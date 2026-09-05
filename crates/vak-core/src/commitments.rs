@@ -109,7 +109,31 @@ pub fn begin_episode(
 
     let ledger = CommitmentLedger::new(sessions_home);
     let commitment_id = match existing {
-        Some(id) => id.to_string(),
+        Some(id) => {
+            let id = id.to_string();
+            // A resumed session may have crashed after EpisodeStarted but
+            // before EpisodeEnded. Close that exact orphan as blocked before
+            // opening the new episode; never replay its effects implicitly.
+            if let Ok(Some(commitment)) = ledger.get(&id)
+                && let Some(episode) =
+                    commitment.episodes.iter().rev().find(|episode| {
+                        episode.ended_at.is_none() && episode.session_id == session_id
+                    })
+            {
+                let _ = ledger.append(&Event::new(
+                    &id,
+                    EventKind::EpisodeEnded {
+                        episode_id: episode.episode_id.clone(),
+                        advancement: Advancement::Blocked {
+                            blocker: "recovered after an interrupted process; review before retry"
+                                .into(),
+                        },
+                        spend_usd: 0.0,
+                    },
+                ));
+            }
+            id
+        }
         None => {
             let objective = objective_from(prompt);
             let spec = CommitmentSpec {
@@ -171,7 +195,11 @@ pub fn classify(
                 .content
                 .iter()
                 .any(|block| matches!(block, vak_llm::ContentBlock::Text { text } if text.trim().len() > 40));
-            if said_something || tool_calls > 0 {
+            // Tool activity alone is not progress: retries, repeated reads,
+            // and failed probes are common in a long run. Only a substantive
+            // response or an explicitly moved criterion clears the stall
+            // streak.
+            if said_something {
                 Advancement::Learned {
                     fact: format!(
                         "episode completed with {tool_calls} tool call(s) and no criterion movement"
@@ -371,6 +399,29 @@ pub async fn maintain(sessions_home: &Path, cwd: &Path) -> Maintenance {
                         .is_ok()
                 {
                     report.satisfied.push(commitment.commitment_id.clone());
+                }
+            }
+            vak_commit::Suspension::Commitment { commitment_id } => {
+                if ledger
+                    .get(&commitment_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|dependency| {
+                        dependency
+                            .closure
+                            .as_ref()
+                            .is_some_and(|closure| closure.verdict == Verdict::Fulfilled)
+                    })
+                    && ledger
+                        .append(&Event::new(
+                            &commitment.commitment_id,
+                            EventKind::Resumed {
+                                reason: format!("dependency {commitment_id} was fulfilled"),
+                            },
+                        ))
+                        .is_ok()
+                {
+                    report.resumed.push(commitment.commitment_id.clone());
                 }
             }
             vak_commit::Suspension::Human {
@@ -582,6 +633,51 @@ mod tests {
         assert_eq!(commitment.spec.objective, "watch the cloud bill every day");
     }
 
+    #[test]
+    fn resuming_a_session_closes_its_orphaned_episode_before_starting_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let id = ledger
+            .open_commitment(vak_commit::spec_from_reading(
+                "resume the migration",
+                vak_intent::Reading {
+                    horizon: Horizon::Durable,
+                    ..Reading::general()
+                },
+                Vec::new(),
+                dir.path().to_path_buf(),
+                Economics::default(),
+            ))
+            .unwrap();
+        ledger
+            .append(&Event::new(
+                &id,
+                EventKind::EpisodeStarted {
+                    episode_id: "orphan".into(),
+                    session_id: "s1".into(),
+                },
+            ))
+            .unwrap();
+        let intent = intent_with(Evidence::None, Horizon::Durable, 0.9);
+        let next = begin_episode(
+            dir.path(),
+            &config(),
+            &intent,
+            "resume the migration",
+            "s1",
+            dir.path(),
+            Some(&id),
+        )
+        .unwrap();
+        let commitment = ledger.get(&id).unwrap().unwrap();
+        assert!(commitment.episodes[0].ended_at.is_some());
+        assert!(matches!(
+            commitment.episodes[0].advancement,
+            Some(Advancement::Blocked { .. })
+        ));
+        assert_ne!(next.episode_id, "orphan");
+    }
+
     /// A stray recurrence-ish word must not leave a month-long obligation
     /// behind. Weak horizon evidence declines to open one.
     #[test]
@@ -694,6 +790,15 @@ mod tests {
         );
         assert!(!answered.is_stall());
         assert!(matches!(answered, Advancement::Learned { .. }));
+
+        let tool_only = classify(
+            &vak_agent::TurnOutcome::Completed {
+                response: vak_llm::AssistantMessage::empty("test-model"),
+            },
+            12,
+            Vec::new(),
+        );
+        assert!(tool_only.is_stall());
     }
 
     #[test]
@@ -790,6 +895,53 @@ mod tests {
             ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
             vak_commit::Phase::Suspended
         );
+    }
+
+    #[tokio::test]
+    async fn a_commitment_dependency_wakes_after_fulfillment() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let dependency = ledger
+            .open_commitment(vak_commit::spec_from_reading(
+                "dependency",
+                Reading::general(),
+                Vec::new(),
+                dir.path().to_path_buf(),
+                Economics::default(),
+            ))
+            .unwrap();
+        ledger
+            .append(&Event::new(
+                &dependency,
+                EventKind::Closed {
+                    verdict: Verdict::Fulfilled,
+                    strength: Satisfaction::Asserted,
+                    evidence: Vec::new(),
+                    note: "done".into(),
+                },
+            ))
+            .unwrap();
+        let waiting = ledger
+            .open_commitment(vak_commit::spec_from_reading(
+                "waiting",
+                Reading::general(),
+                Vec::new(),
+                dir.path().to_path_buf(),
+                Economics::default(),
+            ))
+            .unwrap();
+        ledger
+            .append(&Event::new(
+                &waiting,
+                EventKind::Suspended {
+                    suspension: vak_commit::Suspension::Commitment {
+                        commitment_id: dependency,
+                    },
+                },
+            ))
+            .unwrap();
+        let report = maintain(dir.path(), dir.path()).await;
+        assert_eq!(report.resumed, vec![waiting]);
     }
 
     #[tokio::test]

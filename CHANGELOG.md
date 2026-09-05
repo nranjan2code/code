@@ -5,6 +5,17 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.8 — 2026-09-05
+
+### Harness lifecycle hardening
+
+- Revoke active permission leases immediately when a session's effective mode changes, including warm pooled gateway cores.
+- Deny forwarded approval gates during revocation and reject late replies.
+- Refuse dollar-capped dispatch for models whose pricing is unknown instead of allowing an unenforceable budget.
+- Persist child-run terminal markers and recover completed children into verification after a process restart.
+- Recover orphaned commitment episodes, wake commitments after fulfilled dependencies, and classify tool-only or empty turns as stalled.
+- Add regression coverage across permissions, gateway approvals, budgets, commitments, child sessions, subagents, flows, and full workspace execution.
+
 ## 3.0.7 — 2026-09-05
 
 ### Stream lifecycle management and multi-task scale

@@ -259,7 +259,7 @@ impl Store {
             EntryPayload::Activity(_) => EntryKind::Activity,
             EntryPayload::Work(_) => EntryKind::Work,
             EntryPayload::Intent(_) => EntryKind::Intent,
-            EntryPayload::TurnCapabilitiesBound(_) => return None,
+            EntryPayload::TurnCapabilitiesBound(_) | EntryPayload::ChildRun { .. } => return None,
         };
 
         match &entry.payload {
@@ -403,7 +403,7 @@ impl Store {
                 ),
                 is_error: false,
             }),
-            EntryPayload::TurnCapabilitiesBound(_) => None,
+            EntryPayload::TurnCapabilitiesBound(_) | EntryPayload::ChildRun { .. } => None,
         }
     }
 

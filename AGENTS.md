@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v1.0.0 — all roadmap phases implemented and live-tested.**
+**Status: v3.0.8 — all roadmap phases implemented and live-tested.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -64,7 +64,9 @@ multi-bot identity (34), Tavily (35), first-run onboarding (36),
 distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
-configuration (44). Each carries its own `Status:` line — read it before
+configuration (44), plus the 3.0.8 lifecycle-hardening release covering
+permission leases, approval gates, budget admission, child-run recovery, and
+commitment progress accounting. Each carries its own `Status:` line — read it before
 assuming a document describes shipped behaviour rather than a proposal.
 
 ## Non-negotiable invariants
@@ -188,14 +190,9 @@ assuming a document describes shipped behaviour rather than a proposal.
     gateway-registered handle is in that same map, so the *current* turn on
     a channel is reached too) and for the gateway's own default workspace
     (its `CorePool` entry is `state.core` by shared `Arc` identity, not a
-    copy). It does **not** yet hold for another workspace the same gateway
-    also pools (docs/design/34 Phase 2): a warm, un-refreshed pool entry
-    keeps its mode until idle eviction. Pinned down by
-    `core_pool::tests::warm_pool_entry_does_not_see_a_permission_mode_change_written_after_it_started`
-    — read that test's doc comment (and docs/design/34's "Known
-    limitation") before attempting a fix; a straightforward one already
-    reproducibly broke `busy_message_is_steered_not_dropped` for reasons
-    not yet root-caused.
+    copy). This also holds for other workspaces served by the gateway: warm
+    pool entries recheck their persisted security ceiling on cache hits and
+    cancel the old permission lease before narrowing.
 18. **Durable services use the canonical default workspace.** Generated
     launchd/systemd units for the gateway and channel bridges must execute from
     `vak_config::paths::default_workspace()` (`~/vak-home` for each account),

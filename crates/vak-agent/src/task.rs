@@ -502,6 +502,19 @@ impl TaskTool {
         }
         let started = std::time::Instant::now();
         let outcome = agent.run(prompt, &steering, cancel, ev_tx).await;
+        let child_status = match &outcome {
+            crate::TurnOutcome::Completed { .. } => vak_session::types::ChildRunStatus::Completed,
+            crate::TurnOutcome::Failed { .. } => vak_session::types::ChildRunStatus::Failed,
+            crate::TurnOutcome::Aborted { .. } => vak_session::types::ChildRunStatus::Aborted,
+            crate::TurnOutcome::MaxTurnsReached => vak_session::types::ChildRunStatus::MaxTurns,
+        };
+        // Persist the terminal marker before notifying the parent. Recovery
+        // must never observe a finished child without a durable status.
+        let _ = agent
+            .session
+            .lock()
+            .await
+            .append_child_run_status(child_status);
         if let Some(events) = &self.deps.events {
             let _ = events
                 .send(crate::AgentEvent::SubagentFinished {

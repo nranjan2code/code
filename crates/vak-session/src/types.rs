@@ -487,6 +487,18 @@ pub struct IntentRecord {
     pub commitment_id: Option<String>,
 }
 
+/// Durable terminal marker for a child-agent run. Presence of a child ledger
+/// alone does not prove that the child finished; recovery must consult this
+/// marker before attaching evidence or retrying work.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildRunStatus {
+    Completed,
+    Failed,
+    Aborted,
+    MaxTurns,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EntryPayload {
@@ -505,6 +517,11 @@ pub enum EntryPayload {
     Work(WorkEvent),
     /// This turn's resolved intent. Model-visible via `model_visible`.
     Intent(Box<IntentRecord>),
+    /// Terminal marker written by a child agent before its parent observes the
+    /// result. Never model-visible.
+    ChildRun {
+        status: ChildRunStatus,
+    },
     /// Exact capability interface used by one provider turn.
     TurnCapabilitiesBound(TurnCapabilitiesBound),
 }

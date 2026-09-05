@@ -1,6 +1,6 @@
 # 47 — The commitment kernel
 
-Status: **all phases shipped**.
+Status: **all phases shipped; lifecycle recovery and progress hardening shipped in 3.0.8**.
 
 | Phase | Delivers |
 |---|---|

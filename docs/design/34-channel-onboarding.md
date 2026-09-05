@@ -478,42 +478,11 @@ time (the moment the operator sets it) and in `CorePool::resolve_at` (the
 moment enforcement actually applies), so the log shows both intent and
 effect.
 
-**Known limitation**: a pooled Core's ceiling is read when that instance
-is constructed. If a workspace's config later *tightens*, an already-warm
-instance — overridden or plain inherit alike — keeps its earlier mode
-until idle eviction drops it, up to `core_pool_idle_secs` (1800s default)
-later, or indefinitely on a channel active enough to never idle out. Locked
-down by `core_pool::tests::
-warm_pool_entry_does_not_see_a_permission_mode_change_written_after_it_started`.
-This is narrower than it first looks: the gateway's *own default*
-workspace is exempt, because `CorePool::new` seeds that one entry with the
-exact `Core` object `AppState.core` already is (an `Arc`-backed clone, not
-a copy), so `apply_permission_mode`'s direct mutation of `state.core` (the
-one thing `POST /config/mode` from this process can ever change) is
-visible there immediately, same object identity. The gap is real only for
-a *different* workspace this same gateway also serves (multi-tenant
-CorePool) whose own `.vak/config.toml` changes independently — by a
-separate `vak` process, or a hand edit — which is exactly the scenario
-`apply_permission_mode`'s revoke-in-flight sweep over `state.sessions`
-(docs/design/33, AGENTS.md rule 17) does reach for the *current* turn
-(gateway-registered handles share that same map) but the *next* message on
-that channel still resolves the stale, unrefreshed pool entry.
-
-A fix was attempted and reverted: re-deriving the mode from disk on every
-`CorePool` cache hit (respecting each entry's own permission-mode pin, so
-an explicit channel override still gets re-capped against a moved ceiling
-rather than clobbered outright) reproducibly hung
-`busy_message_is_steered_not_dropped` (`vak-server/tests/gateway.rs`) — a
-steering message resolving mid-turn on the same warm Core a live tool call
-was still running on. Wrapping the refresh in
-`tokio::task::block_in_place` did not fix it, so the cause is not simple
-executor-thread starvation from synchronous config-file IO; it never
-surfaced in `core_pool`'s own unit tests, only against a real in-flight
-dispatch, and was not root-caused before the attempt was reverted. Any
-future fix must pass both that gateway test and the `core_pool` test named
-above — the second currently asserts the *unfixed* behavior and must flip
-to asserting the mode changed, on purpose, as part of the same change.
-
+Warm pooled entries now recheck the persisted permission ceiling on every
+cache hit. This security-only path preserves narrower channel pins and
+cancels the old Core permission lease before applying a tighter ceiling. The
+regression `warm_pool_entry_rechecks_a_permission_mode_change_written_after_it_started`
+and the live steering regression both pass.
 ## Phase 3: Discord/Slack bridges + per-surface admin UI
 
 The routing model is already surface-agnostic by construction

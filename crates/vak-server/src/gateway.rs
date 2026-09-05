@@ -796,6 +796,28 @@ impl GatewayState {
         })
     }
 
+    /// Reject forwarded approval gates belonging to a revoked session. A
+    /// late reply then finds no gate and cannot authorize stale work.
+    pub(crate) fn deny_pending_for_session(&self, session_id: &str) -> usize {
+        let mut pending = self
+            .pending_approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let keys: Vec<String> = pending
+            .iter()
+            .filter(|(_, gate)| gate.session_id == session_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut denied = 0;
+        for key in keys {
+            if let Some(gate) = pending.remove(&key) {
+                let _ = gate.tx.send(false);
+                denied += 1;
+            }
+        }
+        denied
+    }
+
     pub(crate) fn snapshot(&self) -> Vec<(String, ChannelBinding)> {
         let mut pairs: Vec<(String, ChannelBinding)> = self
             .bindings
@@ -3485,6 +3507,28 @@ mod tests {
         assert_eq!(
             entry.first_seen_text.unwrap().chars().count(),
             FIRST_SEEN_TEXT_MAX_CHARS
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_revoke_denies_forwarded_gates_for_session() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+        let mut receivers = Vec::new();
+        for id in ["gate-a", "gate-b", "other"] {
+            let rx = gw.register_gate(id, if id == "other" { "s2" } else { "s1" });
+            receivers.push((id, rx));
+        }
+        assert_eq!(gw.deny_pending_for_session("s1"), 2);
+        let (_, first) = receivers.remove(0);
+        let (_, second) = receivers.remove(0);
+        assert!(!first.await.unwrap());
+        assert!(!second.await.unwrap());
+        assert!(gw.resolve_gate(true, Some("gate-a")).is_err());
+        assert!(gw.resolve_gate(true, Some("gate-b")).is_err());
+        assert_eq!(
+            gw.resolve_gate(false, Some("other")).unwrap().session_id,
+            "s2"
         );
     }
 }

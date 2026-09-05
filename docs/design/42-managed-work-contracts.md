@@ -571,6 +571,11 @@ no child + readonly/retry-safe operation  → interrupted, retry eligible
 possible write/external side effect       → interrupted, require review
 ```
 
+Child sessions persist an append-only terminal marker (`completed`, `failed`,
+`aborted`, or `max_turns`) before their parent observes the result. Recovery
+must use that marker; the existence of a child ledger alone is not evidence
+that the child finished.
+
 Never automatically replay a possible external mutation. Add an operation
 identity for retryable effects:
 

@@ -10,7 +10,7 @@ use vak_session::types::{
     EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, TurnCapabilitiesBound,
     WorkContract, WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
 };
-use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
+use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog, SessionPath};
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -306,6 +306,78 @@ fn restart_reconciles_orphaned_running_work_without_replaying_it() {
         vak_session::types::WorkItemStatus::Interrupted
     );
     assert!(projection.items["mutate"].blocker.is_some());
+}
+
+#[test]
+fn restart_attaches_completed_child_for_verification_without_marking_it_succeeded() {
+    let dir = tempdir().unwrap();
+    let child_path =
+        SessionPath::new_session_file(dir.path(), PathBuf::from("/tmp/proj").as_path(), "child-1");
+    let mut child = SessionLog::create(
+        child_path,
+        SessionHeader {
+            session_id: "child-1".into(),
+            ..header()
+        },
+    )
+    .unwrap();
+    child
+        .append_child_run_status(vak_session::types::ChildRunStatus::Completed)
+        .unwrap();
+    drop(child);
+
+    let mut log = SessionLog::create(dir.path().join("parent.jsonl"), header()).unwrap();
+    let mut contract = work_contract("child-recovery");
+    contract.items[0].owner = WorkOwner::Subagent;
+    log.append_work(WorkEvent {
+        contract_id: "child-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated { contract },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "child-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractStatusChanged {
+            from: vak_session::types::WorkContractStatus::Draft,
+            to: vak_session::types::WorkContractStatus::Active,
+            reason: "delegating".into(),
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "child-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ItemStatusChanged {
+            item_id: "one".into(),
+            from: vak_session::types::WorkItemStatus::Ready,
+            to: vak_session::types::WorkItemStatus::Running,
+            attempt: 1,
+            reason: "delegated".into(),
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "child-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ItemAssigned {
+            item_id: "one".into(),
+            owner: WorkOwner::Subagent,
+            child_session_id: Some("child-1".into()),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        log.reconcile_running_work_with_child_ledgers(&HashSet::new(), Some(dir.path()))
+            .unwrap(),
+        1
+    );
+    let state = log.work_projection().unwrap().unwrap().items["one"].clone();
+    assert_eq!(
+        state.status,
+        vak_session::types::WorkItemStatus::ReadyForVerification
+    );
+    assert_eq!(state.evidence.len(), 1);
 }
 
 #[test]

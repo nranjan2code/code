@@ -206,6 +206,24 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Intent(Box::new(record))))
     }
 
+    pub fn append_child_run_status(
+        &mut self,
+        status: crate::types::ChildRunStatus,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::ChildRun { status }))
+    }
+
+    pub fn child_run_status(&self) -> Option<crate::types::ChildRunStatus> {
+        self.chain_to_root()
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::ChildRun { status } => Some(status.clone()),
+                _ => None,
+            })
+    }
+
     pub fn append_turn_capabilities(
         &mut self,
         bound: crate::types::TurnCapabilitiesBound,
@@ -335,6 +353,14 @@ impl SessionLog {
         &mut self,
         live_child_sessions: &std::collections::HashSet<String>,
     ) -> Result<usize, SessionError> {
+        self.reconcile_running_work_with_child_ledgers(live_child_sessions, None)
+    }
+
+    pub fn reconcile_running_work_with_child_ledgers(
+        &mut self,
+        live_child_sessions: &std::collections::HashSet<String>,
+        sessions_home: Option<&Path>,
+    ) -> Result<usize, SessionError> {
         let Some(projection) = self
             .work_projection()
             .map_err(|error| SessionError::Corrupt {
@@ -344,7 +370,7 @@ impl SessionLog {
         else {
             return Ok(0);
         };
-        let stale: Vec<(String, u32)> = projection
+        let stale: Vec<(String, u32, Option<String>)> = projection
             .items
             .values()
             .filter(|item| {
@@ -354,10 +380,16 @@ impl SessionLog {
                         .as_ref()
                         .is_some_and(|id| live_child_sessions.contains(id))
             })
-            .map(|item| (item.item_id.clone(), item.attempt))
+            .map(|item| {
+                (
+                    item.item_id.clone(),
+                    item.attempt,
+                    item.child_session_id.clone(),
+                )
+            })
             .collect();
         let mut reconciled = 0;
-        for (item_id, attempt) in stale {
+        for (item_id, attempt, child_id) in stale {
             let Some(current) = self
                 .work_projection()
                 .map_err(|error| SessionError::Corrupt {
@@ -367,6 +399,39 @@ impl SessionLog {
             else {
                 break;
             };
+            let child_status = child_id.as_deref().and_then(|id| {
+                let home = sessions_home?;
+                let cwd = self.header().map(|h| h.contract_cwd())?;
+                let path = SessionPath::new_session_file(home, &cwd, id);
+                SessionLog::open(path)
+                    .ok()
+                    .and_then(|child| child.child_run_status())
+            });
+            if matches!(child_status, Some(crate::types::ChildRunStatus::Completed)) {
+                self.append_work(WorkEvent {
+                    contract_id: current.contract.contract_id.clone(),
+                    revision: current.contract.revision,
+                    kind: crate::types::WorkEventKind::EvidenceAttached {
+                        item_id: item_id.clone(),
+                        evidence: crate::types::EvidenceRef::ChildSession {
+                            session_id: child_id.clone().unwrap_or_default(),
+                        },
+                    },
+                })?;
+                self.append_work(WorkEvent {
+                    contract_id: current.contract.contract_id.clone(),
+                    revision: current.contract.revision,
+                    kind: crate::types::WorkEventKind::ItemStatusChanged {
+                        item_id,
+                        from: crate::types::WorkItemStatus::Running,
+                        to: crate::types::WorkItemStatus::ReadyForVerification,
+                        attempt,
+                        reason: "recovered completed child; verify its durable evidence".into(),
+                    },
+                })?;
+                reconciled += 1;
+                continue;
+            }
             self.append_work(WorkEvent {
                 contract_id: current.contract.contract_id.clone(),
                 revision: current.contract.revision,
@@ -375,7 +440,19 @@ impl SessionLog {
                     from: crate::types::WorkItemStatus::Running,
                     to: crate::types::WorkItemStatus::Interrupted,
                     attempt,
-                    reason: "recovered after process restart; review before retry".into(),
+                    reason: match child_status {
+                        Some(crate::types::ChildRunStatus::Failed) => {
+                            "child failed before restart; review before retry"
+                        }
+                        Some(crate::types::ChildRunStatus::Aborted) => {
+                            "child was aborted before restart; review before retry"
+                        }
+                        Some(crate::types::ChildRunStatus::MaxTurns) => {
+                            "child hit its turn limit; review before retry"
+                        }
+                        _ => "recovered after process restart; review before retry",
+                    }
+                    .into(),
                 },
             })?;
             reconciled += 1;
@@ -627,7 +704,8 @@ impl SessionLog {
                 | EntryPayload::Goal(_)
                 | EntryPayload::Activity(_)
                 | EntryPayload::Work(_)
-                | EntryPayload::TurnCapabilitiesBound(_) => {}
+                | EntryPayload::TurnCapabilitiesBound(_)
+                | EntryPayload::ChildRun { .. } => {}
             }
         }
         if let Ok(Some(work)) = self.work_projection()

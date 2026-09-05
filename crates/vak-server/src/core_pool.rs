@@ -168,6 +168,15 @@ impl CorePool {
             let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
             self.evict_idle_locked(&mut entries, now);
             if let Some(entry) = entries.get_mut(&key) {
+                // A warm entry may outlive a persisted workspace downgrade.
+                // Recheck only the security ceiling on cache hits: full
+                // preference refresh would take unrelated capability locks
+                // while an active turn is running.
+                if let Err(error) = entry.core.enforce_persisted_permission_ceiling() {
+                    return Err(format!(
+                        "could not recheck workspace permission ceiling: {error}"
+                    ));
+                }
                 entry.last_active = now;
                 return Ok(entry.core.clone());
             }
@@ -593,33 +602,12 @@ mod tests {
         assert_eq!(pool.len(), 2);
     }
 
-    /// A warm pool entry is an `Arc`-backed `Core` resolved once from the
-    /// workspace's config and then reused verbatim on every cache hit — a
-    /// permission-mode change persisted to that workspace's
-    /// `.vak/config.toml` after the entry warmed (by a separate `vak`
-    /// process, or a different workspace's own config changing while this
-    /// gateway serves it too, docs/design/34 Phase 2) is invisible to it
-    /// until eviction. AGENTS.md rule 17 promises "permission changes
-    /// revoke active capabilities before apply", and `apply_permission_mode`
-    /// (vak-server/src/lib.rs) keeps that promise for `state.sessions` —
-    /// but a gateway-routed channel dispatches through `CorePool` instead,
-    /// which that sweep never touches.
-    ///
-    /// A first attempt at closing this (re-deriving the mode from disk on
-    /// every cache hit, before returning the entry) reproducibly hung
-    /// `busy_message_is_steered_not_dropped` (tests/gateway.rs) — a
-    /// steering message resolved mid-turn on the same warm `Core` a live
-    /// tool call was still running on. Wrapping the refresh in
-    /// `tokio::task::block_in_place` did not fix it, so the hang is not
-    /// simple executor-thread starvation from synchronous file IO; it did
-    /// not surface in this module's own tests (no in-flight turn to race
-    /// against), only against a real in-progress dispatch. That fix was
-    /// reverted rather than shipped un-understood. This test intentionally
-    /// documents the *current* (unfixed) behavior, so the gap stays
-    /// visible and any future fix attempt has this exact test — plus
-    /// `busy_message_is_steered_not_dropped` — as its two required checks.
+    /// A warm pool entry is reused, but its persisted permission ceiling is
+    /// rechecked on every cache hit. This security-only check avoids taking
+    /// unrelated capability locks while an active turn is running and cancels
+    /// the old Core permission lease before narrowing the resident mode.
     #[test]
-    fn warm_pool_entry_does_not_see_a_permission_mode_change_written_after_it_started() {
+    fn warm_pool_entry_rechecks_a_permission_mode_change_written_after_it_started() {
         let default_dir = tempfile::tempdir().unwrap();
         let ws = tempfile::tempdir().unwrap();
         workspace_with_mode(ws.path(), "full-access");
@@ -639,9 +627,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             still_warm.effective_permission_mode(),
-            PermissionMode::FullAccess,
-            "documents the gap: an active channel keeps the pre-downgrade \
-             mode until its pool entry is idle-evicted or the process restarts"
+            PermissionMode::ReadOnly,
+            "a warm channel must observe the persisted security ceiling"
         );
     }
 

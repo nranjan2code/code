@@ -393,6 +393,7 @@ struct CoreInner {
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
+    permission_lease: std::sync::Mutex<CancellationToken>,
     approval_mode_override: std::sync::Mutex<Option<vak_config::ApprovalMode>>,
     /// Live replacement for the config's `allow`/`ask`/`deny` lists.
     ///
@@ -846,6 +847,7 @@ impl Core {
                 max_turns_override: std::sync::Mutex::new(None),
                 max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 mode_override: std::sync::Mutex::new(None),
+                permission_lease: std::sync::Mutex::new(CancellationToken::new()),
                 mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 approval_mode_override: std::sync::Mutex::new(None),
                 rules_override: std::sync::Mutex::new(None),
@@ -1159,17 +1161,60 @@ impl Core {
     }
 
     pub fn set_permission_mode(&self, mode: vak_config::PermissionMode) {
+        self.replace_permission_mode(mode, true);
+    }
+
+    fn replace_permission_mode(&self, mode: vak_config::PermissionMode, pinned: bool) {
+        let mut lease = self
+            .inner
+            .permission_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.effective_permission_mode() != mode {
+            lease.cancel();
+            *lease = CancellationToken::new();
+        }
         self.inner
             .mode_runtime_pinned
-            .store(true, std::sync::atomic::Ordering::Release);
+            .store(pinned, std::sync::atomic::Ordering::Release);
         Self::write_override(&self.inner.mode_override, Some(mode));
     }
 
     pub fn apply_persisted_permission_mode(&self, mode: vak_config::PermissionMode) {
-        Self::write_override(&self.inner.mode_override, Some(mode));
+        self.replace_permission_mode(mode, false);
+    }
+
+    /// A run's authority lease. A mode change cancels old leases before
+    /// publishing its new mode; a caller cannot revive one by resetting its
+    /// own cancellation token.
+    pub fn permission_lease(&self) -> CancellationToken {
         self.inner
-            .mode_runtime_pinned
-            .store(false, std::sync::atomic::Ordering::Release);
+            .permission_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .child_token()
+    }
+
+    /// Read only the persisted trust-resolved ceiling. Unlike preference
+    /// refresh this never touches live MCP clients or capability caches.
+    pub fn persisted_permission_ceiling(&self) -> Result<vak_config::PermissionMode, CoreError> {
+        Ok(
+            vak_config::load_with_trust(&self.inner.cwd, self.inner.trust_project_config)?
+                .permission_mode,
+        )
+    }
+
+    /// Revoke a resident scoped mode when the workspace's persisted ceiling
+    /// has narrowed. A narrower channel pin remains intact; only a mode above
+    /// the new ceiling is replaced, and replacement cancels its old lease.
+    pub fn enforce_persisted_permission_ceiling(&self) -> Result<bool, CoreError> {
+        let ceiling = self.persisted_permission_ceiling()?;
+        if self.effective_permission_mode().rank() > ceiling.rank() {
+            self.replace_permission_mode(ceiling, false);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn permission_mode_runtime_pinned(&self) -> bool {
@@ -4223,6 +4268,7 @@ impl Core {
         // whether its gates reach anyone. Whatever the host stamped earlier
         // loses to it, and a disagreement is recorded rather than believed.
         self.reconcile_answerability(approver.as_ref());
+        let permission_lease = self.permission_lease();
         let live_child_sessions = session
             .header()
             .map(|header| {
@@ -4234,7 +4280,10 @@ impl Core {
                     .collect::<std::collections::HashSet<_>>()
             })
             .unwrap_or_default();
-        session.reconcile_running_work(&live_child_sessions)?;
+        session.reconcile_running_work_with_child_ledgers(
+            &live_child_sessions,
+            Some(&self.inner.sessions_home),
+        )?;
         let session_contract = session.header().map(|header| header.contract.clone());
         let (provider, model) = match session_contract.as_ref() {
             Some(contract) => {
@@ -4877,7 +4926,19 @@ impl Core {
             let s = agent.session.lock().await;
             s.receipts().len()
         };
-        let outcome = agent.run_message(prompt, &steering, cancel, events).await;
+        let run_cancel = cancel.child_token();
+        let outcome = {
+            let run = agent.run_message(prompt, &steering, run_cancel.clone(), events);
+            tokio::pin!(run);
+            tokio::select! {
+                biased;
+                _ = permission_lease.cancelled() => {
+                    run_cancel.cancel();
+                    run.await
+                }
+                outcome = &mut run => outcome,
+            }
+        };
         let session = agent.into_session().await;
 
         // Was the reading right? The strongest answer is measured, not
@@ -7205,6 +7266,16 @@ mod capability_reach_tests {
         core.apply_persisted_commitment(false);
         assert!(!core.effective_commitment());
         assert!(!core.tool_names().contains(&"commitments".to_string()));
+    }
+
+    #[tokio::test]
+    async fn permission_mode_change_cancels_existing_permission_lease() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let lease = core.permission_lease();
+        core.set_permission_mode(vak_config::PermissionMode::ReadOnly);
+        assert!(lease.is_cancelled());
+        assert!(!core.permission_lease().is_cancelled());
     }
 }
 

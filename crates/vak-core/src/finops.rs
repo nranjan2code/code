@@ -315,11 +315,6 @@ impl SpendGate for CoreSpendGate {
             output_tokens: check.planned_output_tokens,
             ..Default::default()
         };
-        // Unpriced model: UNKNOWN cost cannot be admitted or denied on
-        // dollars — allow and record without a USD figure.
-        let Some(est) = self.estimate(check.model, &planned) else {
-            return Ok(());
-        };
         let max_run_usd = *self
             .max_run_usd
             .lock()
@@ -328,6 +323,20 @@ impl SpendGate for CoreSpendGate {
             .run_spent_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let max_day_usd = *self
+            .max_day_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(est) = self.estimate(check.model, &planned) else {
+            return if max_run_usd.is_some() || max_day_usd.is_some() {
+                Err(format!(
+                    "cannot enforce dollar budget: model '{}' has unknown pricing; configure a price override before dispatch",
+                    check.model
+                ))
+            } else {
+                Ok(())
+            };
+        };
         if let Some(cap) = max_run_usd
             && !self.raised_once.load(Ordering::SeqCst)
             && run_spent + est > cap
@@ -566,7 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn unpriced_model_admits_and_records_unknown_usd() {
-        let (gate, dir) = gate_with(&[("run", 0.01)]);
+        let (gate, dir) = gate_with(&[]);
         gate.authorize(&check("mystery-model")).await.unwrap();
         gate.record_settled(
             "anthropic",
@@ -578,6 +587,15 @@ mod tests {
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
         let text = std::fs::read_to_string(dir.path().join("cost-log.jsonl")).unwrap();
         assert!(text.contains("\"usd\":null") || !text.contains("\"usd\""));
+    }
+
+    #[tokio::test]
+    async fn unpriced_model_cannot_bypass_either_dollar_cap() {
+        for cap in ["run", "day"] {
+            let (gate, _dir) = gate_with(&[(cap, 0.01)]);
+            let error = gate.authorize(&check("mystery-model")).await.unwrap_err();
+            assert!(error.contains("unknown pricing"), "{error}");
+        }
     }
 
     #[tokio::test]

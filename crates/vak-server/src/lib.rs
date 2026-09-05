@@ -3078,6 +3078,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Work(_) => {}
                         vak_session::EntryPayload::Intent(_) => {}
                         vak_session::EntryPayload::TurnCapabilitiesBound(_) => {}
+                        vak_session::EntryPayload::ChildRun { .. } => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -6513,6 +6514,7 @@ fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode, per
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .cancel();
         deny_pending_approvals(&handle);
+        let _ = state.gateway.deny_pending_for_session(&handle.id);
     }
 }
 

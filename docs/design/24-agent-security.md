@@ -1,5 +1,9 @@
 # 24 — Agent security boundaries
 
+Status: **implemented and hardened in 3.0.8**. Permission lease revocation,
+forwarded approval cancellation, pooled permission-ceiling refresh, and
+fail-closed budget admission are covered by runtime checks and regression tests.
+
 ## Threat model
 
 Treat model output as adversarial even when the user is trusted. Untrusted
