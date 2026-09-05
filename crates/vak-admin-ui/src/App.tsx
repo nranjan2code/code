@@ -65,10 +65,10 @@ function PromptsPage() {
 function ScopeControl() {
   return (
     <div class="scope-control" role="group" aria-label="Configuration scope">
-      <button classList={{ active: configScope() === "user" }} onClick={() => setConfigScopePersisted("user")}>
+      <button aria-pressed={configScope() === "user"} classList={{ active: configScope() === "user" }} onClick={() => setConfigScopePersisted("user")}>
         Shared · global
       </button>
-      <button classList={{ active: configScope() === "project" }} onClick={() => setConfigScopePersisted("project")}>
+      <button aria-pressed={configScope() === "project"} classList={{ active: configScope() === "project" }} onClick={() => setConfigScopePersisted("project")}>
         This project
       </button>
       <span>
