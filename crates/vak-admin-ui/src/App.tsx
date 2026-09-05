@@ -378,7 +378,7 @@ function Sessions() {
     setBusyCandidate(sessionId);
     try {
       await api.keepBestRun(sessionId);
-      pushToast("info", "Kept. Those changes are now in your project.");
+      pushToast("info", "Kept. Those changes are now in your workspace.");
       bestofnActions.refetch();
       refetch();
     } catch (err) {
@@ -488,7 +488,7 @@ Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} ses
         >
           <table class="table">
             <thead>
-              <tr><th>session</th><th>messages</th><th>started</th><th>last active</th><th>project</th><th /></tr>
+              <tr><th>session</th><th>messages</th><th>started</th><th>last active</th><th>workspace</th><th /></tr>
             </thead>
             <tbody>
               <For each={filtered()}>
@@ -1175,7 +1175,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     try {
       await api.enableIntegration(entry.id, props.ctx.scope(), key);
       setIntegrationKeys((current) => ({ ...current, [entry.id]: "" }));
-      pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Shared" : "this project"}`);
+      pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Shared" : "this workspace"}`);
       await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1192,8 +1192,8 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     try {
       await api.removeIntegration(entry.id, props.ctx.scope());
       pushToast("info", props.ctx.scope() === "project" && entry.inherited
-        ? `${entry.label} project override cleared`
-        : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Shared" : "this project"}`);
+        ? `${entry.label} workspace override cleared`
+        : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Shared" : "this workspace"}`);
       await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1533,7 +1533,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   };
   return <section class="stack plugin-stack">
     <div class="panel">
-      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Shared" : "this project"} until you enable them.</p></div></div>
+      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Shared" : "this workspace"} until you enable them.</p></div></div>
       <div class="form-row"><label>Local package directory</label><input class="mono" placeholder="/path/to/plugin" value={path()} onInput={(e) => setPath(e.currentTarget.value)} /></div>
       <div class="row-gap"><button disabled={busy() || !path().trim()} onClick={() => void install(false)}>Install disabled</button><button class="ghost" disabled={busy() || !path().trim()} onClick={() => void install(true)}>Stage update</button></div>
     </div>
@@ -1847,9 +1847,9 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
               this page. Only what you choose under “Runs on” narrows when one fires.
             </p>
             <p class="dim">
-              This lists only the automations set up for this project. One set up for your whole
+              This lists only the automations set up for this workspace. One set up for your whole
               account still runs here, but isn’t shown or editable from this page, so saving here
-              can never quietly copy it into this project.
+              can never quietly copy it into this workspace.
             </p>
           </div>
         </div>
@@ -2511,14 +2511,14 @@ function MemoryView() {
     <div class="view">
       <PageHeader
         title="Memory"
-        description="Things vak should keep in mind between sessions — about you, or about this project."
+        description="Things vak should keep in mind between sessions — about you, or about this workspace."
         actions={<button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
       />
 
       <div class="stat-strip">
         <StatCard label="Total memories" value={notes().length} />
         <StatCard label="About me" value={profileCount()} sub="carried across every workspace" />
-        <StatCard label="About this project" value={projectCount()} />
+        <StatCard label="About this workspace" value={projectCount()} />
         <StatCard label="Oldest note" value={oldestAgo()} tone={staleCount() > 0 ? "warn" : undefined} sub={staleCount() > 0 ? `${staleCount()} unrevisited 30+ days` : undefined} />
       </div>
 
@@ -2568,7 +2568,7 @@ function MemoryView() {
                     <li class="note-card">
                       <div class="note-head">
                         <span class="note-freshness" data-age={noteAgeBucket(m.ts)} title={`Last touched ${timeAgo(m.ts)}`} />
-                        <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this project"}</span>
+                        <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this workspace"}</span>
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
                         <span class="dim" style="margin-left:auto; font-size:11px">{timeAgo(m.ts)}</span>
                       </div>
@@ -2885,8 +2885,8 @@ function FinOpsView() {
           <section class="panel" style="margin-top:14px">
             <div class="panel-title-row"><div><h2>Runtime activity today</h2><p class="dim">Only observed executions are counted. Duration is shown only when the execution boundary reports it.</p></div></div>
             <Show when={(data()?.activity ?? []).length > 0} fallback={<p class="dim">No instrumented runtime executions have been recorded today.</p>}>
-              <table class="table"><thead><tr><th>kind</th><th>calls</th><th>successes</th><th>duration</th></tr></thead><tbody>
-                <For each={data()?.activity ?? []}>{(row) => <tr><td class="mono">{row.kind}</td><td>{row.calls}</td><td>{row.successes}</td><td>{row.duration_ms > 0 ? `${row.duration_ms.toLocaleString()} ms` : "not measured"}</td></tr>}</For>
+              <table class="table"><thead><tr><th>kind</th><th>activity</th><th>plugin</th><th>calls</th><th>successes</th><th>duration</th></tr></thead><tbody>
+                <For each={data()?.activity ?? []}>{(row) => <tr><td class="mono">{row.kind}</td><td class="mono">{row.name}</td><td>{row.plugin ?? "—"}</td><td>{row.calls}</td><td>{row.successes}</td><td>{row.duration_ms > 0 ? `${row.duration_ms.toLocaleString()} ms` : "not measured"}</td></tr>}</For>
               </tbody></table>
             </Show>
           </section>
@@ -4436,7 +4436,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
       <div class="toolbar">
         <input
           class="search-input"
-          placeholder="Find a chat or project…"
+          placeholder="Find a chat or workspace…"
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
         />
@@ -5197,7 +5197,7 @@ function GatewaySection() {
         <div class="panel-title-row">
           <div>
             <h2>Inheritance chain</h2>
-            <p class="dim">Shared defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
+              <p class="dim">Shared defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
           </div>
           <span class="chip chip-tone-success">restrictive only</span>
         </div>
@@ -5253,8 +5253,8 @@ const RULE_SECTIONS: { decision: RuleDecision; title: string; empty: string }[] 
 ];
 
 const MODE_COPY: Record<string, string> = {
-  ReadOnly: "It can read and search this project, and nothing else. Every change is refused.",
-  WorkspaceWrite: "It can change files inside this project on its own. Anything outside asks you first.",
+  ReadOnly: "It can read and search this workspace, and nothing else. Every change is refused.",
+  WorkspaceWrite: "It can change files inside this workspace on its own. Anything outside asks you first.",
   FullAccess: "Nothing is checked with you first. Only for a workspace you trust completely.",
 };
 
@@ -5625,7 +5625,7 @@ function Settings() {
     setSavingKey(true);
     try {
       await api.setProviderKey(selectedProvider(), providerKeyInput().trim(), configScope());
-      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Shared" : "this project"}`);
+      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Shared" : "this workspace"}`);
       setProviderKeyInput("");
       refetchProviders();
       await discover(selectedProvider());
