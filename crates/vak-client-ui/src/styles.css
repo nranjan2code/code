@@ -161,6 +161,7 @@ code, pre, kbd { font-family: var(--mono); }
   height: 100%;
   background: var(--bg);
 }
+.app::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 70% 35% at 50% -12%, var(--accent-wash), transparent 72%); opacity: .42; }
 .app.sidebar-collapsed { grid-template-columns: 0 minmax(420px, 1fr) auto; }
 .setup-banner { grid-area: banner; }
 .app.sidebar-collapsed .sidebar { visibility: hidden; pointer-events: none; }
