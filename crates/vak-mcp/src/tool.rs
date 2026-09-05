@@ -7,7 +7,7 @@ use vak_tools::{Tool, ToolContext, ToolOutput};
 
 use crate::manager::McpManager;
 
-type InvocationRecorder = Arc<dyn Fn(&str, &str, bool) + Send + Sync>;
+type InvocationRecorder = Arc<dyn Fn(&str, &str, bool, u64) + Send + Sync>;
 type CatalogObserver = Arc<dyn Fn(&[(String, Vec<crate::McpToolInfo>)]) + Send + Sync>;
 
 /// One meta-tool exposing every configured MCP server without dumping tool
@@ -177,17 +177,18 @@ impl McpTool {
 
         if !self.allowed(server, tool) {
             if let Some(record) = &self.invocation_recorder {
-                record(server, tool, false);
+                record(server, tool, false, 0);
             }
             return ToolOutput::error(format!(
                 "MCP capability denied by channel policy: {server}/{tool}"
             ));
         }
 
+        let started = std::time::Instant::now();
         match self.manager.call_tool(server, tool, arguments).await {
             Ok(text) => {
                 if let Some(record) = &self.invocation_recorder {
-                    record(server, tool, true);
+                    record(server, tool, true, started.elapsed().as_millis() as u64);
                 }
                 if text.is_empty() {
                     ToolOutput::ok("(empty result)")
@@ -209,7 +210,7 @@ impl McpTool {
             }
             Err(e) => {
                 if let Some(record) = &self.invocation_recorder {
-                    record(server, tool, false);
+                    record(server, tool, false, started.elapsed().as_millis() as u64);
                 }
                 ToolOutput::error(ctx.truncate_output(format!(
                     "mcp call failed: {}",

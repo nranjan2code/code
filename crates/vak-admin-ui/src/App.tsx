@@ -2884,7 +2884,7 @@ function FinOpsView() {
           </div>
           <section class="panel" style="margin-top:14px">
             <div class="panel-title-row"><div><h2>Runtime activity today</h2><p class="dim">Only observed executions are counted. Duration is shown only when the execution boundary reports it.</p></div></div>
-            <Show when={(data()?.activity ?? []).length > 0} fallback={<p class="dim">No MCP or hook executions have been recorded today.</p>}>
+            <Show when={(data()?.activity ?? []).length > 0} fallback={<p class="dim">No instrumented runtime executions have been recorded today.</p>}>
               <table class="table"><thead><tr><th>kind</th><th>calls</th><th>successes</th><th>duration</th></tr></thead><tbody>
                 <For each={data()?.activity ?? []}>{(row) => <tr><td class="mono">{row.kind}</td><td>{row.calls}</td><td>{row.successes}</td><td>{row.duration_ms > 0 ? `${row.duration_ms.toLocaleString()} ms` : "not measured"}</td></tr>}</For>
               </tbody></table>
@@ -6894,9 +6894,6 @@ export default function App() {
                     <a href={navHref(item.hash)} classList={{ active: currentRoute() === item.hash }}>
                       <Icon d={item.icon} />
                       {item.label}
-                      <span class={`nav-scope nav-scope-${item.scope}`} title={item.scope === "layered" ? "Shared or This project" : item.scope === "project" ? "This project" : item.scope === "switchable" ? "Workspace filter" : "All projects"}>
-                        {item.scope === "layered" ? "layers" : item.scope === "project" ? "project" : item.scope === "switchable" ? "filter" : "global"}
-                      </span>
                       <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
                         <span class="nav-badge">{item.badge!()}</span>
                       </Show>

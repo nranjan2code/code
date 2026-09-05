@@ -1470,6 +1470,7 @@ async fn voice_speak(
 /// immediately rather than only after a restart.
 async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ledger = vak_core::finops::FinOpsLedger::new(&state.core.sessions_home());
+    let activity = vak_core::finops::ActivityLedger::new(&state.core.sessions_home()).all_rows();
     let rows = ledger.all_rows();
     let now = chrono::Utc::now();
     let day_start = now
@@ -1480,6 +1481,18 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         .iter()
         .filter(|r| day_start.is_some_and(|start| r.ts >= start))
         .collect();
+    let day_activity = activity
+        .iter()
+        .filter(|r| day_start.is_some_and(|start| r.ts >= start));
+    let mut activity_by_kind = std::collections::BTreeMap::<String, (u64, u64, u64)>::new();
+    for row in day_activity {
+        let entry = activity_by_kind.entry(row.kind.clone()).or_default();
+        entry.0 += 1;
+        entry.1 += u64::from(row.success);
+        if let Some(duration) = row.duration_ms {
+            entry.2 += duration;
+        }
+    }
     let day_usd: f64 = day_rows.iter().filter_map(|r| r.usd).sum();
     let unknown_rows = day_rows.iter().filter(|r| r.usd.is_none()).count();
     let mut by_provider = std::collections::BTreeMap::<String, (f64, u64, u64, u64, u64)>::new();
@@ -1516,6 +1529,7 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         "day_input_tokens": day_rows.iter().map(|r| r.input_tokens).sum::<u64>(),
         "day_output_tokens": day_rows.iter().map(|r| r.output_tokens).sum::<u64>(),
         "day_cache_read_tokens": day_rows.iter().map(|r| r.cache_read_input_tokens.unwrap_or(0)).sum::<u64>(),
+        "activity": activity_by_kind.into_iter().map(|(kind, (calls, successes, duration_ms))| serde_json::json!({"kind": kind, "calls": calls, "successes": successes, "duration_ms": duration_ms})).collect::<Vec<_>>(),
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
         "daily": daily,

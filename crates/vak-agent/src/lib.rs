@@ -285,6 +285,7 @@ pub struct AgentConfig {
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
     pub hook_recorder: Option<HookRecorder>,
+    pub tool_activity_recorder: Option<ToolActivityRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
     pub max_retries: u32,
     /// Exponential backoff base: delay = base * 2^(attempt-1), jittered.
@@ -328,7 +329,8 @@ pub struct AgentConfig {
     pub max_audit_blocks: u32,
 }
 
-pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool) + Send + Sync>;
+pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync>;
+pub type ToolActivityRecorder = Arc<dyn Fn(&str, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
 impl AgentConfig {
@@ -355,6 +357,7 @@ impl AgentConfig {
             hooks: None,
             revocation_check: None,
             hook_recorder: None,
+            tool_activity_recorder: None,
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
@@ -921,7 +924,13 @@ impl Agent {
                                 sid
                             };
                             if let Some(gate) = &self.config.spend_gate {
-                                gate.record_settled(self.provider.name(), &m.model, &sid, &m.usage);
+                                gate.record_settled_with_latency(
+                                    self.provider.name(),
+                                    &m.model,
+                                    &sid,
+                                    &m.usage,
+                                    ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
+                                );
                             }
                             m
                         }
@@ -1163,7 +1172,13 @@ impl Agent {
             };
             if let Some(gate) = &self.config.spend_gate {
                 let provider = settled_provider_slot.as_deref().unwrap_or_default();
-                gate.record_settled(provider, &response.model, &settled_session_id, &usage);
+                gate.record_settled_with_latency(
+                    provider,
+                    &response.model,
+                    &settled_session_id,
+                    &usage,
+                    ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
+                );
             }
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
@@ -2667,6 +2682,7 @@ impl Agent {
         let sandbox = self.config.sandbox.clone();
         let hooks = self.config.hooks.clone();
         let hook_recorder = self.config.hook_recorder.clone();
+        let tool_activity_recorder = self.config.tool_activity_recorder.clone();
         let session_id = self
             .session
             .lock()
@@ -2768,6 +2784,7 @@ impl Agent {
                                 &skill_names,
                                 hooks.as_ref(),
                                 hook_recorder.as_ref(),
+                                tool_activity_recorder.as_ref(),
                                 sandbox.as_ref(),
                                 cancel,
                                 events,
@@ -2848,6 +2865,7 @@ impl Agent {
                 let skill_names = skill_names.clone();
                 let hooks = hooks.clone();
                 let hook_recorder = hook_recorder.clone();
+                let tool_activity_recorder = tool_activity_recorder.clone();
                 join.spawn(async move {
                     let r = execute_one(
                         call,
@@ -2857,6 +2875,7 @@ impl Agent {
                         &skill_names,
                         hooks.as_ref(),
                         hook_recorder.as_ref(),
+                        tool_activity_recorder.as_ref(),
                         sandbox.as_ref(),
                         &cancel,
                         &events,
@@ -3266,10 +3285,12 @@ async fn execute_one(
     skill_names: &[String],
     hooks: Option<&Arc<Vec<vak_hooks::HookDef>>>,
     hook_recorder: Option<&HookRecorder>,
+    tool_activity_recorder: Option<&ToolActivityRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
+    let started = std::time::Instant::now();
     let _ = events
         .send(AgentEvent::ToolCallStart {
             id: call.id.clone(),
@@ -3388,6 +3409,13 @@ async fn execute_one(
             result_preview: result_preview(result_content),
         })
         .await;
+    if let Some(recorder) = tool_activity_recorder {
+        recorder(
+            &call.name,
+            matches!(output, ToolRunOutput::Ok(_)),
+            started.elapsed().as_millis() as u64,
+        );
+    }
 
     (call.id, output)
 }

@@ -58,7 +58,7 @@ pub struct HookOutcome {
     pub reason: Option<String>,
 }
 
-pub type HookRecorder<'a> = &'a (dyn Fn(&HookDef, bool) + Send + Sync);
+pub type HookRecorder<'a> = &'a (dyn Fn(&HookDef, bool, u64) + Send + Sync);
 
 impl HookOutcome {
     fn merge(&mut self, other: HookOutcome) {
@@ -125,9 +125,10 @@ pub async fn run_hooks_with_recorder(
             continue;
         }
 
+        let started = std::time::Instant::now();
         let outcome = run_one(hook, event, session_id, cwd, tool, extra, cancel).await;
         if let Some(recorder) = recorder {
-            recorder(hook, !outcome.blocked);
+            recorder(hook, !outcome.blocked, started.elapsed().as_millis() as u64);
         }
         combined.merge(outcome);
         if combined.blocked {

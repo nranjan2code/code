@@ -29,6 +29,17 @@ pub trait SpendGate: Send + Sync {
     /// rollups.
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage);
 
+    fn record_settled_with_latency(
+        &self,
+        provider: &str,
+        model: &str,
+        session_id: &str,
+        usage: &Usage,
+        _latency_ms: u64,
+    ) {
+        self.record_settled(provider, model, session_id, usage);
+    }
+
     /// The approver accepted the budget Ask: lift the cap for the REST of
     /// this run (raise-cap-once semantics, docs/design/15-reliability.md). Default no-op
     /// for gates without run state.

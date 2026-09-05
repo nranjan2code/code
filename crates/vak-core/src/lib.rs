@@ -4576,19 +4576,36 @@ impl Core {
             // only until then.
             let policy = self.channel_policy().unwrap_or_default();
             let context = self.plugin_mcp_invocation_context();
-            let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
-                for (store, plugin, trace_id) in &context {
-                    if server.starts_with(&format!("plugin.{plugin}.")) {
-                        let _ = store.record_invocation(
-                            trace_id,
-                            plugin,
-                            &format!("mcp:{server}/{tool}"),
-                            success,
-                        );
-                        break;
+            let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+            let activity_session = session.header().map(|h| h.session_id.clone());
+            let recorder = Arc::new(
+                move |server: &str, tool: &str, success: bool, duration_ms: u64| {
+                    let plugin = context
+                        .iter()
+                        .find(|(_, plugin, _)| server.starts_with(&format!("plugin.{plugin}.")))
+                        .map(|(_, plugin, _)| plugin.clone());
+                    let _ = activity_ledger.append(&finops::ActivityRow {
+                        ts: chrono::Utc::now(),
+                        kind: "mcp".into(),
+                        name: format!("{server}/{tool}"),
+                        success,
+                        duration_ms: Some(duration_ms),
+                        session_id: activity_session.clone(),
+                        plugin,
+                    });
+                    for (store, plugin, trace_id) in &context {
+                        if server.starts_with(&format!("plugin.{plugin}.")) {
+                            let _ = store.record_invocation(
+                                trace_id,
+                                plugin,
+                                &format!("mcp:{server}/{tool}"),
+                                success,
+                            );
+                            break;
+                        }
                     }
-                }
-            });
+                },
+            );
             // MCP aliases are now computed by TurnCapabilities::build(),
             // which applies all four filter stages including the domain
             // slice. The catalog observer below re-filters live discoveries
@@ -4816,23 +4833,56 @@ impl Core {
             .collect();
         let shared_home = shared_root;
         let workspace_home = self.inner.cwd.join(".vak");
-        cfg.hook_recorder = Some(Arc::new(move |hook: &vak_hooks::HookDef, success: bool| {
-            if let Some((plugin, _)) = plugin_hooks
-                .iter()
-                .find(|(_, candidate)| candidate.command == hook.command)
-            {
-                let store = vak_plugin::PluginStore::new(match plugin.scope {
-                    vak_plugin::InstallScope::User => &shared_home,
-                    vak_plugin::InstallScope::Workspace => &workspace_home,
-                });
-                let _ = store.record_invocation(
-                    &plugin.trace_id,
-                    &plugin.name,
-                    &format!("hook:{}", hook.event.as_str()),
+        let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+        let activity_session = session.header().map(|h| h.session_id.clone());
+        cfg.hook_recorder = Some(Arc::new(
+            move |hook: &vak_hooks::HookDef, success: bool, duration_ms: u64| {
+                let plugin_name = plugin_hooks
+                    .iter()
+                    .find(|(_, candidate)| candidate.command == hook.command)
+                    .map(|(plugin, _)| plugin.name.clone());
+                let _ = activity_ledger.append(&finops::ActivityRow {
+                    ts: chrono::Utc::now(),
+                    kind: "hook".into(),
+                    name: hook.event.as_str().into(),
                     success,
-                );
-            }
-        }));
+                    duration_ms: Some(duration_ms),
+                    session_id: activity_session.clone(),
+                    plugin: plugin_name,
+                });
+                if let Some((plugin, _)) = plugin_hooks
+                    .iter()
+                    .find(|(_, candidate)| candidate.command == hook.command)
+                {
+                    let store = vak_plugin::PluginStore::new(match plugin.scope {
+                        vak_plugin::InstallScope::User => &shared_home,
+                        vak_plugin::InstallScope::Workspace => &workspace_home,
+                    });
+                    let _ = store.record_invocation(
+                        &plugin.trace_id,
+                        &plugin.name,
+                        &format!("hook:{}", hook.event.as_str()),
+                        success,
+                    );
+                }
+            },
+        ));
+        let tool_activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+        let tool_activity_session = session.header().map(|h| h.session_id.clone());
+        cfg.tool_activity_recorder = Some(Arc::new(
+            move |name: &str, success: bool, duration_ms: u64| {
+                let plugin = name.strip_prefix("plugin.").and_then(|rest| rest.split('.').next()).map(str::to_owned);
+                let _ = tool_activity_ledger.append(&finops::ActivityRow {
+                    ts: chrono::Utc::now(),
+                    kind: if name == "skill" { "skill" } else { "tool" }.into(),
+                    name: name.into(),
+                    success,
+                    duration_ms: Some(duration_ms),
+                    session_id: tool_activity_session.clone(),
+                    plugin,
+                });
+            },
+        ));
 
         // session-start hooks fire once per run, before any tool or
         // checkpoint activity. A block aborts the run before it starts.

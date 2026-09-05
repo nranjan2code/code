@@ -51,6 +51,56 @@ pub struct CostRow {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityRow {
+    pub ts: chrono::DateTime<chrono::Utc>,
+    pub kind: String,
+    pub name: String,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+}
+
+pub struct ActivityLedger {
+    path: PathBuf,
+}
+
+impl ActivityLedger {
+    pub fn new(sessions_home: &std::path::Path) -> Self {
+        Self {
+            path: sessions_home.join("activity-log.jsonl"),
+        }
+    }
+
+    pub fn append(&self, row: &ActivityRow) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let line = serde_json::to_string(row)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        writeln!(file, "{line}")
+    }
+
+    pub fn all_rows(&self) -> Vec<ActivityRow> {
+        let Ok(file) = std::fs::File::open(&self.path) else {
+            return Vec::new();
+        };
+        BufReader::new(file)
+            .lines()
+            .filter_map(|line| line.ok())
+            .filter_map(|line| serde_json::from_str(&line).ok())
+            .collect()
+    }
+}
+
 pub struct FinOpsLedger {
     path: PathBuf,
 }
@@ -370,6 +420,17 @@ impl SpendGate for CoreSpendGate {
     }
 
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage) {
+        self.record_settled_with_latency(provider, model, session_id, usage, 0);
+    }
+
+    fn record_settled_with_latency(
+        &self,
+        provider: &str,
+        model: &str,
+        session_id: &str,
+        usage: &Usage,
+        latency_ms: u64,
+    ) {
         let usd = self.estimate(model, usage);
         // Fail-closed accounting: a run/day cap must still hold even if
         // the ledger write below fails (e.g. disk full) — an I/O error
@@ -409,6 +470,21 @@ impl SpendGate for CoreSpendGate {
             // so caps stay enforced even when this fails.
             eprintln!("warning: cost ledger append failed: {e}");
         }
+        let _ = ActivityLedger::new(
+            self.ledger
+                .path
+                .parent()
+                .unwrap_or(self.ledger.path.as_path()),
+        )
+        .append(&ActivityRow {
+            ts: chrono::Utc::now(),
+            kind: "provider".into(),
+            name: format!("{provider}/{model}"),
+            success: true,
+            duration_ms: (latency_ms > 0).then_some(latency_ms),
+            session_id: Some(session_id.to_string()),
+            plugin: None,
+        });
     }
 }
 
@@ -866,5 +942,26 @@ mod tests {
             .await
             .expect_err("day cap must already reflect gate_a's settled spend");
         assert!(err.contains("day budget $5.00"), "{err}");
+    }
+
+    #[test]
+    fn activity_ledger_round_trips_observed_rows() {
+        let dir = tempdir().unwrap();
+        let ledger = ActivityLedger::new(dir.path());
+        ledger
+            .append(&ActivityRow {
+                ts: chrono::Utc::now(),
+                kind: "mcp".into(),
+                name: "server/tool".into(),
+                success: false,
+                duration_ms: Some(42),
+                session_id: Some("s1".into()),
+                plugin: Some("demo".into()),
+            })
+            .unwrap();
+        let rows = ledger.all_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].duration_ms, Some(42));
+        assert_eq!(rows[0].plugin.as_deref(), Some("demo"));
     }
 }

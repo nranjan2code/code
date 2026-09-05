@@ -236,12 +236,6 @@ html, body {
 .sidebar nav a:hover { background: var(--surface-hover); color: var(--text); }
 .sidebar nav a.active { background: var(--surface-active); color: var(--text); font-weight: 600; }
 .sidebar nav a.active svg { color: var(--accent-bright); }
-.nav-scope { margin-left: auto; color: var(--faint); font-size: 9px; font-weight: 600; letter-spacing: .02em; opacity: .72; }
-.sidebar nav a.active .nav-scope { color: var(--text-soft); opacity: 1; }
-.nav-scope-global { color: var(--blue); }
-.nav-scope-switchable { color: var(--yellow); }
-.nav-scope-project { color: var(--accent); }
-.nav-scope-layered { color: var(--green); }
 .sidebar-foot {
   margin-top: auto;
   display: flex;
