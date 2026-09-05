@@ -1754,6 +1754,17 @@ a.tab-btn {
 .extension-shell .integration-catalog { grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 10px; }
 .extension-shell .integration-row { min-height: 150px; padding: 15px; transition: border-color .15s, background .15s, transform .15s; }
 .extension-shell .integration-row:hover { border-color: var(--border-strong); background: var(--surface-hover); transform: translateY(-1px); }
+.extension-shell .table tbody tr:not(.row-detail):hover { background: var(--surface-hover); }
+.extension-shell .table tbody tr:not(.row-detail) td:first-child { color: var(--text); }
+.extension-shell .table tbody tr.row-open { background: var(--accent-wash); }
+.extension-shell .row-detail > td { padding: 0; background: var(--surface-raised); border-bottom: 1px solid var(--border); }
+.extension-shell .row-detail .detail-grid { padding: 17px 18px 2px; }
+.extension-shell .row-detail .detail-grid > div { min-width: 0; }
+.extension-shell .compact-edit { margin: 12px 18px 16px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.extension-shell .compact-edit .form-row:last-of-type { margin-bottom: 4px; }
+.extension-shell .capability-item { transition: border-color .15s ease, background .15s ease; }
+.extension-shell .capability-item:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.extension-shell .stack > .panel { box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 2%, transparent); }
 
 @media (max-width: 780px) {
   .extension-overview { grid-template-columns: 1fr 1fr; }
