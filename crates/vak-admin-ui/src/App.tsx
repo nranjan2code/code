@@ -64,19 +64,18 @@ function PromptsPage() {
 
 function ScopeControl() {
   return (
-    <div class="scope-control" role="group" aria-label="Configuration scope">
-      <button aria-pressed={configScope() === "user"} classList={{ active: configScope() === "user" }} onClick={() => setConfigScopePersisted("user")}>
-        Shared (global)
-      </button>
-      <button aria-pressed={configScope() === "project"} classList={{ active: configScope() === "project" }} onClick={() => setConfigScopePersisted("project")}>
-        This workspace
-      </button>
+    <label class="scope-control" aria-label="Admin scope">
+      <span class="scope-control-label">Scope</span>
+      <select value={configScope()} onChange={(e) => setConfigScopePersisted(e.currentTarget.value as ConfigScope)}>
+        <option value="user">Global</option>
+        <option value="project">Workspace</option>
+      </select>
       <span>
         {configScope() === "user"
-          ? "Baseline inherited by every workspace"
-          : "Overrides for this workspace only"}
+          ? "applies across workspaces"
+          : "applies to the selected workspace"}
       </span>
-    </div>
+    </label>
   );
 }
 
@@ -97,9 +96,8 @@ function AdminContextBar() {
           <button class="ghost small context-action" onClick={() => navigate("#/operations")}>Open workspace filter</button>
         </Show>
       </>}>
-        <strong>{configScope() === "user" ? "Shared baseline" : "This workspace"}</strong>
-        <span class="admin-context-detail">{configScope() === "user" ? "inherited by every workspace" : "workspace-only override"}</span>
-        <ScopeControl />
+        <strong>{configScope() === "user" ? "Global" : "Workspace"}</strong>
+        <span class="admin-context-detail">{configScope() === "user" ? "applies across workspaces" : "applies to the selected workspace"}</span>
       </Show>
     </div>
   );
@@ -3180,6 +3178,7 @@ function WorkspacePicker(props: {
   onChange: (value: string) => void;
   known: string[];
   corePool: CorePoolEntry[];
+  catalog?: Array<{ path: string; name: string }>;
 }) {
   const options = createMemo(() => {
     const seen = props.known.filter(Boolean);
@@ -3191,6 +3190,7 @@ function WorkspacePicker(props: {
   const isCustom = () => !!props.value && !options().includes(props.value);
   const [custom, setCustom] = createSignal(isCustom());
   const warm = createMemo(() => props.corePool.some((e) => e.workspace === props.value.trim()));
+  const label = (path: string) => props.catalog?.find((entry) => entry.path === path)?.name || path.split("/").filter(Boolean).at(-1) || path;
 
   return (
     <div style="margin-bottom:8px">
@@ -3214,7 +3214,7 @@ function WorkspacePicker(props: {
           props.onChange(next);
         }}
       >
-        <For each={options()}>{(w) => <option value={w}>{w}</option>}</For>
+        <For each={options()}>{(w) => <option value={w}>{label(w)} · {w}</option>}</For>
         <option value={CUSTOM_WORKSPACE}>Another folder…</option>
       </select>
       <Show when={custom()}>
@@ -4811,6 +4811,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
             onChange={(value) => { setWorkspace(value); setWorkspaceDirty(true); }}
             known={props.ctx.status()?.known_workspaces ?? []}
             corePool={pool()?.entries ?? []}
+            catalog={props.ctx.status()?.workspace_catalog}
           />
           <button class="ghost small" onClick={() => { setWorkspace(props.ctx.status()?.canonical_default_workspace ?? ""); setWorkspaceDirty(true); }}>
             Use canonical ~/vak-home
@@ -6913,6 +6914,9 @@ export default function App() {
         <div class="shell">
           <aside class="sidebar">
             <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> vak</div>
+            <div class="sidebar-scope">
+              <ScopeControl />
+            </div>
             <nav>
               <For each={NAV}>
                 {(item, index) => (

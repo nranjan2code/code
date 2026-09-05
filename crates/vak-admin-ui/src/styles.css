@@ -1753,6 +1753,12 @@ a.tab-btn {
 .scope-control button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-soft); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
 .scope-control button.active { border-color: var(--accent); background: var(--accent-wash); color: var(--text); }
 .scope-control span { color: var(--muted); font-size: 11.5px; margin-left: 6px; }
+.scope-control select { min-height: 30px; min-width: 112px; padding: 5px 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+.scope-control-label { color: var(--faint) !important; font-size: 10px !important; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-left: 0 !important; }
+.sidebar-scope { padding: 10px 12px 12px; border-bottom: 1px solid var(--border-soft); }
+.sidebar-scope .scope-control { display: block; }
+.sidebar-scope .scope-control select { display: block; width: 100%; margin-top: 6px; }
+.sidebar-scope .scope-control > span:last-child { display: block; margin: 6px 0 0; font-size: 10.5px; line-height: 1.35; }
 .workspace-names { display: grid; gap: 10px; }
 .workspace-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
 .workspace-name-row > div:first-child { display: grid; gap: 3px; min-width: 0; }

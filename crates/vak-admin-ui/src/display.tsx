@@ -78,7 +78,7 @@ export const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;
 /// Ordered least to most permissive.
 export const MODES: { value: string; label: string }[] = [
   { value: "ReadOnly", label: "Look, don't touch" },
-  { value: "WorkspaceWrite", label: "Work inside this project" },
+  { value: "WorkspaceWrite", label: "Work inside this workspace" },
   { value: "FullAccess", label: "No limits" },
 ];
 
@@ -88,7 +88,7 @@ export const MODES: { value: string; label: string }[] = [
 /// vocabulary in both places.
 export const CHANNEL_MODES: { value: PermissionMode; label: string; desc: string }[] = [
   { value: "read-only", label: "Look, don't touch", desc: "Reads and searches only; every change refused" },
-  { value: "workspace-write", label: "Work inside this project", desc: "Changes files here; anything else asks first" },
+  { value: "workspace-write", label: "Work inside this workspace", desc: "Changes files here; anything else asks first" },
   { value: "full-access", label: "No limits", desc: "Nothing is checked with you first" },
 ];
 
