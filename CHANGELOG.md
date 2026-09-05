@@ -5,7 +5,7 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
-## Unreleased
+## 3.0.4 — 2026-09-05
 
 ### Universal call-contract admission
 

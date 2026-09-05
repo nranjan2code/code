@@ -1,7 +1,7 @@
 # 50 — Call and evidence contract
 
-**Status: implemented in 3.0.3 for schema admission; semantic evidence
-contracts are the next additive extension.**
+**Status: implemented in 3.0.4 for schema admission and evidence-aware
+presentation.**
 
 vak has one call boundary regardless of whether a turn is temporal, coding,
 research, data, or ordinary conversation. A provider proposal is not an
