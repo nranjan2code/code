@@ -186,7 +186,7 @@ impl DiscordBridge {
     }
 
     /// One message through the gateway contract; wait for the final text.
-    async fn process(&self, message: &DiscordMessage) -> String {
+    async fn process(&self, message: &DiscordMessage) -> Vec<String> {
         // 0c-03: real per-user chat/sender, never a fixed placeholder.
         let req = match InboundRequest::new(
             self,
@@ -195,7 +195,7 @@ impl DiscordBridge {
             message.text.clone(),
         ) {
             Ok(req) => req.waiting().with_bot_id(self.bot_id.clone()),
-            Err(e) => return format!("(bridge refused to send: {e})"),
+            Err(e) => return vec![format!("(bridge refused to send: {e})")],
         };
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
@@ -205,19 +205,20 @@ impl DiscordBridge {
             .await;
         match res {
             Ok(r) if r.status().as_u16() == 202 => {
-                "(queued: I'm still working on your previous message)".into()
+                vec!["(queued: I'm still working on your previous message)".into()]
             }
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(v) => v["text"].as_str().unwrap_or("(empty reply)").to_string(),
-                Err(e) => format!("(bad gateway reply: {e})"),
+                Ok(v) => super::prepared_chunks(v, "discord")
+                    .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]),
+                Err(e) => vec![format!("(bad gateway reply: {e})")],
             },
-            Ok(r) => format!("(gateway error: {})", r.status()),
-            Err(e) => format!("(gateway unreachable: {e})"),
+            Ok(r) => vec![format!("(gateway error: {})", r.status())],
+            Err(e) => vec![format!("(gateway unreachable: {e})")],
         }
     }
 
-    async fn send_message(&self, channel_id: &str, text: &str) -> Result<(), String> {
-        for chunk in chunk_text(text, 1900) {
+    async fn send_message(&self, channel_id: &str, chunks: &[String]) -> Result<(), String> {
+        for chunk in chunks {
             let resp = http()
                 .post(format!("{}/channels/{channel_id}/messages", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))

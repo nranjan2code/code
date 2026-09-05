@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
+import { downloadCsv } from "./data";
 
 export interface DataGridColumn {
   key: string;
@@ -42,8 +43,10 @@ export default function DataGrid(props: { data: DataGridData }) {
         const valA = a[col];
         const valB = b[col];
         if (isNum) {
-          const numA = parseFloat(String(valA).replace(/[^0-9.-]/g, "")) || 0;
-          const numB = parseFloat(String(valB).replace(/[^0-9.-]/g, "")) || 0;
+          const numA = valA == null || valA === "" ? NaN : Number(valA);
+          const numB = valB == null || valB === "" ? NaN : Number(valB);
+          if (!Number.isFinite(numA)) return Number.isFinite(numB) ? 1 : 0;
+          if (!Number.isFinite(numB)) return -1;
           return sortAsc() ? numA - numB : numB - numA;
         }
         const strA = String(valA ?? "").toLowerCase();
@@ -56,11 +59,7 @@ export default function DataGrid(props: { data: DataGridData }) {
 
   const handleExportCsv = () => {
     const cols = props.data.columns;
-    let csv = cols.map((c) => `"${c.label}"`).join(",") + "\n";
-    for (const row of filteredAndSortedRows()) {
-      csv += cols.map((c) => `"${String(row[c.key] ?? "").replace(/"/g, '""')}"`).join(",") + "\n";
-    }
-    void navigator.clipboard.writeText(csv);
+    downloadCsv("dataset.csv", [cols.map((c) => c.label), ...filteredAndSortedRows().map((row) => cols.map((c) => row[c.key]))]);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -77,11 +76,12 @@ export default function DataGrid(props: { data: DataGridData }) {
             type="text"
             class="grid-search-input"
             placeholder="Search records..."
+            aria-label="Search dataset records"
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
           />
           <button class="pill-action-btn" onClick={handleExportCsv}>
-            {copied() ? "✓ Copied CSV" : "Export CSV"}
+            {copied() ? "Downloaded" : "Download CSV"}
           </button>
         </div>
       </div>
@@ -94,10 +94,13 @@ export default function DataGrid(props: { data: DataGridData }) {
                 {(col) => (
                   <th
                     class={col.isNumeric ? "cell-numeric" : ""}
-                    onClick={() => handleSort(col.key)}
+                    scope="col"
+                    aria-sort={sortCol() === col.key ? (sortAsc() ? "ascending" : "descending") : "none"}
                   >
+                    <button onClick={() => handleSort(col.key)}>
                     {col.label}{" "}
                     {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
+                    </button>
                   </th>
                 )}
               </For>

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
 import type {
   AgentEvent,
@@ -404,7 +404,8 @@ export function toggleItemExpanded(id: string) {
 }
 
 export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
-  setPresentationBySession(id, timeline);
+  if (timeline.schema_version !== 2 || timeline.session_id !== id) throw new Error("Unsupported presentation snapshot");
+  setPresentationBySession(id, reconcile(timeline, { key: "id" }));
 }
 
 export function clearPresentation(id: string) {
@@ -412,31 +413,7 @@ export function clearPresentation(id: string) {
 }
 
 export function applyPresentationEvent(id: string, event: PresentationStreamEvent) {
-  if (event.type === "snapshot") {
-    setPresentationBySession(id, event.timeline);
-    return;
-  }
-  const current = presentationOf(id) ?? { schema_version: 2, session_id: id, items: [], diagnostics: [] };
-  const items = [...current.items];
-  if (event.type === "text_delta") {
-    const index = items.findIndex((item) => item.id === event.item_id);
-    if (index >= 0) items[index] = { ...items[index], fallback_text: `${items[index].fallback_text}${event.delta}` };
-  } else if (event.type === "item_completed") {
-    const index = items.findIndex((item) => item.id === event.item_id);
-    if (index >= 0) {
-      const item = items[index];
-      const content = item.content.type === "document"
-        ? { ...item.content, document: { ...item.content.document, source_markdown: item.fallback_text, blocks: [] } }
-        : item.content;
-      items[index] = { ...item, status: event.status, content };
-    }
-  } else {
-    const item = event.item;
-    const index = items.findIndex((candidate) => candidate.id === item.id);
-    if (index >= 0) items[index] = item;
-    else items.push(item);
-  }
-  setPresentationBySession(id, { ...current, items });
+  hydrateFromPresentation(id, event.snapshot);
 }
 
 // ---- buckets: "main" transcript vs "side" (/btw) branch --------------------

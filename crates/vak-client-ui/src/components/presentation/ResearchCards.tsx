@@ -37,7 +37,7 @@ export default function ResearchCards(props: { data: ResearchData }) {
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">Research Synthesis</span>
-          <span class="card-subtitle">{props.data.sources.length} Verified Sources</span>
+          <span class="card-subtitle">{props.data.sources.length} sources</span>
         </div>
         <div class="card-actions">
           <button class="pill-action-btn" onClick={handleCopy}>
@@ -51,7 +51,7 @@ export default function ResearchCards(props: { data: ResearchData }) {
           <For each={props.data.takeaways}>
             {(item, idx) => {
               const text = typeof item === "string" ? item : item.text;
-              const cites = typeof item === "object" ? item.citation_indices ?? [idx() + 1] : [idx() + 1];
+              const cites = typeof item === "object" ? item.citation_indices ?? [] : [];
               return (
                 <div class="takeaway-row">
                   <div class="takeaway-bullet">{idx() + 1}</div>

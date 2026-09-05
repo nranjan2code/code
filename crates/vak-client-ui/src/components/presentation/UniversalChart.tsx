@@ -1,239 +1,50 @@
-import { For, Show, createSignal, onMount } from "solid-js";
-
-export interface MetricCard {
-  label: string;
-  value: string;
-  delta?: string;
-  deltaType?: "up" | "down" | "neutral";
-}
-
-export interface ChartPoint {
-  x: string | number;
-  y: number;
-}
-
-export interface ChartSeries {
-  name: string;
-  color?: string;
-  points: ChartPoint[];
-}
-
-export interface ChartData {
-  title?: string;
-  kpis?: MetricCard[];
-  series: ChartSeries[];
-  x_labels?: string[];
-  accessible_summary?: string;
-}
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { chartGeometry, downloadCsv, type ChartData, type ChartPoint } from "./data";
+export type { ChartData, ChartPoint, ChartSeries } from "./data";
 
 export default function UniversalChart(props: { data: ChartData }) {
-  let containerRef!: HTMLDivElement;
-  let lineRef!: SVGLineElement;
-  let ptRef!: SVGCircleElement;
-
-  const [activeX, setActiveX] = createSignal<string>("");
-  const [activeValues, setActiveValues] = createSignal<{ name: string; val: number; color: string }[]>([]);
-  const [copied, setCopied] = createSignal(false);
-
-  const seriesList = () => props.data.series || [];
-  const primarySeries = () => seriesList()[0] || { points: [] };
-
-  const maxY = () => {
-    let max = 1;
-    for (const s of seriesList()) {
-      for (const p of s.points) {
-        if (p.y > max) max = p.y;
-      }
-    }
-    return max;
-  };
-
-  const minY = () => 0;
-
-  const getPath = (pts: ChartPoint[], width = 700, height = 200) => {
-    if (pts.length < 2) return "";
-    const range = maxY() - minY() || 1;
-    return pts
-      .map((p, idx) => {
-        const x = (idx / (pts.length - 1)) * width;
-        const y = height - 20 - ((p.y - minY()) / range) * (height - 40);
-        return `${idx === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  };
-
-  const getAreaPath = (pts: ChartPoint[], width = 700, height = 200) => {
-    if (pts.length < 2) return "";
-    const linePath = getPath(pts, width, height);
-    return `${linePath} L${width},${height - 10} L0,${height - 10} Z`;
-  };
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!containerRef) return;
-    const rect = containerRef.getBoundingClientRect();
-    const relX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    const pct = relX / rect.width;
-    const pts = primarySeries().points;
-    if (!pts.length) return;
-
-    const idx = Math.min(pts.length - 1, Math.max(0, Math.round(pct * (pts.length - 1))));
-    const curX = pts[idx]?.x ?? idx;
-    setActiveX(String(curX));
-
-    const vals = seriesList().map((s, sIdx) => ({
-      name: s.name,
-      val: s.points[idx]?.y ?? 0,
-      color: s.color ?? (sIdx === 0 ? "var(--accent-bright)" : "var(--cyan)"),
-    }));
-    setActiveValues(vals);
-
-    const svgX = (idx / Math.max(pts.length - 1, 1)) * 700;
-    const range = maxY() - minY() || 1;
-    const svgY = 200 - 20 - (((pts[idx]?.y ?? 0) - minY()) / range) * 160;
-
-    if (lineRef) {
-      lineRef.setAttribute("x1", String(svgX));
-      lineRef.setAttribute("x2", String(svgX));
-    }
-    if (ptRef) {
-      ptRef.setAttribute("cx", String(svgX));
-      ptRef.setAttribute("cy", String(svgY));
-    }
-  };
-
-  onMount(() => {
-    if (primarySeries().points.length) {
-      const lastIdx = primarySeries().points.length - 1;
-      setActiveX(String(primarySeries().points[lastIdx]?.x ?? ""));
-      setActiveValues(
-        seriesList().map((s, idx) => ({
-          name: s.name,
-          val: s.points[lastIdx]?.y ?? 0,
-          color: s.color ?? (idx === 0 ? "var(--accent-bright)" : "var(--cyan)"),
-        }))
-      );
-    }
-  });
-
-  const handleExportCsv = () => {
-    const s = seriesList();
-    if (!s.length) return;
-    let csv = "x," + s.map((item) => item.name).join(",") + "\n";
-    const len = s[0].points.length;
-    for (let i = 0; i < len; i++) {
-      const row = [s[0].points[i]?.x ?? i, ...s.map((item) => item.points[i]?.y ?? "")];
-      csv += row.join(",") + "\n";
-    }
-    void navigator.clipboard.writeText(csv);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-
-  return (
-    <div class="canvas-card chart-studio-wrap">
-      <div class="card-header">
-        <div class="card-title-group">
-          <span class="card-badge badge-emerald">Telemetry & Benchmarks</span>
-          <span class="card-subtitle">{props.data.title ?? "Performance Metrics"}</span>
-        </div>
-        <div class="card-actions">
-          <button class="pill-action-btn" onClick={handleExportCsv}>
-            {copied() ? "✓ Copied CSV" : "Export CSV"}
-          </button>
-        </div>
-      </div>
-
-      <Show when={props.data.kpis && props.data.kpis.length > 0}>
-        <div class="metric-kpi-row">
-          <For each={props.data.kpis}>
-            {(kpi) => (
-              <div class="metric-pod">
-                <span class="pod-label">{kpi.label}</span>
-                <span class="pod-value">{kpi.value}</span>
-                <Show when={kpi.delta}>
-                  <span
-                    class="pod-badge"
-                    style={{
-                      color:
-                        kpi.deltaType === "down"
-                          ? "var(--rose-bright)"
-                          : "var(--emerald-bright)",
-                    }}
-                  >
-                    {kpi.delta}
-                  </span>
-                </Show>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-
-      <div class="chart-interactive-stage">
-        <Show when={activeValues().length > 0}>
-          <div class="chart-active-bubble">
-            <span>
-              Point: <strong>{activeX()}</strong>
-            </span>
-            <For each={activeValues()}>
-              {(v) => (
-                <span>
-                  {v.name}: <strong style={{ color: v.color }}>{v.val.toLocaleString()}</strong>
-                </span>
-              )}
-            </For>
-          </div>
-        </Show>
-
-        <div
-          class="svg-chart-container"
-          ref={containerRef}
-          onMouseMove={handleMouseMove}
-        >
-          <svg viewBox="0 0 700 200" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="chartGradient1" x1="0" y1="0" x2="0" y2="1">
-                {/* Matches the primary series' own stroke (var(--accent-bright))
-                    rather than an unrelated fixed indigo, so the fill reads
-                    as "under this line" instead of a second, off-palette hue. */}
-                <stop offset="0%" stop-color="var(--accent-bright)" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="var(--accent-bright)" stop-opacity="0.0" />
-              </linearGradient>
-            </defs>
-            <line x1="0" y1="40" x2="700" y2="40" stroke="rgba(255,255,255,0.04)" />
-            <line x1="0" y1="90" x2="700" y2="90" stroke="rgba(255,255,255,0.04)" />
-            <line x1="0" y1="140" x2="700" y2="140" stroke="rgba(255,255,255,0.04)" />
-
-            <Show when={primarySeries().points.length > 1}>
-              <polygon
-                points={getAreaPath(primarySeries().points)}
-                fill="url(#chartGradient1)"
-              />
-            </Show>
-
-            <For each={seriesList()}>
-              {(s, idx) => (
-                <path
-                  d={getPath(s.points)}
-                  fill="none"
-                  stroke={s.color ?? (idx() === 0 ? "var(--accent-bright)" : "var(--cyan)")}
-                  stroke-width={idx() === 0 ? "2.5" : "2"}
-                  stroke-dasharray={idx() > 0 ? "4 3" : undefined}
-                />
-              )}
-            </For>
-
-            <line ref={lineRef} x1="350" y1="0" x2="350" y2="200" class="chart-crosshair-line" />
-            <circle ref={ptRef} cx="350" cy="100" r="5" fill="var(--bg)" stroke="var(--accent-bright)" stroke-width="3" />
-          </svg>
-        </div>
-
-        <Show when={props.data.x_labels && props.data.x_labels.length > 0}>
-          <div style={{ display: "flex", "justify-content": "space-between", "font-size": "11px", color: "var(--text-dim)", "margin-top": "4px", "font-family": "var(--font-mono)" }}>
-            <For each={props.data.x_labels}>{(lbl) => <span>{lbl}</span>}</For>
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
+  const geometry = createMemo(() => chartGeometry(props.data));
+  const [selected, setSelected] = createSignal(0);
+  const key = () => geometry().keys[Math.min(selected(), geometry().keys.length - 1)];
+  const colors = ["var(--accent-bright)", "var(--cyan)", "var(--green)", "var(--muted)"];
+  const line = (points: ChartPoint[]) => points.map((point, i) => `${i ? "L" : "M"}${geometry().x(point.x)},${geometry().y(point.y!)}`).join(" ");
+  const number = (value: number | null) => value === null ? "Missing" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value);
+  const exportData = () => downloadCsv("chart.csv", [
+    [props.data.x_label ?? "X", ...props.data.series.map((series) => series.name)],
+    ...geometry().keys.map((x) => [x, ...props.data.series.map((series) => geometry().valueAt(series, x))]),
+  ]);
+  return <figure class="semantic-chart">
+    <figcaption><strong>{props.data.title ?? "Chart"}</strong><p>{props.data.accessible_summary}</p></figcaption>
+    <Show when={geometry().keys.length} fallback={<p>No data points supplied.</p>}>
+      <svg viewBox="0 0 680 264" role="img" aria-label={props.data.accessible_summary}>
+        <title>{props.data.title ?? "Chart"}</title>
+        <desc>{props.data.accessible_summary} Use the point selector or data table to inspect exact values.</desc>
+        <For each={[0, 0.5, 1]}>{(fraction) => {
+          const value = () => geometry().minY + fraction * (geometry().maxY - geometry().minY);
+          return <g><line x1="54" x2="626" y1={geometry().y(value())} y2={geometry().y(value())} stroke="var(--border)" /><text x="46" y={geometry().y(value()) + 4} text-anchor="end">{number(value())}</text></g>;
+        }}</For>
+        <For each={props.data.series}>{(series, index) => <g>
+          <Show when={props.data.chart_type !== "bar"}>
+            <For each={geometry().segments(series)}>{(points) => <>
+              <Show when={props.data.chart_type === "area" && points.length > 1}><path d={`${line(points)} L${geometry().x(points[points.length - 1].x)},${geometry().y(0)} L${geometry().x(points[0].x)},${geometry().y(0)} Z`} fill={colors[index() % colors.length]} opacity="0.12" /></Show>
+              <path d={line(points)} fill="none" stroke={colors[index() % colors.length]} stroke-width="2" stroke-dasharray={index() ? `${index() + 2} 3` : undefined} />
+              <For each={points}>{(point) => <circle cx={geometry().x(point.x)} cy={geometry().y(point.y!)} r="3" fill={colors[index() % colors.length]}><title>{series.name}: {point.x}, {number(point.y)}</title></circle>}</For>
+            </>}</For>
+          </Show>
+          <Show when={props.data.chart_type === "bar"}>
+            <For each={series.points.filter((point) => point.y !== null)}>{(point) => {
+              const width = () => Math.min(28, 420 / Math.max(1, geometry().keys.length * props.data.series.length));
+              return <rect x={geometry().x(point.x) + (index() - props.data.series.length / 2) * width()} y={Math.min(geometry().y(0), geometry().y(point.y!))} width={width() - 1} height={Math.abs(geometry().y(point.y!) - geometry().y(0))} fill={colors[index() % colors.length]}><title>{series.name}: {point.x}, {number(point.y)}</title></rect>;
+            }}</For>
+          </Show>
+        </g>}</For>
+        <text x="54" y="249">{String(geometry().keys[0])}</text><text x="626" y="249" text-anchor="end">{String(geometry().keys.at(-1))}</text>
+      </svg>
+      <p class="semantic-chart-axes">{props.data.x_label ?? "X"}{props.data.y_label ? ` · ${props.data.y_label}` : ""}</p>
+      <label class="semantic-chart-selector">Inspect point: {String(key())}<input type="range" min="0" max={Math.max(0, geometry().keys.length - 1)} value={selected()} onInput={(event) => setSelected(Number(event.currentTarget.value))} aria-valuetext={String(key())} /></label>
+      <dl class="semantic-chart-values"><For each={props.data.series}>{(series) => <div><dt>{series.name}</dt><dd>{number(geometry().valueAt(series, key()))}</dd></div>}</For></dl>
+    </Show>
+    <details><summary>Data table</summary><div class="semantic-table-wrap"><table class="semantic-table"><thead><tr><th scope="col">{props.data.x_label ?? "X"}</th><For each={props.data.series}>{(series) => <th scope="col">{series.name}</th>}</For></tr></thead><tbody><For each={geometry().keys}>{(x) => <tr><th scope="row">{String(x)}</th><For each={props.data.series}>{(series) => <td>{number(geometry().valueAt(series, x))}</td>}</For></tr>}</For></tbody></table></div></details>
+    <button onClick={exportData}>Download CSV</button>
+  </figure>;
 }

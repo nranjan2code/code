@@ -12,6 +12,18 @@ pub mod discord;
 pub mod slack;
 pub mod telegram;
 
+fn prepared_chunks(body: serde_json::Value, surface: &str) -> Result<Vec<String>, String> {
+    let packet: vak_delivery::DeliveryPacket = serde_json::from_value(body["delivery"].clone())
+        .map_err(|_| "gateway did not supply a valid delivery packet".to_string())?;
+    if packet.schema_version != vak_delivery::DELIVERY_SCHEMA_VERSION || packet.surface != surface {
+        return Err("gateway supplied an incompatible delivery packet".into());
+    }
+    if packet.chunks.is_empty() || packet.chunks.iter().any(String::is_empty) {
+        return Err("gateway supplied an empty delivery packet".into());
+    }
+    Ok(packet.chunks)
+}
+
 /// Watches a bridge's own credential and reports when it changes.
 ///
 /// A bridge used to read its token once at startup, which made revoking

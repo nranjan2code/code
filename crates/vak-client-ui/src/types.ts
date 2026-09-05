@@ -88,6 +88,7 @@ export type DocumentBlock =
   | { type: "code"; id: string; language?: string | null; filename?: string | null; content: string }
   | { type: "callout"; id: string; tone: string; title?: string | null; blocks: DocumentBlock[] }
   | { type: "diff"; id: string; content: string }
+  | { type: "structured"; id: string; output: StructuredOutput; fallback_markdown: string }
   | { type: "citations"; id: string; items: { label: string; url: string; title?: string | null }[] }
   | { type: "media"; id: string; source: string; alt: string; media_type?: string | null }
   | { type: "artifact_ref"; id: string; artifact: ArtifactRef }
@@ -149,12 +150,18 @@ export interface OutputTimeline {
   diagnostics: string[];
 }
 
-export type PresentationStreamEvent =
+export type PresentationDelta =
   | { type: "snapshot"; timeline: OutputTimeline }
   | { type: "item_started"; item: OutputItem }
-  | { type: "text_delta"; item_id: string; delta: string }
+  | { type: "text_delta"; item_id: string; delta: string; text: string }
   | { type: "item_replaced"; item: OutputItem }
   | { type: "item_completed"; item_id: string; status: OutputStatus };
+
+export interface PresentationStreamEvent {
+  sequence: number | null;
+  delta: PresentationDelta | null;
+  snapshot: OutputTimeline;
+}
 
 type StreamEvent =
   | { Start: { partial: AssistantMessage } }

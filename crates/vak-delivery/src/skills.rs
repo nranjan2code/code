@@ -519,7 +519,7 @@ pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
         .take(12)
         .map(|url| StructuredOutput {
             semantic_type: "link.preview".into(),
-            schema_version: 1,
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
             skill_id: "core".into(),
             skill_version: "1.0.0".into(),
             payload: serde_json::json!({"url": url, "title": "Open source link"}),
@@ -554,6 +554,107 @@ pub struct StructuredOutput {
     pub skill_id: String,
     pub skill_version: String,
     pub payload: Value,
+}
+
+/// The only model-authored rich block envelope. The host supplies versions
+/// and renderer identity; models supply data, never executable UI or receipts.
+pub fn parse_fragment(source: &str) -> Result<StructuredOutput, SkillError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Fragment {
+        semantic_type: String,
+        payload: Value,
+    }
+    let fragment: Fragment = serde_json::from_str(source)
+        .map_err(|error| SkillError::InvalidPayload(error.to_string()))?;
+    let output = StructuredOutput {
+        semantic_type: fragment.semantic_type,
+        payload: fragment.payload,
+        schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+        skill_id: "core".into(),
+        skill_version: "1.0.0".into(),
+    };
+    built_in_skill_registry().validate(&output, "desktop", &[])?;
+    Ok(output)
+}
+
+/// Deterministic text projection of validated data. It preserves every supplied
+/// field in an inspectable data appendix rather than trusting a second summary.
+pub fn structured_markdown(output: &StructuredOutput) -> String {
+    let p = &output.payload;
+    let title = p["title"].as_str().unwrap_or(&output.semantic_type);
+    let mut lines = vec![format!("### {title}")];
+    match output.semantic_type.as_str() {
+        "metric" => lines.push(format!(
+            "{}: {} {}",
+            p["label"].as_str().unwrap_or_default(),
+            p["value"]
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| p["value"].to_string()),
+            p["unit"].as_str().unwrap_or_default()
+        )),
+        "link.preview" => lines.push(format!(
+            "{}\n{}",
+            title,
+            p["url"].as_str().unwrap_or_default()
+        )),
+        "chart" => lines.push(p["accessible_summary"].as_str().unwrap_or_default().into()),
+        "terminal.view" => lines.push(format!(
+            "Command: {}\nExit: {}",
+            p["command"].as_str().unwrap_or("not supplied"),
+            p.get("exit_code")
+                .map(Value::to_string)
+                .unwrap_or_else(|| "not supplied".into())
+        )),
+        _ => {}
+    }
+    let json = serde_json::to_string_pretty(p).unwrap_or_else(|_| p.to_string());
+    let fence = "`".repeat(
+        json.split(|c| c != '`')
+            .map(str::len)
+            .max()
+            .unwrap_or(0)
+            .max(2)
+            + 1,
+    );
+    lines.push(format!("{fence}json\n{json}\n{fence}"));
+    lines.join("\n\n")
+}
+
+/// Replace validated rich fences in-place with their deterministic text
+/// projection. Ordinary Markdown and invalid/incomplete fences stay exact.
+pub fn project_structured_fences(source: &str) -> String {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+    let mut replacements = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+    for (event, range) in Parser::new(source).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
+                if language.as_ref() == "vak" =>
+            {
+                pending = Some((range.start, String::new()))
+            }
+            Event::Text(text) => {
+                if let Some((_, content)) = &mut pending {
+                    content.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some((start, content)) = pending.take()
+                    && let Ok(output) = parse_fragment(&content)
+                {
+                    replacements.push((start..range.end, structured_markdown(&output)));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut result = source.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        result.replace_range(range, &replacement);
+    }
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -657,6 +758,13 @@ impl SkillRegistry {
         let skill = self
             .get(&output.skill_id)
             .ok_or_else(|| SkillError::UnknownType(output.skill_id.clone()))?;
+        if output.schema_version != crate::PRESENTATION_SCHEMA_VERSION
+            || output.skill_version != skill.version
+        {
+            return Err(SkillError::InvalidPayload(
+                "unsupported structured output version".into(),
+            ));
+        }
         if !skill
             .provides
             .iter()
@@ -679,22 +787,150 @@ impl SkillRegistry {
 }
 
 fn validate_payload(semantic_type: &str, payload: &Value) -> Result<(), SkillError> {
+    if payload.to_string().len() > 1_000_000 {
+        return Err(SkillError::InvalidPayload("payload exceeds 1 MB".into()));
+    }
     let object = payload
         .as_object()
         .ok_or_else(|| SkillError::InvalidPayload("payload must be an object".into()))?;
-    let required = match semantic_type {
-        "link.preview" => &["url", "title"][..],
-        "metric" => &["label", "value"][..],
-        "chart" => &["chart_type", "series", "accessible_summary"][..],
-        "media.image" | "media.video" | "media.audio" => &["source", "media_type", "alt"][..],
+    let strings = |value: &Value, keys: &[&str]| keys.iter().all(|key| value[*key].is_string());
+    fn array<'a>(value: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
+        value[key].as_array().filter(|items| items.len() <= 10_000)
+    }
+    let scalar = |value: &Value| {
+        value.is_null() || value.is_string() || value.is_number() || value.is_boolean()
+    };
+    let nonnegative = |value: &Value| value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0);
+    let valid = match semantic_type {
+        "link.preview" => strings(payload, &["url", "title"]),
+        "metric" => {
+            strings(payload, &["label"])
+                && object.contains_key("value")
+                && scalar(&payload["value"])
+        }
+        "media.image" | "media.video" | "media.audio" => {
+            strings(payload, &["source", "media_type", "alt"])
+        }
+        "chart" => {
+            strings(payload, &["accessible_summary"])
+                && matches!(
+                    payload["chart_type"].as_str(),
+                    Some("line" | "bar" | "area")
+                )
+                && array(payload, "series").is_some_and(|series| {
+                    series.iter().all(|s| {
+                        strings(s, &["name"])
+                            && array(s, "points").is_some_and(|points| {
+                                points.iter().all(|p| {
+                                    (p["x"].is_number() || p["x"].is_string())
+                                        && p.get("y").is_some_and(|y| {
+                                            y.is_null() || y.as_f64().is_some_and(f64::is_finite)
+                                        })
+                                })
+                            })
+                    })
+                })
+        }
+        "research.synthesis" => array(payload, "sources").is_some_and(|sources| {
+            sources.iter().all(|s| strings(s, &["title", "url"]))
+                && array(payload, "takeaways").is_some_and(|items| {
+                    items.iter().all(|item| {
+                        item.is_string()
+                            || (strings(item, &["text"])
+                                && item.get("citation_indices").is_none_or(|indices| {
+                                    indices.as_array().is_some_and(|indices| {
+                                        indices.iter().all(|i| {
+                                            i.as_u64()
+                                                .is_some_and(|i| i > 0 && i <= sources.len() as u64)
+                                        })
+                                    })
+                                }))
+                    })
+                })
+        }),
+        "coding.diff" => array(payload, "files").is_some_and(|files| {
+            files.iter().all(|file| {
+                strings(file, &["filename", "hunks"])
+                    && file["additions"].is_u64()
+                    && file["deletions"].is_u64()
+            })
+        }),
+        "test.report" => array(payload, "tests").is_some_and(|tests| {
+            tests.iter().all(|test| {
+                strings(test, &["name"])
+                    && matches!(
+                        test["status"].as_str(),
+                        Some("passed" | "failed" | "skipped")
+                    )
+                    && test.get("duration_ms").is_none_or(&nonnegative)
+            }) && ["total", "passed", "failed", "skipped"].iter().all(|key| {
+                payload.get(*key).is_none_or(|count| {
+                    count.as_u64().is_some_and(|count| {
+                        count
+                            == if *key == "total" {
+                                tests.len()
+                            } else {
+                                tests
+                                    .iter()
+                                    .filter(|test| test["status"].as_str() == Some(*key))
+                                    .count()
+                            } as u64
+                    })
+                })
+            })
+        }),
+        "terminal.view" => {
+            strings(payload, &["output"])
+                && payload.get("command").is_none_or(Value::is_string)
+                && payload.get("exit_code").is_none_or(Value::is_i64)
+                && payload.get("duration_ms").is_none_or(&nonnegative)
+        }
+        "data.grid" => array(payload, "columns").is_some_and(|columns| {
+            let keys: std::collections::BTreeSet<_> =
+                columns.iter().filter_map(|c| c["key"].as_str()).collect();
+            keys.len() == columns.len()
+                && columns.iter().all(|c| strings(c, &["key", "label"]))
+                && array(payload, "rows").is_some_and(|rows| {
+                    rows.iter().all(|row| {
+                        row.as_object().is_some_and(|row| {
+                            row.iter()
+                                .all(|(key, value)| keys.contains(key.as_str()) && scalar(value))
+                        })
+                    })
+                })
+        }),
+        "recipe.card" => {
+            strings(payload, &["title"])
+                && payload
+                    .get("servings")
+                    .is_none_or(|v| v.as_u64().is_some_and(|v| v > 0 && v <= 10_000))
+                && array(payload, "ingredients").is_some_and(|items| {
+                    items.iter().all(|item| {
+                        item.is_string()
+                            || (strings(item, &["name"])
+                                && item.get("amount").is_none_or(&nonnegative)
+                                && item.get("unit").is_none_or(Value::is_string))
+                    })
+                })
+                && array(payload, "steps").is_some_and(|steps| {
+                    steps.iter().all(|step| {
+                        step.is_string()
+                            || (strings(step, &["text"])
+                                && step.get("timer_seconds").is_none_or(|v| {
+                                    v.as_u64().is_some_and(|v| v > 0 && v <= 86_400)
+                                }))
+                    })
+                })
+        }
         _ => return Err(SkillError::UnknownType(semantic_type.into())),
     };
-    if let Some(missing) = required.iter().find(|field| !object.contains_key(**field)) {
-        return Err(SkillError::InvalidPayload(format!(
-            "missing field {missing}"
-        )));
+    if valid {
+        Ok(())
+    } else {
+        Err(SkillError::InvalidPayload(format!(
+            "invalid {semantic_type} payload shape or values"
+        )))
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -728,7 +964,7 @@ mod tests {
         );
         let output = StructuredOutput {
             semantic_type: "chart".into(),
-            schema_version: 1,
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
             skill_id: "core".into(),
             skill_version: "1.0.0".into(),
             payload: serde_json::json!({"chart_type":"line","series":[],"accessible_summary":"No data"}),
@@ -808,7 +1044,7 @@ mod tests {
         );
         let planner = PresentationPlanner { skills, recipes };
         let plan = planner.plan(&[], "desktop", &[], &[StructuredOutput {
-            semantic_type: "chart".into(), schema_version: 1, skill_id: "core".into(), skill_version: "1.0.0".into(),
+            semantic_type: "chart".into(), schema_version: crate::PRESENTATION_SCHEMA_VERSION, skill_id: "core".into(), skill_version: "1.0.0".into(),
             payload: serde_json::json!({"chart_type":"line","series":[],"accessible_summary":"No data"}),
         }]);
         assert!(plan.accepted.is_empty());

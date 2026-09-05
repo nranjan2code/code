@@ -521,10 +521,11 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 fallback_text: String::new(),
             },
         }),
-        AgentEvent::Stream(vak_llm::StreamEvent::TextDelta { delta, .. }) => {
+        AgentEvent::Stream(vak_llm::StreamEvent::TextDelta { delta, partial }) => {
             Some(OutputStreamEvent::TextDelta {
                 item_id: "live-assistant".into(),
                 delta,
+                text: partial.text_content(),
             })
         }
         AgentEvent::ToolCallStart { id, name, .. } => Some(OutputStreamEvent::ItemStarted {
@@ -762,6 +763,46 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
     }
 }
 
+pub(crate) fn project_frame(
+    timeline: &mut OutputTimeline,
+    framed: crate::events::SeqEvent,
+) -> Option<vak_delivery::OutputStreamFrame> {
+    let sequence = framed.seq;
+    let mut event = live_event(&timeline.session_id, framed.event)?;
+    let active = timeline
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.id.starts_with("live-assistant-"))
+        .map(|item| (item.id.clone(), item.turn_id.clone()));
+    match &mut event {
+        OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
+            if item.id == "live-assistant" {
+                item.id = format!("live-assistant-{sequence}");
+                item.turn_id = format!("live-turn-{sequence}");
+            } else if item.turn_id == "live"
+                && let Some((_, turn)) = &active
+            {
+                item.turn_id = turn.clone();
+            }
+        }
+        OutputStreamEvent::TextDelta { item_id, .. }
+        | OutputStreamEvent::ItemCompleted { item_id, .. } => {
+            if let Some((id, _)) = &active {
+                *item_id = id.clone();
+            }
+        }
+        OutputStreamEvent::Snapshot { .. } => {}
+    }
+    apply_stream_event(timeline, event.clone());
+    timeline.cursor = Some(format!("live:{sequence}"));
+    Some(vak_delivery::OutputStreamFrame {
+        sequence: Some(sequence),
+        delta: Some(event),
+        snapshot: timeline.clone(),
+    })
+}
+
 pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStreamEvent) {
     match event {
         OutputStreamEvent::Snapshot { timeline: snapshot } => *timeline = snapshot,
@@ -776,13 +817,16 @@ pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStr
                 timeline.items.push(item);
             }
         }
-        OutputStreamEvent::TextDelta { item_id, delta } => {
+        OutputStreamEvent::TextDelta { item_id, text, .. } => {
             if let Some(item) = timeline
                 .items
                 .iter_mut()
                 .find(|candidate| candidate.id == item_id)
             {
-                item.fallback_text.push_str(&delta);
+                item.fallback_text = text.clone();
+                item.content = OutputContent::Document {
+                    document: compile_markdown(text),
+                };
             }
         }
         OutputStreamEvent::ItemCompleted { item_id, status } => {

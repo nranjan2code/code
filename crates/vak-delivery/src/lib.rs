@@ -20,9 +20,9 @@ pub mod templates;
 pub use presentation::{
     ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
     DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
-    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
-    PresentationDocument, SurfaceCapabilities, TableAlignment, compile_markdown, inline_text,
-    safe_link,
+    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
+    OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, SurfaceCapabilities,
+    TableAlignment, compile_markdown, inline_text, safe_link,
 };
 pub use skills::{
     ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, LinkPreview, MediaOutput, Metric,
@@ -565,7 +565,6 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         ));
     }
     if let DeliveryContent::Answer(answer) = &job.content
-        && answer.schema_version != 1
         && answer.schema_version != DELIVERY_SCHEMA_VERSION
     {
         return Err(DeliveryError::UnsupportedSchema(answer.schema_version));
@@ -1194,23 +1193,17 @@ mod tests {
     }
 
     #[test]
-    fn schema_one_answer_is_compiled_without_source_loss() {
+    fn obsolete_answer_schema_is_refused_without_migration() {
         let mut input = job(Markup::Plain, None);
         let DeliveryContent::Answer(answer) = &mut input.content else {
             panic!("test job must contain an answer");
         };
         answer.schema_version = 1;
         answer.document = PresentationDocument::default();
-        let source = answer.source_markdown.clone();
-
-        let packet = render(&input).expect("schema one remains readable");
-        let timeline = packet
-            .presentation
-            .expect("legacy input gets a v2 projection");
-        let OutputContent::Document { document } = &timeline.items[0].content else {
-            panic!("legacy answer must compile to a document");
-        };
-        assert_eq!(document.source_markdown, source);
+        assert!(matches!(
+            render(&input),
+            Err(DeliveryError::UnsupportedSchema(1))
+        ));
     }
 
     #[test]

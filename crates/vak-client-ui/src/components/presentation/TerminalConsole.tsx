@@ -16,7 +16,7 @@ export default function TerminalConsole(props: { data: TerminalData }) {
     setTimeout(() => setCopied(false), 1200);
   };
 
-  const isSuccess = () => (props.data.exit_code ?? 0) === 0;
+  const isSuccess = () => props.data.exit_code === 0;
 
   return (
     <div class="canvas-card terminal-wrap">
@@ -26,7 +26,7 @@ export default function TerminalConsole(props: { data: TerminalData }) {
             Terminal
           </span>
           <span class="card-subtitle">
-            Exit {props.data.exit_code ?? 0}
+            {props.data.exit_code === undefined ? "Exit status unavailable" : `Exit ${props.data.exit_code}`}
             <Show when={props.data.duration_ms !== undefined}>
               {" "}· {props.data.duration_ms}ms
             </Show>
@@ -42,7 +42,7 @@ export default function TerminalConsole(props: { data: TerminalData }) {
       <div class="sleek-terminal">
         <Show when={props.data.command}>
           <div>
-            <span class="term-line-cmd">user@vak:~$</span> {props.data.command}
+            <span class="term-line-cmd">$</span> {props.data.command}
           </div>
         </Show>
         <pre class="term-output-text">{props.data.output}</pre>

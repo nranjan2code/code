@@ -1,4 +1,4 @@
-import { For, createSignal, onCleanup } from "solid-js";
+import { For, Show, createSignal, onCleanup } from "solid-js";
 
 export interface Ingredient {
   name: string;
@@ -21,11 +21,11 @@ export interface RecipeData {
 }
 
 export default function RecipeCard(props: { data: RecipeData }) {
-  const [servings, setServings] = createSignal(props.data.servings ?? 2);
-  const baseServings = props.data.servings ?? 2;
+  const [servings, setServings] = createSignal(props.data.servings ?? 1);
+  const baseServings = props.data.servings ?? 1;
 
   const [activeTimers, setActiveTimers] = createSignal<Record<number, number>>({});
-  const [timerIntervals, setTimerIntervals] = createSignal<Record<number, any>>({});
+  const [timerIntervals, setTimerIntervals] = createSignal<Record<number, ReturnType<typeof setInterval>>>({});
 
   const scale = () => servings() / baseServings;
 
@@ -46,20 +46,19 @@ export default function RecipeCard(props: { data: RecipeData }) {
     const newTimers = { ...activeTimers(), [idx]: totalSeconds };
     setActiveTimers(newTimers);
 
+    const deadline = Date.now() + totalSeconds * 1000;
     const interval = setInterval(() => {
       setActiveTimers((prev) => {
-        const current = prev[idx];
-        if (current <= 1) {
+        const current = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        if (current === 0) {
           clearInterval(interval);
           const nextIntervals = { ...timerIntervals() };
           delete nextIntervals[idx];
           setTimerIntervals(nextIntervals);
 
-          const next = { ...prev };
-          delete next[idx];
-          return next;
+          return { ...prev, [idx]: 0 };
         }
-        return { ...prev, [idx]: current - 1 };
+        return { ...prev, [idx]: current };
       });
     }, 1000);
 
@@ -75,7 +74,7 @@ export default function RecipeCard(props: { data: RecipeData }) {
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
-    return `⏱ ${m}:${s < 10 ? "0" : ""}${s} (Stop)`;
+    return seconds === 0 ? "Timer complete · Restart" : `${m}:${s < 10 ? "0" : ""}${s} · Stop`;
   };
 
   return (
@@ -84,16 +83,18 @@ export default function RecipeCard(props: { data: RecipeData }) {
         <div class="card-title-group">
           <span class="card-badge badge-amber">Culinary Recipe</span>
           <span class="card-subtitle">
-            {props.data.title} · ⏱ {props.data.cook_time_minutes ?? 15}m
+            {props.data.title}<Show when={props.data.cook_time_minutes !== undefined}> · {props.data.cook_time_minutes} min</Show>
           </span>
         </div>
         <div class="card-actions">
+          <Show when={props.data.servings !== undefined}>
           <span style={{ "font-size": "12px", color: "var(--text-muted)" }}>Servings:</span>
           <div class="servings-stepper">
-            <button onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
+            <button aria-label="Decrease servings" disabled={servings() <= 1} onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
             <span class="servings-num">{servings()}</span>
-            <button onClick={() => setServings(servings() + 1)}>+</button>
+            <button aria-label="Increase servings" disabled={servings() >= 10000} onClick={() => setServings(servings() + 1)}>+</button>
           </div>
+          </Show>
         </div>
       </div>
 
@@ -110,12 +111,12 @@ export default function RecipeCard(props: { data: RecipeData }) {
                   </label>
                 );
               }
-              const scaledAmount = item.amount ? Math.round(item.amount * scale() * 10) / 10 : null;
+              const scaledAmount = () => item.amount === undefined ? null : Math.round(item.amount * scale() * 100) / 100;
               return (
                 <label class="ingredient-checkbox-row">
                   <input type="checkbox" />
                   <span>
-                    {scaledAmount ? `${scaledAmount} ` : ""}
+                    {scaledAmount() === null ? "" : `${scaledAmount()} `}
                     {item.unit ? `${item.unit} ` : ""}
                     {item.name}
                   </span>
@@ -131,9 +132,9 @@ export default function RecipeCard(props: { data: RecipeData }) {
             {(step, idx) => {
               const text = typeof step === "string" ? step : step.text;
               const timerSecs = typeof step === "object" ? step.timer_seconds : null;
-              const isRunning = activeTimers()[idx()] !== undefined;
+              const isRunning = () => activeTimers()[idx()] !== undefined;
               return (
-                <div class="timer-action-card" classList={{ "active-timer": isRunning }}>
+                <div class="timer-action-card" classList={{ "active-timer": isRunning() }}>
                   <div>
                     <div style={{ "font-size": "13px", "font-weight": "600", color: "var(--text-main)" }}>
                       {idx() + 1}. {text}
@@ -142,12 +143,12 @@ export default function RecipeCard(props: { data: RecipeData }) {
                   {timerSecs && (
                     <button
                       class="timer-trigger-btn"
-                      classList={{ running: isRunning }}
+                      classList={{ running: isRunning() }}
                       onClick={() => toggleTimer(idx(), timerSecs)}
                     >
-                      {isRunning
+                      {isRunning()
                         ? formatTimer(activeTimers()[idx()])
-                        : `▶ ${Math.floor(timerSecs / 60)}:00 Timer`}
+                        : `Start ${Math.floor(timerSecs / 60)}:${String(timerSecs % 60).padStart(2, "0")} timer`}
                     </button>
                   )}
                 </div>

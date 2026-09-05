@@ -2777,22 +2777,17 @@ pub(crate) fn register_handle(
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
     });
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        let observer_id = id.clone();
         runtime.spawn(async move {
             loop {
                 match presentation_rx.recv().await {
                     Ok(framed) => {
-                        let event = framed.event;
-                        if let Some(projected) =
-                            crate::projection::live_event(&observer_id, event.clone())
-                        {
-                            crate::projection::apply_stream_event(
-                                &mut presentation_state
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-                                projected,
-                            );
-                        }
+                        let event = framed.event.clone();
+                        crate::projection::project_frame(
+                            &mut presentation_state
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner),
+                            framed,
+                        );
                         let activity = match event {
                             AgentEvent::SubagentStarted { label } => {
                                 Some(vak_session::ActivityRecord {
@@ -4335,27 +4330,83 @@ async fn presentation_events_sse(
                             .clone()
                     })
             };
-            let initial = vak_delivery::OutputStreamEvent::Snapshot { timeline: initial };
+            let mut timeline = initial;
+            let mut last_sequence = timeline
+                .cursor
+                .as_deref()
+                .and_then(|cursor| cursor.strip_prefix("live:"))
+                .and_then(|seq| seq.parse::<u64>().ok())
+                .unwrap_or(0);
+            let initial = vak_delivery::OutputStreamFrame {
+                sequence: Some(last_sequence),
+                delta: None,
+                snapshot: timeline.clone(),
+            };
             let initial = tokio_stream::once(Ok(
                 Event::default().data(serde_json::to_string(&initial).unwrap_or_default())
             ));
             handle.subscribed.notify_one();
-            let live_id = id.clone();
             let live = BroadcastStream::new(rx).filter_map(move |event| match event {
                 Ok(framed) => {
-                    crate::projection::live_event(&live_id, framed.event).map(|projected| {
+                    if framed.seq <= last_sequence {
+                        return None;
+                    }
+                    last_sequence = framed.seq;
+                    crate::projection::project_frame(&mut timeline, framed).map(|frame| {
                         Ok(Event::default()
-                            .data(serde_json::to_string(&projected).unwrap_or_default()))
+                            .id(last_sequence.to_string())
+                            .data(serde_json::to_string(&frame).unwrap_or_default()))
                     })
                 }
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
+                Err(_) => {
+                    if let Some(events) = handle.events_tx.replay_after(last_sequence) {
+                        for framed in events {
+                            last_sequence = framed.seq;
+                            crate::projection::project_frame(&mut timeline, framed);
+                        }
+                    } else {
+                        let guard = handle
+                            .session
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        timeline = guard
+                            .as_ref()
+                            .map(|session| crate::projection::snapshot(&id, session))
+                            .unwrap_or_else(|| {
+                                handle
+                                    .presentation
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .clone()
+                            });
+                        last_sequence = timeline
+                            .cursor
+                            .as_deref()
+                            .and_then(|cursor| cursor.strip_prefix("live:"))
+                            .and_then(|seq| seq.parse().ok())
+                            .unwrap_or(last_sequence);
+                        timeline
+                            .diagnostics
+                            .push("Presentation stream resynchronized after a gap.".into());
+                    }
+                    let frame = vak_delivery::OutputStreamFrame {
+                        sequence: Some(last_sequence),
+                        delta: None,
+                        snapshot: timeline.clone(),
+                    };
+                    Some(Ok(Event::default()
+                        .id(last_sequence.to_string())
+                        .data(serde_json::to_string(&frame).unwrap_or_default())))
+                }
             });
             Box::pin(initial.chain(live))
         }
         None => match open_historical_session(&state, &id) {
             Some(session) => {
-                let event = vak_delivery::OutputStreamEvent::Snapshot {
-                    timeline: crate::projection::snapshot(&id, &session),
+                let event = vak_delivery::OutputStreamFrame {
+                    sequence: None,
+                    delta: None,
+                    snapshot: crate::projection::snapshot(&id, &session),
                 };
                 Box::pin(tokio_stream::once(Ok(
                     Event::default().data(serde_json::to_string(&event).unwrap_or_default())

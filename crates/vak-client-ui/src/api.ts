@@ -405,9 +405,13 @@ export function openPresentationStream(
   const es = eventSource(`/sessions/${encodeURIComponent(id)}/presentation/events`);
   es.onmessage = (message) => {
     try {
-      onEvent(JSON.parse(message.data) as PresentationStreamEvent);
+      const frame = JSON.parse(message.data);
+      if (frame?.snapshot?.schema_version !== 2 || frame.snapshot.session_id !== id || !Array.isArray(frame.snapshot.items) || !Array.isArray(frame.snapshot.diagnostics)) {
+        throw new Error("Invalid presentation frame");
+      }
+      onEvent(frame as PresentationStreamEvent);
     } catch {
-      // Ignore keep-alive and malformed frames; the legacy stream remains the fallback.
+      onError?.();
     }
   };
   es.onerror = () => onError?.();

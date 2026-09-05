@@ -1,4 +1,4 @@
-import { createEffect, createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, ErrorBoundary, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type {
   DocumentBlock,
@@ -10,7 +10,6 @@ import type {
 import { density, openInEditor, uiPreferences } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
-import MarkdownView from "./MarkdownView";
 import { safeUrl } from "../safeUrl";
 import { highlight, languageForFence } from "../highlight";
 import ResearchCards from "./presentation/ResearchCards";
@@ -66,7 +65,7 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
               </span>
             );
           case "image":
-            return node.safe && safeUrl(node.url, true) ? <img class="semantic-image" src={node.url} alt={node.alt} title={node.title ?? undefined} /> : <span>{node.alt}</span>;
+            return node.safe && uiPreferences.externalMedia && safeUrl(node.url, true) ? <img class="semantic-image" src={node.url} alt={node.alt} title={node.title ?? undefined} loading="lazy" /> : <span>{node.alt || "Image unavailable"}</span>;
           case "soft_break":
             return " ";
           case "hard_break":
@@ -82,10 +81,12 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
 function Heading(props: { block: Extract<DocumentBlock, { type: "heading" }> }) {
   const content = () => <InlineSequence nodes={props.block.content} />;
   switch (props.block.level) {
-    case 1: return <h2 class="semantic-heading h1">{content()}</h2>;
-    case 2: return <h3 class="semantic-heading h2">{content()}</h3>;
-    case 3: return <h4 class="semantic-heading h3">{content()}</h4>;
-    default: return <h5 class="semantic-heading h4">{content()}</h5>;
+    case 1: return <h1 class="semantic-heading h1">{content()}</h1>;
+    case 2: return <h2 class="semantic-heading h2">{content()}</h2>;
+    case 3: return <h3 class="semantic-heading h3">{content()}</h3>;
+    case 4: return <h4 class="semantic-heading h4">{content()}</h4>;
+    case 5: return <h5 class="semantic-heading h5">{content()}</h5>;
+    default: return <h6 class="semantic-heading h6">{content()}</h6>;
   }
 }
 
@@ -110,9 +111,13 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
       }
     });
   });
-  const copy = (button: HTMLButtonElement) => {
-    void navigator.clipboard.writeText(props.content);
-    button.textContent = "Copied";
+  const copy = async (button: HTMLButtonElement) => {
+    try {
+      await navigator.clipboard.writeText(props.content);
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Copy failed";
+    }
     setTimeout(() => (button.textContent = "Copy"), 900);
   };
   return (
@@ -124,17 +129,6 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
       <pre ref={pre}><code>{props.content}</code></pre>
     </div>
   );
-}
-
-function inlineToText(nodes: InlineNode[]): string {
-  return nodes
-    .map((n) => {
-      if (n.type === "text") return n.text;
-      if ("content" in n && Array.isArray((n as any).content)) return inlineToText((n as any).content);
-      if ("code" in n && typeof (n as any).code === "string") return (n as any).code;
-      return "";
-    })
-    .join("");
 }
 
 function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Element {
@@ -151,21 +145,6 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
           }
           case "table": {
-            if (props.recipeId === "data.spreadsheet_grid" || block.rows.length >= 3) {
-              const columns = block.header.map((cell, idx) => ({
-                key: `col_${idx}`,
-                label: inlineToText(cell) || `Col ${idx + 1}`,
-                isNumeric: block.alignments[idx] === "right",
-              }));
-              const rows = block.rows.map((row) => {
-                const record: Record<string, any> = {};
-                row.forEach((cell, idx) => {
-                  record[`col_${idx}`] = inlineToText(cell);
-                });
-                return record;
-              });
-              return <DataGrid data={{ columns, rows }} />;
-            }
             return (
               <div class="semantic-table-wrap">
                 <table class="semantic-table">
@@ -181,18 +160,17 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             if (block.language === "diff") {
               return <DiffInspector rawDiff={block.content} filename={block.filename ?? undefined} />;
             }
-            if (props.recipeId === "terminal.session" && (block.language === "bash" || block.language === "sh" || block.language === "shell")) {
-              return <TerminalConsole data={{ command: block.content.split("\n")[0], output: block.content, exit_code: 0 }} />;
-            }
             return <CodeBlock language={block.language} filename={block.filename} content={block.content} />;
           case "diff":
             return <DiffInspector rawDiff={block.content} />;
+          case "structured":
+            return <StructuredView output={block.output} fallback={block.fallback_markdown} />;
           case "callout":
             return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} /></section>;
           case "citations":
             return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer noopener">{citation.label}</a></Show></li>}</For></ol>;
           case "media":
-            return safeUrl(block.source, true) ? (block.media_type?.startsWith("image/") ? <img class="semantic-media" src={block.source} alt={block.alt} /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer noopener">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
+            return safeUrl(block.source, true) ? (block.media_type?.startsWith("image/") && uiPreferences.externalMedia ? <img class="semantic-media" src={block.source} alt={block.alt} loading="lazy" /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer noopener">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
           case "artifact_ref":
             return <Artifact item={{ id: block.id, turn_id: "", timestamp: "", role: "assistant", kind: "artifact", status: "succeeded", content: { type: "artifact", artifact: block.artifact }, actions: [], fallback_text: block.artifact.path ?? block.artifact.name }} />;
           case "rule":
@@ -207,12 +185,9 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
 
 export function PresentationDocumentView(props: { document: PresentationDocument }) {
   const recipeId = () => props.document.metadata.recipe_id;
-  const plain = () => props.document.blocks.every((block) => ["heading", "paragraph", "list", "quote", "rule"].includes(block.type));
-  if (!recipeId() && plain() && props.document.source_markdown.trim()) {
-    return <><MarkdownView text={props.document.source_markdown} /><RenderAudit document={props.document} /></>;
-  }
   return (
     <div class="semantic-document">
+      <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
       <RenderAudit document={props.document} />
@@ -284,10 +259,16 @@ function ActivityRow(props: { item: OutputItem }) {
   return <div class={`semantic-activity ${props.item.status}`} title={evidence || undefined}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status} · {new Date(props.item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div>;
 }
 
-function StructuredView(props: { output: import("../types").StructuredOutput }) {
-  if (!uiPreferences.richPreviews) {
-    return <div class="rich-unsupported"><strong>{props.output.semantic_type}</strong><span>Rich rendering is disabled in Appearance settings.</span></div>;
-  }
+function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string }) {
+  const fallback = () => <div class="semantic-source">{props.fallback || JSON.stringify(props.output.payload, null, 2)}</div>;
+  return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
+    <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
+      <StructuredRenderer output={props.output} />
+    </Show>
+  </ErrorBoundary>;
+}
+
+function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
   if (props.output.semantic_type === "research.synthesis") {
     return <ResearchCards data={payload} />;
@@ -312,7 +293,7 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
   }
   if (props.output.semantic_type === "link.preview" && typeof payload.url === "string") {
     return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer noopener">
-      <Show when={typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" /></Show>
+      <Show when={uiPreferences.externalMedia && typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" loading="lazy" /></Show>
       <span><strong>{String(payload.title ?? payload.url)}</strong><small>{String(payload.description ?? payload.site_name ?? payload.url)}</small></span>
     </a>;
   }
@@ -329,39 +310,23 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
 }
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
-  const users = () => props.items.filter((item) => item.role === "user" && item.content.type === "document");
-  const outcomes = () => props.items.filter((item) => item.kind === "outcome" && item.content.type === "document");
-  const errors = () => props.items.filter((item) => item.kind === "error");
-  const approvals = () => props.items.filter((item) => item.kind === "approval");
-  const artifacts = () => props.items.filter((item) => item.kind === "artifact");
-  const structured = () => props.items.filter((item) => item.content.type === "structured");
-  const ordered = () => props.items;
+  const ordered = () => props.items.filter((item) => density() !== "outcome" || !["progress", "retry", "information"].includes(item.kind));
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {
       return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
-    if (item.kind === "outcome" && item.content.type === "document") return <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>;
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} />;
+    if (item.content.type === "document") return <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>;
+    if (item.content.type === "outcome") return <article class="semantic-outcome">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</article>;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} />;
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
-    return null;
+    return <div class="semantic-source">{item.fallback_text}</div>;
   };
   return (
     <section class="semantic-turn" data-turn={props.id}>
-      <Show when={density() !== "outcome"} fallback={
-        <>
-          <For each={users()}>{(item) => item.content.type === "document" && <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>}</For>
-          <For each={approvals()}>{(item) => <SemanticApproval item={item} sessionId={props.sessionId} />}</For>
-          <For each={outcomes()}>{(item) => item.content.type === "document" && <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>}</For>
-          <For each={structured()}>{(item) => item.content.type === "structured" && <StructuredView output={item.content.output} />}</For>
-          <For each={errors()}>{(item) => <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>}</For>
-          <Show when={artifacts().length > 0}><section class="artifact-shelf" aria-label="Artifacts"><div class="artifact-shelf-head">Artifacts <span>{artifacts().length}</span></div><For each={artifacts()}>{(item) => <Artifact item={item} />}</For></section></Show>
-        </>
-      }>
-        <For each={ordered()}>{(item) => OrderedItem(item)}</For>
-      </Show>
+      <For each={ordered()}>{(item) => OrderedItem(item)}</For>
     </section>
   );
 }

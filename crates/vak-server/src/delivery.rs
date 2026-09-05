@@ -710,18 +710,7 @@ impl ChannelAdapter for DiscordAdapter {
     }
 
     fn profile(&self) -> DeliveryProfile {
-        DeliveryProfile {
-            surface: "discord".into(),
-            markup: Markup::Markdown,
-            max_chars: Some(1900),
-            supports_tables: false,
-            supports_code_blocks: true,
-            supports_links: true,
-            // Interactive components (Discord buttons) are a follow-up;
-            // approvals ship as the typed yes/no prompt below.
-            supports_actions: false,
-            template: None,
-        }
+        built_in_surface_profile("discord")
     }
 
     async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
@@ -761,17 +750,7 @@ impl ChannelAdapter for SlackAdapter {
     }
 
     fn profile(&self) -> DeliveryProfile {
-        DeliveryProfile {
-            surface: "slack".into(),
-            markup: Markup::Markdown,
-            max_chars: Some(3900),
-            supports_tables: false,
-            supports_code_blocks: true,
-            supports_links: true,
-            // Block Kit buttons are a follow-up; see typed_verdict_prompt.
-            supports_actions: false,
-            template: None,
-        }
+        built_in_surface_profile("slack")
     }
 
     async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {

@@ -148,6 +148,7 @@ pub enum OutputStreamEvent {
     TextDelta {
         item_id: String,
         delta: String,
+        text: String,
     },
     ItemReplaced {
         item: OutputItem,
@@ -156,6 +157,15 @@ pub enum OutputStreamEvent {
         item_id: String,
         status: OutputStatus,
     },
+}
+
+/// A reconnectable presentation frame. Consumers may apply the delta or
+/// replace their state with the complete snapshot; both describe the same point.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputStreamFrame {
+    pub sequence: Option<u64>,
+    pub delta: Option<OutputStreamEvent>,
+    pub snapshot: OutputTimeline,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +257,11 @@ pub enum DocumentBlock {
         language: Option<String>,
         filename: Option<String>,
         content: String,
+    },
+    Structured {
+        id: String,
+        output: crate::skills::StructuredOutput,
+        fallback_markdown: String,
     },
     Callout {
         id: String,
@@ -463,6 +478,7 @@ fn collect_coverage(blocks: &[DocumentBlock], coverage: &mut Vec<DocumentCoverag
             | DocumentBlock::Paragraph { id, .. }
             | DocumentBlock::Table { id, .. }
             | DocumentBlock::Code { id, .. }
+            | DocumentBlock::Structured { id, .. }
             | DocumentBlock::Diff { id, .. }
             | DocumentBlock::Citations { id, .. }
             | DocumentBlock::Media { id, .. }
@@ -616,7 +632,24 @@ fn nodes_to_blocks(
     diagnostics: &mut Vec<String>,
 ) -> Vec<DocumentBlock> {
     let mut blocks = Vec::new();
+    let mut inline_run = Vec::new();
     for node in nodes {
+        if matches!(
+            node,
+            Node::Text(_)
+                | Node::Strong(_)
+                | Node::Emphasis(_)
+                | Node::Strikethrough(_)
+                | Node::Link(..)
+                | Node::Image(..)
+                | Node::InlineCode(_)
+                | Node::SoftBreak
+                | Node::HardBreak
+        ) {
+            inline_run.push(node);
+            continue;
+        }
+        flush_inline_run(&mut inline_run, &mut blocks, ids);
         match node {
             Node::Paragraph(children) => {
                 let content = nodes_to_inline(children);
@@ -637,6 +670,22 @@ fn nodes_to_blocks(
                 blocks: nodes_to_blocks(children, ids, diagnostics),
             }),
             Node::CodeBlock(language, content) => {
+                if language.as_deref() == Some("vak") {
+                    match crate::skills::parse_fragment(&content) {
+                        Ok(output) => {
+                            let fallback_markdown = crate::skills::structured_markdown(&output);
+                            blocks.push(DocumentBlock::Structured {
+                                id: ids.next(),
+                                output,
+                                fallback_markdown,
+                            });
+                            continue;
+                        }
+                        Err(error) => {
+                            diagnostics.push(format!("Structured block preserved as code: {error}"))
+                        }
+                    }
+                }
                 let is_diff = language.as_deref() == Some("diff");
                 blocks.push(if is_diff {
                     DocumentBlock::Diff {
@@ -712,7 +761,21 @@ fn nodes_to_blocks(
             }
         }
     }
+    flush_inline_run(&mut inline_run, &mut blocks, ids);
     blocks
+}
+
+fn flush_inline_run(nodes: &mut Vec<Node>, blocks: &mut Vec<DocumentBlock>, ids: &mut Ids) {
+    if nodes.is_empty() {
+        return;
+    }
+    let content = nodes_to_inline(std::mem::take(nodes));
+    if !content.is_empty() {
+        blocks.push(DocumentBlock::Paragraph {
+            id: ids.next(),
+            content,
+        });
+    }
 }
 
 fn table_cells(nodes: Vec<Node>) -> Vec<Vec<InlineNode>> {
@@ -805,6 +868,37 @@ fn safe_media(url: &str) -> bool {
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::{DocumentBlock, InlineNode, compile_markdown, safe_link};
+
+    #[test]
+    fn tight_lists_keep_inline_runs_together() {
+        let source = "- Stocks include **Axis Bank**, **Adani Ports**, and **HDFC Bank**.";
+        let document = compile_markdown(source);
+        let DocumentBlock::List { items, .. } = &document.blocks[0] else {
+            panic!("expected list");
+        };
+        assert_eq!(items[0].len(), 1);
+        let DocumentBlock::Paragraph { content, .. } = &items[0][0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(content.len(), 7);
+        assert_eq!(
+            super::inline_text(content),
+            "Stocks include Axis Bank, Adani Ports, and HDFC Bank."
+        );
+        assert_eq!(document.source_markdown, source);
+    }
+
+    #[test]
+    fn loose_paragraphs_and_nested_lists_keep_their_boundaries() {
+        let document = compile_markdown(
+            "- First **paragraph**.\n\n  Second paragraph.\n\n  - Nested [link](https://example.com)\n\n  Last paragraph.",
+        );
+        let DocumentBlock::List { items, .. } = &document.blocks[0] else {
+            panic!("expected list");
+        };
+        assert_eq!(items[0].len(), 4);
+        assert!(matches!(items[0][2], DocumentBlock::List { .. }));
+    }
 
     #[test]
     fn compiles_commonmark_without_losing_source() {

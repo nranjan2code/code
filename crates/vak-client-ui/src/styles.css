@@ -435,11 +435,16 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .semantic-heading.h3, .semantic-heading.h4 { font-size: 13px; }
 .semantic-list { margin: .45em 0; padding-left: 1.45em; }
 .semantic-list li { margin: .2em 0; }
-/* List items are a continuous reading surface. Some model Markdown uses
-   loose-list syntax, which produces several paragraph nodes for one bullet;
-   keep those fragments inline instead of vertically exploding the answer. */
-.semantic-list li > .semantic-document > .semantic-paragraph { display: inline; margin: 0; }
-.semantic-list li > .semantic-document > .semantic-paragraph + .semantic-paragraph::before { content: " "; }
+.semantic-list li > .semantic-paragraph { margin-block: .35em; }
+.semantic-source { white-space: pre-wrap; overflow-wrap: anywhere; }
+.semantic-chart { margin: 1rem 0; min-width: 0; overflow-x: auto; }
+.semantic-chart svg { display: block; width: 100%; color: var(--muted); }
+.semantic-chart svg text { fill: currentColor; font-size: 12px; }
+.semantic-chart-selector { display: grid; gap: 8px; }
+.semantic-chart-selector input { width: 100%; min-height: 44px; accent-color: var(--accent-bright); }
+.semantic-chart-values { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.semantic-chart-values dd { margin: 0; font-variant-numeric: tabular-nums; }
+.semantic-chart-axes { color: var(--muted); }
 .semantic-quote { margin: .7em 0; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); color: var(--muted); background: var(--surface); }
 .semantic-rule { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 .semantic-link { color: var(--accent-bright); text-underline-offset: 2px; }
