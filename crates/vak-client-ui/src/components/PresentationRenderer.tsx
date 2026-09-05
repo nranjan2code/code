@@ -19,6 +19,7 @@ import UniversalChart from "./presentation/UniversalChart";
 import DataGrid from "./presentation/DataGrid";
 import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard from "./presentation/RecipeCard";
+import MermaidViewer from "./presentation/MermaidViewer";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -96,6 +97,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   createEffect(() => {
     const content = props.content;
     const language = props.language;
+    void uiPreferences.theme;
     const seq = ++renderSeq;
     pre.textContent = content;
     pre.classList.remove("shiki");
@@ -157,6 +159,9 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
+            if (block.language === "mermaid") {
+              return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
+            }
             if (block.language === "diff") {
               return <DiffInspector rawDiff={block.content} filename={block.filename ?? undefined} />;
             }
@@ -166,7 +171,7 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "structured":
             return <StructuredView output={block.output} fallback={block.fallback_markdown} />;
           case "diagram":
-            return <details class="semantic-diagram"><summary>Diagram source</summary><pre>{block.source}</pre><small>Interactive diagram rendering is unavailable; source is preserved exactly.</small></details>;
+            return <MermaidViewer source={block.source} />;
           case "callout":
             return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} /></section>;
           case "citations":

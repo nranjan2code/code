@@ -136,13 +136,25 @@ export function languageFor(path: string): string | null {
   return BY_EXTENSION[ext] ?? null;
 }
 
+export function currentShikiTheme(): "vitesse-light" | "vitesse-dark" | "vitesse-black" {
+  if (typeof document === "undefined") return "vitesse-dark";
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "light") return "vitesse-light";
+  if (theme === "contrast") return "vitesse-black";
+  return "vitesse-dark";
+}
+
 async function core(): Promise<HighlighterCore> {
   if (!corePromise) {
     corePromise = (async () => {
       const { createHighlighterCore } = await import("shiki/core");
       const { createOnigurumaEngine } = await import("shiki/engine/oniguruma");
       return createHighlighterCore({
-        themes: [import("@shikijs/themes/vitesse-dark")],
+        themes: [
+          import("@shikijs/themes/vitesse-dark"),
+          import("@shikijs/themes/vitesse-light"),
+          import("@shikijs/themes/vitesse-black"),
+        ],
         langs: [],
         engine: createOnigurumaEngine(import("shiki/wasm")),
       });
@@ -214,12 +226,17 @@ async function ensureLanguage(hl: HighlighterCore, lang: string): Promise<boolea
  * is unknown or the grammar cannot be loaded, so callers render plain text
  * rather than showing nothing.
  */
-export async function highlight(code: string, lang: string | null): Promise<string | null> {
+export async function highlight(
+  code: string,
+  lang: string | null,
+  overrideTheme?: string,
+): Promise<string | null> {
   if (!lang) return null;
   try {
     const hl = await core();
     if (!(await ensureLanguage(hl, lang))) return null;
-    return hl.codeToHtml(code, { lang, theme: "vitesse-dark" });
+    const theme = overrideTheme ?? currentShikiTheme();
+    return hl.codeToHtml(code, { lang, theme });
   } catch {
     return null;
   }

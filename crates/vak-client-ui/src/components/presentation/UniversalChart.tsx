@@ -26,7 +26,7 @@ export default function UniversalChart(props: { data: ChartData }) {
         <For each={props.data.series}>{(series, index) => <g>
           <Show when={props.data.chart_type !== "bar"}>
             <For each={geometry().segments(series)}>{(points) => <>
-              <Show when={props.data.chart_type === "area" && points.length > 1}><path d={`${line(points)} L${geometry().x(points[points.length - 1].x)},${geometry().y(0)} L${geometry().x(points[0].x)},${geometry().y(0)} Z`} fill={colors[index() % colors.length]} opacity="0.12" /></Show>
+              <Show when={props.data.chart_type === "area" && points.length > 1}><path d={`${line(points)} L${geometry().x(points[points.length - 1].x)},${geometry().y(0)} L${geometry().x(points[0].x)},${geometry().y(0)} Z`} fill={colors[index() % colors.length]} opacity="var(--chart-area-opacity, 0.16)" /></Show>
               <path d={line(points)} fill="none" stroke={colors[index() % colors.length]} stroke-width="2" stroke-dasharray={index() ? `${index() + 2} 3` : undefined} />
               <For each={points}>{(point) => <circle cx={geometry().x(point.x)} cy={geometry().y(point.y!)} r="3" fill={colors[index() % colors.length]}><title>{series.name}: {point.x}, {number(point.y)}</title></circle>}</For>
             </>}</For>

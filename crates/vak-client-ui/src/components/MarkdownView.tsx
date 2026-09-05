@@ -1,6 +1,6 @@
 import { createEffect, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { openInEditor } from "../store";
+import { openInEditor, uiPreferences } from "../store";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 
@@ -23,6 +23,7 @@ async function colorizeCodeBlocks(root: HTMLElement) {
 export default function MarkdownView(props: { text: string; streaming?: boolean }): JSX.Element {
   let el!: HTMLDivElement;
   createEffect(() => {
+    void uiPreferences.theme;
     if (props.streaming) return;
     el.innerHTML = renderMarkdown(props.text);
     void colorizeCodeBlocks(el);

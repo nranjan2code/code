@@ -83,7 +83,7 @@ export default function TestMatrix(props: { data: TestSuiteData }) {
                 <path
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke="rgba(244, 63, 94, 0.25)"
+                  stroke="var(--rose-wash, rgba(244, 63, 94, 0.25))"
                   stroke-width="3.5"
                 />
                 <path
