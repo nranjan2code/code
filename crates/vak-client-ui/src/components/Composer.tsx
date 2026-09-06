@@ -24,7 +24,7 @@ import { IntentStrip } from "./IntentStrip";
 
 /** Context-window gauge; sits with the run controls in the composer. */
 function Ring(props: { pct: number; label: string }): JSX.Element {
-  const r = 9;
+  const r = 8;
   const c = 2 * Math.PI * r;
   const clamped = () => Math.max(0, Math.min(1, props.pct));
   // Fixed status colors (never the accent) so the ring's meaning — normal,
@@ -33,18 +33,18 @@ function Ring(props: { pct: number; label: string }): JSX.Element {
   const color = () => (clamped() > 0.85 ? "var(--red)" : clamped() > 0.6 ? "var(--yellow)" : "var(--accent)");
   return (
     <div class="ring" title={props.label}>
-      <svg width="24" height="24" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r={r} fill="none" stroke="var(--border)" stroke-width="3" />
+      <svg width="20" height="20" viewBox="0 0 20 20">
+        <circle cx="10" cy="10" r={r} fill="none" stroke="var(--border)" stroke-width="2.5" />
         <circle
-          cx="12"
-          cy="12"
+          cx="10"
+          cy="10"
           r={r}
           fill="none"
           stroke={color()}
-          stroke-width="3"
+          stroke-width="2.5"
           stroke-linecap="round"
           stroke-dasharray={`${clamped() * c} ${c}`}
-          transform="rotate(-90 12 12)"
+          transform="rotate(-90 10 10)"
         />
       </svg>
     </div>
@@ -80,13 +80,6 @@ export default function Composer(props: { cwd: string }) {
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
   const [commands, setCommands] = createSignal<api.CustomCommand[]>([]);
   const [commandPicked, setCommandPicked] = createSignal(0);
-  // Goal mode (docs/design/27 Phase H): armed objective consumed by the
-  // next prompt; completion is audited against the criteria.
-  const [goalFormOpen, setGoalFormOpen] = createSignal(false);
-  const [goalObjective, setGoalObjective] = createSignal("");
-  const [goalCriteria, setGoalCriteria] = createSignal("");
-  // Goal arming itself lives in store.ts (`armedGoal`), shared with the
-  // `/goal` slash command in App.tsx — one piece of state, not two.
   const [skillPicked, setSkillPicked] = createSignal(0);
   // Image attachments: picked or pasted, sent as base64 vision blocks.
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
@@ -329,20 +322,6 @@ export default function Composer(props: { cwd: string }) {
     // No need to pass or clear the goal here: sendPrompt consumes
     // `armedGoal` itself (store.ts), for whichever session it resolves.
     void sendPrompt(t, undefined, files.length ? files : undefined);
-  };
-
-  const armGoal = () => {
-    const objective = goalObjective().trim();
-    const criteria = goalCriteria()
-      .split(";")
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (!objective || criteria.length === 0) return;
-    // Unscoped (sessionId: null): armed from the button before a
-    // particular run, applies to whichever session the next prompt
-    // resolves to — matching this form's previous behavior exactly.
-    setArmedGoal({ objective, criteria, sessionId: null });
-    setGoalFormOpen(false);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -601,13 +580,14 @@ export default function Composer(props: { cwd: string }) {
                 </For>
               </select>
             </Show>
-            <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
-              <span class="composer-hint">@ to add files</span>
+            <button class="composer-context" title="Mention file (@)" onClick={beginMention}>
+              <span class="composer-at">@</span>
+              <span>files</span>
             </button>
             <input
               ref={fileInput}
               type="file"
-              accept="image/*"
+              accept="image/*,.txt,.rs,.ts,.js,.json,.py,.md,.toml,.yaml,.yml,.css,.html,.sh"
               multiple
               style="display:none"
               onChange={(e) => {
@@ -621,7 +601,8 @@ export default function Composer(props: { cwd: string }) {
               aria-label="Attach files"
               onClick={() => fileInput.click()}
             >
-              <Icon name="add" size={14} />
+              <Icon name="add" size={13} />
+              <span>Attach</span>
             </button>
           </div>
 
@@ -640,37 +621,7 @@ export default function Composer(props: { cwd: string }) {
               </button>
             </div>
           </Show>
-          <Show when={goalFormOpen()}>
-            <div class="goal-form">
-              <input
-                class="goal-objective"
-                placeholder="Objective — what done means"
-                value={goalObjective()}
-                onInput={(e) => setGoalObjective(e.currentTarget.value)}
-              />
-              <input
-                class="goal-criteria"
-                placeholder="Criteria separated by ';' — prefix 'verify:' to run as shell"
-                value={goalCriteria()}
-                onInput={(e) => setGoalCriteria(e.currentTarget.value)}
-              />
-              <button class="goal-arm" disabled={!goalObjective().trim() || goalCriteria().split(';').filter((c) => c.trim()).length === 0} onClick={armGoal}>
-                Arm
-              </button>
-              <button class="goal-cancel" onClick={() => setGoalFormOpen(false)}>
-                Cancel
-              </button>
-            </div>
-          </Show>
           <div class="composer-actions">
-            <button
-              class="composer-goal"
-              title="Goal mode — audited completion (docs/design/27 Phase H)"
-              aria-label="Configure goal mode"
-              onClick={() => setGoalFormOpen(!goalFormOpen())}
-            >
-              <Icon name="spark" size={14} />
-            </button>
             <select
               class="composer-density"
               value={density()}
