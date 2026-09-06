@@ -5,6 +5,17 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.16 — 2026-09-06
+
+### Sandboxed Python & React runtime plugins with chat presentation and preview dock integration
+
+- **Sandboxed Python execution (`python_eval`)**: Implemented `PythonTool` running in isolated process groups with fully scrubbed environments (`env_clear`, zero parent API keys or secrets leaked). All generated scripts and pip installations are quarantined in `.vak/scratch/python/site-packages/` and never pollute regular project files.
+- **Sandboxed React component preview (`react_preview`)**: Implemented `ReactPreviewTool` compiling self-contained, offline HTML preview bundles with React 18, Babel Standalone, and Tailwind CSS. Quarantined in `.vak/scratch/previews/` with strict Content Security Policy (`connect-src 'none'`) and built-in ErrorBoundary.
+- **Multi-tier network governance**: Follows the privileged MCP network model (`network = true | false`). When network access is disabled, `pip install` package management is blocked with a typed error and React preview CSP strictly enforces `connect-src 'none'`. Channel overlays (`plugins_network_deny`, `plugins_deny`) enable remote bot lockdown.
+- **Shared capability seeding**: Automatically seeds `python-sandbox` and `react-sandbox` plugins along with their skills (`python-execution`, `react-component-preview`) into `~/vak-home/.vak/plugins/packages/` so every new workspace inherits them seamlessly.
+- **Interactive chat rendering**: Created `UIPreviewCard` rendering live sandboxed component previews directly inside chat turns with reload, popout, source inspection, and a direct "Right Bar" open action.
+- **Dual-mode Right Bar Preview Dock**: Upgraded `PreviewPane` to seamlessly toggle between live sandboxed Component Previews and local dev servers from `.vak/launch.toml`.
+
 ## 3.0.15 — 2026-09-06
 
 ### Reconfirmation modals, workspace removal safety, and composer layout stability

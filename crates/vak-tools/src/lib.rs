@@ -12,6 +12,8 @@ pub mod glob;
 pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
+pub mod python_runner;
+pub mod react_runner;
 pub mod read;
 pub mod sandbox;
 pub mod webbrowse;
@@ -23,6 +25,8 @@ use serde_json::Value;
 
 pub use context::{OutputLimits, ToolContext};
 pub use contract::validate_input;
+pub use python_runner::PythonTool;
+pub use react_runner::ReactPreviewTool;
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 

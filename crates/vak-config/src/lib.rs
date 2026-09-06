@@ -168,6 +168,8 @@ pub struct FileConfig {
     pub feeds: FeedSettings,
     #[serde(default)]
     pub server: ServerSettings,
+    #[serde(default)]
+    pub plugins: PluginSettings,
 }
 
 /// How the HTTP surface is exposed (docs/design/48-web-client.md §4.2).
@@ -650,6 +652,67 @@ pub struct CapabilityInheritanceResolved {
     pub inherit_plugins: bool,
 }
 
+/// Global and workspace settings governing capability plugins.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct PluginSettings {
+    /// Explicitly enabled plugin names.
+    pub enabled: Vec<String>,
+    /// Explicitly disabled plugin names.
+    pub disabled: Vec<String>,
+    /// Optional allowlist of permitted plugin names. If specified, only matching plugins may be enabled.
+    pub allow: Option<Vec<String>>,
+    /// Denylist of forbidden plugin names. Deny always takes precedence over allow.
+    pub deny: Vec<String>,
+    /// Plugins permitted outbound network access. Privileged.
+    pub network_allow: Option<Vec<String>>,
+    /// Plugins forbidden outbound network access.
+    pub network_deny: Vec<String>,
+}
+
+/// Resolved plugin policy across global and workspace layers.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct PluginResolved {
+    pub enabled: Vec<String>,
+    pub disabled: Vec<String>,
+    pub allow: Option<Vec<String>>,
+    pub deny: Vec<String>,
+    pub network_allow: Option<Vec<String>>,
+    pub network_deny: Vec<String>,
+}
+
+impl PluginResolved {
+    pub fn is_enabled(&self, name: &str) -> bool {
+        // Deny always wins
+        if self.deny.iter().any(|d| d == name || d == "*") {
+            return false;
+        }
+        if self.disabled.iter().any(|d| d == name) {
+            return false;
+        }
+        if let Some(allow) = &self.allow {
+            return allow.iter().any(|a| a == name || a == "*");
+        }
+        if !self.enabled.is_empty() {
+            return self.enabled.iter().any(|e| e == name || e == "*");
+        }
+        true
+    }
+
+    pub fn is_network_allowed(&self, name: &str) -> bool {
+        if !self.is_enabled(name) {
+            return false;
+        }
+        if self.network_deny.iter().any(|d| d == name || d == "*") {
+            return false;
+        }
+        if let Some(allow) = &self.network_allow {
+            return allow.iter().any(|a| a == name || a == "*");
+        }
+        false
+    }
+}
+
 /// Restrictive capability overlay for a gateway channel. `None` means inherit
 /// the workspace policy; `Some([])` means deny everything in that category.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -670,6 +733,12 @@ pub struct ChannelPolicy {
     /// only take network access away from a server it can already reach,
     /// never grant it to one the server config itself denies.
     pub mcp_network_deny: Vec<String>,
+    /// Plugin-name patterns for which this channel forces outbound network off.
+    pub plugins_network_deny: Vec<String>,
+    /// Optional allowlist of plugin names permitted on this channel.
+    pub plugins_allow: Option<Vec<String>>,
+    /// Denylist of plugin names forbidden on this channel.
+    pub plugins_deny: Vec<String>,
     /// Autonomy ceiling for this channel (docs/design/47-commitment-kernel.md).
     ///
     /// **Restrictive only**, like everything else on this type: a channel may
@@ -750,6 +819,9 @@ impl ChannelPolicy {
             hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
             hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
             mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
+            plugins_network_deny: merge_deny(&lower.plugins_network_deny, &higher.plugins_network_deny),
+            plugins_allow: merge_allow(&lower.plugins_allow, &higher.plugins_allow),
+            plugins_deny: merge_deny(&lower.plugins_deny, &higher.plugins_deny),
             autonomy_ceiling: Self::cap_autonomy(
                 lower.autonomy_ceiling.as_deref(),
                 higher.autonomy_ceiling.as_deref(),
@@ -907,6 +979,7 @@ pub struct Config {
     pub heartbeat: HeartbeatResolved,
     pub feeds: FeedResolved,
     pub server: ServerResolved,
+    pub plugins: PluginResolved,
     pub warnings: Vec<String>,
 }
 
@@ -1281,6 +1354,7 @@ impl Default for Config {
                 web_terminal: false,
                 web_terminal_requires_loopback: true,
             },
+            plugins: PluginResolved::default(),
             warnings: Vec::new(),
         }
     }
@@ -2296,7 +2370,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, plugins.network_allow";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2366,6 +2440,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // whoever can reach the port — a cloned repository that could
             // set these would be handing itself the machine.
             fc.server = ServerSettings::default();
+            fc.plugins.network_allow = None;
+            fc.plugins.allow = None;
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
@@ -2830,6 +2906,15 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         );
     }
 
+    cfg.plugins = PluginResolved {
+        enabled: merged.plugins.enabled,
+        disabled: merged.plugins.disabled,
+        allow: merged.plugins.allow,
+        deny: merged.plugins.deny,
+        network_allow: merged.plugins.network_allow,
+        network_deny: merged.plugins.network_deny,
+    };
+
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
             if let Some(model) = &profile.model {
@@ -2901,6 +2986,15 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "update",
     "tools",
     "heartbeat",
+    "plugins",
+];
+const KNOWN_PLUGINS_KEYS: &[&str] = &[
+    "enabled",
+    "disabled",
+    "allow",
+    "deny",
+    "network_allow",
+    "network_deny",
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];
@@ -3223,6 +3317,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_HEARTBEAT_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown heartbeat key 'heartbeat.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(t) = top.get("plugins").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_PLUGINS_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown plugins key 'plugins.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -3581,6 +3685,32 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.feeds.dedup_window_days.is_some() {
         base.feeds.dedup_window_days = over.feeds.dedup_window_days;
+    }
+    for p in over.plugins.enabled {
+        if !base.plugins.enabled.contains(&p) {
+            base.plugins.enabled.push(p);
+        }
+    }
+    for p in over.plugins.disabled {
+        if !base.plugins.disabled.contains(&p) {
+            base.plugins.disabled.push(p);
+        }
+    }
+    if over.plugins.allow.is_some() {
+        base.plugins.allow = over.plugins.allow;
+    }
+    for p in over.plugins.deny {
+        if !base.plugins.deny.contains(&p) {
+            base.plugins.deny.push(p);
+        }
+    }
+    if over.plugins.network_allow.is_some() {
+        base.plugins.network_allow = over.plugins.network_allow;
+    }
+    for p in over.plugins.network_deny {
+        if !base.plugins.network_deny.contains(&p) {
+            base.plugins.network_deny.push(p);
+        }
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);
@@ -4445,5 +4575,48 @@ mod channel_autonomy_tests {
         let composed = ChannelPolicy::merge(&policy(Some("banana")), &policy(Some("autonomous")));
         assert_eq!(composed.autonomy_ceiling.as_deref(), Some("banana"));
         assert!(autonomy_rank("banana") < autonomy_rank("autonomous"));
+    }
+
+    #[test]
+    fn plugin_resolved_allow_deny_network_matrix() {
+        let mut resolved = PluginResolved::default();
+        assert!(resolved.is_enabled("python-sandbox"));
+        assert!(!resolved.is_network_allowed("python-sandbox"));
+
+        // Enable network
+        resolved.network_allow = Some(vec!["python-sandbox".into()]);
+        assert!(resolved.is_network_allowed("python-sandbox"));
+
+        // Global or channel deny takes priority
+        resolved.network_deny.push("python-sandbox".into());
+        assert!(!resolved.is_network_allowed("python-sandbox"));
+        assert!(resolved.is_enabled("python-sandbox"));
+
+        // Disabling or denying plugin shuts it off completely
+        resolved.disabled.push("python-sandbox".into());
+        assert!(!resolved.is_enabled("python-sandbox"));
+        assert!(!resolved.is_network_allowed("python-sandbox"));
+    }
+
+    #[test]
+    fn channel_policy_merges_plugin_network_and_allow_deny() {
+        let bot = ChannelPolicy {
+            plugins_allow: Some(vec!["python-sandbox".into(), "react-sandbox".into()]),
+            plugins_deny: vec!["untrusted-plugin".into()],
+            plugins_network_deny: vec!["react-sandbox".into()],
+            ..ChannelPolicy::default()
+        };
+        let chat = ChannelPolicy {
+            plugins_allow: Some(vec!["python-sandbox".into()]),
+            plugins_deny: vec!["banned-plugin".into()],
+            plugins_network_deny: vec!["python-sandbox".into()],
+            ..ChannelPolicy::default()
+        };
+        let merged = ChannelPolicy::merge(&bot, &chat);
+        assert_eq!(merged.plugins_allow, Some(vec!["python-sandbox".into()]));
+        assert!(merged.plugins_deny.contains(&"untrusted-plugin".to_string()));
+        assert!(merged.plugins_deny.contains(&"banned-plugin".to_string()));
+        assert!(merged.plugins_network_deny.contains(&"react-sandbox".to_string()));
+        assert!(merged.plugins_network_deny.contains(&"python-sandbox".to_string()));
     }
 }

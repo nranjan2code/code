@@ -64,6 +64,18 @@ const PLUGINS: &[(&str, &str, &str, &str)] = &[
         "Plain-language writing, planning, research, and data help for everyday work.",
         "writing-and-editing",
     ),
+    (
+        "python-sandbox",
+        "1.0.0",
+        "Sandboxed Python execution runtime for data analytics, scientific scripts, and automation.",
+        "python-execution",
+    ),
+    (
+        "react-sandbox",
+        "1.0.0",
+        "Sandboxed React 18 and Tailwind UI preview compiler and interactive renderer.",
+        "react-component-preview",
+    ),
 ];
 
 const PLUGIN_SKILLS: &[(&str, &str, &str)] = &[
@@ -76,6 +88,16 @@ const PLUGIN_SKILLS: &[(&str, &str, &str)] = &[
         "writing-and-editing",
         "Draft, rewrite, summarize, and polish documents while preserving the requested voice.",
         "First identify audience, purpose, and format. Preserve facts and explicit constraints, make the smallest useful edit, and call out material ambiguities instead of inventing details.",
+    ),
+    (
+        "python-execution",
+        "Execute Python code and scripts in a sandboxed, quarantined environment with optional library management.",
+        "Use `python_eval` to execute Python computation, data manipulation, or generate charts and artifacts. All generated intermediate files stay quarantined in `.vak/scratch/python/` unless explicitly directed to save into the project. Operational environment is scrubbed and secrets are never exposed.",
+    ),
+    (
+        "react-component-preview",
+        "Compile and preview React 18 and Tailwind components in a sandboxed iframe with presentation cards.",
+        "Use `react_preview` to render UI prototypes, dashboards, and dynamic components. Generates a self-contained, quarantined HTML preview in `.vak/scratch/previews/` with ErrorBoundary and strict CSP ('connect-src none'), surfacing interactive preview cards in chat and the Right Dock Preview panel.",
     ),
 ];
 

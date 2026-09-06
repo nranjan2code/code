@@ -109,6 +109,23 @@ export function setDensity(value: Density) {
 }
 export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments" | null>(null);
 
+export interface ActiveComponentPreview {
+  id: string;
+  title: string;
+  artifactPath: string;
+  html?: string;
+  previewId?: string;
+  timestamp?: number;
+  sandbox?: string;
+  connectSrc?: string;
+}
+export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
+
+export function openComponentPreview(preview: ActiveComponentPreview) {
+  setActiveComponentPreview(preview);
+  setDockTab("preview");
+}
+
 /**
  * Goal mode (docs/design/27 Phase H): an objective + criteria armed for the
  * *next* prompt, consumed once and cleared. `sessionId: null` means armed

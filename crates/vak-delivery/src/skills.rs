@@ -533,6 +533,8 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "terminal.view",
             "data.grid",
             "recipe.card",
+            "ui.preview",
+            "react.preview",
         ]
         .into_iter()
         .map(String::from)
@@ -807,7 +809,11 @@ pub fn structured_outputs_from_text_with(
     let mut remainder = text;
     while let Some(start) = remainder.find("```vak") {
         let after = &remainder[start + 6..];
-        let body = after.strip_prefix('\n').unwrap_or(after);
+        let body = if let Some(nl) = after.find('\n') {
+            &after[nl + 1..]
+        } else {
+            after
+        };
         let Some(end) = body.find("```") else { break };
         if let Ok(output) = parse_fragment_with(&body[..end], skills)
             && !outputs
@@ -939,6 +945,11 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
             p.get("exit_code")
                 .map(Value::to_string)
                 .unwrap_or_else(|| "not supplied".into())
+        )),
+        "ui.preview" | "react.preview" => lines.push(format!(
+            "Preview: {}\nFile: {}",
+            title,
+            p["artifact_path"].as_str().unwrap_or_default()
         )),
         _ => {}
     }

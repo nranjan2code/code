@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openInEditor, presentationOf, speak, toggleItemExpanded, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openInEditor, presentationOf, speak, toggleItemExpanded, type Item } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
@@ -212,6 +212,8 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     grep: "Search files",
     glob: "Find files",
     mcp: "Use connected tool",
+    python_eval: "Run Python (Sandbox)",
+    react_preview: "Render React Preview",
   } as Record<string, string>)[props.item.name] ?? props.item.name.replaceAll("_", " ");
   const summary = createMemo(() => {
     const a = args();
@@ -224,6 +226,14 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     if (props.item.name === "bash" && typeof a.command === "string") {
       return a.command.replace(/\s+/g, " ").trim().slice(0, 120);
     }
+    if (props.item.name === "python_eval") {
+      if (typeof a.script_path === "string") return a.script_path;
+      if (typeof a.code === "string") return a.code.replace(/\s+/g, " ").trim().slice(0, 100);
+      return "Python script execution";
+    }
+    if (props.item.name === "react_preview") {
+      return typeof a.title === "string" ? a.title : "React Component";
+    }
     return null;
   });
   const status = () => props.item.isError ? "Failed" : props.item.done ? "Completed" : "Running";
@@ -232,6 +242,12 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     if (value) return value.slice(0, density() === "audit" ? 4000 : 800);
     return props.item.done ? "No output returned." : "Waiting for a result…";
   };
+  const previewArtifactPath = createMemo(() => {
+    if (props.item.name !== "react_preview" || !props.item.done) return null;
+    const txt = props.item.preview || "";
+    const match = txt.match(/\.vak\/scratch\/previews\/[^\s"']+\.html/);
+    return match ? match[0] : null;
+  });
 
   return (
       <div class="tool" classList={{ err: props.item.isError, open: open(), running: !props.item.done, done: props.item.done }}>
@@ -253,6 +269,28 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
                 past the first file. */}
             <button class="tool-open" onClick={() => void openFileSmart(path())} title={path()}>
               <Icon name="code" size={12} /> View file
+            </button>
+          </div>
+        )}
+      </Show>
+      <Show when={previewArtifactPath()}>
+        {(p) => (
+          <div class="tool-actions">
+            <button
+              class="tool-open"
+              onClick={() => {
+                const a = args();
+                const t = a && typeof a.title === "string" ? a.title : "React Component Preview";
+                openComponentPreview({
+                  id: p(),
+                  title: t,
+                  artifactPath: p(),
+                  timestamp: Date.now(),
+                });
+              }}
+              title="Open live preview in Right Dock"
+            >
+              <Icon name="preview" size={12} /> Open in Preview
             </button>
           </div>
         )}

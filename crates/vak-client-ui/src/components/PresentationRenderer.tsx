@@ -21,6 +21,7 @@ import DataGrid from "./presentation/DataGrid";
 import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
+import UIPreviewCard from "./presentation/UIPreviewCard";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -350,6 +351,9 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   }
   if (props.output.semantic_type === "recipe.card") {
     return <RecipeCard data={payload} />;
+  }
+  if (props.output.semantic_type === "ui.preview" || props.output.semantic_type === "react.preview") {
+    return <UIPreviewCard data={payload} />;
   }
   if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
     return <UniversalChart data={payload} />;
