@@ -1,5 +1,5 @@
 import { createMemo, Show } from "solid-js";
-import { connection, health, type Connection } from "../store";
+import { connection, density, health, setDensity, type Connection, type Density } from "../store";
 
 /** What each connection state means to a reader, in words rather than hue.
  *
@@ -51,6 +51,17 @@ export default function StatusBar() {
         </Show>
       </div>
       <div class="st-right">
+        <select
+          class="st-density"
+          value={density()}
+          onChange={(e) => setDensity(e.currentTarget.value as Density)}
+          title="Transcript detail level (Outcome: results only, Balanced: key steps, Audit: full verbose receipts)"
+          aria-label="Transcript detail"
+        >
+          <option value="outcome">Outcome detail</option>
+          <option value="balanced">Balanced detail</option>
+          <option value="audit">Audit detail</option>
+        </select>
         <Show when={h()?.provider}>
           <span class="st-item" title="active provider">{h()?.provider}</span>
         </Show>

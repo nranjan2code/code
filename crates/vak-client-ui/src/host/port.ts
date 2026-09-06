@@ -66,6 +66,8 @@ export interface Host {
   /** Choose a folder: a native dialog, or a server-side browser. `null`
    *  when the operator cancelled. */
   pickWorkspace(): Promise<string | null>;
+  /** Stop listing a workspace from host recents. */
+  forgetWorkspace?(cwd: string): Promise<void>;
 
   /** Get bytes to the operator: a native save dialog, or a download. */
   saveText(suggestedName: string, contents: string, mime?: string): Promise<SaveOutcome>;

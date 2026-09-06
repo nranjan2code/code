@@ -5,6 +5,18 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.15 — 2026-09-06
+
+### Reconfirmation modals, workspace removal safety, and composer layout stability
+
+- **Accidental removal protection with `ConfirmModal`**: Added a dedicated confirmation modal with clear action semantics, danger badges, and explicit assurances that local project files and git commits remain intact on disk before forgetting a workspace, archiving a task, or permanently deleting ledger history.
+- **Graceful in-flight cancellation**: Removing a workspace or archiving a task automatically and safely halts any active agent runs in that workspace or session, recording partial outputs cleanly without data corruption.
+- **Automatic canvas clearing on removal**: Archiving an active task or removing an active workspace immediately switches the canvas to the next available task or opens a fresh clean session rather than leaving stale chats rendered.
+- **Active workspace removal support**: Updated server and desktop host ports to seamlessly switch the active workspace to an available workspace or default home when removing the active directory, clearing both desktop and web recent lists.
+- **Workspace and session context menus**: Right-click context menus on sidebar workspace rows ("Switch to workspace", "Copy folder path", "Remove from list") and session rows ("Open task", "View transcript", "Copy task ID", "Archive task", "Delete permanently").
+- **Composer layout stability**: Eliminated composer toolbar distortion when sending prompts by enforcing non-wrapping horizontal alignment, moving detail density controls to the status bar (`st-density`), compacting token meters into a tight pill, and morphing the Send button directly into a Stop button within the exact same 28x28 footprint.
+- **Discoverable slash palette and skills button**: Added a dedicated `[/] skills` button to the composer toolbar alongside a unified slash palette supporting built-in commands (`/clear`, `/btw`, `/compact`, `/diff`, `/terminal`, `/files`, `/help`) and registered skills with full keyboard navigation.
+
 ## 3.0.14 — 2026-09-06
 
 ### Composer toolbar alignment and control streamlining

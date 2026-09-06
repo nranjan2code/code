@@ -786,6 +786,21 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     info
 }
 
+#[tauri::command]
+fn forget_workspace_desktop(cwd: String) {
+    let path = std::path::Path::new(&cwd);
+    let _ = vak_core::workspaces::forget(path);
+    let mut prefs = desktop_prefs();
+    prefs.recent_workspaces.retain(|p| p != &cwd);
+    if prefs.last_project.as_deref() == Some(&cwd) {
+        prefs.last_project = prefs.recent_workspaces.first().cloned();
+    }
+    let _ = std::fs::create_dir_all(vak_home());
+    if let Ok(json) = serde_json::to_string(&prefs) {
+        let _ = std::fs::write(prefs_path(), json);
+    }
+}
+
 fn main() {
     // Augment GUI process PATH with canonical toolchain paths so brokers and MCP servers resolve node/python/etc.
     #[allow(unsafe_code)]
@@ -921,6 +936,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_info,
+            forget_workspace_desktop,
             open_admin,
             review_workspace,
             start_backend,

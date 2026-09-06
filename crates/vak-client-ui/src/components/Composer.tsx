@@ -3,20 +3,19 @@ import type { JSX } from "solid-js";
 import {
   activeId,
   armedGoal,
-  density,
   health,
   isRunning,
   itemsOf,
   promptHistory,
   recordPrompt,
   setArmedGoal,
-  setDensity,
+  setDockTab,
+  setShowShortcuts,
   switchModel,
   usageOf,
   workspaceSwitching,
 } from "../store";
-import type { Density } from "../store";
-import { loadHealth, sendPrompt, stopRun, switchWorkspace } from "../App";
+import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
@@ -63,13 +62,22 @@ function detectMention(text: string, caret: number): Mention | null {
   return { start: caret - m[2].length - 1, query: m[2] };
 }
 
-/** Slash palette: `/name` as the very start of the message picks a skill. */
-function detectSkillQuery(text: string, caret: number): string | null {
-  if (caret === 0 || !text.startsWith("/")) return null;
-  const upto = text.slice(0, caret);
-  const m = /^\/([\w-]*)$/.exec(upto);
-  return m ? m[1] : null;
+interface SlashOption {
+  id: string;
+  name: string;
+  kind: "command" | "skill";
+  description: string;
 }
+
+const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
+  { name: "clear", description: "Clear current prompt draft and pending attachments" },
+  { name: "btw", description: "Ask a side question without landing on main session chain" },
+  { name: "compact", description: "Compact session context to free up context window tokens" },
+  { name: "diff", description: "Open diff inspector to review code changes" },
+  { name: "terminal", description: "Open integrated shell terminal pane" },
+  { name: "files", description: "Mention workspace files and attach code (@)" },
+  { name: "help", description: "View keyboard shortcuts and command manual (?)" },
+];
 
 export default function Composer(props: { cwd: string }) {
   const [text, setText] = createSignal("");
@@ -79,8 +87,7 @@ export default function Composer(props: { cwd: string }) {
   const [files, setFiles] = createSignal<string[]>([]);
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
   const [commands, setCommands] = createSignal<api.CustomCommand[]>([]);
-  const [commandPicked, setCommandPicked] = createSignal(0);
-  const [skillPicked, setSkillPicked] = createSignal(0);
+  const [slashPicked, setSlashPicked] = createSignal(0);
   // Image attachments: picked or pasted, sent as base64 vision blocks.
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
   const [composerError, setComposerError] = createSignal<string | null>(null);
@@ -197,36 +204,86 @@ export default function Composer(props: { cwd: string }) {
       .catch(() => setCommands([]));
   });
 
-  const skillMatches = () => {
-    // The skill menu renders above the textarea, so this runs once before
-    // `ta` is assigned; without the guard that first pass throws and takes
-    // down whatever triggered the render.
-    if (!ta) return [];
-    if (commandMatches().length) return [];
-    const q = detectSkillQuery(text(), ta.selectionStart);
-    if (q === null) return [];
-    const needle = q.toLowerCase();
-    return skills()
-      .filter(
-        (s) =>
-          s.name.toLowerCase().includes(needle) ||
-          s.description.toLowerCase().includes(needle),
-      )
-      .slice(0, 8);
-  };
-
-  const commandMatches = () => {
+  const slashMatches = (): SlashOption[] => {
     if (!ta || ta.selectionStart === 0 || !text().startsWith("/")) return [];
     const m = /^\/([\w-]*)$/.exec(text().slice(0, ta.selectionStart));
     if (!m) return [];
     const needle = m[1].toLowerCase();
-    return commands().filter((c) => c.name.includes(needle) || c.description.toLowerCase().includes(needle)).slice(0, 8);
+
+    const cmds: SlashOption[] = BUILTIN_SLASH_COMMANDS
+      .concat(commands())
+      .filter((c) => !needle || c.name.toLowerCase().includes(needle) || c.description.toLowerCase().includes(needle))
+      .map((c) => ({ id: `cmd-${c.name}`, name: c.name, kind: "command", description: c.description }));
+
+    const sks: SlashOption[] = skills()
+      .filter((s) => !needle || s.name.toLowerCase().includes(needle) || s.description.toLowerCase().includes(needle))
+      .map((s) => ({ id: `skill-${s.name}`, name: s.name, kind: "skill", description: s.description || "Skill" }));
+
+    return [...cmds, ...sks].slice(0, 10);
   };
 
-  const applyCommand = (command: api.CustomCommand) => {
-    const next = `/${command.name} `;
-    setText(next);
-    queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
+  const applySlashOption = (option: SlashOption) => {
+    if (option.kind === "command") {
+      if (option.name === "clear") {
+        setText("");
+        setPendingFiles([]);
+        setComposerError(null);
+        queueMicrotask(grow);
+        return;
+      }
+      if (option.name === "btw") {
+        setText("/btw ");
+        queueMicrotask(() => { ta.focus(); ta.setSelectionRange(5, 5); grow(); });
+        return;
+      }
+      if (option.name === "files") {
+        setText("");
+        beginMention();
+        return;
+      }
+      if (option.name === "diff") {
+        setDockTab("diff");
+        setText("");
+        queueMicrotask(grow);
+        return;
+      }
+      if (option.name === "terminal") {
+        setDockTab("terminal");
+        setText("");
+        queueMicrotask(grow);
+        return;
+      }
+      if (option.name === "help") {
+        setShowShortcuts(true);
+        setText("");
+        queueMicrotask(grow);
+        return;
+      }
+      if (option.name === "compact") {
+        const next = "/compact ";
+        setText(next);
+        queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
+        return;
+      }
+      const next = `/${option.name} `;
+      setText(next);
+      queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
+    } else {
+      const next = `use the ${option.name} skill `;
+      setText(next);
+      queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
+    }
+  };
+
+  const beginSlash = () => {
+    if (!text().startsWith("/")) {
+      setText(`/${text().trimStart()}`);
+    }
+    queueMicrotask(() => {
+      ta.focus();
+      ta.setSelectionRange(text().length, text().length);
+      grow();
+    });
   };
 
   const matches = () => {
@@ -260,16 +317,6 @@ export default function Composer(props: { cwd: string }) {
     const q = mn.query.toLowerCase();
     setCandidates(files().filter((f) => f.toLowerCase().includes(q)).slice(0, 8));
   });
-
-  const applySkill = (skill: SkillInfo) => {
-    const next = `use the ${skill.name} skill `;
-    setText(next);
-    queueMicrotask(() => {
-      ta.focus();
-      ta.setSelectionRange(next.length, next.length);
-      grow();
-    });
-  };
 
   const applyPick = (path: string) => {
     const mn = mention();
@@ -325,20 +372,22 @@ export default function Composer(props: { cwd: string }) {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const commandMenu = commandMatches();
-    if (commandMenu.length) {
+    const slashList = slashMatches();
+    if (slashList.length) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setCommandPicked((p) => Math.min(p + 1, commandMenu.length - 1));
+        setSlashPicked((p) => Math.min(p + 1, slashList.length - 1));
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setCommandPicked((p) => Math.max(p - 1, 0));
+        setSlashPicked((p) => Math.max(p - 1, 0));
         return;
       }
       if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        e.preventDefault(); applyCommand(commandMenu[Math.min(commandPicked(), commandMenu.length - 1)]); return;
+        e.preventDefault();
+        applySlashOption(slashList[Math.min(slashPicked(), slashList.length - 1)]);
+        return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
@@ -346,33 +395,7 @@ export default function Composer(props: { cwd: string }) {
         return;
       }
     } else {
-      setCommandPicked(0);
-    }
-    const skillMenu = skillMatches();
-    if (skillMenu.length) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSkillPicked((p) => Math.min(p + 1, skillMenu.length - 1));
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSkillPicked((p) => Math.max(p - 1, 0));
-        return;
-      }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        e.preventDefault();
-        applySkill(skillMenu[Math.min(skillPicked(), skillMenu.length - 1)]);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setText(text().slice(1));
-        queueMicrotask(() => ta.setSelectionRange(0, 0));
-        return;
-      }
-    } else {
-      setSkillPicked(0);
+      setSlashPicked(0);
     }
     if (mention() && candidates().length) {
       if (e.key === "ArrowDown") {
@@ -398,7 +421,7 @@ export default function Composer(props: { cwd: string }) {
     }
 
     // Prompt history navigation when input is empty or at start
-    if (!commandMenu.length && !skillMenu.length && !(mention() && candidates().length)) {
+    if (!slashList.length && !(mention() && candidates().length)) {
       if (e.key === "ArrowUp" && (ta.selectionStart === 0 || !text())) {
         const hist = promptHistory();
         if (hist.length > 0) {
@@ -447,28 +470,25 @@ export default function Composer(props: { cwd: string }) {
 
   return (
     <div class="composer-wrap">
-      <Show when={commandMatches().length}>
-        <div class="mention-menu skill-menu">
-          <For each={commandMatches()}>{(command, i) => <button class="mention-item" classList={{ on: commandPicked() === i() }} onMouseEnter={() => setCommandPicked(i())} onClick={() => applyCommand(command)}><span class="skill-name">/{command.name}</span><span class="skill-desc">{command.description}</span></button>}</For>
-          <div class="mention-hint">commands · Tab or Enter to insert</div>
-        </div>
-      </Show>
-      <Show when={skillMatches().length}>
-        <div class="mention-menu skill-menu">
-          <For each={skillMatches()}>
-            {(s, i) => (
+      <Show when={slashMatches().length}>
+        <div class="mention-menu slash-menu">
+          <For each={slashMatches()}>
+            {(opt, i) => (
               <button
-                class="mention-item"
-                classList={{ on: skillPicked() === i() }}
-                onMouseEnter={() => setSkillPicked(i())}
-                onClick={() => applySkill(s)}
+                class="slash-item"
+                classList={{ on: slashPicked() === i() }}
+                onMouseEnter={() => setSlashPicked(i())}
+                onClick={() => applySlashOption(opt)}
               >
-                <span class="skill-name">/{s.name}</span>
-                <span class="skill-desc">{s.description || "no description"}</span>
+                <span class="slash-badge" classList={{ cmd: opt.kind === "command", skill: opt.kind === "skill" }}>
+                  {opt.kind === "command" ? "cmd" : "skill"}
+                </span>
+                <span class="slash-name">/{opt.name}</span>
+                <span class="slash-desc">{opt.description}</span>
               </button>
             )}
           </For>
-          <div class="mention-hint">skills · Enter to use, Esc to dismiss</div>
+          <div class="mention-hint">commands & skills · Tab or Enter to use, Esc to dismiss</div>
         </div>
       </Show>
       <Show when={mention() && candidates().length}>
@@ -584,6 +604,10 @@ export default function Composer(props: { cwd: string }) {
               <span class="composer-at">@</span>
               <span>files</span>
             </button>
+            <button class="composer-context" title="Commands & skills (/)" onClick={beginSlash}>
+              <span class="composer-at">/</span>
+              <span>skills</span>
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -622,30 +646,41 @@ export default function Composer(props: { cwd: string }) {
             </div>
           </Show>
           <div class="composer-actions">
-            <select
-              class="composer-density"
-              value={density()}
-              onChange={(e) => setDensity(e.currentTarget.value as Density)}
-              aria-label="Transcript detail"
-              title="Transcript detail"
+            <div
+              class="composer-tokens-pill"
+              title={`Input ${inTok()} tokens · output ${outTok()} tokens · context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
             >
-              <option value="outcome">outcome</option>
-              <option value="balanced">balanced</option>
-              <option value="audit">audit</option>
-            </select>
-            <span class="composer-tokens" title={`Input ${inTok()} tokens · output ${outTok()} tokens`}>
-              {inTok()} in · {outTok()} out
-            </span>
-            <Ring
-              pct={ctxPct()}
-              label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
-            />
-            <Show when={isRunning(activeId())}>
-              <button class="composer-stop" title="Stop (Esc)" aria-label="Stop running task" onClick={stopRun}><Icon name="stop" size={15} /><span>Stop</span></button>
+              <Ring
+                pct={ctxPct()}
+                label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
+              />
+              <span class="composer-tokens">
+                {inTok()} in · {outTok()} out
+              </span>
+            </div>
+            <Show
+              when={isRunning(activeId())}
+              fallback={
+                <button
+                  class="send-button"
+                  title="Send prompt (Enter)"
+                  aria-label="Send prompt"
+                  disabled={!text().trim() && pendingFiles().length === 0}
+                  onClick={submit}
+                >
+                  <Icon name="send" size={15} />
+                </button>
+              }
+            >
+              <button
+                class="send-button stop"
+                title="Stop running task (Esc)"
+                aria-label="Stop running task"
+                onClick={stopRun}
+              >
+                <Icon name="stop" size={15} />
+              </button>
             </Show>
-            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!text().trim() && pendingFiles().length === 0} onClick={submit}>
-              <Icon name="send" size={16} />
-            </button>
           </div>
         </div>
       </div>

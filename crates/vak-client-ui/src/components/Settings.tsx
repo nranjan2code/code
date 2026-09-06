@@ -23,6 +23,7 @@ import * as api from "../api";
 import { relTime } from "../time";
 import { loadHealth, refreshSessions } from "../App";
 import Icon, { type IconName } from "./Icon";
+import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
 
@@ -81,6 +82,7 @@ function fmt(value: number): string {
 export default function Settings() {
   const scope = () => settingsScope();
   const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
+  const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
 
   // Prompt layers (docs/design/45). The layer resource is keyed on scope so
   // switching Shared/This project reloads the editable layer, while the
@@ -582,27 +584,44 @@ export default function Settings() {
     }
   };
 
-  const deleteTask = async (id: string) => {
+  const deleteTask = (id: string) => {
     const task = archivedSessions().find((session) => session.session_id === id);
-    if (!window.confirm(`Delete “${task?.title || "Untitled task"}”? This cannot be undone in Vak.`)) return;
-    try {
-      await api.deleteSession(id);
-      await refreshSessions();
-      setNotice({ kind: "info", text: "Task deleted from history." });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not delete that task: ${error instanceof Error ? error.message : String(error)}` });
-    }
+    setConfirmConfig({
+      title: `Permanently delete “${task?.title || "Untitled task"}”?`,
+      description: "This task and its conversation events will be deleted from Vak's ledger. This action cannot be undone.",
+      confirmLabel: "Delete Task",
+      cancelLabel: "Cancel",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await api.deleteSession(id);
+          await refreshSessions();
+          setNotice({ kind: "info", text: "Task deleted from history." });
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not delete that task: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      },
+    });
   };
 
-  const deleteAllArchived = async () => {
-    if (!archivedSessions().length || !window.confirm(`Delete all ${archivedSessions().length} archived tasks? This cannot be undone in Vak.`)) return;
-    try {
-      const result = await api.deleteAllArchived();
-      await refreshSessions();
-      setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
-    }
+  const deleteAllArchived = () => {
+    if (!archivedSessions().length) return;
+    setConfirmConfig({
+      title: `Delete all ${archivedSessions().length} archived tasks?`,
+      description: "All archived tasks and their events will be permanently removed from Vak's ledger. This action cannot be undone.",
+      confirmLabel: "Delete All Archived",
+      cancelLabel: "Cancel",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          const result = await api.deleteAllArchived();
+          await refreshSessions();
+          setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      },
+    });
   };
 
   // ---- Data & backup (docs/design/29-personal-os.md P3) ----------------------
@@ -1460,6 +1479,7 @@ export default function Settings() {
           </Show>
         </div>
       </main>
+      <ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} />
     </div>
   );
 }

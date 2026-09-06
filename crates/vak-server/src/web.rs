@@ -424,16 +424,12 @@ pub(crate) async fn forget_workspace(
     Json(body): Json<OpenWorkspaceBody>,
 ) -> Response {
     let path = PathBuf::from(body.path.trim());
-    // Refusing to remove the workspace currently in use avoids the state
-    // where the active project is not in its own list.
-    if canonical_eq(&path, state.active_core().cwd()) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "that workspace is currently open; switch to another first",
-            })),
-        )
-            .into_response();
+    // If the active workspace is being forgotten, fall back to the default core.
+    if canonical_eq(&path, state.active_core().cwd()) && !canonical_eq(&path, state.core.cwd()) {
+        *state
+            .active_core
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
     match vak_core::workspaces::forget(&path) {
         Ok(()) => Json(serde_json::json!({ "forgotten": body.path })).into_response(),

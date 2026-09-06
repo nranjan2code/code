@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   activeId,
   backend,
@@ -23,6 +23,8 @@ import type { SessionSummary } from "../types";
 import { relTime } from "../time";
 import Icon from "./Icon";
 
+import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
+
 type Filter = "all" | "archived";
 
 type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
@@ -31,6 +33,18 @@ export default function Sidebar() {
   const [filter, setFilter] = createSignal<Filter>("all");
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; cwd: string; name: string } | null>(null);
+  const [sessionContextMenu, setSessionContextMenu] = createSignal<{ x: number; y: number; session: SessionSummary } | null>(null);
+  const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
+
+  onMount(() => {
+    const dismiss = () => {
+      setContextMenu(null);
+      setSessionContextMenu(null);
+    };
+    window.addEventListener("click", dismiss);
+    onCleanup(() => window.removeEventListener("click", dismiss));
+  });
 
   const visible = createMemo(() => {
     let list = sessions();
@@ -81,13 +95,48 @@ export default function Sidebar() {
   });
 
   /// Remove a project from the list. Its history is untouched.
-  const forgetWorkspace = async (cwd: string, name: string) => {
+  const executeForgetWorkspace = async (cwd: string, name: string) => {
     try {
+      // 1. If any task in this workspace is running, stop it gracefully
+      const wsSessions = sessions().filter((s) => (s.cwd || backend().cwd) === cwd);
+      for (const s of wsSessions) {
+        if (isRunning(s.session_id) || s.running) {
+          try {
+            await api.cancelRun(s.session_id);
+          } catch {
+            // continue
+          }
+        }
+      }
+
+      // 2. If it's the active workspace, switch to another workspace first
+      if (backend().cwd === cwd) {
+        const all = groups();
+        const other = all.find((g) => g.cwd !== cwd)?.cwd
+          || (backend().recent_workspaces ?? []).find((c) => c !== cwd);
+        if (other) {
+          await switchWorkspace(other);
+        } else {
+          try {
+            await switchWorkspace("~/vak-home");
+          } catch {
+            // continue with forget
+          }
+        }
+      }
+      await host.forgetWorkspace?.(cwd);
       await api.forgetWorkspace(cwd);
       await refreshBackend();
+      await refreshSessions();
+
+      // 3. If current active chat was in the removed workspace, reset canvas
+      if (wsSessions.some((s) => s.session_id === activeId())) {
+        void newSession();
+      }
+
       setNotice({
         kind: "info",
-        text: `Removed ${name} from the list. Its tasks and settings are kept — open the folder again to restore it.`,
+        text: `Removed "${name}" from list. Any active runs were stopped. Local files and history remain safely on disk.`,
       });
     } catch (error) {
       setNotice({
@@ -97,13 +146,109 @@ export default function Sidebar() {
     }
   };
 
-  const toggleArchive = async (session: SessionSummary, next: boolean) => {
+  const requestForgetWorkspace = (cwd: string, name: string) => {
+    setConfirmConfig({
+      title: `Remove "${name}" from workspace list?`,
+      description: `This removes the workspace from your sidebar. Your local files, git branches, commits, and session ledgers are completely safe and remain untouched on disk.`,
+      detail: backend().cwd === cwd
+        ? "This is your currently active workspace. Vak will safely switch you to another workspace and stop any active runs."
+        : "Any tasks currently running in this workspace will be safely stopped.",
+      confirmLabel: "Remove Workspace",
+      cancelLabel: "Keep Workspace",
+      isDanger: true,
+      onConfirm: async () => {
+        await executeForgetWorkspace(cwd, name);
+      },
+    });
+  };
+
+  const executeToggleArchive = async (session: SessionSummary, next: boolean) => {
     try {
+      // If archiving a running task, stop it cleanly
+      if (next && (isRunning(session.session_id) || session.running)) {
+        try {
+          await api.cancelRun(session.session_id);
+        } catch {
+          // ignore
+        }
+      }
       await api.setArchived(session.session_id, next);
       await refreshSessions();
+
+      // If the archived chat is the active chat on screen, clear the canvas!
+      if (next && activeId() === session.session_id) {
+        const remaining = sessions().filter((s) => !s.archived && s.session_id !== session.session_id);
+        if (remaining.length > 0) {
+          void activate(remaining[0].session_id);
+        } else {
+          void newSession();
+        }
+      }
+
+      setNotice({
+        kind: "info",
+        text: next ? "Task archived and cleared from canvas. You can view or restore it anytime in Archived." : "Task restored.",
+      });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not ${next ? "archive" : "restore"} that task: ${error instanceof Error ? error.message : String(error)}` });
     }
+  };
+
+  const requestToggleArchive = (session: SessionSummary, next: boolean) => {
+    if (!next) {
+      void executeToggleArchive(session, false);
+      return;
+    }
+    setConfirmConfig({
+      title: `Archive "${session.title || "Untitled task"}"?`,
+      description: "This task will be removed from your active sidebar list and cleared from the canvas. All message history and receipts are safely preserved in the ledger.",
+      detail: (isRunning(session.session_id) || session.running)
+        ? "This task is currently working. Archiving it will safely stop the active run and save partial output."
+        : "You can view or restore this task anytime from the Archived section.",
+      confirmLabel: "Archive Task",
+      cancelLabel: "Cancel",
+      isDanger: false,
+      onConfirm: async () => {
+        await executeToggleArchive(session, true);
+      },
+    });
+  };
+
+  const requestDeleteSession = (session: SessionSummary) => {
+    setConfirmConfig({
+      title: `Permanently delete "${session.title || "Untitled task"}"?`,
+      description: "This task and its conversation events will be deleted from Vak's ledger. This action cannot be undone.",
+      detail: (isRunning(session.session_id) || session.running)
+        ? "This task is currently active. Deleting it will stop the run and erase its ledger."
+        : "All events and receipts for this task will be permanently erased.",
+      confirmLabel: "Delete Task",
+      cancelLabel: "Cancel",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          if (isRunning(session.session_id) || session.running) {
+            try {
+              await api.cancelRun(session.session_id);
+            } catch {
+              // ignore
+            }
+          }
+          await api.deleteSession(session.session_id);
+          await refreshSessions();
+          if (activeId() === session.session_id) {
+            const remaining = sessions().filter((s) => s.session_id !== session.session_id && !s.archived);
+            if (remaining.length > 0) {
+              void activate(remaining[0].session_id);
+            } else {
+              void newSession();
+            }
+          }
+          setNotice({ kind: "info", text: "Task deleted from history." });
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not delete task: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      },
+    });
   };
 
   return (
@@ -184,24 +329,26 @@ export default function Sidebar() {
           <For each={groups()}>
             {(group) => (
               <section class="workspace-group">
-                <div class="workspace-group-row" classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }}>
+                <div
+                  class="workspace-group-row"
+                  classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({ x: e.clientX, y: e.clientY, cwd: group.cwd, name: group.name });
+                  }}
+                >
                   <button class="workspace-group-head" title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchWorkspace(group.cwd)}>
                     <Icon name="folder" size={14} />
                     <span>{group.name}</span>
                     <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
                   </button>
-                  {/* Removing a project is a LIST decision, not a delete:
-                      its sessions, memory, and settings all survive, and
-                      re-opening the folder restores it. The active project
-                      has no remove control — removing the thing you are
-                      looking at leaves the list disagreeing with the view. */}
-                  <Show when={backend().cwd !== group.cwd && filter() !== "archived"}>
+                  <Show when={filter() !== "archived"}>
                     <button
                       class="workspace-forget has-tooltip"
-                      data-tooltip="Remove from this list (keeps its history)"
+                      data-tooltip={backend().cwd === group.cwd ? `Close & remove ${group.name} from list (keeps files)` : `Remove ${group.name} from list (keeps files)`}
                       aria-label={`Remove ${group.name} from the workspace list`}
                       disabled={workspaceSwitching()}
-                      onClick={(e) => { e.stopPropagation(); void forgetWorkspace(group.cwd, group.name); }}
+                      onClick={(e) => { e.stopPropagation(); void requestForgetWorkspace(group.cwd, group.name); }}
                     >
                       <Icon name="close" size={12} />
                     </button>
@@ -216,7 +363,14 @@ export default function Sidebar() {
                     // keyboard (no tabindex, no key handler; a click was
                     // the only way in). This is a plain row with three
                     // sibling controls instead.
-                    <div class="sb-item" classList={{ active: activeId() === session.session_id }}>
+                    <div
+                      class="sb-item"
+                      classList={{ active: activeId() === session.session_id }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
+                      }}
+                    >
                       <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
                         <span class="session-icon"><Icon name="chat" size={14} /></span>
                         <span class="sb-item-copy">
@@ -234,9 +388,14 @@ export default function Sidebar() {
                       <button class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
                         <Icon name="history" size={13} />
                       </button>
-                      <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
+                      <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, !session.archived); }}>
                         <Icon name={session.archived ? "restore" : "archive"} size={13} />
                       </button>
+                      <Show when={session.archived}>
+                        <button class="sb-archive has-tooltip danger" data-tooltip="Permanently delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); void requestDeleteSession(session); }}>
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </Show>
                       <span class="sb-time">{relTime(session.updated_at)}</span>
                     </div>
                   )}
@@ -272,6 +431,122 @@ export default function Sidebar() {
         </Show>
         <button class="sidebar-help has-tooltip" data-tooltip="Keyboard shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span>?</span></button>
       </div>
+
+      <Show when={contextMenu()}>
+        {(menu) => (
+          <div
+            class="context-menu"
+            style={{ top: `${menu().y}px`, left: `${Math.min(menu().x, window.innerWidth - 190)}px` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Show when={backend().cwd !== menu().cwd}>
+              <button
+                class="context-menu-item"
+                onClick={() => {
+                  const c = menu().cwd;
+                  setContextMenu(null);
+                  void switchWorkspace(c);
+                }}
+              >
+                <Icon name="folder" size={13} />
+                <span>Switch to workspace</span>
+              </button>
+            </Show>
+            <button
+              class="context-menu-item"
+              onClick={() => {
+                void navigator.clipboard.writeText(menu().cwd);
+                setNotice({ kind: "info", text: `Copied path to clipboard.` });
+                setContextMenu(null);
+              }}
+            >
+              <Icon name="copy" size={13} />
+              <span>Copy folder path</span>
+            </button>
+            <div class="context-menu-divider" />
+            <button
+              class="context-menu-item danger"
+              onClick={() => {
+                const { cwd, name } = menu();
+                setContextMenu(null);
+                void requestForgetWorkspace(cwd, name);
+              }}
+            >
+              <Icon name="close" size={13} />
+              <span>Remove from list</span>
+            </button>
+          </div>
+        )}
+      </Show>
+
+      <Show when={sessionContextMenu()}>
+        {(menu) => (
+          <div
+            class="context-menu"
+            style={{ top: `${menu().y}px`, left: `${Math.min(menu().x, window.innerWidth - 190)}px` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              class="context-menu-item"
+              onClick={() => {
+                const id = menu().session.session_id;
+                setSessionContextMenu(null);
+                void activate(id);
+              }}
+            >
+              <Icon name="chat" size={13} />
+              <span>Open task</span>
+            </button>
+            <button
+              class="context-menu-item"
+              onClick={() => {
+                const id = menu().session.session_id;
+                setSessionContextMenu(null);
+                setTranscriptViewId(id);
+              }}
+            >
+              <Icon name="history" size={13} />
+              <span>View transcript</span>
+            </button>
+            <button
+              class="context-menu-item"
+              onClick={() => {
+                void navigator.clipboard.writeText(menu().session.session_id);
+                setNotice({ kind: "info", text: "Copied task ID to clipboard." });
+                setSessionContextMenu(null);
+              }}
+            >
+              <Icon name="copy" size={13} />
+              <span>Copy task ID</span>
+            </button>
+            <div class="context-menu-divider" />
+            <button
+              class="context-menu-item"
+              onClick={() => {
+                const s = menu().session;
+                setSessionContextMenu(null);
+                void requestToggleArchive(s, !s.archived);
+              }}
+            >
+              <Icon name={menu().session.archived ? "restore" : "archive"} size={13} />
+              <span>{menu().session.archived ? "Restore task" : "Archive task"}</span>
+            </button>
+            <button
+              class="context-menu-item danger"
+              onClick={() => {
+                const s = menu().session;
+                setSessionContextMenu(null);
+                void requestDeleteSession(s);
+              }}
+            >
+              <Icon name="trash" size={13} />
+              <span>Delete permanently</span>
+            </button>
+          </div>
+        )}
+      </Show>
+
+      <ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} />
     </aside>
   );
 }
