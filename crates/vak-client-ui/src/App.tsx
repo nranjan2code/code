@@ -53,6 +53,8 @@ import {
   setSearchOpen,
   settingsOpen,
   setSettingsOpen,
+  workspacePickerOpen,
+  setWorkspacePickerOpen,
   inboxOpen,
   setInboxOpen,
   transcriptViewId,
@@ -105,6 +107,7 @@ import FeedsModal from "./components/FeedsModal";
 import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
+import WorkspacePickerModal from "./components/WorkspacePickerModal";
 
 const streams = new Map<string, EventSource>();
 const presentationStreams = new Map<string, EventSource>();
@@ -749,6 +752,10 @@ function diffCoversPath(diff: string, path: string): boolean {
 export async function switchWorkspace(cwd?: string) {
   if (workspaceSwitching()) return;
   try {
+    if (!cwd && !host.can("native-dialogs")) {
+      setWorkspacePickerOpen(true);
+      return;
+    }
     const dir = cwd ?? (await host.pickWorkspace());
     if (typeof dir === "string") {
       if (dir === backend().cwd) return;
@@ -915,6 +922,7 @@ export default function App() {
       if (!mod) {
         if (e.key === "Escape") {
           if (showShortcuts()) setShowShortcuts(false);
+          else if (workspacePickerOpen()) setWorkspacePickerOpen(false);
           else if (searchOpen()) setSearchOpen(false);
           else if (settingsOpen()) setSettingsOpen(false);
           else if (bestOfOpen()) setBestOfOpen(false);
@@ -1180,6 +1188,7 @@ export default function App() {
           <Toast />
           <SearchModal />
           <FeedsModal />
+          <WorkspacePickerModal />
           <Show when={settingsOpen()}><Settings /></Show>
         </div>
       )}

@@ -1,6 +1,20 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, armedGoal, density, health, isRunning, itemsOf, setArmedGoal, setDensity, usageOf, workspaceSwitching } from "../store";
+import {
+  activeId,
+  armedGoal,
+  density,
+  health,
+  isRunning,
+  itemsOf,
+  promptHistory,
+  recordPrompt,
+  setArmedGoal,
+  setDensity,
+  switchModel,
+  usageOf,
+  workspaceSwitching,
+} from "../store";
 import type { Density } from "../store";
 import { loadHealth, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -78,33 +92,83 @@ export default function Composer(props: { cwd: string }) {
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
+  const [historyIdx, setHistoryIdx] = createSignal(-1);
+  let draftText = "";
+  const [modelList, setModelList] = createSignal<string[]>([]);
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
+
+  const isTouchDevice = () => typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+
+  onMount(() => {
+    const onEditPrompt = (ev: Event) => {
+      const custom = ev as CustomEvent<{ text: string }>;
+      if (custom.detail?.text) {
+        setText(custom.detail.text);
+        queueMicrotask(() => {
+          if (ta) {
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+            grow();
+          }
+        });
+      }
+    };
+    window.addEventListener("vak:edit-prompt", onEditPrompt);
+    onCleanup(() => window.removeEventListener("vak:edit-prompt", onEditPrompt));
+  });
+
+  createEffect(() => {
+    const p = health()?.provider;
+    if (!p) return;
+    api.discoverModels(p).then((r) => setModelList(r.models)).catch(() => {});
+  });
 
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
   const addFiles = (list: FileList | File[]) => {
     setComposerError(null);
     for (const file of Array.from(list)) {
-      if (!file.type.startsWith("image/")) {
-        setComposerError(`${file.name}: only images can be attached`);
-        continue;
-      }
-      if (file.size > MAX_FILE_BYTES) {
-        setComposerError(`${file.name} is too large (max 5 MB)`);
-        continue;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = String(reader.result ?? "");
-        const base64 = url.includes(",") ? url.slice(url.indexOf(",") + 1) : "";
-        if (base64) {
-          setPendingFiles((cur) => [...cur, { name: file.name, mime: file.type, data: base64 }]);
+      if (file.type.startsWith("image/")) {
+        if (file.size > MAX_FILE_BYTES) {
+          setComposerError(`${file.name} is too large (max 5 MB)`);
+          continue;
         }
-      };
-      reader.readAsDataURL(file);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = String(reader.result ?? "");
+          const base64 = url.includes(",") ? url.slice(url.indexOf(",") + 1) : "";
+          if (base64) {
+            setPendingFiles((cur) => [...cur, { name: file.name, mime: file.type, data: base64 }]);
+          }
+        };
+        reader.readAsDataURL(file);
+      } else {
+        // Text / code file dropped: format and insert as code block
+        if (file.size > 2 * 1024 * 1024) {
+          setComposerError(`${file.name} is too large to attach (max 2 MB)`);
+          continue;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const content = String(reader.result ?? "");
+          const ext = file.name.split(".").pop() ?? "";
+          const codeBlock = `\n\`\`\`${ext}\n// ${file.name}\n${content}\n\`\`\`\n`;
+          const cur = text();
+          setText(cur ? `${cur}\n${codeBlock}` : codeBlock.trimStart());
+          queueMicrotask(() => {
+            if (ta) {
+              ta.focus();
+              ta.setSelectionRange(ta.value.length, ta.value.length);
+              grow();
+            }
+          });
+        };
+        reader.readAsText(file);
+      }
     }
   };
+
 
   const usage = createMemo(() => usageOf(activeId()));
   const ctxPct = createMemo(() => {
@@ -254,6 +318,9 @@ export default function Composer(props: { cwd: string }) {
       setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
       return;
     }
+    if (t) recordPrompt(t);
+    setHistoryIdx(-1);
+    draftText = "";
     setText("");
     setMention(null);
     setPendingFiles([]);
@@ -350,7 +417,49 @@ export default function Composer(props: { cwd: string }) {
         return;
       }
     }
+
+    // Prompt history navigation when input is empty or at start
+    if (!commandMenu.length && !skillMenu.length && !(mention() && candidates().length)) {
+      if (e.key === "ArrowUp" && (ta.selectionStart === 0 || !text())) {
+        const hist = promptHistory();
+        if (hist.length > 0) {
+          e.preventDefault();
+          if (historyIdx() === -1) {
+            draftText = text();
+          }
+          const nextIdx = Math.min(historyIdx() + 1, hist.length - 1);
+          setHistoryIdx(nextIdx);
+          setText(hist[nextIdx]);
+          queueMicrotask(() => {
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+            grow();
+          });
+          return;
+        }
+      }
+      if (e.key === "ArrowDown" && historyIdx() >= 0) {
+        e.preventDefault();
+        const hist = promptHistory();
+        const nextIdx = historyIdx() - 1;
+        setHistoryIdx(nextIdx);
+        if (nextIdx >= 0) {
+          setText(hist[nextIdx]);
+        } else {
+          setText(draftText);
+        }
+        queueMicrotask(() => {
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+          grow();
+        });
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      if (isTouchDevice() && !e.metaKey && !e.ctrlKey) {
+        // Soft keyboards on touch devices: Return key creates a newline
+        return;
+      }
       e.preventDefault();
       submit();
     }
@@ -422,7 +531,8 @@ export default function Composer(props: { cwd: string }) {
             <For each={pendingFiles()}>
               {(f, i) => (
                 <span class="attachment-chip">
-                  {f.name}
+                  <img class="attachment-thumb" src={`data:${f.mime};base64,${f.data}`} alt="" />
+                  <span class="attachment-name">{f.name}</span>
                   <button
                     class="attachment-remove"
                     title={`Remove ${f.name}`}
@@ -441,15 +551,20 @@ export default function Composer(props: { cwd: string }) {
           rows={1}
           placeholder={activeId() && isRunning(activeId()) ? "Add direction while Vak is working…" : "Ask Vak to build, fix, or explain…"}
           value={text()}
-          onInput={(event) => { setText(event.currentTarget.value); refreshMention(); grow(); }}
+          onInput={(event) => {
+            setText(event.currentTarget.value);
+            if (historyIdx() !== -1) setHistoryIdx(-1);
+            refreshMention();
+            grow();
+          }}
           onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) refreshMention(); }}
           onClick={refreshMention}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
-            const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
-            if (imgs.length) {
+            const files = Array.from(e.clipboardData?.files ?? []);
+            if (files.length) {
               e.preventDefault();
-              addFiles(imgs);
+              addFiles(files);
             }
           }}
         />
@@ -474,6 +589,18 @@ export default function Composer(props: { cwd: string }) {
               <option value="WorkspaceWrite">Workspace write</option>
               <option value="FullAccess">Full access</option>
             </select>
+            <Show when={modelList().length > 0}>
+              <select
+                class="composer-mode composer-model-select"
+                value={health()?.model ?? ""}
+                onChange={(e) => void switchModel(e.currentTarget.value)}
+                title={`Active model: ${health()?.model ?? ""} — click to switch`}
+              >
+                <For each={modelList()}>
+                  {(m) => <option value={m}>{m}</option>}
+                </For>
+              </select>
+            </Show>
             <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
               <span class="composer-hint">@ to add files</span>
             </button>
@@ -490,13 +617,14 @@ export default function Composer(props: { cwd: string }) {
             />
             <button
               class="composer-context composer-attach"
-              title="Attach images (or paste / drop them here)"
-              aria-label="Attach images"
+              title="Attach files (or paste / drop them here)"
+              aria-label="Attach files"
               onClick={() => fileInput.click()}
             >
               <Icon name="add" size={14} />
             </button>
           </div>
+
           <Show when={armedGoal()}>
             <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
               <Icon name="spark" size={13} />

@@ -1,10 +1,22 @@
-import { createEffect, Show } from "solid-js";
+import { createEffect, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { openInEditor, uiPreferences } from "../store";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 
+function closeUnclosedFences(src: string): string {
+  const lines = src.split("\n");
+  let open = false;
+  for (const line of lines) {
+    if (/^```/.test(line.trim())) {
+      open = !open;
+    }
+  }
+  return open ? `${src}\n\`\`\`` : src;
+}
+
 async function colorizeCodeBlocks(root: HTMLElement) {
+  if (!root || !root.isConnected) return;
   for (const cb of Array.from(root.querySelectorAll<HTMLElement>(".cb"))) {
     if (cb.dataset.hl === "1") continue;
     const code = cb.querySelector("pre > code");
@@ -12,7 +24,7 @@ async function colorizeCodeBlocks(root: HTMLElement) {
     const lang = languageForFence(cb.querySelector(".cb-h span")?.textContent ?? "");
     if (!lang) continue;
     const out = await highlight(code.textContent ?? "", lang);
-    if (!out) continue;
+    if (!out || !cb.isConnected) continue;
     const pre = cb.querySelector("pre");
     if (!pre) continue;
     pre.outerHTML = out;
@@ -22,12 +34,34 @@ async function colorizeCodeBlocks(root: HTMLElement) {
 
 export default function MarkdownView(props: { text: string; streaming?: boolean }): JSX.Element {
   let el!: HTMLDivElement;
+  let hlTimer: number | null = null;
+
   createEffect(() => {
     void uiPreferences.theme;
-    if (props.streaming) return;
-    el.innerHTML = renderMarkdown(props.text);
-    void colorizeCodeBlocks(el);
+    const raw = props.text;
+    if (!el) return;
+    const textToRender = props.streaming ? closeUnclosedFences(raw) : raw;
+    el.innerHTML = renderMarkdown(textToRender);
+
+    if (props.streaming) {
+      if (hlTimer !== null) clearTimeout(hlTimer);
+      hlTimer = window.setTimeout(() => {
+        hlTimer = null;
+        void colorizeCodeBlocks(el);
+      }, 400);
+    } else {
+      if (hlTimer !== null) {
+        clearTimeout(hlTimer);
+        hlTimer = null;
+      }
+      void colorizeCodeBlocks(el);
+    }
   });
+
+  onCleanup(() => {
+    if (hlTimer !== null) clearTimeout(hlTimer);
+  });
+
   const onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.classList.contains("cb-copy")) {
@@ -41,9 +75,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
       openInEditor(code.textContent ?? "");
     }
   };
-  return (
-    <Show when={!props.streaming} fallback={<div class="md streaming semantic-stream-text">{props.text}</div>}>
-      <div class="md" ref={el} onClick={onClick} />
-    </Show>
-  );
+
+  return <div class="md" classList={{ streaming: !!props.streaming }} ref={el} onClick={onClick} />;
 }
+

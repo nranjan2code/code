@@ -59,6 +59,43 @@ export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
+
+const PROMPT_HISTORY_KEY = "vak.promptHistory";
+function loadPromptHistory(): string[] {
+  try {
+    return JSON.parse(sessionStorage.getItem(PROMPT_HISTORY_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+export const [promptHistory, setPromptHistory] = createSignal<string[]>(loadPromptHistory());
+
+export function recordPrompt(prompt: string) {
+  const trimmed = prompt.trim();
+  if (!trimmed) return;
+  setPromptHistory((prev) => {
+    const filtered = prev.filter((p) => p !== trimmed);
+    const updated = [trimmed, ...filtered].slice(0, 50);
+    try {
+      sessionStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    return updated;
+  });
+}
+
+export async function switchModel(newModel: string) {
+  if (!newModel) return;
+  try {
+    await api.patchConfig({ model: newModel });
+    const cur = health();
+    if (cur) setHealth({ ...cur, model: newModel });
+  } catch (err) {
+    console.error("Failed to switch model", err);
+  }
+}
+
 // Provider/model picker state. Whether *setup* is complete is not tracked
 // here: it is derived from `GET /onboarding` on every read, so there is no
 // local flag that can disagree with the server about what is configured.
@@ -100,6 +137,7 @@ export function goalAppliesTo(id: string | null): ArmedGoal | null {
   return current.sessionId === null || current.sessionId === id ? current : null;
 }
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
+export const [workspacePickerOpen, setWorkspacePickerOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */

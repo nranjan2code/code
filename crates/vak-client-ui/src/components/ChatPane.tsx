@@ -257,7 +257,9 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
           </div>
         )}
       </Show>
-      <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
+      <Show when={open() || density() === "audit" || props.item.isError || !props.item.done}>
+        <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
+      </Show>
       <details class="tool-details" open={open() || density() === "audit"}>
         <summary>View request details</summary>
         <pre class="tool-args">{argsPretty()}</pre>
@@ -265,6 +267,49 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     </div>
   );
 };
+
+function MessageActions(props: { text: string; role: "user" | "assistant" }) {
+  const [copied, setCopied] = createSignal(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(props.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  };
+  const editPrompt = () => {
+    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: props.text } }));
+  };
+
+  return (
+    <div class={`msg-actions msg-actions-${props.role}`} aria-label="Message actions">
+      <button
+        class="msg-action-btn"
+        title={copied() ? "Copied" : "Copy text"}
+        aria-label={copied() ? "Copied" : "Copy text"}
+        onClick={copy}
+      >
+        <Show when={copied()} fallback={<Icon name="copy" size={11} />}>
+          <Icon name="check" size={11} />
+        </Show>
+        <span>{copied() ? "Copied" : "Copy"}</span>
+      </button>
+      <Show when={props.role === "user"}>
+        <button
+          class="msg-action-btn"
+          title="Edit prompt in composer"
+          aria-label="Edit prompt in composer"
+          onClick={editPrompt}
+        >
+          <Icon name="code" size={11} />
+          <span>Edit</span>
+        </button>
+      </Show>
+    </div>
+  );
+}
 
 /** Arg keys that name the subject of a webfetch-style tool call. */
 const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
@@ -369,7 +414,14 @@ export const Markdown = MarkdownView;
 export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element => {
   const item = props.item;
   if (item.kind === "user") {
-    return <div class="msg user"><Markdown text={item.text} /></div>;
+    return (
+      <div class="msg user">
+        <div class="msg-bubble-wrap">
+          <div class="md"><Markdown text={item.text} /></div>
+          <MessageActions text={item.text} role="user" />
+        </div>
+      </div>
+    );
   }
   if (item.kind === "assistant") {
     return (
@@ -379,6 +431,9 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           <Show when={item.streaming}>
             <span class="caret" />
           </Show>
+        </Show>
+        <Show when={!item.streaming && item.text}>
+          <MessageActions text={item.text} role="assistant" />
         </Show>
       </div>
     );
@@ -418,6 +473,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   let scroller!: HTMLDivElement;
   let pinned = true;
   let scrollFrame: number | null = null;
+  let smoothScrolling = false;
+  let smoothTimer: number | null = null;
   const [atBottom, setAtBottom] = createSignal(true);
 
   const onScroll = () => {
@@ -425,8 +482,17 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     setAtBottom(pinned);
   };
   const scrollToBottom = (force = false) => {
-    if (pinned || force) {
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: force ? "smooth" : "auto" });
+    if (force) {
+      smoothScrolling = true;
+      if (smoothTimer !== null) clearTimeout(smoothTimer);
+      smoothTimer = window.setTimeout(() => { smoothScrolling = false; }, 400);
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      pinned = true;
+      setAtBottom(true);
+      return;
+    }
+    if (pinned && !smoothScrolling) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       pinned = true;
       setAtBottom(true);
     }
@@ -475,7 +541,9 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
   onCleanup(() => {
     if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+    if (smoothTimer !== null) clearTimeout(smoothTimer);
   });
+
 
   return (
     <div class="chat-shell">

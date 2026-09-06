@@ -5,6 +5,18 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.13 — 2026-09-06
+
+### Chat surface UX overhaul and web workspace management
+
+- **Progressive streaming markdown**: Dynamic unclosed code block detection renders headings, bold, and code blocks in real time with debounced Shiki highlighting, preventing post-turn DOM swap and layout reflow.
+- **Collapsible tool cards**: Completed tool calls collapse by default to preserve transcript scannability, with full outputs expandable on click.
+- **Message action bar**: Floating hover bar provides 1-click response copying with checkmark feedback and prompt editing for user messages.
+- **Composer ergonomics**: Prompt history navigation (`↑`/`↓`), multi-file drag-and-drop code attachments, image preview thumbnails, and mobile virtual keyboard Enter handling.
+- **Quick model switcher**: Inline dropdown in composer populated dynamically from discovered provider models.
+- **Web workspace management**: Added `WorkspacePickerModal` backed by `DirectoryPicker` allowing web users to browse server directories and add/switch workspaces directly from the sidebar.
+- **Workspace lifecycle clarity**: Workspace removal is strictly a presentation decision ("forget") that never deletes local files or directories on disk.
+
 ## 3.0.12 — 2026-09-06
 
 ### System-driven tool-failure recovery (no more silent `produced`)

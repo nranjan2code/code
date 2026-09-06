@@ -10,6 +10,7 @@ export type IconName =
   | "chevron"
   | "close"
   | "code"
+  | "copy"
   | "diff"
   | "download"
   | "file"
@@ -46,6 +47,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   chevron: () => <path d="m9 18 6-6-6-6" />,
   close: () => <><path d="m6 6 12 12M18 6 6 18" /></>,
   code: () => <><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></>,
+  copy: () => <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
   diff: () => <><path d="M7 3v18M17 3v18M4 7h6M14 17h6M17 7v6M14 10h6" /></>,
   download: () => <><path d="M12 3v11m0 0 4-4m-4 4-4-4" /><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></>,
   file: () => <><path d="M6 3h8l4 4v14H6Z" /><path d="M14 3v5h5M9 13h6M9 17h5" /></>,

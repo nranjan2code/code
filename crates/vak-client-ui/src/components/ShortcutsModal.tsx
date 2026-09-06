@@ -1,20 +1,24 @@
 import { trapFocus } from "../focusTrap";
 import { setShowShortcuts } from "../store";
 
-const SHORTCUTS: [string, string][] = [
-  ["⌘N", "new session"],
-  ["⌘D", "toggle diff pane"],
-  ["⌘\\", "toggle split view (two tasks side-by-side)"],
-  ["⌘B", "toggle sidebar"],
-  ["⌘H", "time travel (workspace snapshots)"],
-  ["⌘K", "global search across sessions"],
+const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
+const mod = isMac ? "⌘" : "Ctrl+";
+
+const shortcuts: [string, string][] = [
+  [`${mod}N`, "new session"],
+  [`${mod}D`, "toggle diff pane"],
+  [`${mod}\\`, "toggle split view (two tasks side-by-side)"],
+  [`${mod}B`, "toggle sidebar"],
+  [`${mod}H`, "time travel (workspace snapshots)"],
+  [`${mod}K`, "global search across sessions"],
   ["G then I", "open inbox"],
-  ["⌘,", "open settings"],
+  [`${mod},`, "open settings"],
   ["⌃`", "toggle terminal"],
-  ["⌘;", "toggle side chat (ask aside)"],
+  [`${mod};`, "toggle side chat (ask aside)"],
   ["@", "mention a file in the composer"],
-  ["/", "pick a skill in the composer"],
-  ["⌘/", "this help"],
+  ["/", "pick a skill or command in the composer"],
+  ["↑ / ↓", "navigate prompt history (empty composer)"],
+  [`${mod}/`, "this help"],
   ["Esc", "stop the running turn"],
   ["Enter", "send / steer while running"],
   ["Shift+Enter", "newline"],
@@ -27,7 +31,7 @@ export default function ShortcutsModal() {
         <h3 id="shortcuts-title">Keyboard shortcuts</h3>
         <table>
           <tbody>
-            {SHORTCUTS.map(([k, d]) => (
+            {shortcuts.map(([k, d]) => (
               <tr>
                 <td>
                   <kbd>{k}</kbd>
@@ -44,3 +48,4 @@ export default function ShortcutsModal() {
     </div>
   );
 }
+
