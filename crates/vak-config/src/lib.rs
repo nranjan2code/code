@@ -819,7 +819,10 @@ impl ChannelPolicy {
             hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
             hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
             mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
-            plugins_network_deny: merge_deny(&lower.plugins_network_deny, &higher.plugins_network_deny),
+            plugins_network_deny: merge_deny(
+                &lower.plugins_network_deny,
+                &higher.plugins_network_deny,
+            ),
             plugins_allow: merge_allow(&lower.plugins_allow, &higher.plugins_allow),
             plugins_deny: merge_deny(&lower.plugins_deny, &higher.plugins_deny),
             autonomy_ceiling: Self::cap_autonomy(
@@ -4614,9 +4617,21 @@ mod channel_autonomy_tests {
         };
         let merged = ChannelPolicy::merge(&bot, &chat);
         assert_eq!(merged.plugins_allow, Some(vec!["python-sandbox".into()]));
-        assert!(merged.plugins_deny.contains(&"untrusted-plugin".to_string()));
+        assert!(
+            merged
+                .plugins_deny
+                .contains(&"untrusted-plugin".to_string())
+        );
         assert!(merged.plugins_deny.contains(&"banned-plugin".to_string()));
-        assert!(merged.plugins_network_deny.contains(&"react-sandbox".to_string()));
-        assert!(merged.plugins_network_deny.contains(&"python-sandbox".to_string()));
+        assert!(
+            merged
+                .plugins_network_deny
+                .contains(&"react-sandbox".to_string())
+        );
+        assert!(
+            merged
+                .plugins_network_deny
+                .contains(&"python-sandbox".to_string())
+        );
     }
 }

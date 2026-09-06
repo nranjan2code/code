@@ -99,7 +99,9 @@ with strict CSP (network connect-src blocked unless allowed) and an ErrorBoundar
         // Quarantined scratch directory: .vak/scratch/previews/
         let previews_dir = ctx.cwd.join(".vak/scratch/previews");
         if let Err(e) = std::fs::create_dir_all(&previews_dir) {
-            return ToolOutput::error(format!("failed to initialize scratch previews directory: {e}"));
+            return ToolOutput::error(format!(
+                "failed to initialize scratch previews directory: {e}"
+            ));
         }
 
         let now_nanos = std::time::SystemTime::now()
@@ -137,7 +139,10 @@ Status: Ready for presentation and preview dock rendering."
 
         let mut output = ToolOutput::ok(ctx.truncate_output(summary));
         // Append structured metadata if needed
-        output.content.push_str(&format!("\n\n```vak:presentation\n{}\n```", response_payload));
+        output.content.push_str(&format!(
+            "\n\n```vak:presentation\n{}\n```",
+            response_payload
+        ));
         output
     }
 }
@@ -175,7 +180,7 @@ fn generate_preview_html(
     );
 
     format!(
-r#"<!DOCTYPE html>
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -370,9 +375,11 @@ mod tests {
         assert!(res.content.contains("allowed"));
 
         let previews_dir = dir.path().join(".vak/scratch/previews");
-        let entries: Vec<_> = std::fs::read_dir(&previews_dir).unwrap().flatten().collect();
+        let entries: Vec<_> = std::fs::read_dir(&previews_dir)
+            .unwrap()
+            .flatten()
+            .collect();
         let html = std::fs::read_to_string(entries[0].path()).unwrap();
         assert!(html.contains("connect-src *"));
     }
 }
-

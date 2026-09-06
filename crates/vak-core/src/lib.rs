@@ -1106,20 +1106,54 @@ impl Core {
         let channel_policy = self.channel_policy();
 
         let python_allowed = cfg.plugins.is_enabled("python-sandbox")
-            && channel_policy.as_ref().map(|p| p.plugins_allow.as_ref().map(|l| l.contains(&"python-sandbox".to_string())).unwrap_or(true)).unwrap_or(true)
-            && channel_policy.as_ref().map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string())).unwrap_or(true);
+            && channel_policy
+                .as_ref()
+                .map(|p| {
+                    p.plugins_allow
+                        .as_ref()
+                        .map(|l| l.contains(&"python-sandbox".to_string()))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true)
+            && channel_policy
+                .as_ref()
+                .map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string()))
+                .unwrap_or(true);
         if python_allowed {
             let net = cfg.plugins.is_network_allowed("python-sandbox")
-                && channel_policy.as_ref().map(|p| !p.plugins_network_deny.contains(&"python-sandbox".to_string())).unwrap_or(true);
+                && channel_policy
+                    .as_ref()
+                    .map(|p| {
+                        !p.plugins_network_deny
+                            .contains(&"python-sandbox".to_string())
+                    })
+                    .unwrap_or(true);
             tools.push(Arc::new(vak_tools::PythonTool::new(net)));
         }
 
         let react_allowed = cfg.plugins.is_enabled("react-sandbox")
-            && channel_policy.as_ref().map(|p| p.plugins_allow.as_ref().map(|l| l.contains(&"react-sandbox".to_string())).unwrap_or(true)).unwrap_or(true)
-            && channel_policy.as_ref().map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string())).unwrap_or(true);
+            && channel_policy
+                .as_ref()
+                .map(|p| {
+                    p.plugins_allow
+                        .as_ref()
+                        .map(|l| l.contains(&"react-sandbox".to_string()))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true)
+            && channel_policy
+                .as_ref()
+                .map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string()))
+                .unwrap_or(true);
         if react_allowed {
             let net = cfg.plugins.is_network_allowed("react-sandbox")
-                && channel_policy.as_ref().map(|p| !p.plugins_network_deny.contains(&"react-sandbox".to_string())).unwrap_or(true);
+                && channel_policy
+                    .as_ref()
+                    .map(|p| {
+                        !p.plugins_network_deny
+                            .contains(&"react-sandbox".to_string())
+                    })
+                    .unwrap_or(true);
             tools.push(Arc::new(vak_tools::ReactPreviewTool::new(net)));
         }
 
@@ -1630,7 +1664,11 @@ impl Core {
                             .unwrap_or_default();
                         let key = format!("plugin.{}.{}", plugin.name, name);
                         let net_allowed = self.config().plugins.is_network_allowed(&plugin.name)
-                            && self.channel_policy().as_ref().map(|p| !p.plugins_network_deny.contains(&plugin.name)).unwrap_or(true);
+                            && self
+                                .channel_policy()
+                                .as_ref()
+                                .map(|p| !p.plugins_network_deny.contains(&plugin.name))
+                                .unwrap_or(true);
                         config
                             .servers
                             .entry(key)
@@ -2972,14 +3010,36 @@ impl Core {
         let cfg = self.config();
         let channel_policy = self.channel_policy();
         let python_allowed = cfg.plugins.is_enabled("python-sandbox")
-            && channel_policy.as_ref().map(|p| p.plugins_allow.as_ref().map(|l| l.contains(&"python-sandbox".to_string())).unwrap_or(true)).unwrap_or(true)
-            && channel_policy.as_ref().map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string())).unwrap_or(true);
+            && channel_policy
+                .as_ref()
+                .map(|p| {
+                    p.plugins_allow
+                        .as_ref()
+                        .map(|l| l.contains(&"python-sandbox".to_string()))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true)
+            && channel_policy
+                .as_ref()
+                .map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string()))
+                .unwrap_or(true);
         if python_allowed {
             names.push("python_eval".into());
         }
         let react_allowed = cfg.plugins.is_enabled("react-sandbox")
-            && channel_policy.as_ref().map(|p| p.plugins_allow.as_ref().map(|l| l.contains(&"react-sandbox".to_string())).unwrap_or(true)).unwrap_or(true)
-            && channel_policy.as_ref().map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string())).unwrap_or(true);
+            && channel_policy
+                .as_ref()
+                .map(|p| {
+                    p.plugins_allow
+                        .as_ref()
+                        .map(|l| l.contains(&"react-sandbox".to_string()))
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true)
+            && channel_policy
+                .as_ref()
+                .map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string()))
+                .unwrap_or(true);
         if react_allowed {
             names.push("react_preview".into());
         }

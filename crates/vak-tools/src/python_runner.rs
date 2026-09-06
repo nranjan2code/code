@@ -94,7 +94,9 @@ execution duration is strictly bounded."
             .max(1000);
 
         if code.is_none() && script_path.is_none() {
-            return ToolOutput::error("missing required parameter: either 'code' or 'script_path' must be provided");
+            return ToolOutput::error(
+                "missing required parameter: either 'code' or 'script_path' must be provided",
+            );
         }
 
         // Ensure quarantined scratch directory: .vak/scratch/python/
@@ -123,7 +125,8 @@ execution duration is strictly bounded."
                     None => pip_cmd,
                 };
                 let mut pip_proc = shell_command(&effective_pip);
-                pip_proc.current_dir(&ctx.cwd)
+                pip_proc
+                    .current_dir(&ctx.cwd)
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -139,7 +142,9 @@ execution duration is strictly bounded."
                             err.trim()
                         ));
                     }
-                    Err(e) => return ToolOutput::error(format!("failed to spawn pip install: {e}")),
+                    Err(e) => {
+                        return ToolOutput::error(format!("failed to spawn pip install: {e}"));
+                    }
                     _ => {}
                 }
             }
@@ -154,7 +159,9 @@ execution duration is strictly bounded."
             let filename = format!("exec_{now_nanos}.py");
             let file_path = scratch_dir.join(&filename);
             if let Err(e) = std::fs::write(&file_path, code_content) {
-                return ToolOutput::error(format!("failed to stage Python code in scratch directory: {e}"));
+                return ToolOutput::error(format!(
+                    "failed to stage Python code in scratch directory: {e}"
+                ));
             }
             file_path
         } else {
@@ -172,7 +179,9 @@ execution duration is strictly bounded."
                     }
                     canon
                 }
-                Err(e) => return ToolOutput::error(format!("script file not found '{}': {e}", rel)),
+                Err(e) => {
+                    return ToolOutput::error(format!("script file not found '{}': {e}", rel));
+                }
             }
         };
 
@@ -310,7 +319,10 @@ fn find_generated_artifacts(scratch_dir: &Path) -> Vec<String> {
         if path.is_file() {
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 let ext_lower = ext.to_ascii_lowercase();
-                if matches!(ext_lower.as_str(), "svg" | "png" | "jpg" | "jpeg" | "csv" | "json" | "parquet") {
+                if matches!(
+                    ext_lower.as_str(),
+                    "svg" | "png" | "jpg" | "jpeg" | "csv" | "json" | "parquet"
+                ) {
                     found.push(path.display().to_string());
                 }
             }
@@ -406,7 +418,9 @@ mod tests {
         });
         let res = tool.execute(&args, &ctx).await;
         assert!(res.is_error);
-        assert!(res.content.contains("resolves outside workspace") || res.content.contains("not found"));
+        assert!(
+            res.content.contains("resolves outside workspace") || res.content.contains("not found")
+        );
     }
 
     #[tokio::test]
@@ -423,4 +437,3 @@ mod tests {
         assert!(res.content.contains("network access is disabled"));
     }
 }
-
