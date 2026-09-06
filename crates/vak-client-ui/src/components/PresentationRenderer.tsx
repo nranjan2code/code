@@ -282,7 +282,8 @@ function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
   const review = async (verdict: "accepted" | "needs_work" | "rejected") => {
     setBusy(true);
     try {
-      await api.recordOutcomeReview(props.sessionId, verdict);
+      const turn = props.item.actions.find((action) => action.data.verdict === verdict)?.data.turn;
+      await api.recordOutcomeReview(props.sessionId, verdict, turn ? Number(turn) : undefined);
       window.location.reload();
     } finally {
       setBusy(false);

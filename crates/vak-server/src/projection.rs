@@ -26,7 +26,7 @@ fn result_outcome(
     human_review: Option<&String>,
 ) -> Option<ResultOutcome> {
     let completion = evaluation
-        .and_then(|value| value.split('|').nth(2))
+        .and_then(|value| value.split('|').nth(3))
         .map(str::to_owned);
     if admitted.is_none()
         && completion.is_none()
@@ -50,7 +50,7 @@ fn result_outcome(
             })
             .unwrap_or_default(),
         evidence_receipt_ids: evaluation
-            .and_then(|value| value.split('|').nth(1))
+            .and_then(|value| value.split('|').nth(2))
             .map(|value| {
                 value
                     .split(',')
@@ -159,7 +159,10 @@ fn snapshot_inner(
             }
             EntryPayload::Intent(record) => {
                 if let Some(outcome) = &record.outcome {
-                    turn_outcomes.insert(scan_turn, outcome.clone());
+                    // Core records admission immediately before the user
+                    // message that starts the turn. Attach it to that next
+                    // turn rather than decorating the previous answer.
+                    turn_outcomes.insert(scan_turn + 1, outcome.clone());
                 }
             }
             EntryPayload::Activity(activity)
@@ -285,7 +288,7 @@ fn snapshot_inner(
                             let output_status = status_for_completion(
                                 turn_evaluations
                                     .get(&turn)
-                                    .and_then(|value| value.split('|').nth(2)),
+                                    .and_then(|value| value.split('|').nth(3)),
                             );
                             timeline.items.push(OutputItem {
                                 id: format!("{}-text-{index}", entry.id),
@@ -378,13 +381,13 @@ fn snapshot_inner(
                                                     "outcome_evaluation".into(),
                                                     evaluation_json.into(),
                                                 );
-                                                if let Some(receipts) = evaluation.split('|').nth(1) {
+                                                if let Some(receipts) = evaluation.split('|').nth(2) {
                                                     document.metadata.insert(
                                                         "outcome_evidence_receipts".into(),
                                                         receipts.into(),
                                                     );
                                                 }
-                                                if let Some(completion) = evaluation.split('|').nth(2)
+                                                if let Some(completion) = evaluation.split('|').nth(3)
                                                 {
                                                     document.metadata.insert(
                                                         "outcome_completion".into(),
@@ -868,10 +871,16 @@ fn activity_item(
             id: format!("review-{verdict}-{}", activity.activity_id),
             label: label.into(),
             verb: "record_outcome_review".into(),
-            data: BTreeMap::from([
-                ("session_id".into(), session_id.into()),
-                ("verdict".into(), verdict.into()),
-            ]),
+            data: {
+                let mut data = BTreeMap::from([
+                    ("session_id".into(), session_id.into()),
+                    ("verdict".into(), verdict.into()),
+                ]);
+                if let Some(turn) = activity.turn {
+                    data.insert("turn".into(), turn.to_string());
+                }
+                data
+            },
         })
         .collect()
     } else if kind == OutputKind::Approval && status == OutputStatus::Pending {

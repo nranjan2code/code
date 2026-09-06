@@ -3344,7 +3344,7 @@ async fn run_prompt(
         &preview_intent.reading,
         preview_intent.provenance.resolver_version,
     );
-    preview_outcome.evidence_max_age_secs = Some(core.config().intent.evidence_max_age_secs);
+    preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
     preview_outcome.max_turns = preview_intent.engagement.limits.max_turns;
     *handle
         .intent
@@ -3850,7 +3850,6 @@ fn apply_plan_change(
         }
         _ => {}
     }
-    outcome.resolver_version = outcome.resolver_version.saturating_add(1);
     outcome.revision = outcome.revision.saturating_add(1);
     let after = outcome
         .requirements
@@ -3891,6 +3890,13 @@ async fn plan_change(
                         None
                     }
                 })
+            })
+        })
+        .or_else(|| {
+            handle.intent.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()
+                    .and_then(|record| record.outcome.as_ref().map(|outcome| outcome.revision))
             })
         })
         .unwrap_or(0);
@@ -4133,6 +4139,8 @@ struct ApprovalBody {
 struct OutcomeReviewBody {
     verdict: String,
     #[serde(default)]
+    turn: Option<usize>,
+    #[serde(default)]
     note: Option<String>,
 }
 
@@ -4159,18 +4167,23 @@ async fn record_outcome_review(
     let Some(session) = guard.as_mut() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let reviewed_turn = session
-        .chain_to_root()
-        .iter()
-        .filter_map(|entry| match &entry.payload {
-            vak_session::EntryPayload::Activity(activity)
-                if activity.label == "Outcome evaluation" =>
-            {
-                activity.turn
-            }
-            _ => None,
-        })
-        .next_back();
+    let reviewed_turn = body.turn.or_else(|| {
+        session
+            .chain_to_root()
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Activity(activity)
+                    if activity.label == "Outcome evaluation" =>
+                {
+                    activity.turn
+                }
+                _ => None,
+            })
+            .next_back()
+    });
+    if body.turn.is_some() && reviewed_turn.is_none() {
+        return (StatusCode::NOT_FOUND, "outcome evaluation turn not found").into_response();
+    }
     let activity = vak_session::ActivityRecord {
         activity_id: format!("outcome-review-{}", uuid::Uuid::now_v7()),
         turn: reviewed_turn,

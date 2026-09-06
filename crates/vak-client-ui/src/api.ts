@@ -625,11 +625,12 @@ export function patchConfig(patch: ConfigPatch): Promise<void> {
 export function recordOutcomeReview(
   sessionId: string,
   verdict: "accepted" | "needs_work" | "rejected",
+  turn?: number,
   note?: string,
 ): Promise<{ recorded: boolean }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/outcome-review`, {
     method: "POST",
-    body: JSON.stringify({ verdict, note }),
+    body: JSON.stringify({ verdict, turn, note }),
   });
 }
 

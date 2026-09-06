@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -48,6 +49,14 @@ pub struct TaskDeps {
     /// Parent intent budget for child delegation. `Some(0)` is an enforced
     /// denial; `None` leaves delegation available to the parent policy.
     pub subagent_budget: Option<usize>,
+    pub max_retries: u32,
+    pub retry_base_backoff_ms: u64,
+    pub request_timeout: Option<std::time::Duration>,
+    pub circuit_breaker: Option<Arc<crate::CircuitBreaker>>,
+    pub run_retry_attempts: u32,
+    pub run_retry_base_backoff_ms: u64,
+    pub dispatch_ceiling: u32,
+    pub spend_gate: Option<Arc<dyn crate::SpendGate>>,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approval_mode: ApprovalMode,
@@ -68,6 +77,7 @@ pub struct TaskDeps {
 
 pub struct TaskTool {
     deps: Arc<TaskDeps>,
+    budget_used: AtomicUsize,
 }
 
 struct RegistryGuard {
@@ -211,6 +221,7 @@ impl TaskTool {
     pub fn new(deps: TaskDeps) -> Self {
         TaskTool {
             deps: Arc::new(deps),
+            budget_used: AtomicUsize::new(0),
         }
     }
 }
@@ -317,6 +328,13 @@ impl TaskTool {
             return ToolOutput::error(
                 "child work item does not exist in the parent's managed contract",
             );
+        }
+        if let Some(limit) = self.deps.subagent_budget {
+            let used = self.budget_used.fetch_add(1, Ordering::AcqRel);
+            if used >= limit {
+                self.budget_used.fetch_sub(1, Ordering::AcqRel);
+                return ToolOutput::error("subagent delegation budget exhausted for this turn");
+            }
         }
 
         let session_id = format!(
@@ -444,6 +462,14 @@ impl TaskTool {
             });
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
+        cfg.max_retries = self.deps.max_retries;
+        cfg.retry_base_backoff_ms = self.deps.retry_base_backoff_ms;
+        cfg.request_timeout = self.deps.request_timeout;
+        cfg.circuit_breaker = self.deps.circuit_breaker.clone();
+        cfg.run_retry_attempts = self.deps.run_retry_attempts;
+        cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;
+        cfg.dispatch_ceiling = self.deps.dispatch_ceiling;
+        cfg.spend_gate = self.deps.spend_gate.clone();
         cfg.outcome = self.deps.outcome.clone();
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();

@@ -323,6 +323,9 @@ pub struct AgentConfig {
     /// Frozen route ladder (Phase B): primary-first candidate legs beyond
     /// the configured provider/model. Empty ⇒ single-model legacy.
     pub ladder: Vec<(Arc<dyn Provider>, String)>,
+    /// Canonical configured provider names parallel to `ladder`. Adapter
+    /// names are implementation details and must not enter routing evidence.
+    pub ladder_provider_names: Vec<String>,
     /// Workspace-delta provider (Phase H MEA): supplies a bounded summary
     /// of what changed since the run-start checkpoint, feeding goal-mode
     /// auditors environment facts instead of transcript-only claims.
@@ -374,6 +377,7 @@ impl AgentConfig {
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
             ladder: Vec::new(),
+            ladder_provider_names: Vec::new(),
             workspace_delta: None,
             handoff_reset: true,
             max_audit_blocks: 2,
@@ -2489,15 +2493,24 @@ impl Agent {
                 last_err = Some(LlmError::Network(open.to_string()));
                 continue 'legs;
             }
-            ledger.receipt.stamp_leg(provider_arc.name(), model);
+            let route_provider = if li == 0 {
+                provider_arc.name().to_string()
+            } else {
+                self.config
+                    .ladder_provider_names
+                    .get(li - 1)
+                    .cloned()
+                    .unwrap_or_else(|| provider_arc.name().to_string())
+            };
+            ledger.receipt.stamp_leg(&route_provider, model);
             if li > 0 && forward {
                 self.record_activity(
                     vak_session::ActivityKind::RouteFallback,
                     vak_session::ActivityStatus::Running,
                     "Route fallback".into(),
-                    Some(format!("{}/{}", (*provider_arc).name(), model)),
+                    Some(format!("{}/{}", route_provider, model)),
                     [
-                        ("provider".into(), (*provider_arc).name().to_string()),
+                        ("provider".into(), route_provider.clone()),
                         ("model".into(), model.clone()),
                     ]
                     .into(),
@@ -2505,7 +2518,7 @@ impl Agent {
                 .await;
                 let _ = events
                     .send(AgentEvent::RouteFallback {
-                        to_provider: (*provider_arc).name().to_string(),
+                        to_provider: route_provider,
                         to_model: model.clone(),
                     })
                     .await;
@@ -2601,6 +2614,11 @@ impl Agent {
                             "provider dispatch panicked and was contained".into(),
                         )),
                         Err(_) => {
+                            // The provider owns a spawned producer keyed by
+                            // this token. A watchdog timeout must revoke the
+                            // attempt before the retry/fallback path can
+                            // release capacity and dispatch again.
+                            cancel.cancel();
                             domain_override = Some(FailureDomain::Deadline);
                             Err(LlmError::Network(format!(
                                 "model step exceeded deadline of {}s",

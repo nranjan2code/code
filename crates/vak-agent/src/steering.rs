@@ -59,8 +59,15 @@ impl SteeringQueues {
 
     pub async fn wait_if_paused(&self, cancel: &tokio_util::sync::CancellationToken) -> bool {
         while self.is_paused() {
+            // Register the notification before rechecking the flag. A resume
+            // between the flag check and waiter registration otherwise loses
+            // the wakeup and can strand the run indefinitely.
+            let resumed = self.resumed.notified();
+            if !self.is_paused() {
+                break;
+            }
             tokio::select! {
-                _ = self.resumed.notified() => {}
+                _ = resumed => {}
                 _ = cancel.cancelled() => return false,
             }
         }

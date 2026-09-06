@@ -40,6 +40,23 @@ fn breaker_opens_after_threshold_and_half_closes_after_cooldown() {
 }
 
 #[test]
+fn half_open_breaker_allows_only_one_probe() {
+    let br = CircuitBreaker::new(CircuitBreakerConfig {
+        threshold: 1,
+        cooldown: std::time::Duration::from_millis(1),
+    });
+    br.record_failure();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert!(br.check().is_ok());
+    assert!(
+        br.check().is_err(),
+        "a second caller must not race the probe"
+    );
+    br.record_success();
+    assert!(br.check().is_ok());
+}
+
+#[test]
 fn non_retryable_failures_do_not_trip_the_breaker() {
     let br = CircuitBreaker::new(CircuitBreakerConfig {
         threshold: 2,

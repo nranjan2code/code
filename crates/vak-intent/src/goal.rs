@@ -80,18 +80,26 @@ impl GoalState {
 /// domain request. Domain planning still happens after this audit fact.
 pub fn classify_goal_update(request: &str, active_revision: Option<u64>) -> GoalRelation {
     let text = request.trim().to_ascii_lowercase();
-    if text.contains("status") || text.contains("how is") || text.contains("progress") {
+    let command = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find(|word| !word.is_empty())
+        .unwrap_or("");
+    if command == "status"
+        || text.starts_with("how is ")
+        || text.starts_with("what is the progress")
+        || text.starts_with("what is the status")
+    {
         GoalRelation::Status
-    } else if text.contains("pause") || text.contains("hold") {
+    } else if command == "pause" || command == "hold" {
         GoalRelation::Pauses
-    } else if text.contains("resume") || text.contains("continue") {
+    } else if command == "resume" || command == "continue" {
         GoalRelation::Resumes
-    } else if text.contains("cancel") || text.contains("stop") || text.contains("abort") {
+    } else if command == "cancel" || command == "stop" || command == "abort" {
         GoalRelation::Cancels
-    } else if text.contains("actually")
-        || text.contains("correction")
-        || text.contains("wrong")
-        || text.contains("fix that")
+    } else if text.starts_with("actually ")
+        || text.starts_with("correction")
+        || text.starts_with("that's wrong")
+        || text.starts_with("fix that")
     {
         GoalRelation::if_active(active_revision, GoalRelation::Corrects)
     } else if text.contains("instead")
@@ -138,6 +146,14 @@ mod tests {
         assert_eq!(
             classify_goal_update("start a new thing", None),
             GoalRelation::New
+        );
+        assert_eq!(
+            classify_goal_update("Implement a progress bar", None),
+            GoalRelation::New
+        );
+        assert_eq!(
+            classify_goal_update("Fix the cancellation button", Some(1)),
+            GoalRelation::AddsTo
         );
     }
 

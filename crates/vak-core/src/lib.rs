@@ -208,6 +208,14 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 .collect(),
             max_turns: self.core.effective_max_turns(),
             outcome: Some(outcome),
+            max_retries: 0,
+            retry_base_backoff_ms: 100,
+            request_timeout: Some(std::time::Duration::from_secs(600)),
+            circuit_breaker: None,
+            run_retry_attempts: 0,
+            run_retry_base_backoff_ms: 1000,
+            dispatch_ceiling: 1,
+            spend_gate: None,
             permission: Some(permission),
             mode: match self.core.effective_permission_mode() {
                 vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
@@ -399,6 +407,7 @@ struct CoreInner {
     route: std::sync::Mutex<RouteSelection>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
+    evidence_max_age_override: std::sync::Mutex<Option<i64>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     permission_lease: std::sync::Mutex<CancellationToken>,
@@ -858,6 +867,7 @@ impl Core {
                 route: std::sync::Mutex::new(route),
                 max_turns_override: std::sync::Mutex::new(None),
                 max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+                evidence_max_age_override: std::sync::Mutex::new(None),
                 mode_override: std::sync::Mutex::new(None),
                 permission_lease: std::sync::Mutex::new(CancellationToken::new()),
                 mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
@@ -2261,6 +2271,10 @@ impl Core {
         {
             self.apply_persisted_max_turns(config.max_turns);
         }
+        Self::write_override(
+            &self.inner.evidence_max_age_override,
+            Some(config.intent.evidence_max_age_secs),
+        );
         if !self
             .inner
             .theme_runtime_pinned
@@ -2299,6 +2313,11 @@ impl Core {
         self.apply_persisted_commitment(config.commitment.enabled);
         self.apply_persisted_approval_mode(config.approval_mode);
         Ok(config.permission_mode)
+    }
+
+    pub fn effective_evidence_max_age_secs(&self) -> i64 {
+        Self::read_override(&self.inner.evidence_max_age_override)
+            .unwrap_or(self.inner.config.intent.evidence_max_age_secs)
     }
 
     /// Derive a scoped allow rule from a call that was just approved, and
@@ -3286,7 +3305,7 @@ impl Core {
             return Ok(vec![primary]);
         };
         let mut keys = vec![primary.api_key.clone()];
-        if let Some(value) = vak_config::get_var(pool_env) {
+        if let Some(value) = self.provider_secret(pool_env) {
             keys.extend(
                 value
                     .split([',', '\n'])
@@ -3734,7 +3753,7 @@ impl Core {
                 }
             }
         }
-        (context_window, max_output.max(1_000.min(context_window)))
+        (context_window, max_output.min(context_window).max(1))
     }
 
     /// Drop memoised discovery for `provider` (or all of it) so the next
@@ -3771,11 +3790,15 @@ impl Core {
         primary: vak_llm::RouteLeg,
         demand: Option<vak_intent::DemandHint>,
     ) -> routing::RoutePlan {
+        const DISCOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(300);
         let mut candidates = vec![primary.clone()];
 
         // Same-model legs on other keyed providers (legacy Phase B set).
         if let Ok(cache) = self.inner.models_cache.lock() {
-            for ((p, credential_id), (_, models)) in cache.iter() {
+            for ((p, credential_id), (fetched_at, models)) in cache.iter() {
+                if fetched_at.elapsed() >= DISCOVERY_TTL {
+                    continue;
+                }
                 if models.contains(&primary.model)
                     && !candidates.iter().any(|c| {
                         c.provider == *p && c.credential_id.as_deref() == Some(credential_id)
@@ -3802,7 +3825,10 @@ impl Core {
         if !route_cfg.fallback_models.is_empty()
             && let Ok(cache) = self.inner.models_cache.lock()
         {
-            for ((p, credential_id), (_, models)) in cache.iter() {
+            for ((p, credential_id), (fetched_at, models)) in cache.iter() {
+                if fetched_at.elapsed() >= DISCOVERY_TTL {
+                    continue;
+                }
                 if self.provider_auth_for_leg(p, Some(credential_id)).is_err() {
                     continue;
                 }
@@ -4376,8 +4402,7 @@ impl Core {
             &resolved_intent.reading,
             resolved_intent.provenance.resolver_version,
         );
-        admitted_outcome.evidence_max_age_secs =
-            Some(self.inner.config.intent.evidence_max_age_secs);
+        admitted_outcome.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
         cfg.outcome = Some(admitted_outcome);
 
         // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----
@@ -4585,6 +4610,7 @@ impl Core {
                     && let Ok(p) = self.inner.registry.get(&adapter_name_for_leg(leg), &auth)
                 {
                     cfg.ladder.push((p, leg.model.clone()));
+                    cfg.ladder_provider_names.push(leg.provider.clone());
                 }
             }
         }
@@ -4787,6 +4813,14 @@ impl Core {
                     engagement.limits.max_turns,
                 ),
                 subagent_budget: engagement.limits.subagent_budget,
+                max_retries: cfg.max_retries,
+                retry_base_backoff_ms: cfg.retry_base_backoff_ms,
+                request_timeout: cfg.request_timeout,
+                circuit_breaker: cfg.circuit_breaker.clone(),
+                run_retry_attempts: cfg.run_retry_attempts,
+                run_retry_base_backoff_ms: cfg.run_retry_base_backoff_ms,
+                dispatch_ceiling: cfg.dispatch_ceiling,
+                spend_gate: cfg.spend_gate.clone(),
                 permission: Some(engine.clone()),
                 mode: cfg.mode,
                 approval_mode: cfg.approval_mode,
@@ -5027,8 +5061,7 @@ impl Core {
                 &resolved_intent.reading,
                 resolved_intent.provenance.resolver_version,
             );
-            outcome_spec.evidence_max_age_secs =
-                Some(self.inner.config.intent.evidence_max_age_secs);
+            outcome_spec.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
             let record = vak_session::types::IntentRecord {
                 reading: resolved_intent.reading.clone(),
                 engagement: resolved_intent.engagement.clone(),
@@ -5048,6 +5081,7 @@ impl Core {
             Some(s) => s,
             None => std::sync::Arc::new(vak_agent::SteeringQueues::new()),
         };
+        let admitted_outcome = cfg.outcome.clone();
         let mut agent = Agent::new(provider, session, cfg);
         if let Some((objective, criteria)) = goal {
             agent.set_goal(objective, criteria);
@@ -5104,17 +5138,29 @@ impl Core {
                     )
                 })
                 .count();
-            let mut outcome_spec = vak_intent::OutcomeSpec::from_reading(
-                prompt_text,
-                &resolved_intent.reading,
-                resolved_intent.provenance.resolver_version,
-            );
+            let mut outcome_spec = admitted_outcome.unwrap_or_else(|| {
+                vak_intent::OutcomeSpec::from_reading(
+                    prompt_text,
+                    &resolved_intent.reading,
+                    resolved_intent.provenance.resolver_version,
+                )
+            });
             outcome_spec.evidence_max_age_secs =
                 Some(self.inner.config.intent.evidence_max_age_secs);
             let mut tool_calls = std::collections::HashSet::new();
             let mut successful_receipts = std::collections::HashSet::new();
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
+                    if record.message.role == vak_llm::Role::User
+                        && record
+                            .message
+                            .content
+                            .iter()
+                            .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+                    {
+                        tool_calls.clear();
+                        successful_receipts.clear();
+                    }
                     for block in &record.message.content {
                         match block {
                             vak_llm::ContentBlock::ToolUse { id, .. } => {
@@ -5132,9 +5178,10 @@ impl Core {
                     }
                 }
             }
-            let evidence_state = session.successful_tool_receipts().last().map_or(
-                vak_intent::EvidenceState::None,
-                |(_, recorded_at)| {
+            let evidence_state = session
+                .successful_tool_receipts_for_latest_turn()
+                .last()
+                .map_or(vak_intent::EvidenceState::None, |(_, recorded_at)| {
                     vak_intent::evidence_state_from_age(
                         chrono::Utc::now(),
                         *recorded_at,
@@ -5144,8 +5191,7 @@ impl Core {
                                 .map_or(86_400, |seconds| seconds),
                         ),
                     )
-                },
-            );
+                });
             let requirement_evaluations = vak_intent::evaluate_requirements_with_state(
                 &outcome_spec,
                 response_text.as_deref(),

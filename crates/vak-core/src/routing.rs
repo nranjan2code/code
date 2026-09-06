@@ -289,11 +289,14 @@ pub fn assemble_ladder(
         if legs.len() >= max_total {
             break;
         }
-        if leg == *primary || leg.provider == primary.provider && leg.model == primary.model {
+        if leg == *primary {
             continue;
         }
         let seats = counts.entry(leg.provider.clone()).or_insert(0);
-        if *seats >= seats_per_provider {
+        let independent_credential = leg.provider == primary.provider
+            && leg.credential_id.is_some()
+            && leg.credential_id != primary.credential_id;
+        if *seats >= seats_per_provider && !independent_credential {
             continue;
         }
         *seats += 1;
@@ -556,5 +559,22 @@ mod tests {
         ];
         let (legs, _) = assemble_ladder(&primary, ranked, 4, false);
         assert_eq!(legs.len(), 2);
+    }
+
+    #[test]
+    fn assemble_keeps_same_model_on_a_distinct_credential() {
+        let primary = RouteLeg {
+            provider: "openrouter".into(),
+            model: "shared-model".into(),
+            dialect: vak_llm::EndpointDialect::Responses,
+            credential_id: Some("key-a".into()),
+        };
+        let alternate = RouteLeg {
+            credential_id: Some("key-b".into()),
+            ..primary.clone()
+        };
+        let (legs, _) = assemble_ladder(&primary, vec![alternate], 3, false);
+        assert_eq!(legs.len(), 2);
+        assert_eq!(legs[1].credential_id.as_deref(), Some("key-b"));
     }
 }

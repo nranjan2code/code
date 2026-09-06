@@ -28,6 +28,7 @@ impl Default for CircuitBreakerConfig {
 struct State {
     consecutive_failures: u32,
     opened_at: Option<Instant>,
+    probe_in_flight: bool,
 }
 
 #[derive(Debug)]
@@ -64,6 +65,12 @@ impl CircuitBreaker {
     pub fn check_key(&self, key: &str) -> Result<(), CircuitOpen> {
         let mut states = self.lock();
         let st = states.entry(key.to_string()).or_default();
+        if st.probe_in_flight {
+            return Err(CircuitOpen {
+                remaining_secs: 1,
+                failures: st.consecutive_failures,
+            });
+        }
         if let Some(opened_at) = st.opened_at {
             let elapsed = opened_at.elapsed();
             if elapsed < self.config.cooldown {
@@ -72,8 +79,10 @@ impl CircuitBreaker {
                     failures: st.consecutive_failures,
                 });
             }
-            // Cooldown elapsed: allow one probe through.
+            // Cooldown elapsed: reserve exactly one half-open probe. Other
+            // callers remain fail-closed until that probe settles.
             st.opened_at = None;
+            st.probe_in_flight = true;
         }
         Ok(())
     }
@@ -87,6 +96,7 @@ impl CircuitBreaker {
         let st = states.entry(key.to_string()).or_default();
         st.consecutive_failures = 0;
         st.opened_at = None;
+        st.probe_in_flight = false;
     }
 
     /// Only retryable failures should call this.
@@ -101,6 +111,7 @@ impl CircuitBreaker {
         if st.consecutive_failures >= self.config.threshold && st.opened_at.is_none() {
             st.opened_at = Some(Instant::now());
         }
+        st.probe_in_flight = false;
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, State>> {

@@ -402,15 +402,34 @@ pub fn evaluate_requirements_with_state(
     evidence_state: EvidenceState,
 ) -> Vec<RequirementEvaluation> {
     let has_response = response.is_some_and(|text| !text.trim().is_empty());
+    let is_refusal = response.is_some_and(|text| {
+        let normalized = text.trim().to_ascii_lowercase();
+        [
+            "i cannot",
+            "i can't",
+            "i can’t",
+            "unable to",
+            "cannot do",
+            "can't do",
+            "can’t do",
+        ]
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix))
+    });
     let has_reference =
         response.is_some_and(|text| text.contains("http://") || text.contains("https://"));
     spec.requirements
         .iter()
         .map(|requirement| {
             let (status, reason) = match requirement.kind {
-                RequirementKind::Deliverable if has_response => {
-                    (RequirementStatus::Met, "response content exists".into())
-                }
+                RequirementKind::Deliverable if is_refusal => (
+                    RequirementStatus::Unknown,
+                    "response is a refusal; the requested deliverable was not established".into(),
+                ),
+                RequirementKind::Deliverable if has_response => (
+                    RequirementStatus::Met,
+                    "response content exists".into(),
+                ),
                 RequirementKind::Deliverable => (
                     RequirementStatus::Unmet,
                     "no response content was produced".into(),
@@ -570,6 +589,27 @@ mod tests {
         assert_eq!(
             evaluate_response(Some("answer"), false, false),
             OutcomeStatus::Produced
+        );
+    }
+
+    #[test]
+    fn refusal_cannot_satisfy_a_deliverable_requirement() {
+        let mut spec = OutcomeSpec::from_reading("create a report", &Reading::general(), 1);
+        assert!(
+            spec.merge_declared_requirement(
+                "report",
+                "deliverable",
+                "create report.md",
+                "must",
+                None
+            )
+            .is_ok()
+        );
+        let evaluations = evaluate_requirements(&spec, Some("I cannot do that."));
+        assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
+        assert_eq!(
+            evaluate_completion(OutcomeStatus::Produced, &evaluations, &spec),
+            CompletionVerdict::Unknown
         );
     }
 

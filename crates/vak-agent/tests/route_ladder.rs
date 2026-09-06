@@ -169,6 +169,7 @@ fn setup_with_primary(
     cfg.run_retry_attempts = 0;
     cfg.dispatch_ceiling = 3;
     cfg.ladder = ladder;
+    cfg.ladder_provider_names = vec!["openrouter".into(); cfg.ladder.len()];
     (Agent::new(primary, log, cfg), dir)
 }
 
@@ -210,6 +211,10 @@ async fn primary_failure_walks_to_fallback_and_receipt_records_it() {
     assert_eq!(session.receipts().len(), 1);
     let r = &session.receipts()[0];
     assert_eq!(r.model, "fallback-model", "receipt names the winning leg");
+    assert_eq!(
+        r.provider, "openrouter",
+        "receipt preserves configured route identity"
+    );
     assert_eq!(r.winning_attempt, Some(1));
     assert_eq!(r.attempts[0].reason, AttemptReason::Initial);
     assert_eq!(r.attempts[0].domain, vak_llm::FailureDomain::Network);
@@ -330,7 +335,7 @@ async fn fallback_legs_carry_provider_attribution_and_events() {
     // Receipt-level stamp names the WINNING leg.
     assert_eq!(
         (r.provider.as_str(), r.model.as_str()),
-        ("fallback-ok", "fallback-model")
+        ("openrouter", "fallback-model")
     );
     // Attempt 0 keeps its own (failed) leg attribution.
     assert_eq!(
@@ -340,13 +345,13 @@ async fn fallback_legs_carry_provider_attribution_and_events() {
     // Attempt 1 attributes to the serving fallback leg.
     assert_eq!(
         r.attempt_leg(&r.attempts[1]),
-        ("fallback-ok", "fallback-model")
+        ("openrouter", "fallback-model")
     );
 
     let fallbacks = events.await.unwrap();
     assert_eq!(
         fallbacks,
-        vec![("fallback-ok".into(), "fallback-model".into())],
+        vec![("openrouter".into(), "fallback-model".into())],
         "exactly one RouteFallback event for the single leg change"
     );
 }

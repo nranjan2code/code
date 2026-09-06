@@ -575,6 +575,46 @@ impl SessionLog {
         receipts
     }
 
+    /// Successful receipts on the active, latest user turn only. Earlier
+    /// turns are deliberately excluded so a stale unrelated command cannot
+    /// establish evidence for the current result.
+    pub fn successful_tool_receipts_for_latest_turn(
+        &self,
+    ) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
+        let mut known_calls = std::collections::HashSet::new();
+        let mut receipts = Vec::new();
+        for entry in self.chain_to_root() {
+            if let EntryPayload::Message(record) = &entry.payload {
+                if record.message.role == vak_llm::Role::User
+                    && record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+                {
+                    known_calls.clear();
+                    receipts.clear();
+                }
+                for block in &record.message.content {
+                    match block {
+                        vak_llm::ContentBlock::ToolUse { id, .. } => {
+                            known_calls.insert(id.clone());
+                        }
+                        vak_llm::ContentBlock::ToolResult {
+                            tool_use_id,
+                            is_error: false,
+                            ..
+                        } if known_calls.contains(tool_use_id) => {
+                            receipts.push((tool_use_id.clone(), entry.ts));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        receipts
+    }
+
     /// Distinct bash commands that ran GREEN on the active chain, in
     /// first-run order (docs/design/10-flows.md adoption substrate). A command is
     /// settled when its tool_result is not an error.

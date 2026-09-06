@@ -198,7 +198,8 @@ async fn retry_budget_exhaustion_fails_with_last_error() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     // A provider whose stream never completes: the deadline must fire.
-    struct Hung;
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    struct Hung(Arc<std::sync::atomic::AtomicBool>);
     #[async_trait::async_trait]
     impl Provider for Hung {
         fn name(&self) -> &str {
@@ -207,8 +208,9 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
         async fn stream(
             &self,
             _r: ChatRequest,
-            _c: CancellationToken,
+            c: CancellationToken,
         ) -> Result<EventStream, LlmError> {
+            let cancelled = self.0.clone();
             let (sink, rx) = stream::channel(8);
             sink.push(stream::StreamEvent::Start {
                 partial: AssistantMessage::empty("m"),
@@ -216,7 +218,8 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
             // Hold the sink open forever — simulates a stalled stream.
             tokio::spawn(async move {
                 let _keep_alive = sink;
-                std::future::pending::<()>().await;
+                c.cancelled().await;
+                cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
             });
             Ok(rx)
         }
@@ -249,7 +252,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     cfg.request_timeout = Some(std::time::Duration::from_millis(300));
     cfg.run_retry_attempts = 0;
     std::mem::forget(dir);
-    let mut agent = Agent::new(Arc::new(Hung), log, cfg);
+    let mut agent = Agent::new(Arc::new(Hung(cancelled.clone())), log, cfg);
 
     let start = Instant::now();
     let outcome = agent
@@ -273,4 +276,6 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
         elapsed < std::time::Duration::from_secs(3),
         "watchdog must fire promptly, took {elapsed:?}"
     );
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
 }

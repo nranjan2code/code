@@ -154,6 +154,11 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
 
     ids.sort();
     ids.dedup();
+    if ids.is_empty() {
+        return Err(LlmError::Parse(
+            "provider model catalogue contained no model ids".into(),
+        ));
+    }
     Ok(ids)
 }
 
@@ -272,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_data_is_empty_not_an_error() {
+    fn missing_data_is_still_empty_for_the_parser() {
         assert!(collect_data_ids(serde_json::json!({})).is_empty());
     }
 

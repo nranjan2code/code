@@ -60,6 +60,14 @@ pub struct ExecutorDeps {
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
     pub outcome: Option<vak_intent::OutcomeSpec>,
+    pub max_retries: u32,
+    pub retry_base_backoff_ms: u64,
+    pub request_timeout: Option<std::time::Duration>,
+    pub circuit_breaker: Option<Arc<vak_agent::CircuitBreaker>>,
+    pub run_retry_attempts: u32,
+    pub run_retry_base_backoff_ms: u64,
+    pub dispatch_ceiling: u32,
+    pub spend_gate: Option<Arc<dyn vak_agent::SpendGate>>,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approval_mode: ApprovalMode,
@@ -535,6 +543,14 @@ async fn execute_node(
 
             let mut cfg = AgentConfig::new(deps.system_prompt.clone());
             cfg.outcome = deps.outcome.clone();
+            cfg.max_retries = deps.max_retries;
+            cfg.retry_base_backoff_ms = deps.retry_base_backoff_ms;
+            cfg.request_timeout = deps.request_timeout;
+            cfg.circuit_breaker = deps.circuit_breaker.clone();
+            cfg.run_retry_attempts = deps.run_retry_attempts;
+            cfg.run_retry_base_backoff_ms = deps.run_retry_base_backoff_ms;
+            cfg.dispatch_ceiling = deps.dispatch_ceiling;
+            cfg.spend_gate = deps.spend_gate.clone();
             cfg.model = deps.model.clone();
             cfg.tools = tools;
             cfg.max_turns = deps
