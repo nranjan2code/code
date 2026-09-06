@@ -86,6 +86,13 @@ project-layer `identity` override.
   project (unlike guardrails) because free-form context can widen perceived
   latitude rather than narrow it.
 
+- v3.0.17: multi-turn continuity, conversational drift, and no-escape-hatch
+  clarification rules in `operating_rules`. Instructs the agent that conversational
+  drift across turns is expected and to follow along smoothly without complaint
+  or resistance; to resolve references ("the data", "do that", "it", "something")
+  against earlier turns; and prohibits using demands for manual input or clarification
+  as an exception-handling escape hatch to avoid taking action or using available tools.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

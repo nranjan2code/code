@@ -882,6 +882,132 @@ impl SessionLog {
                 .map(|entry| entry.id.clone())
                 .unwrap_or_else(|| work.contract.contract_id.clone());
             out.insert(0, (work_entry_id, Message::user_text(context), false, true));
+        } else if let Some(goal) = self.goal_state()
+            && (goal.revision > 1 || !goal.additions.is_empty())
+            && goal.control == vak_intent::GoalControlState::Active
+            && !goal.objective.trim().is_empty()
+            && self.work_projection().ok().flatten().is_none()
+        {
+            // In direct conversation mode, project the multi-turn thread when
+            // multiple user directives exist. This enables the model to trace the
+            // human intent across drifts and resolves anaphoric references
+            // ("the data", "do that", "it", "something") without amnesia.
+            let mut user_directives: Vec<(usize, String)> = Vec::new();
+            let mut turn_counter = 1;
+            for entry in self.chain_to_root() {
+                if let EntryPayload::Message(record) = &entry.payload
+                    && record.message.role == vak_llm::Role::User
+                {
+                    let text = record.message.text_content();
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() && !trimmed.starts_with('<') {
+                        user_directives.push((turn_counter, trimmed.to_string()));
+                        turn_counter += 1;
+                    }
+                }
+            }
+
+            if user_directives.len() > 1 {
+                let mut thread = format!(
+                    "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
+                    goal.revision,
+                    goal.objective.trim()
+                );
+                let start_idx = user_directives.len().saturating_sub(8);
+                for (num, req) in &user_directives[start_idx..] {
+                    let preview = if req.len() > 200 {
+                        let head = req
+                            .char_indices()
+                            .map(|(idx, _)| idx)
+                            .nth(200)
+                            .unwrap_or_else(|| 200.min(req.len()));
+                        format!("{}...", &req[..head])
+                    } else {
+                        req.clone()
+                    };
+                    thread.push_str(&format!("- Turn {num}: {preview}\n"));
+                }
+                thread.push_str(
+                    "Rules for multi-turn execution:\n\
+                     - Follow the user's intent across conversational drifts without complaint or friction.\n\
+                     - Conversational drift across turns is expected: follow along smoothly and adapt immediately.\n\
+                     - Resolve references (\"the data\", \"do that\", \"it\", \"something\") against the request timeline above.\n\
+                     - If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch to avoid taking action or using available tools.\n\
+                     </conversation_thread>",
+                );
+
+                let latest_turn_entry_id = self
+                    .chain_to_root()
+                    .iter()
+                    .rev()
+                    .find(|entry| {
+                        matches!(
+                            entry.payload,
+                            EntryPayload::GoalUpdate(_) | EntryPayload::Message(_)
+                        )
+                    })
+                    .map(|entry| entry.id.clone())
+                    .unwrap_or_else(|| "thread-anchor".into());
+
+                let insert_pos = out
+                    .iter()
+                    .rposition(|(_, m, _, is_ctrl)| {
+                        !*is_ctrl
+                            && m.role == vak_llm::Role::User
+                            && m.content
+                                .iter()
+                                .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
+                    })
+                    .unwrap_or(out.len());
+
+                out.insert(
+                    insert_pos,
+                    (
+                        latest_turn_entry_id,
+                        Message::user_text(thread),
+                        false,
+                        true,
+                    ),
+                );
+            }
+        }
+
+        // Prune older tool outputs: tool results from turns strictly prior to
+        // the current active exchange are truncated to prevent historical dumps
+        // (large crawls, lengthy tracebacks) from consuming context and causing
+        // attention drift. The active turn's tool results are always kept 100% verbatim.
+        let last_user_text_idx = out.iter().rposition(|(_, m, _, is_ctrl)| {
+            !*is_ctrl
+                && m.role == vak_llm::Role::User
+                && m.content
+                    .iter()
+                    .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
+        });
+
+        if let Some(pivot) = last_user_text_idx {
+            for (i, (_, msg, _, is_ctrl)) in out.iter_mut().enumerate() {
+                if i >= pivot || *is_ctrl || msg.role != vak_llm::Role::User {
+                    continue;
+                }
+                for block in &mut msg.content {
+                    if let vak_llm::ContentBlock::ToolResult { content, .. } = block {
+                        const MAX_HISTORICAL_TOOL_RESULT_CHARS: usize = 600;
+                        if content.len() > MAX_HISTORICAL_TOOL_RESULT_CHARS {
+                            let head_len = content
+                                .char_indices()
+                                .map(|(idx, _)| idx)
+                                .nth(300)
+                                .unwrap_or_else(|| 300.min(content.len()));
+                            let original_len = content.len();
+                            content.truncate(head_len);
+                            content.push_str(&format!(
+                                "\n... [historical tool output trimmed; total was {} chars]",
+                                original_len
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         out

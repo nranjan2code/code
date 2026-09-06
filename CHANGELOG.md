@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.17 — 2026-09-06
+
+### Multi-turn continuity, conversational drift handling, and local context discovery
+
+- **Dynamic `<conversation_thread>` projection**: When a session has multiple turns (`revision > 1`), `derive_messages()` projects the chronological request timeline across turns alongside explicit rules directing the model to follow intent across conversational drifts without complaint or resistance, resolve references against earlier turns, and prohibiting clarification as an exception-handling escape hatch.
+- **Historical tool result pruning**: Tool execution results prior to the active turn exceeding 600 characters are safely pruned down to 300 characters plus summary metadata in runtime memory projections, preventing past search dumps and stack traces from crowding out context while keeping on-disk JSONL ledgers 100% verbatim.
+- **System prompt operating rules**: Updated core `operating_rules` in `system-prompt.md` to universally enforce drift adaptability, reference resolution, and prohibit using demands for manual input/URLs as an excuse to avoid using tools.
+- **Provider model context discovery for Ollama**: Added native `/api/show` model context discovery in `vak-llm` inspecting `num_ctx`, `details.context_length`, and `model_info`. Local models default conservatively to 8,192 tokens instead of 128,000, ensuring context compaction triggers reliably on local hardware.
+
 ## 3.0.16 — 2026-09-06
 
 ### Sandboxed Python & React runtime plugins with chat presentation and preview dock integration

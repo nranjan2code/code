@@ -76,6 +76,13 @@ behavior. Printed by every offline `eval` run; a failing metric fails
 the eval. Semantic selection quality (what a summarizer chooses to keep)
 stays with `eval --live` — absent evidence is UNKNOWN, never assumed.
 
+## Multi-turn Request Timeline & Historical Tool Pruning
+
+In multi-turn sessions across conversational drifts, two hazards threaten context integrity:
+1. **Request amnesia across turns**: In direct conversational turns where managed work contracts are inactive, `derive_messages()` synthesizes a `<conversation_thread>` element when `goal_state.revision > 1`. This projects the chronological user request timeline across turns along with clear rules directing the model to follow user intent across conversational drifts, resolve references against earlier turns, and forbidding clarification as an escape hatch to avoid taking action.
+2. **Historical tool output bloat**: Unbounded tool outputs (such as large web searches or stack traces) from turns prior to the active user exchange are pruned down to 300 characters + summary marker in runtime memory projections. The append-only on-disk ledger remains 100% verbatim.
+3. **Local provider context discovery**: `model_context` queries provider endpoints (including native Ollama metadata queries via `/api/show`) to dynamically discover real context limits (`parameters.num_ctx`, `details.context_length`, or `model_info["*.context_length"]`). Local endpoints default to a conservative 8,192 token ceiling instead of 128,000, ensuring context compaction triggers reliably on local hardware.
+
 ## Still not built
 
 - Relevance-scored retrieval of dropped turns. Our ledger keeps everything

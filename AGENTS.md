@@ -463,6 +463,21 @@ assuming a document describes shipped behaviour rather than a proposal.
     (`sandbox="allow-scripts"`) within safe error boundaries to protect the client
     host from untrusted script execution.
 
+36. **Multi-turn continuity and conversational drift are harness-guaranteed, model-agnostic invariants.**
+    The harness guarantees multi-turn execution and conversational drift continuity
+    across both local and cloud models. Turn projection deterministically injects a
+    `<conversation_thread>` summarizing the chronological user request timeline across
+    turns when multiple revisions exist, instructing the model to follow user intent
+    across conversational drifts smoothly without complaint or resistance, resolve
+    references ("the data", "do that", "it", "something") against the timeline, and
+    prohibits using clarification as an exception-handling escape hatch to avoid taking
+    action or calling available tools. Historical tool execution results from prior
+    turns exceeding length limits are pruned to compact summaries in runtime memory
+    projections without modifying the append-only ledger on disk. Provider model context
+    discovery (including native Ollama metadata queries via `/api/show`) must discover
+    the real context window or default conservatively (8,192 tokens) to ensure context
+    compaction triggers reliably on local hardware rather than overflowing context.
+
 ## Code rules
 
 - Edition 2024, stable toolchain. `cargo fmt` + `cargo clippy -D warnings` must pass.

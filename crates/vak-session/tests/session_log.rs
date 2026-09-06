@@ -75,6 +75,13 @@ fn user_msg(text: &str) -> MessageRecord {
     }
 }
 
+fn assistant_msg(text: &str) -> MessageRecord {
+    MessageRecord {
+        message: Message::assistant(vec![ContentBlock::text(text)]),
+        meta: None,
+    }
+}
+
 fn work_contract(id: &str) -> WorkContract {
     WorkContract {
         contract_id: id.into(),
@@ -689,5 +696,185 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
             .chain_to_root()
             .iter()
             .any(|entry| matches!(entry.payload, EntryPayload::TurnCapabilitiesBound(_)))
+    );
+}
+
+#[test]
+fn conversation_thread_projects_across_multi_turn_drifts() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("thread.jsonl"), header()).unwrap();
+
+    // Turn 1
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 1,
+        relation: vak_intent::GoalRelation::New,
+        request: "initial research on WEF".into(),
+        supersedes_revision: None,
+    })
+    .unwrap();
+    log.append_message(user_msg("initial research on WEF"))
+        .unwrap();
+    log.append_message(assistant_msg("here are findings"))
+        .unwrap();
+
+    // Turn 2
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 2,
+        relation: vak_intent::GoalRelation::AddsTo,
+        request: "use python sandbox".into(),
+        supersedes_revision: None,
+    })
+    .unwrap();
+    log.append_message(user_msg("use python sandbox")).unwrap();
+    log.append_message(assistant_msg("running in sandbox"))
+        .unwrap();
+
+    // Turn 3: User drifts to GDP task
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 3,
+        relation: vak_intent::GoalRelation::AddsTo,
+        request: "now evaluate global GDP past 5 years".into(),
+        supersedes_revision: None,
+    })
+    .unwrap();
+    log.append_message(user_msg("now evaluate global GDP past 5 years"))
+        .unwrap();
+
+    let messages = log.derive_messages();
+    let thread_msg = messages
+        .iter()
+        .find(|m| m.text_content().contains("<conversation_thread"));
+    assert!(
+        thread_msg.is_some(),
+        "expected <conversation_thread> projection"
+    );
+    let thread_text = thread_msg.unwrap().text_content();
+    assert!(thread_text.contains("revision=\"3\""));
+    assert!(thread_text.contains("initial research on WEF"));
+    assert!(thread_text.contains("use python sandbox"));
+    assert!(thread_text.contains("now evaluate global GDP past 5 years"));
+    assert!(thread_text.contains("Follow the user's intent across conversational drifts"));
+    assert!(thread_text.contains("Conversational drift across turns is expected: follow along smoothly and adapt immediately."));
+    assert!(thread_text.contains("If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch"));
+
+    // The thread must appear before the latest user message
+    let last_user_idx = messages
+        .iter()
+        .rposition(|m| m.text_content().contains("now evaluate global GDP"))
+        .unwrap();
+    let thread_idx = messages
+        .iter()
+        .position(|m| m.text_content().contains("<conversation_thread"))
+        .unwrap();
+    assert!(
+        thread_idx < last_user_idx,
+        "thread must precede the active user turn"
+    );
+}
+
+#[test]
+fn historical_tool_results_are_pruned_in_projection() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("prune.jsonl"), header()).unwrap();
+
+    // Turn 1: Huge search result (2500 chars)
+    log.append_message(user_msg("search the web")).unwrap();
+    let call_id = "call-1".to_string();
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::Assistant,
+            content: vec![vak_llm::ContentBlock::ToolUse {
+                id: call_id.clone(),
+                name: "search".into(),
+                input: serde_json::json!({}),
+            }],
+        },
+        meta: None,
+    })
+    .unwrap();
+    let giant_output = "A".repeat(2500);
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::User,
+            content: vec![vak_llm::ContentBlock::tool_result(
+                call_id,
+                giant_output.clone(),
+            )],
+        },
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(assistant_msg("found results")).unwrap();
+
+    // Turn 2: Active turn with tool result (2500 chars)
+    log.append_message(user_msg("now run python")).unwrap();
+    let call_id_2 = "call-2".to_string();
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::Assistant,
+            content: vec![vak_llm::ContentBlock::ToolUse {
+                id: call_id_2.clone(),
+                name: "python".into(),
+                input: serde_json::json!({}),
+            }],
+        },
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::User,
+            content: vec![vak_llm::ContentBlock::tool_result(
+                call_id_2,
+                giant_output.clone(),
+            )],
+        },
+        meta: None,
+    })
+    .unwrap();
+
+    let messages = log.derive_messages();
+
+    // Find Turn 1's tool result: it should be pruned
+    let turn1_result = messages
+        .iter()
+        .find(|m| {
+            m.content.iter().any(|b| match b {
+                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id == "call-1",
+                _ => false,
+            })
+        })
+        .unwrap();
+
+    let turn1_text = match &turn1_result.content[0] {
+        vak_llm::ContentBlock::ToolResult { content, .. } => content,
+        _ => unreachable!(),
+    };
+    assert!(
+        turn1_text.len() < 600,
+        "historical tool result must be truncated: was {}",
+        turn1_text.len()
+    );
+    assert!(turn1_text.contains("historical tool output trimmed; total was 2500 chars"));
+
+    // Find Turn 2's active tool result: it MUST remain full-size verbatim (2500 chars)
+    let turn2_result = messages
+        .iter()
+        .find(|m| {
+            m.content.iter().any(|b| match b {
+                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id == "call-2",
+                _ => false,
+            })
+        })
+        .unwrap();
+
+    let turn2_text = match &turn2_result.content[0] {
+        vak_llm::ContentBlock::ToolResult { content, .. } => content,
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        turn2_text.len(),
+        2500,
+        "active turn tool result must be 100% verbatim"
     );
 }

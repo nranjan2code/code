@@ -169,6 +169,46 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
             input_tokens: data.get("inputTokenLimit")?.as_u64()?,
             output_tokens: data.get("outputTokenLimit").and_then(|v| v.as_u64()),
         }),
+        "ollama" => {
+            // 1. Check modelfile parameters for "num_ctx <N>"
+            let param_ctx = data
+                .get("parameters")
+                .and_then(|p| p.as_str())
+                .and_then(|p| {
+                    for line in p.lines() {
+                        let mut parts = line.split_whitespace();
+                        if parts.next() == Some("num_ctx")
+                            && let Some(val) = parts.next().and_then(|v| v.parse::<u64>().ok())
+                        {
+                            return Some(val);
+                        }
+                    }
+                    None
+                });
+
+            // 2. Check details.context_length
+            let details_ctx = data
+                .get("details")
+                .and_then(|d| d.get("context_length"))
+                .and_then(|v| v.as_u64());
+
+            // 3. Check model_info for any key ending with "context_length" (e.g. qwen35.context_length, gemma4.context_length)
+            let model_info_ctx = data
+                .get("model_info")
+                .and_then(|mi| mi.as_object())
+                .and_then(|obj| {
+                    obj.iter()
+                        .find(|(k, _)| k.ends_with(".context_length") || *k == "context_length")
+                        .and_then(|(_, v)| v.as_u64())
+                });
+
+            let input_tokens = param_ctx.or(details_ctx).or(model_info_ctx).unwrap_or(8192);
+
+            Some(ModelContext {
+                input_tokens,
+                output_tokens: Some(4096.min(input_tokens.saturating_div(2))),
+            })
+        }
         _ => {
             let input_tokens = data
                 .get("top_provider")
@@ -216,6 +256,29 @@ pub async fn model_context(
                 .bearer_auth(&auth.api_key)
                 .send()
                 .await
+        }
+        "ollama" => {
+            let root = base.trim_end_matches("/v1");
+            let req = client
+                .post(format!("{root}/api/show"))
+                .json(&serde_json::json!({ "name": model }));
+            let req = if !auth.api_key.is_empty() {
+                req.bearer_auth(&auth.api_key)
+            } else {
+                req
+            };
+            match req.send().await {
+                Ok(res) if res.status().is_success() => {
+                    let json = read_json(res).await?;
+                    return Ok(context_from_json("ollama", &json));
+                }
+                _ => {
+                    return Ok(Some(ModelContext {
+                        input_tokens: 8192,
+                        output_tokens: Some(4096),
+                    }));
+                }
+            }
         }
         _ => return Ok(None),
     }
@@ -315,6 +378,39 @@ mod tests {
         ] {
             assert!(default_base_url(p).is_some(), "{p} has no default base url");
         }
+    }
+
+    #[test]
+    fn ollama_context_extracted_from_model_info() {
+        let json = serde_json::json!({
+            "model_info": {
+                "qwen35.context_length": 32768
+            }
+        });
+        assert_eq!(
+            context_from_json("ollama", &json),
+            Some(ModelContext {
+                input_tokens: 32768,
+                output_tokens: Some(4096)
+            })
+        );
+    }
+
+    #[test]
+    fn ollama_context_prefers_modelfile_num_ctx() {
+        let json = serde_json::json!({
+            "parameters": "temperature 0.7\nnum_ctx 16384\ntop_p 0.9",
+            "model_info": {
+                "general.context_length": 131072
+            }
+        });
+        assert_eq!(
+            context_from_json("ollama", &json),
+            Some(ModelContext {
+                input_tokens: 16384,
+                output_tokens: Some(4096)
+            })
+        );
     }
 
     #[test]
