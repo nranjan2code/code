@@ -5,6 +5,14 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.14 — 2026-09-06
+
+### Composer toolbar alignment and control streamlining
+
+- **Streamlined composer controls**: Removed the standalone spark/goal control from the primary input bar to keep focus on direct turn entry.
+- **Precision vertical alignment**: Standardized all bottom toolbar interactive elements (workspace selector, permission mode, model picker, file mention, file attachment, density selector, token counts, context ring, and send button) to a uniform 26px baseline plane with centered flex distribution.
+- **Attachment buttons**: Clean, dedicated `@ files` mention and `+ Attach` file picker buttons with consistent styling.
+
 ## 3.0.13 — 2026-09-06
 
 ### Chat surface UX overhaul and web workspace management
