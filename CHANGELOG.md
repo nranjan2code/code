@@ -5,6 +5,13 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.11 — 2026-09-06
+
+### Provider and runtime contract audit
+
+- Harden provider routing, fallback identity, watchdog cancellation, discovery freshness, child/flow policy propagation, and outcome evaluation evidence.
+- Regenerate shipped frontend bundles and add focused regression coverage for the audited runtime paths.
+
 ## 3.0.10 — 2026-09-06
 
 ### Admin feed workflow UX
