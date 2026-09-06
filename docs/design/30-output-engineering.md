@@ -3,9 +3,9 @@
 Status: schema-v2 semantic timeline with result-scoped outcome/evidence metadata
 and projected collaborative goal state, deterministic CommonMark compiler,
 universal recipe catalog (research, coding diffs/tests, telemetry charts,
-spreadsheet grids, terminal sessions, culinary recipes) and tool-provenance signal
+spreadsheet grids, terminal sessions, culinary recipes, UI previews) and tool-provenance signal
 engine, desktop native presentation suite (ResearchCards, DiffInspector,
-TestMatrix, UniversalChart, DataGrid, TerminalConsole, RecipeCard),
+TestMatrix, UniversalChart, DataGrid, TerminalConsole, RecipeCard, UIPreviewCard),
 snapshot/SSE projection with merged planner, isolated worker, trusted templates,
 plugin-extensible skill registry, structured fence projection on all markup
 surfaces, engagement posture integration, Telegram/Slack/Discord projections,
@@ -238,6 +238,10 @@ continuous chat canvas:
   exit code status pill (`Exit 0`), execution duration, and formatted output.
 - **`RecipeCard`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
   ingredient weights and measurements, paired with live countdown step timers.
+- **`UIPreviewCard`**: Live interactive sandboxed iframe card for React and web UI
+  previews, featuring viewport mode selector (Mobile 375px, Tablet 768px, Desktop 1024px,
+  Full 100%), reload button, external window launcher, and one-click dock-to-preview
+  integration opening the Right Bar Preview pane.
 
 ## Channel-specific markup projections
 
@@ -389,7 +393,7 @@ Markdown remains the export and emergency fallback for every projection.
    (ResearchCards with citation popovers, Zed-grade DiffInspector, TestMatrix with
    pass-rate ring, UniversalChart with mouse crosshair tracking and KPI pods, DataGrid
    with column sorting and search, TerminalConsole with exit codes, RecipeCard with
-   scaling and timers): complete.
+   scaling and timers, UIPreviewCard with viewport modes and preview dock integration): complete.
 7. TUI projector: planned.
 8. Golden fixtures cover parser losslessness, nested structures, tables, code,
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and

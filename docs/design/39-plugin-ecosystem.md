@@ -312,13 +312,85 @@ present stale activation as current.
 | P3 | Git and signed catalogs, publisher identities, revocation, Discover/Sources UI | catalog compromise cannot change an installed digest or silently activate code |
 | P4 | remote MCP/OAuth, isolated MCP Apps UI adapter, organization policies | external connectors remain least-privilege and headless-compatible |
 | P5 | curated daily-user collection, quality/security review automation | useful cross-domain catalog with reproducible review evidence and no privileged shortcuts |
+| P6 | sandboxed workspace execution runtimes (Python & React), quarantined `.vak/scratch/` execution, network gating, UI preview cards and dual-mode preview dock | live in v3.0.16; zero secret leakage, isolated scratch containment, safe client iframe rendering |
+
+## Sandboxed execution runtimes (Phase 6 / v3.0.16)
+
+Vak workspaces require safe, repeatable execution for modern programming and
+frontend development workflows without compromising host security or workspace
+purity. Shipped in v3.0.16, execution runtimes are provided as built-in,
+governed capability plugins:
+
+1. **`python-sandbox`** — provides the `python_eval` tool for executing Python
+   scripts, data analysis routines, and package-backed workflows.
+2. **`react-sandbox`** — provides the `react_preview` tool for compiling,
+   validating, and rendering self-contained React/Tailwind/Lucide component
+   bundles.
+
+### Quarantined scratch execution
+
+Workspaces maintain strict isolation between project source code and intermediate
+execution artifacts:
+
+- All generated execution scripts, virtual environments (`venv`), installed
+  packages (`site-packages`), compilation caches, and preview HTML bundles are
+  quarantined under `<workspace>/.vak/scratch/` (specifically
+  `.vak/scratch/python/` and `.vak/scratch/previews/`).
+- The `.vak/` directory is gitignored by default; ephemeral execution artifacts
+  never pollute the user's project git status or source tree.
+- Ephemeral assets are promoted into the project source tree only when the user
+  explicitly requests an exported file or artifact.
+
+### Scrubbed operational environment
+
+Runtime processes execute in scrubbed subprocess environments (`env_clear`),
+preventing ambient secret leakage:
+
+- Only minimal operational system variables (`PATH`, `HOME`, and virtualenv
+  environment variables) are passed to child processes.
+- All provider API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`),
+  gateway tokens, database credentials, and ambient process environment
+  variables are stripped.
+- Execution is strictly rooted in the canonical workspace directory; paths
+  attempting directory traversal outside the workspace boundary fail closed.
+
+### Network governance and package management
+
+Runtime plugins adhere to the privileged network model established for MCP
+servers and broker tools:
+
+- Configured globally or per-workspace via `[plugins]` in `.vak/config.toml`:
+  `plugins_enabled` and `plugins_network_deny`.
+- Inbound channel overlays support `plugins_allow`, `plugins_deny`, and
+  `plugins_network_deny`.
+- When network access is disallowed (`plugins_network_deny = true` or lack of
+  explicit workspace network entitlement):
+  - Package installation (`pip install`) fails closed with an informative
+    diagnostic.
+  - Generated React preview bundles enforce a strict Content Security Policy
+    (`connect-src 'none'`) preventing client-side network egress.
+
+### Cross-surface preview presentation
+
+Compiled React previews integrate seamlessly across client surfaces:
+
+- **Delivery projection**: Rendered previews emit structured presentation
+  recipes with `preview_id`, `url`, `title`, and `source_type = "react"`.
+- **In-stream Chat Cards**: `UIPreviewCard` mounts in the continuous chat
+  timeline with responsive viewport controls (Mobile 375px, Tablet 768px,
+  Desktop 1024px, Full width), safe iframe sandboxing (`sandbox="allow-scripts"`),
+  and React `ErrorBoundary` containment.
+- **Right Bar Preview Dock**: Upgraded to dual-mode operation supporting both
+  external dev server URLs (`http://localhost:...`) and live compiled Sandboxed
+  React UI previews with real-time reload and error inspection.
 
 ## Non-goals
 
 - A plugin does not load a native Rust dynamic library into the Vak process.
 - A plugin cannot introduce an unregistered schema-v2 AST node.
 - A marketplace cannot grant permissions or inject secrets.
-- Install does not execute dependency managers or build scripts.
+- Install does not execute dependency managers or build scripts outside the
+  isolated scratch sandbox.
 - Compatibility does not claim endorsement by another marketplace owner.
 - Public ranking, payments, reviews, and publisher analytics do not precede the
   secure local lifecycle.

@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.10 — all roadmap phases implemented and repository-verified.**
+**Status: v3.0.16 — all roadmap phases implemented and repository-verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -64,10 +64,11 @@ multi-bot identity (34), Tavily (35), first-run onboarding (36),
 distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
-configuration (44), plus the 3.0.8 lifecycle-hardening release and the 3.0.10
-outcome-directed runtime release covering
-permission leases, approval gates, budget admission, child-run recovery, and
-commitment progress accounting. Each carries its own `Status:` line — read it before
+configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
+outcome-directed runtime release, and the 3.0.16 sandboxed execution runtimes
+(Python & React plugin capabilities, quarantined scratch isolation in
+`.vak/scratch/`, dual-mode Right Bar Preview dock, and in-stream UI preview
+presentation cards). Each carries its own `Status:` line — read it before
 assuming a document describes shipped behaviour rather than a proposal.
 
 ## Non-negotiable invariants
@@ -443,6 +444,24 @@ assuming a document describes shipped behaviour rather than a proposal.
     just a credential in an access log. The web terminal is off by default
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
+35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/`, and network-contained.**
+    Built-in execution plugins (`python-sandbox`, `react-sandbox`) providing
+    `python_eval` and `react_preview` execute in quarantined operational
+    environments strictly confined to the canonical workspace boundary (`<ws>`).
+    Execution processes run with scrubbed environments (`env_clear`), passing only
+    minimal operational paths (`PATH`, `HOME`, virtual environment paths) and zero
+    parent credentials or model API keys. Intermediate execution artifacts, virtual
+    environments, site-packages, compiled bundles, and generated preview files are
+    strictly quarantined under `.vak/scratch/` (`.vak/scratch/python/` and
+    `.vak/scratch/previews/`) and must never contaminate workspace project source
+    trees or git-tracked directories unless explicitly copied as an outcome
+    artifact requested by the user. Package installation and egress follow the
+    privileged network model (`network = true | false` via `plugins_network_deny` /
+    channel policies); without explicit network authorization, package managers
+    (`pip`) fail closed and preview HTML enforces a strict Content Security Policy
+    (`connect-src 'none'`). Frontend client preview frames must be sandboxed
+    (`sandbox="allow-scripts"`) within safe error boundaries to protect the client
+    host from untrusted script execution.
 
 ## Code rules
 
