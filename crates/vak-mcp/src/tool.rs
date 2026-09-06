@@ -94,15 +94,35 @@ impl Tool for McpTool {
     }
 
     fn schema(&self) -> Value {
+        // The contract is intentionally `oneOf` (not a flat `required`):
+        // `server`/`tool`/`arguments` are only meaningful for `action == "call"`,
+        // and `additionalProperties: false` on each branch keeps the model from
+        // inventing shapes it cannot reach. This is the schema the model sees
+        // during tool selection, so it must be precise — a model that trusts a
+        // flat `required: ["action"]` will omit `server`/`tool` and guess.
         serde_json::json!({
             "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["list", "call"], "description": "list servers+tools, or call one"},
-                "server": {"type": "string", "description": "Server name (required for call)"},
-                "tool": {"type": "string", "description": "Tool name (required for call)"},
-                "arguments": {"type": "object", "description": "Arguments object for the tool (call only)"}
-            },
-            "required": ["action"]
+            "oneOf": [
+                {
+                    "description": "List every configured MCP server and the tools it exposes (exact names + inputSchemas). Always call this first.",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["list"]}
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Invoke one discovered tool. `server` must be a name returned by `action: list`; `tool` one of that server's tools.",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["call"]},
+                        "server": {"type": "string", "description": "Discovered server name"},
+                        "tool": {"type": "string", "description": "Discovered tool name"},
+                        "arguments": {"type": "object", "description": "Arguments matching the tool's inputSchema (call only)"}
+                    },
+                    "required": ["action", "server", "tool"],
+                    "additionalProperties": false
+                }
+            ]
         })
     }
 

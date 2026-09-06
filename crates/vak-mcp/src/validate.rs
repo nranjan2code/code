@@ -30,6 +30,27 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
             }
         }
     }
+    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        let mut matched = 0usize;
+        let mut last_err = String::new();
+        for sub in one_of {
+            match validate(value, sub, &format!("{path} (oneOf)")) {
+                Ok(()) => matched += 1,
+                Err(e) => last_err = e,
+            }
+        }
+        if matched != 1 {
+            return Err(if matched == 0 {
+                last_err
+            } else {
+                format!(
+                    "invalid MCP arguments: {path} matched {matched} of {} oneOf branches",
+                    one_of.len()
+                )
+            });
+        }
+        return Ok(());
+    }
     if let (Some(properties), Some(object)) = (
         schema.get("properties").and_then(Value::as_object),
         value.as_object(),
@@ -37,6 +58,22 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
         for (name, child_schema) in properties {
             if let Some(child) = object.get(name) {
                 validate(child, child_schema, &format!("{path}.{name}"))?;
+            }
+        }
+    }
+    if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
+        && let Some(object) = value.as_object()
+    {
+        let known: std::collections::HashSet<&str> = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .map(|props| props.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        for name in object.keys() {
+            if !known.contains(name.as_str()) {
+                return Err(format!(
+                    "invalid MCP arguments: unexpected parameter `{name}` for {path}"
+                ));
             }
         }
     }
@@ -85,5 +122,21 @@ mod tests {
         let schema = json!({"type": "array", "items": {"type": "string"}});
         assert!(validate_arguments(&json!(["one", "two"]), &schema).is_ok());
         assert!(validate_arguments(&json!(["one", 2]), &schema).is_err());
+    }
+
+    #[test]
+    fn validates_one_of_and_additional_properties() {
+        let schema = json!({
+            "oneOf": [
+                {"properties": {"q": {"type": "string"}}, "required": ["q"], "additionalProperties": false},
+                {"properties": {"id": {"type": "integer"}}, "required": ["id"], "additionalProperties": false}
+            ]
+        });
+        assert!(validate_arguments(&json!({"q": "hello"}), &schema).is_ok());
+        assert!(validate_arguments(&json!({"id": 7}), &schema).is_ok());
+        // neither branch
+        assert!(validate_arguments(&json!({"nope": 1}), &schema).is_err());
+        // unexpected key under a matching branch
+        assert!(validate_arguments(&json!({"q": "x", "extra": 1}), &schema).is_err());
     }
 }

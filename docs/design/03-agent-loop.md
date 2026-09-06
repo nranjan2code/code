@@ -32,7 +32,10 @@ No panics; session-write failures become `Failed`.
   permission/approval denial, revocation, authentication, and rate limiting
   do not receive recovery advice. The corrected call still passes the normal
   authorization, sandbox, hook, doom-loop, turn, and dispatch-ceiling checks.
-  never kills the run.
+  When the model fails to repair a correctable fault across consecutive turns,
+  the loop escalates past the hint into a system-authored, schema-resurfacing
+  directive and finally a bounded stop that degrades the outcome (see
+  `docs/design/15-reliability.md`). Never kills the run.
 - **Parallel by default**, results re-ordered into assistant source order.
 - **Steering + follow-up are two queues**: steering drains before the next
   model call; follow-up is exposed for callers after natural stops.

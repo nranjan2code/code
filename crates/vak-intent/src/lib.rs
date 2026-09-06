@@ -84,8 +84,8 @@ pub use outcome::{
     OutcomeStatus, RequirementEvaluation, RequirementImportance, RequirementKind,
     RequirementOrigin, RequirementStatus, classify_intervention, evaluate_completion,
     evaluate_intervention, evaluate_requirements, evaluate_requirements_with_evidence,
-    evaluate_requirements_with_state, evaluate_response, evidence_state_from_age,
-    human_review_state,
+    evaluate_requirements_with_state, evaluate_response, evaluate_response_with_failures,
+    evidence_state_from_age, human_review_state,
 };
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{

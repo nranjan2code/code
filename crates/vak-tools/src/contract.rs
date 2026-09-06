@@ -37,6 +37,30 @@ fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), Strin
             "invalid tool arguments: {path} is not an allowed value"
         ));
     }
+    // `oneOf`: the value must match exactly one branch. Used for conditional
+    // contracts (e.g. the `mcp` broker where `server`/`tool` are required only
+    // when `action == "call"`). Each branch carries its own required/properties,
+    // so matching a branch validates the whole per-branch contract.
+    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        let mut matched = 0usize;
+        let mut last_err = String::new();
+        for sub in one_of {
+            match validate_value(sub, value, &format!("{path} (oneOf)")) {
+                Ok(()) => matched += 1,
+                Err(e) => last_err = e,
+            }
+        }
+        return if matched == 1 {
+            Ok(())
+        } else if matched == 0 {
+            Err(last_err)
+        } else {
+            Err(format!(
+                "invalid tool arguments: {path} matched {matched} of {} oneOf branches",
+                one_of.len()
+            ))
+        };
+    }
     if let Some(required) = schema.get("required").and_then(Value::as_array)
         && let Some(object) = value.as_object()
     {
@@ -54,6 +78,22 @@ fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), Strin
         for (key, child_schema) in properties {
             if let Some(child) = object.get(key) {
                 validate_value(child_schema, child, &format!("{path}.{key}"))?;
+            }
+        }
+    }
+    if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
+        && let Some(object) = value.as_object()
+    {
+        let known: std::collections::HashSet<&str> = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .map(|props| props.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        for key in object.keys() {
+            if !known.contains(key.as_str()) {
+                return Err(format!(
+                    "invalid tool arguments: unexpected parameter `{key}` for {path}"
+                ));
             }
         }
     }
@@ -118,5 +158,45 @@ mod tests {
         assert!(validate_input(&schema, &json!({"mode": "read", "items": [1, 2]})).is_ok());
         assert!(validate_input(&schema, &json!({"mode": "other"})).is_err());
         assert!(validate_input(&schema, &json!({"items": ["one"]})).is_err());
+    }
+
+    #[test]
+    fn one_of_enforces_exactly_one_branch() {
+        let schema = json!({
+            "type": "object",
+            "oneOf": [
+                {"properties": {"action": {"type": "string", "enum": ["list"]}}, "required": ["action"], "additionalProperties": false},
+                {"properties": {"action": {"type": "string", "enum": ["call"]}, "server": {"type": "string"}, "tool": {"type": "string"}}, "required": ["action", "server", "tool"], "additionalProperties": false}
+            ]
+        });
+        // list branch
+        assert!(validate_input(&schema, &json!({"action": "list"})).is_ok());
+        // call branch, complete
+        assert!(
+            validate_input(
+                &schema,
+                &json!({"action": "call", "server": "s", "tool": "t"})
+            )
+            .is_ok()
+        );
+        // call missing required `server` -> no branch matches -> error
+        assert!(validate_input(&schema, &json!({"action": "call", "tool": "t"})).is_err());
+        // unknown action -> neither branch matches -> error
+        assert!(validate_input(&schema, &json!({"action": "ping"})).is_err());
+        // list branch but with an unexpected param -> list branch invalid, call
+        // branch invalid (action not "call") -> exactly zero match -> error
+        assert!(validate_input(&schema, &json!({"action": "list", "server": "s"})).is_err());
+    }
+
+    #[test]
+    fn additional_properties_false_rejects_unknown_keys() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"action": {"type": "string"}},
+            "required": ["action"],
+            "additionalProperties": false
+        });
+        assert!(validate_input(&schema, &json!({"action": "list"})).is_ok());
+        assert!(validate_input(&schema, &json!({"action": "list", "extra": 1})).is_err());
     }
 }

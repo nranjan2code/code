@@ -26,6 +26,116 @@ pub use contract::validate_input;
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 
+/// Machine classification of a tool failure, so the agent loop and the output
+/// gate can reason about it instead of re-running keyword matches against
+/// free-text errors. `ToolErrorKind::classify` is the single authority that
+/// drives both the recovery hint and the repair budget — there is no parallel
+/// classification in the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolErrorKind {
+    /// The call shape was wrong (missing/invalid argument, schema mismatch,
+    /// unknown capability, oversized payload, or partial/malformed transport
+    /// data). Plausibly repairable by re-issuing with corrected arguments.
+    Correctable,
+    /// A transient transport fault; the runtime may retry, the model cannot
+    /// repair it by editing arguments.
+    Transient,
+    /// The tool is not admitted this turn (not in the frozen capability set).
+    NotAdmitted,
+    /// Policy / permission / capability-surface denial.
+    Denied,
+    /// Authentication / authorization failure.
+    Auth,
+    /// Provider rate limiting.
+    RateLimited,
+    /// User-initiated cancellation.
+    Cancelled,
+    /// Unclassified.
+    Unknown,
+}
+
+impl ToolErrorKind {
+    /// Classify a tool-error content string. Order matters: non-repairable
+    /// categories are matched before `Correctable`, so an auth error that
+    /// happens to contain "invalid" is never misread as a repairable
+    /// argument fault. This subsumes and extends the agent's old keyword
+    /// list — including the previously-uncovered payload/size faults (e.g.
+    /// a body exceeding the fetch byte cap) so they get classified instead
+    /// of falling through to `Unknown`.
+    pub fn classify(error: &str) -> Self {
+        let lower = error.to_ascii_lowercase();
+        if lower.contains("cancel") || lower.contains("aborted") {
+            return Self::Cancelled;
+        }
+        if lower.contains("rate limit") || lower.contains("429") || lower.contains("retry-after") {
+            return Self::RateLimited;
+        }
+        if lower.contains("unauthorized")
+            || lower.contains("forbidden")
+            || lower.contains("credential")
+            || lower.contains("token")
+            || lower.contains("authentication")
+            || lower.contains("unauthenticated")
+        {
+            return Self::Auth;
+        }
+        if lower.contains("denied")
+            || lower.contains("revoked")
+            || lower.contains("not allowed")
+            || lower.contains("permission")
+            || lower.contains("approval")
+            || lower.contains("policy")
+        {
+            return Self::Denied;
+        }
+        if lower.contains("not admitted") {
+            return Self::NotAdmitted;
+        }
+        // Correctable: the caller can plausibly fix this by re-issuing with
+        // corrected arguments. Covers the original hint set plus the
+        // payload/size and generic argument faults that used to be missed.
+        // `unknown_capability` is correctable — the model can switch to an
+        // admitted broker name instead.
+        if lower.contains("unknown_capability")
+            || lower.contains("invalid")
+            || lower.contains("missing")
+            || lower.contains("parameter")
+            || lower.contains("argument")
+            || lower.contains("expected")
+            || lower.contains("not a valid")
+            || lower.contains("schema")
+            || lower.contains("malformed")
+            || lower.contains("truncated")
+            || lower.contains("partial")
+            || lower.contains("parse")
+            || lower.contains("exceeds")
+            || lower.contains("too large")
+            || lower.contains("payload")
+            || lower.contains("byte")
+            || lower.contains("cap")
+            || lower.contains("size")
+            || lower.contains("input too")
+            || lower.contains("timed out")
+            || lower.contains("connection closed")
+            || lower.contains("spawn failed")
+            || lower.contains("protocol error")
+            || lower.contains("tool task failed")
+        {
+            return Self::Correctable;
+        }
+        Self::Unknown
+    }
+
+    /// Whether the failure class carries a model recovery hint today.
+    /// `Transient`, `Auth`, `RateLimited`, `Denied`, `Cancelled`,
+    /// `NotAdmitted`, and `Unknown` deliberately do **not** — matching the
+    /// original contract that only requires an external state change or a
+    /// model-side argument fix.
+    pub fn is_correctable(self) -> bool {
+        matches!(self, Self::Correctable)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
     pub content: String,
@@ -45,6 +155,14 @@ impl ToolOutput {
             content: content.into(),
             is_error: true,
         }
+    }
+
+    /// Classify this output's failure kind, or `Unknown` for a success.
+    pub fn classify(&self) -> ToolErrorKind {
+        if !self.is_error {
+            return ToolErrorKind::Unknown;
+        }
+        ToolErrorKind::classify(&self.content)
     }
 }
 
@@ -158,4 +276,70 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
         .iter()
         .map(|t| vak_llm::ToolDefinition::new(t.name(), t.description(), t.schema()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_correctable_covers_arg_shape_and_payload_faults() {
+        // The previously-uncovered webfetch byte-cap case must now classify
+        // as correctable instead of falling through to Unknown (which meant
+        // it got no recovery hint at all in the agent).
+        assert_eq!(
+            ToolErrorKind::classify("response body exceeds the 524288 byte cap"),
+            ToolErrorKind::Correctable,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("missing required parameter: server"),
+            ToolErrorKind::Correctable,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("invalid tool arguments: expected object"),
+            ToolErrorKind::Correctable,
+        );
+        assert_eq!(
+            ToolErrorKind::classify(r#"{"type":"unknown_capability","name":"tavily_search"}"#),
+            ToolErrorKind::Correctable,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("mcp protocol error: invalid argument"),
+            ToolErrorKind::Correctable,
+        );
+    }
+
+    #[test]
+    fn classify_non_repairable_classes_get_no_hint() {
+        assert_eq!(
+            ToolErrorKind::classify("cancelled"),
+            ToolErrorKind::Cancelled
+        );
+        assert_eq!(
+            ToolErrorKind::classify("429 rate limit exceeded"),
+            ToolErrorKind::RateLimited,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("capability denied by channel policy"),
+            ToolErrorKind::Denied,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("unauthorized: bad token"),
+            ToolErrorKind::Auth,
+        );
+        assert_eq!(
+            ToolErrorKind::classify("tool not admitted on this turn"),
+            ToolErrorKind::NotAdmitted,
+        );
+        assert!(!ToolErrorKind::classify("cancelled").is_correctable());
+        assert!(!ToolErrorKind::classify("429 rate limit").is_correctable());
+        assert!(ToolErrorKind::classify("missing required parameter: server").is_correctable());
+    }
+
+    #[test]
+    fn success_classifies_unknown() {
+        let ok = ToolOutput::ok("done");
+        assert_eq!(ok.classify(), ToolErrorKind::Unknown);
+        assert!(!ok.classify().is_correctable());
+    }
 }

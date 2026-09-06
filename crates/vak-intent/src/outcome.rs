@@ -356,11 +356,28 @@ pub fn evaluate_completion(
 }
 
 pub fn evaluate_response(response: Option<&str>, failed: bool, cancelled: bool) -> OutcomeStatus {
+    evaluate_response_with_failures(response, failed, cancelled, false)
+}
+
+/// As `evaluate_response`, but downgraded to `Unknown` when the supporting
+/// tool calls failed with a correctable fault the runtime could not recover
+/// within the run repair budget (i.e. the model was nudged/instructed to
+/// repair and did not). A non-empty fallback answer after such a failure is
+/// not established evidence, so it must not be signed `Produced`.
+pub fn evaluate_response_with_failures(
+    response: Option<&str>,
+    failed: bool,
+    cancelled: bool,
+    unresolved_correctable: bool,
+) -> OutcomeStatus {
     if failed {
         return OutcomeStatus::Failed;
     }
     if cancelled {
         return OutcomeStatus::Cancelled;
+    }
+    if unresolved_correctable {
+        return OutcomeStatus::Unknown;
     }
     match response.map(str::trim) {
         Some(text) if !text.is_empty() => OutcomeStatus::Produced,

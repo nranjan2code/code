@@ -5116,14 +5116,6 @@ impl Core {
                 }
                 TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached => None,
             };
-            let status = vak_intent::evaluate_response(
-                response_text.as_deref(),
-                matches!(
-                    outcome,
-                    TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached
-                ),
-                matches!(outcome, TurnOutcome::Aborted { .. }),
-            );
             let turn = session
                 .chain_to_root()
                 .iter()
@@ -5149,6 +5141,7 @@ impl Core {
                 Some(self.inner.config.intent.evidence_max_age_secs);
             let mut tool_calls = std::collections::HashSet::new();
             let mut successful_receipts = std::collections::HashSet::new();
+            let mut failed_correctable = std::collections::HashSet::new();
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
                     if record.message.role == vak_llm::Role::User
@@ -5160,6 +5153,7 @@ impl Core {
                     {
                         tool_calls.clear();
                         successful_receipts.clear();
+                        failed_correctable.clear();
                     }
                     for block in &record.message.content {
                         match block {
@@ -5172,6 +5166,16 @@ impl Core {
                                 ..
                             } if tool_calls.contains(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
+                            }
+                            vak_llm::ContentBlock::ToolResult {
+                                tool_use_id,
+                                is_error: true,
+                                content,
+                                ..
+                            } if tool_calls.contains(tool_use_id)
+                                && vak_tools::ToolErrorKind::classify(content).is_correctable() =>
+                            {
+                                failed_correctable.insert(tool_use_id.clone());
                             }
                             _ => {}
                         }
@@ -5192,6 +5196,17 @@ impl Core {
                         ),
                     )
                 });
+            let unresolved_correctable =
+                !failed_correctable.is_empty() && successful_receipts.is_empty();
+            let status = vak_intent::evaluate_response_with_failures(
+                response_text.as_deref(),
+                matches!(
+                    outcome,
+                    TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached
+                ),
+                matches!(outcome, TurnOutcome::Aborted { .. }),
+                unresolved_correctable,
+            );
             let requirement_evaluations = vak_intent::evaluate_requirements_with_state(
                 &outcome_spec,
                 response_text.as_deref(),

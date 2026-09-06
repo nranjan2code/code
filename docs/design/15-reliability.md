@@ -16,6 +16,39 @@ conditions require an external state change or human decision. Existing turn
 limits, doom-loop detection, provider dispatch ceilings, and append-only
 session recording remain the upper bounds for the repair loop.
 
+### Per-run repair budget (escalating, system-authored)
+
+A recovery hint alone is a nudge to the model; it is not a backstop. The loop
+tracks consecutive turns that end with an unresolved classifiable
+(`vak_tools::ToolErrorKind::is_correctable()`) tool failure and escalates:
+
+1. **First** correctable failure this run — the per-call `[recovery]` hint is
+   appended to the result (as above; the model still produces the next call).
+2. **Second consecutive** turn failing on a correctable fault — the loop
+   injects an authoritative, schema-resurfacing directive
+   (`[repair directive] …`): it re-surfaces the exact admitted `Tool::schema()`
+   for each rejected tool (or, for an unknown name, the full admitted inventory)
+   so the repair is no longer a guess. This is issued by the runtime, not the
+   model.
+3. **Third consecutive** turn still failing — the budget is exhausted: the loop
+   stops re-dispatching and returns a degraded, system-authored
+   `TurnOutcome::Completed` that states the failure instead of inventing an
+   answer. A `Diagnostic` activity is appended to the ledger
+   (`tool-repair-exhausted`).
+
+The budget is per `Agent` run (`RepairState`, reset on every `run`) and is
+general across all tool-error classes — it does not special-case the `mcp`
+broker; `ToolErrorKind::classify` is the single classification authority.
+
+### Outcome linkage (no false `Produced`)
+
+The outcome gate (`vak_core` → `vak_intent::evaluate_response_with_failures`)
+inspects the latest turn: when it ends with classifiable correctable failures
+and zero successful receipts, the run is downgraded to `Unknown` rather than
+`Produced` — a non-empty fallback answer is not evidence. Combined with the
+budget above, a run that cannot repair its tool calls fails honest instead of
+signing off a fabricated result.
+
 The standard failure matrix and where each case is handled.
 
 ## Transient failures (QoS)

@@ -84,7 +84,7 @@ use vak_llm::{
 };
 use vak_permission::{AskSource, Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog};
-use vak_tools::{Tool, ToolContext, ToolOutput};
+use vak_tools::{Tool, ToolContext, ToolErrorKind, ToolOutput};
 
 pub use steering::{DrainMode, SteeringQueues};
 
@@ -506,6 +506,8 @@ pub struct Agent {
     obligations: Vec<String>,
     /// The reset-with-handoff rescue fires at most once per run.
     handoff_used: bool,
+    /// Per-run bookkeeping for model-guided tool recovery (see RepairState).
+    repair: RepairState,
 }
 
 impl Agent {
@@ -527,6 +529,7 @@ impl Agent {
             active_goal: None,
             obligations: Vec::new(),
             handoff_used: false,
+            repair: RepairState::default(),
         }
     }
 
@@ -734,6 +737,7 @@ impl Agent {
 
         let mut turn = 0usize;
         let mut outcome_turns = 0usize;
+        self.repair.reset();
         self.run_call_counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1388,8 +1392,34 @@ impl Agent {
                     ))
                 })
                 .collect();
+            let call_names: HashMap<String, String> = calls
+                .iter()
+                .map(|c| (c.id.clone(), c.name.clone()))
+                .collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
             self.record_subagent_work(&task_assignments, &results).await;
+            // Classify unresolved correctable tool failures this turn for the
+            // repair budget (see `reconcile_repair_budget`). Computed before
+            // `results` is consumed into tool-result blocks below, and keyed
+            // by admitted tool name so the controller can resurface the exact
+            // schema that was rejected.
+            let failed_correctable: Vec<(String, ToolErrorKind)> = results
+                .iter()
+                .filter_map(|(id, out)| match out {
+                    ToolRunOutput::Err(content) => {
+                        let kind = ToolErrorKind::classify(content);
+                        if kind.is_correctable() {
+                            Some((
+                                call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
+                                kind,
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
             let successful_bash = results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
                     && bash_pairs.iter().any(|(bash_id, _)| bash_id == id)
@@ -1434,6 +1464,10 @@ impl Agent {
                 .map_err(|e| LlmError::Network(format!("session write failed: {e}")))
             {
                 return TurnOutcome::Failed { error: e };
+            }
+
+            if let Some(outcome) = reconcile_repair_budget(self, &failed_correctable).await {
+                return outcome;
             }
 
             turn += 1;
@@ -3493,40 +3527,190 @@ async fn execute_one(
     (call.id, output)
 }
 
+/// Returns the model recovery contract for a correctable tool error. The
+/// classification that decides this is owned by `vak_tools::ToolErrorKind` —
+/// this function is intentionally a thin shim so the hint and the repair
+/// budget in the turn loop can never drift onto a different keyword list.
 fn tool_recovery_hint(error: &str) -> Option<&'static str> {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("cancel")
-        || lower.contains("denied")
-        || lower.contains("revoked")
-        || lower.contains("approval")
-        || lower.contains("rate limit")
-        || lower.contains("429")
-        || lower.contains("unauthorized")
-        || lower.contains("forbidden")
-    {
+    if ToolErrorKind::classify(error).is_correctable() {
+        Some(
+            "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.",
+        )
+    } else {
+        None
+    }
+}
+
+/// Reconcile the run repair budget against this turn's correctable tool
+/// failures. Returns `Some(TurnOutcome)` only when the budget is exhausted
+/// and the loop must stop repairing; otherwise `None` (continue to the next
+/// model dispatch). This is the "loop where these don't happen" for tool
+/// failures of any class: the recovery hint is the first nudge; a
+/// system-authored, schema-resurfacing directive is the second; a bounded
+/// degraded stop is the third.
+async fn reconcile_repair_budget(
+    agent: &mut Agent,
+    failed_correctable: &[(String, ToolErrorKind)],
+) -> Option<TurnOutcome> {
+    if failed_correctable.is_empty() {
+        agent.repair.consecutive_failed_turns = 0;
         return None;
     }
-    if lower.contains("unknown_capability")
-        || lower.contains("invalid")
-        || lower.contains("missing required")
-        || lower.contains("schema")
-        || lower.contains("timed out")
-        || lower.contains("connection closed")
-        || lower.contains("spawn failed")
-        || lower.contains("protocol error")
-        || lower.contains("tool task failed")
-    {
-        return Some(
-            "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.",
-        );
+    if agent.repair.exhausted {
+        return None;
+    }
+    agent.repair.consecutive_failed_turns += 1;
+
+    if agent.repair.consecutive_failed_turns == REPAIR_DIRECTIVE_TURN {
+        // The model has now failed to self-repair the same fault across two
+        // turns: a text hint is no longer enough. The loop takes over and
+        // resurfaces the exact admitted schema for the rejected tools so the
+        // repair is no longer a guess.
+        inject_repair_directive(agent, failed_correctable).await;
+    }
+
+    if agent.repair.consecutive_failed_turns > MAX_REPAIR_TURNS {
+        agent.repair.exhausted = true;
+        let outcome = degraded_outcome(agent, failed_correctable).await;
+        return Some(outcome);
     }
     None
+}
+
+/// Append an authoritative repair directive that resurfaces the admitted
+/// schema for each tool the model could not get right. Unlike the per-call
+/// `[recovery]` hint, this is issued by the loop itself (not the model)
+/// when the model has demonstrated it cannot repair the failure unprompted.
+async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind)]) {
+    let remaining = MAX_REPAIR_TURNS.saturating_sub(agent.repair.consecutive_failed_turns - 1);
+    let mut parts: Vec<String> = vec![format!(
+        "[repair directive] The run is stuck on correctable tool failures that          were not repaired across turns. Do not repeat the failing call shape;          re-issue with the exact arguments this tool requires. The run will          stop retrying after {} more failed repair turn(s).",
+        remaining.max(1)
+    )];
+    let mut seen = std::collections::HashSet::new();
+    for (name, _kind) in failed {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let mut found = false;
+        for tool in &agent.config.tools {
+            if tool.name() != *name {
+                continue;
+            }
+            found = true;
+            let schema_str =
+                serde_json::to_string(&tool.schema()).unwrap_or_else(|_| "{}".to_string());
+            parts.push(format!(
+                "\nAdmitted tool `{}` (re-surfaced verbatim):\ndescription: {}\ninput_schema: {}",
+                tool.name(),
+                tool.description(),
+                schema_str
+            ));
+            break;
+        }
+        if !found {
+            // Unknown tool name: list what IS admitted so the model can map
+            // the rejected call onto an admitted one (e.g. use the `mcp`
+            // broker instead of a raw capability name).
+            let admitted: Vec<String> = agent
+                .config
+                .tools
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect();
+            parts.push(format!(
+                "\nTool `{}` is not in the admitted set for this turn.                  Admitted tools: {}. Re-issue using an admitted tool.",
+                name,
+                admitted.join(", ")
+            ));
+        }
+    }
+    let _ = agent.session.lock().await.append_message(MessageRecord {
+        message: Message {
+            role: Role::User,
+            content: vec![ContentBlock::text(parts.join("\n\n"))],
+        },
+        meta: None,
+    });
+}
+
+/// Build the degraded, honest completion returned when the repair budget is
+/// exhausted: record a diagnostic (append-only, model-visible) and return a
+/// system-authored answer that states the failure instead of inventing one.
+async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> TurnOutcome {
+    let summary = failed
+        .iter()
+        .map(|(name, kind)| format!("- `{name}`: correctable fault ({kind:?})"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    agent
+        .record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "Tool repair exhausted".into(),
+            Some(format!(
+                "correctable tool failures were not repaired within the run                  repair budget ({} repair turns); run stopped rather than                  signing a false complete",
+                MAX_REPAIR_TURNS
+            )),
+            std::collections::BTreeMap::from([
+                ("repair_turns".into(), agent.repair.consecutive_failed_turns.to_string()),
+                (
+                    "failed_tools".into(),
+                    failed.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(","),
+                ),
+            ]),
+        )
+        .await;
+    let response = AssistantMessage {
+        content: vec![ContentBlock::text(format!(
+            "I attempted the requested work, but the supporting tool calls              failed and could not be repaired within the run's recovery              budget. I will not sign off a fabricated answer. What failed:
+             {summary}
+
+To continue, either correct the inputs above and              re-run, or widen the workspace capabilities / permissions if the              failure is an admission gate."
+        ))],
+        stop_reason: StopReason::EndTurn,
+        usage: Usage::default(),
+        model: agent.config.model.clone(),
+    };
+    TurnOutcome::Completed { response }
 }
 
 /// Doom-loop threshold: the Nth identical (tool, args) call in one run is
 /// re-routed through approval instead of silently repeating.
 const DOOM_LOOP_THRESHOLD: u32 = 3;
 const MAX_TOOL_INPUT_CHARS: usize = 32_000;
+
+/// After this many **consecutive** turns that end with an unresolved
+/// correctable tool failure (`RepairState::consecutive_failed_turns` exceeds
+/// it), the run stops re-dispatching and degrades the outcome instead of
+/// spinning on failing tool calls. This bounds model-guided repair so a weak
+/// model that ignores the recovery hint cannot burn the whole turn budget
+/// on the same fault class.
+const MAX_REPAIR_TURNS: u32 = 2;
+/// On the Nth consecutive correctable-failure turn the system stops relying
+/// on a text hint alone: it injects an authoritative, schema-resurfacing
+/// directive so the model is no longer guessing what shape was rejected.
+const REPAIR_DIRECTIVE_TURN: u32 = 2;
+
+/// Per-run account of model-guided tool recovery. The loop is: hint on the
+/// first failure, a system-authored directive on the second, and a bounded
+/// degraded stop on the third — instead of unlimited spin or a silent
+/// false "complete". Reset at the start of every `run`.
+#[derive(Debug, Default)]
+struct RepairState {
+    /// Consecutive turns ending with one or more unresolved correctable tool
+    /// failures. Resets to 0 when a turn produces no correctable failures.
+    consecutive_failed_turns: u32,
+    /// Set once the run repair budget is exhausted; the loop must not keep
+    /// dispatching for repair after this.
+    exhausted: bool,
+}
+
+impl RepairState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
 
 async fn authorize(
     config: &AgentConfig,
