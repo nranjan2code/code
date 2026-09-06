@@ -5,6 +5,26 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.12 — 2026-09-06
+
+### System-driven tool-failure recovery (no more silent `produced`)
+
+- Add a typed `ToolErrorKind` classification for tool failures (single
+  authority shared by the recovery hint, the repair budget, and the outcome
+  gate). Webfetch byte-cap and MCP/mcp broker omissions now classify
+  `Correctable`.
+- `McpTool` schema is contract-honest: `oneOf` list/call branches with
+  `additionalProperties: false`, so the model no longer omits `server`/`tool`
+  by trusting an incomplete `required` list.
+- The schema validators (`vak-tools` contract and `vak-mcp`) now enforce
+  `oneOf` (exactly one branch) and `additionalProperties: false`.
+- Per-run repair budget in the agent turn loop: failed attempt -> hint;
+  second consecutive correctable failure -> system-authored, schema-resurfacing
+  directive; third -> bounded degraded stop (honest "could not repair" answer),
+  instead of spinning on a fault or signing off a fabricated result.
+- Outcome linkage: a turn that ends with unresolved correctable tool failures
+  and no successful receipts is downgraded `Produced` -> `Unknown`.
+
 ## 3.0.11 — 2026-09-06
 
 ### Provider and runtime contract audit
