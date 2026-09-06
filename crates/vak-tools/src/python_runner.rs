@@ -316,15 +316,15 @@ fn find_generated_artifacts(scratch_dir: &Path) -> Vec<String> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                let ext_lower = ext.to_ascii_lowercase();
-                if matches!(
-                    ext_lower.as_str(),
-                    "svg" | "png" | "jpg" | "jpeg" | "csv" | "json" | "parquet"
-                ) {
-                    found.push(path.display().to_string());
-                }
+        if path.is_file()
+            && let Some(ext) = path.extension().and_then(|s| s.to_str())
+        {
+            let ext_lower = ext.to_ascii_lowercase();
+            if matches!(
+                ext_lower.as_str(),
+                "svg" | "png" | "jpg" | "jpeg" | "csv" | "json" | "parquet"
+            ) {
+                found.push(path.display().to_string());
             }
         }
     }
@@ -379,6 +379,7 @@ async fn read_capped<R: AsyncReadExt + Unpin>(r: &mut R) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
