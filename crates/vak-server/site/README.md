@@ -1,6 +1,6 @@
 # The public site at `/`
 
-Four pages — `/`, `/surfaces`, `/security`, `/install` — built from this
+Five pages — `/`, `/outcomes`, `/surfaces`, `/security`, `/install` — built from this
 directory into `dist/`, which `crates/vak-server/src/site.rs` embeds with
 `include_dir!`.
 

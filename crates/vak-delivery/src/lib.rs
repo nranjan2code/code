@@ -25,8 +25,8 @@ pub use presentation::{
     ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
     DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
-    OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, SurfaceCapabilities,
-    TableAlignment, compile_markdown, inline_text, safe_link,
+    OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, ResultOutcome,
+    SurfaceCapabilities, TableAlignment, compile_markdown, inline_text, safe_link,
 };
 pub use skills::{
     ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, LinkPreview, MediaOutput, Metric,
@@ -51,6 +51,18 @@ pub struct AnswerDraft {
     pub document: PresentationDocument,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+    /// Independently presentable results. Empty means this draft is a single
+    /// answer result represented by `source_markdown`.
+    #[serde(default)]
+    pub results: Vec<AnswerResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswerResult {
+    pub id: String,
+    pub source_markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ResultOutcome>,
 }
 
 impl AnswerDraft {
@@ -66,16 +78,24 @@ impl AnswerDraft {
             blocks,
             document,
             metadata: BTreeMap::new(),
+            results: Vec::new(),
         }
     }
 
-    fn presentation_document(&self) -> PresentationDocument {
-        if self.document.source_markdown == self.source_markdown && !self.document.blocks.is_empty()
-        {
-            self.document.clone()
-        } else {
-            compile_markdown(self.source_markdown.clone())
+    fn channel_projection(&self) -> Self {
+        if self.results.is_empty() {
+            return self.clone();
         }
+        let source_markdown = self
+            .results
+            .iter()
+            .map(|result| result.source_markdown.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut projected = Self::from_markdown(source_markdown);
+        projected.metadata = self.metadata.clone();
+        projected.results = self.results.clone();
+        projected
     }
 }
 
@@ -550,6 +570,7 @@ pub struct DeliveryPacket {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum DeliveryPayload {
     Text(String),
     Structured(DeliveryContent),
@@ -665,29 +686,106 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
     let DeliveryContent::Answer(answer) = &job.content else {
         return None;
     };
-    let document = answer.presentation_document();
+    let default_status = match (
+        answer
+            .metadata
+            .get("outcome_completion")
+            .map(String::as_str),
+        answer
+            .metadata
+            .get("outcome_evidence_state")
+            .map(String::as_str),
+    ) {
+        (Some("complete"), None | Some("fresh")) | (None, None) => OutputStatus::Succeeded,
+        _ => OutputStatus::Partial,
+    };
+    let default_status = if answer
+        .metadata
+        .get("outcome_human_review")
+        .is_some_and(|value| !value.trim().is_empty() && value != "not_required")
+    {
+        OutputStatus::Partial
+    } else {
+        default_status
+    };
+    let legacy_document = answer.document.clone();
+    let has_typed_results = !answer.results.is_empty();
+    let results = if answer.results.is_empty() {
+        vec![AnswerResult {
+            id: "answer".into(),
+            source_markdown: answer.source_markdown.clone(),
+            outcome: metadata_outcome(&answer.metadata, default_status),
+        }]
+    } else {
+        answer.results.clone()
+    };
+    let mut diagnostics = Vec::new();
+    let items = results
+        .into_iter()
+        .map(|result| {
+            let outcome = result.outcome;
+            let status = outcome.as_ref().map(|value| value.status).unwrap_or(default_status);
+            if status == OutputStatus::Partial {
+                diagnostics.push(format!(
+                    "result '{}' is incomplete or unverified; inspect evidence before relying on it",
+                    result.id
+                ));
+            }
+            OutputItem {
+                id: format!("{}/{}", job.job_id, result.id),
+                timestamp: String::new(),
+                turn_id: job.job_id.clone(),
+                role: OutputRole::Assistant,
+                kind: match job.kind {
+                    DeliveryKind::Assistant | DeliveryKind::TaskSummary | DeliveryKind::Alert => OutputKind::Outcome,
+                    _ => OutputKind::Message,
+                },
+                status,
+                outcome,
+                content: OutputContent::Document {
+                    document: if !has_typed_results
+                        && result.id == "answer"
+                        && legacy_document.source_markdown == result.source_markdown
+                    {
+                        legacy_document.clone()
+                    } else {
+                        compile_markdown(result.source_markdown.clone())
+                    },
+                },
+                provenance: None,
+                actions: Vec::new(),
+                fallback_text: result.source_markdown,
+            }
+        })
+        .collect();
     Some(OutputTimeline {
         schema_version: presentation::PRESENTATION_SCHEMA_VERSION,
         session_id: String::new(),
         cursor: None,
-        items: vec![OutputItem {
-            id: job.job_id.clone(),
-            timestamp: String::new(),
-            turn_id: job.job_id.clone(),
-            role: OutputRole::Assistant,
-            kind: match job.kind {
-                DeliveryKind::Assistant | DeliveryKind::TaskSummary | DeliveryKind::Alert => {
-                    OutputKind::Outcome
-                }
-                _ => OutputKind::Message,
-            },
-            status: OutputStatus::Succeeded,
-            content: OutputContent::Document { document },
-            provenance: None,
-            actions: Vec::new(),
-            fallback_text: answer.source_markdown.clone(),
-        }],
-        diagnostics: Vec::new(),
+        items,
+        diagnostics,
+        goal: None,
+    })
+}
+
+fn metadata_outcome(
+    metadata: &BTreeMap<String, String>,
+    status: OutputStatus,
+) -> Option<ResultOutcome> {
+    let completion = metadata.get("outcome_completion").cloned();
+    let evidence_state = metadata.get("outcome_evidence_state").cloned();
+    let human_review = metadata.get("outcome_human_review").cloned();
+    (completion.is_some() || evidence_state.is_some() || human_review.is_some()).then(|| {
+        ResultOutcome {
+            result_id: "answer".into(),
+            status,
+            completion,
+            evidence_state,
+            requirement_ids: Vec::new(),
+            evidence_receipt_ids: Vec::new(),
+            evidence: Vec::new(),
+            human_review,
+        }
     })
 }
 
@@ -712,9 +810,11 @@ fn render_content(
     let skills_ref = &*skills;
     match &job.content {
         DeliveryContent::Answer(answer) => {
+            let projected_answer = answer.channel_projection();
             let rendered = match job.profile.template.as_ref() {
                 Some(template) => {
-                    let text = template.render(answer, project_structured, skills_ref)?;
+                    let text =
+                        template.render(&projected_answer, project_structured, skills_ref)?;
                     let text = if project_structured {
                         project_structured_fences_with(&text, skills_ref)
                     } else {
@@ -722,9 +822,14 @@ fn render_content(
                     };
                     render_text(&text, job.profile.markup)
                 }
-                None => render_answer(answer, job.profile.markup, project_structured, skills_ref),
+                None => render_answer(
+                    &projected_answer,
+                    job.profile.markup,
+                    project_structured,
+                    skills_ref,
+                ),
             };
-            let coverage = answer
+            let coverage = projected_answer
                 .blocks
                 .iter()
                 .map(|block| Coverage {
@@ -734,7 +839,7 @@ fn render_content(
                 .collect();
             Ok((
                 rendered,
-                answer.source_markdown.clone(),
+                projected_answer.source_markdown,
                 Vec::new(),
                 coverage,
             ))
@@ -810,17 +915,54 @@ fn render_answer(
     project_structured: bool,
     skills: &SkillRegistry,
 ) -> String {
+    let metadata_notice = match (
+        answer
+            .metadata
+            .get("outcome_completion")
+            .map(String::as_str),
+        answer
+            .metadata
+            .get("outcome_evidence_state")
+            .map(String::as_str),
+    ) {
+        (Some("complete"), None | Some("fresh")) | (None, None) => None,
+        _ => Some(
+            "⚠️ Outcome incomplete or unverified — review the evidence before relying on this result.\n\n"
+                .into(),
+        ),
+    };
+    let result_notice = answer.results.iter().find_map(|result| {
+        let outcome = result.outcome.as_ref()?;
+        (outcome.status != OutputStatus::Succeeded
+            || outcome.evidence_state.as_deref().is_some_and(|state| state != "fresh")
+            || outcome.human_review.is_some())
+        .then_some(format!(
+            "⚠️ Result '{}' is incomplete, unverified, or requires review — inspect its evidence before relying on it.\n\n",
+            result.id
+        ))
+    });
+    let notice = result_notice.or(metadata_notice);
     let source = if project_structured {
         project_structured_fences_with(&answer.source_markdown, skills)
     } else {
         answer.source_markdown.clone()
     };
     match markup {
-        Markup::Plain => render_plain(answer, project_structured, skills),
-        Markup::Markdown => source,
-        Markup::TelegramHtml => telegram::markdown_to_html(&source),
-        Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(&source),
-        Markup::DiscordMarkdown => discord::markdown_to_discord(&source),
+        Markup::Plain => format!(
+            "{}{}",
+            notice.unwrap_or_default(),
+            render_plain(answer, project_structured, skills)
+        ),
+        Markup::Markdown => format!("{}{}", notice.unwrap_or_default(), source),
+        Markup::TelegramHtml => {
+            telegram::markdown_to_html(&format!("{}{}", notice.unwrap_or_default(), source))
+        }
+        Markup::SlackMrkdwn => {
+            slack::markdown_to_mrkdwn(&format!("{}{}", notice.unwrap_or_default(), source))
+        }
+        Markup::DiscordMarkdown => {
+            discord::markdown_to_discord(&format!("{}{}", notice.unwrap_or_default(), source))
+        }
         Markup::Json => String::new(),
     }
 }
@@ -1311,6 +1453,196 @@ mod tests {
     }
 
     #[test]
+    fn packet_preserves_outcome_metadata_for_channel_consumers() {
+        let mut input = job(Markup::Markdown, None);
+        let DeliveryContent::Answer(answer) = &mut input.content else {
+            panic!("test job must contain an answer");
+        };
+        answer
+            .metadata
+            .insert("outcome_completion".into(), "partial".into());
+        answer
+            .document
+            .metadata
+            .insert("outcome_evidence_state".into(), "stale".into());
+        let packet = render(&input).expect("valid delivery job");
+        let DeliveryContent::Answer(answer) = &input.content else {
+            panic!("test job must contain an answer");
+        };
+        assert_eq!(
+            answer
+                .metadata
+                .get("outcome_completion")
+                .map(String::as_str),
+            Some("partial")
+        );
+        assert_eq!(
+            packet
+                .presentation
+                .as_ref()
+                .and_then(|timeline| timeline.items.first())
+                .and_then(|item| match &item.content {
+                    OutputContent::Document { document } => document
+                        .metadata
+                        .get("outcome_evidence_state")
+                        .map(String::as_str),
+                    _ => None,
+                }),
+            Some("stale")
+        );
+        let presentation = packet.presentation.as_ref().expect("presentation");
+        assert_eq!(presentation.items[0].status, OutputStatus::Partial);
+        assert!(
+            presentation
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("incomplete or unverified"))
+        );
+    }
+
+    #[test]
+    fn typed_results_keep_outcomes_independent() {
+        let mut input = job(Markup::Markdown, None);
+        let DeliveryContent::Answer(answer) = &mut input.content else {
+            panic!("test job must contain an answer");
+        };
+        answer.results = vec![
+            AnswerResult {
+                id: "answer".into(),
+                source_markdown: "The answer is verified.".into(),
+                outcome: Some(ResultOutcome {
+                    result_id: "answer".into(),
+                    status: OutputStatus::Succeeded,
+                    completion: Some("complete".into()),
+                    evidence_state: Some("fresh".into()),
+                    requirement_ids: vec!["r1".into()],
+                    evidence_receipt_ids: vec!["receipt-1".into()],
+                    evidence: Vec::new(),
+                    human_review: None,
+                }),
+            },
+            AnswerResult {
+                id: "artifact".into(),
+                source_markdown: "The artifact still needs review.".into(),
+                outcome: Some(ResultOutcome {
+                    result_id: "artifact".into(),
+                    status: OutputStatus::Partial,
+                    completion: Some("partial".into()),
+                    evidence_state: Some("stale".into()),
+                    requirement_ids: vec!["r2".into()],
+                    evidence_receipt_ids: Vec::new(),
+                    evidence: Vec::new(),
+                    human_review: Some("required".into()),
+                }),
+            },
+        ];
+        let packet = render(&input).expect("valid delivery job");
+        assert!(packet.fallback_markdown.contains("The answer is verified."));
+        assert!(
+            packet
+                .fallback_markdown
+                .contains("artifact still needs review")
+        );
+        assert!(matches!(
+            &packet.payload,
+            DeliveryPayload::Text(text) if text.contains("Result 'artifact'")
+        ));
+        let timeline = packet.presentation.expect("presentation");
+        assert_eq!(timeline.items.len(), 2);
+        assert_eq!(timeline.items[0].status, OutputStatus::Succeeded);
+        assert_eq!(timeline.items[1].status, OutputStatus::Partial);
+        assert_eq!(
+            timeline.items[1]
+                .outcome
+                .as_ref()
+                .and_then(|o| o.human_review.as_deref()),
+            Some("required")
+        );
+        assert_eq!(timeline.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn stale_evidence_downgrades_even_a_complete_claim() {
+        let mut input = job(Markup::Markdown, None);
+        let DeliveryContent::Answer(answer) = &mut input.content else {
+            panic!("test job must contain an answer");
+        };
+        answer
+            .metadata
+            .insert("outcome_completion".into(), "complete".into());
+        answer
+            .metadata
+            .insert("outcome_evidence_state".into(), "stale".into());
+        let packet = render(&input).expect("valid delivery job");
+        let presentation = packet.presentation.as_ref().expect("presentation");
+        assert_eq!(presentation.items[0].status, OutputStatus::Partial);
+        assert!(
+            matches!(&packet.payload, DeliveryPayload::Text(text) if text.contains("Outcome incomplete or unverified"))
+        );
+    }
+
+    #[test]
+    fn stale_evidence_warning_survives_messaging_renderers() {
+        for markup in [
+            Markup::TelegramHtml,
+            Markup::SlackMrkdwn,
+            Markup::DiscordMarkdown,
+        ] {
+            let mut input = job(markup, None);
+            let DeliveryContent::Answer(answer) = &mut input.content else {
+                panic!("test job must contain an answer");
+            };
+            answer
+                .metadata
+                .insert("outcome_completion".into(), "complete".into());
+            answer
+                .metadata
+                .insert("outcome_evidence_state".into(), "stale".into());
+            let packet = render(&input).expect("valid delivery job");
+            assert!(
+                matches!(&packet.payload, DeliveryPayload::Text(text) if text.contains("Outcome incomplete or unverified")),
+                "markup {markup:?}: {:?}",
+                packet.payload
+            );
+        }
+    }
+
+    #[test]
+    fn typed_result_warning_survives_all_text_channels() {
+        for markup in [
+            Markup::Plain,
+            Markup::Markdown,
+            Markup::TelegramHtml,
+            Markup::SlackMrkdwn,
+            Markup::DiscordMarkdown,
+        ] {
+            let mut input = job(markup, None);
+            let DeliveryContent::Answer(answer) = &mut input.content else {
+                panic!("test job must contain an answer");
+            };
+            answer.results.push(AnswerResult {
+                id: "needs-review".into(),
+                source_markdown: "A result with an evidence gap.".into(),
+                outcome: Some(ResultOutcome {
+                    result_id: "needs-review".into(),
+                    status: OutputStatus::Partial,
+                    completion: Some("partial".into()),
+                    evidence_state: Some("unknown".into()),
+                    requirement_ids: vec!["evidence".into()],
+                    evidence_receipt_ids: Vec::new(),
+                    evidence: Vec::new(),
+                    human_review: Some("required".into()),
+                }),
+            });
+            let packet = render(&input).expect("valid delivery job");
+            assert!(matches!(
+                &packet.payload,
+                DeliveryPayload::Text(text) if text.contains("Result 'needs-review'")
+            ));
+        }
+    }
+
+    #[test]
     fn obsolete_answer_schema_is_refused_without_migration() {
         let mut input = job(Markup::Plain, None);
         let DeliveryContent::Answer(answer) = &mut input.content else {
@@ -1688,6 +2020,7 @@ mod tests {
             provides: vec!["custom.metric".into()],
             renderers,
             schema: None,
+            outcome_requirements: Vec::new(),
         };
         let files = vec![(
             "custom_skill.json".to_string(),

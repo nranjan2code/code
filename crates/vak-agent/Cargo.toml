@@ -14,6 +14,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 vak-hooks = { workspace = true }
+vak-intent = { workspace = true }
 vak-llm = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }

@@ -391,6 +391,7 @@ pub async fn plan_and_run(
             flow_name: flow.name.clone(),
             definition_toml: toml_str.clone(),
             started_at: chrono::Utc::now(),
+            outcome: None,
             nodes: Default::default(),
         };
 

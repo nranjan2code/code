@@ -59,12 +59,35 @@ pub struct OutputItem {
     pub role: OutputRole,
     pub kind: OutputKind,
     pub status: OutputStatus,
+    /// The machine-readable result contract for this item. Presentation is
+    /// result-scoped: one answer may contain several independently evaluated
+    /// results, rather than one status being painted over the whole answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ResultOutcome>,
     pub content: OutputContent,
     #[serde(default)]
     pub provenance: Option<OutputProvenance>,
     #[serde(default)]
     pub actions: Vec<crate::DeliveryAction>,
     pub fallback_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResultOutcome {
+    pub result_id: String,
+    pub status: OutputStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_state: Option<String>,
+    #[serde(default)]
+    pub requirement_ids: Vec<String>,
+    #[serde(default)]
+    pub evidence_receipt_ids: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<vak_intent::EvidenceReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_review: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +145,8 @@ pub struct OutputTimeline {
     pub items: Vec<OutputItem>,
     #[serde(default)]
     pub diagnostics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<vak_intent::GoalState>,
 }
 
 impl OutputTimeline {
@@ -132,6 +157,7 @@ impl OutputTimeline {
             cursor: None,
             items: Vec::new(),
             diagnostics: Vec::new(),
+            goal: None,
         }
     }
 }

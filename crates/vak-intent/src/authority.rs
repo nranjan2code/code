@@ -304,7 +304,62 @@ pub struct Envelope {
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    Presentation,
+    Skill,
+    EvidenceAdapter,
+    Hook,
+    Tool,
+    Evaluator,
+    EnvironmentProvision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityDecision {
+    AutoAdmit,
+    RequiresHuman,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRequest {
+    pub kind: CapabilityKind,
+    pub tool: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub uses_network: bool,
+    #[serde(default)]
+    pub uses_secrets: bool,
+    #[serde(default)]
+    pub external_effect: bool,
+}
+
 impl Envelope {
+    pub fn classify_capability(
+        &self,
+        request: &CapabilityRequest,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> CapabilityDecision {
+        if !self.is_live(now) || !self.covers(&request.tool, &request.paths) {
+            return CapabilityDecision::RequiresHuman;
+        }
+        if request.uses_network || request.uses_secrets || request.external_effect {
+            return CapabilityDecision::RequiresHuman;
+        }
+        match request.kind {
+            CapabilityKind::Presentation
+            | CapabilityKind::Skill
+            | CapabilityKind::EvidenceAdapter
+            | CapabilityKind::Evaluator
+            | CapabilityKind::EnvironmentProvision => CapabilityDecision::AutoAdmit,
+            CapabilityKind::Hook | CapabilityKind::Tool => CapabilityDecision::RequiresHuman,
+        }
+    }
+
     /// Whether the envelope is in force at `now`.
     ///
     /// Revocation and expiry are checked here rather than at the call sites so

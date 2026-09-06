@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use vak_core::Core;
@@ -25,6 +25,7 @@ const MAX_CHANNEL_CHARS: usize = 100_000;
 pub(crate) fn merged_presentation_planner(core: &Core) -> vak_delivery::PresentationPlanner {
     let mut skills = vak_delivery::built_in_skill_registry();
     let mut recipes = vak_delivery::built_in_recipes();
+    let mut revoked_skills = BTreeSet::new();
     for root in core.capability_roots() {
         let Ok(plugins) = vak_plugin::PluginStore::new(&root.path).enabled() else {
             continue;
@@ -39,7 +40,14 @@ pub(crate) fn merged_presentation_planner(core: &Core) -> vak_delivery::Presenta
                     if let Ok(manifest) =
                         serde_json::from_str::<vak_delivery::PresentationSkillManifest>(json)
                     {
-                        let _ = skills.register(manifest);
+                        if !core.capability_revoked(
+                            vak_session::types::CapabilityKind::Skill,
+                            &manifest.id,
+                        ) {
+                            let _ = skills.register(manifest);
+                        } else {
+                            revoked_skills.insert(manifest.id);
+                        }
                     } else if let Ok(recipe) =
                         serde_json::from_str::<vak_delivery::PresentationRecipe>(json)
                     {
@@ -49,6 +57,7 @@ pub(crate) fn merged_presentation_planner(core: &Core) -> vak_delivery::Presenta
             }
         }
     }
+    recipes.remove_revoked_skills(&revoked_skills);
     vak_delivery::PresentationPlanner { skills, recipes }
 }
 
@@ -445,13 +454,21 @@ pub(crate) async fn render_response(
     chat: &str,
     markdown: String,
     requested: Option<&RequestedCapabilities>,
+    outcome_metadata: Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
         target: format!("{surface}:{chat}"),
         kind: DeliveryKind::Assistant,
-        content: DeliveryContent::Answer(AnswerDraft::from_markdown(markdown)),
+        content: DeliveryContent::Answer({
+            let mut answer = AnswerDraft::from_markdown(markdown);
+            if let Some(metadata) = outcome_metadata {
+                answer.metadata.extend(metadata.clone());
+                answer.document.metadata.extend(metadata);
+            }
+            answer
+        }),
         profile: profile_for_surface(core, surface, requested),
         skill_registry: Some(merged_presentation_skills(core)),
     };

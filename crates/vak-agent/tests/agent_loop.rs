@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, SteeringQueues, TurnOutcome, WorkMode};
+use vak_agent::{
+    Agent, AgentConfig, ApprovalMode, AutoApprove, SteeringQueues, TurnOutcome, WorkMode,
+};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider, WorkPurpose};
@@ -167,6 +169,100 @@ async fn single_turn_no_tools_completes() {
     }
     let session = h.agent.session.lock().await;
     assert_eq!(session.derive_messages().len(), 2);
+}
+
+#[tokio::test]
+async fn outcome_turn_cap_counts_model_calls_not_tool_round_trips() {
+    let mut h = harness(
+        vec![
+            ScriptedResponse::Message(tool_call_msg(
+                "tool-1",
+                "bash",
+                serde_json::json!({"command": "printf tool"}),
+            )),
+            ScriptedResponse::Message(assistant_text("done")),
+        ],
+        vec![Arc::new(BashTool)],
+    );
+    h.agent.config.mode = vak_permission::Mode::FullAccess;
+    h.agent.config.approval_mode = ApprovalMode::AutoApprove;
+    h.agent.config.approver = Some(Arc::new(AutoApprove));
+    h.agent.config.outcome = Some(vak_intent::OutcomeSpec {
+        schema_version: 1,
+        revision: 0,
+        objective: "complete one tool-assisted answer".into(),
+        assumptions: Vec::new(),
+        requirements: Vec::new(),
+        resolver_version: 1,
+        evidence_max_age_secs: None,
+        max_turns: Some(2),
+    });
+
+    let outcome = h
+        .agent
+        .run(
+            "run the tool",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(h.requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn queued_outcome_revision_is_applied_and_logged_before_dispatch() {
+    let mut h = harness(
+        vec![ScriptedResponse::Message(assistant_text("done"))],
+        vec![],
+    );
+    let steering = SteeringQueues::new();
+    let intent = vak_intent::Intent::general(1);
+    steering.push_outcome_update(vak_session::types::IntentRecord {
+        reading: intent.reading,
+        engagement: intent.engagement,
+        provenance: intent.provenance,
+        outcome: Some(vak_intent::OutcomeSpec {
+            schema_version: 1,
+            revision: 7,
+            objective: "updated objective".into(),
+            assumptions: Vec::new(),
+            requirements: Vec::new(),
+            resolver_version: 1,
+            evidence_max_age_secs: None,
+            max_turns: Some(1),
+        }),
+        model_visible: None,
+        commitment_id: None,
+    });
+
+    let outcome = h
+        .agent
+        .run(
+            "continue",
+            &steering,
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = h.agent.session.lock().await;
+    let revision = session.chain_to_root().iter().rev().find_map(|entry| {
+        if let vak_session::EntryPayload::Intent(record) = &entry.payload {
+            record.outcome.as_ref().map(|outcome| outcome.revision)
+        } else {
+            None
+        }
+    });
+    assert_eq!(revision, Some(7));
 }
 
 #[tokio::test]

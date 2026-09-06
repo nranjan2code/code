@@ -172,6 +172,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             flow_name: name.into(),
             definition_toml: definition_toml.clone(),
             started_at: chrono::Utc::now(),
+            outcome: None,
             nodes: Default::default(),
         };
         let permission = match self
@@ -185,6 +186,12 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 ));
             }
         };
+        let mut outcome = vak_intent::OutcomeSpec::from_reading(
+            flow.description.clone(),
+            &vak_intent::Reading::default(),
+            0,
+        );
+        outcome.max_turns = Some(self.core.effective_max_turns());
         let deps = vak_flow::ExecutorDeps {
             provider: match self.core.provider() {
                 Ok(provider) => provider,
@@ -200,6 +207,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 .cloned()
                 .collect(),
             max_turns: self.core.effective_max_turns(),
+            outcome: Some(outcome),
             permission: Some(permission),
             mode: match self.core.effective_permission_mode() {
                 vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
@@ -574,6 +582,10 @@ pub struct Core {
     /// attended. Unattended surfaces (the gateway without forward mode,
     /// the heartbeat) set it false, matching the `AutoDeny` they install.
     approver_answerable: bool,
+}
+
+fn effective_turn_cap(base: usize, intent_cap: Option<usize>) -> usize {
+    intent_cap.map(|cap| cap.min(base)).unwrap_or(base)
 }
 
 /// The complete executable surface handed to a standalone flow or agent.
@@ -1407,6 +1419,14 @@ impl Core {
             return self.capability_descriptors();
         }
         published.descriptors()
+    }
+
+    /// Fast live revocation check for presentation and other non-async
+    /// projections. Availability still follows the published epoch; this
+    /// check only answers whether a capability is forbidden right now.
+    pub fn capability_revoked(&self, kind: vak_session::types::CapabilityKind, name: &str) -> bool {
+        self.capability_registry()
+            .revoked_now(&capability::CapabilityId::new(kind, name))
     }
 
     /// A live session's admitted set, re-rendered against the current
@@ -3880,7 +3900,7 @@ impl Core {
         provider: String,
         model: String,
     ) -> Result<SessionLog, CoreError> {
-        self.start_session_with_route_for(provider, model, None)
+        self.start_session_with_route_for(provider, model, None, None)
             .await
     }
 
@@ -3906,7 +3926,8 @@ impl Core {
             &intent::resolver_config(&self.inner.config),
         );
         let demand = resolution.peek().engagement.posture.demand;
-        self.start_session_with_route_for(provider, model, Some(demand))
+        let route_limit = resolution.peek().engagement.limits.ladder_limit;
+        self.start_session_with_route_for(provider, model, Some(demand), route_limit)
             .await
     }
 
@@ -3915,6 +3936,7 @@ impl Core {
         provider: String,
         model: String,
         demand: Option<vak_intent::DemandHint>,
+        route_limit: Option<usize>,
     ) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
@@ -3928,7 +3950,7 @@ impl Core {
             .and_then(|auth| auth.credential_id);
         let needs_tools_or_reasoning =
             demand.is_some_and(|hint| hint.reasoning_required) || !self.tool_names().is_empty();
-        let plan = self.plan_route_ladder(
+        let mut plan = self.plan_route_ladder(
             vak_llm::RouteLeg {
                 provider: provider.clone(),
                 model: model.clone(),
@@ -3940,6 +3962,7 @@ impl Core {
             },
             demand,
         );
+        plan.ladder = intent::limit_ladder(&plan.ladder, route_limit);
         let capabilities = self.admitted_capabilities().await;
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
@@ -4264,6 +4287,7 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        let prompt_text = prompt.text_content();
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier
         // loses to it, and a disagreement is recorded rather than believed.
@@ -4347,6 +4371,14 @@ impl Core {
             intent::projection_is_narrowing(&engagement.limits),
             "a derived engagement widened the baseline"
         );
+        let mut admitted_outcome = vak_intent::OutcomeSpec::from_reading(
+            prompt.text_content(),
+            &resolved_intent.reading,
+            resolved_intent.provenance.resolver_version,
+        );
+        admitted_outcome.evidence_max_age_secs =
+            Some(self.inner.config.intent.evidence_max_age_secs);
+        cfg.outcome = Some(admitted_outcome);
 
         // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----
         // One pipeline for all five kinds. MCP aliases, hooks, frozen skills,
@@ -4435,6 +4467,9 @@ impl Core {
         }
         cfg.model = model.clone();
         cfg.tools = self.agent_tools();
+        // The intent cap is enforced by the admission/commitment contract;
+        // the agent loop's counter includes tool round-trips and is therefore
+        // not a faithful model-turn budget for general-purpose turns.
         cfg.max_turns = self.effective_max_turns();
         cfg.parallel_tools = true;
         cfg.max_retries = self.inner.config.max_retries;
@@ -4731,6 +4766,8 @@ impl Core {
                 child_core.system_prompt_for_capabilities(&child_capability_set);
             let role_prompts = child_core.role_prompts(&child_capability_set);
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                outcome_objective: Some(prompt_text.to_string()),
+                outcome: cfg.outcome.clone(),
                 provider: provider.clone(),
                 system_prompt: child_default_prompt,
                 role_prompts,
@@ -4745,7 +4782,11 @@ impl Core {
                 mcp_aliases: Some(cfg.mcp_aliases.clone()),
                 input_normalizer: cfg.input_normalizer.clone(),
                 read_only_tools,
-                max_turns: self.effective_max_turns(),
+                max_turns: effective_turn_cap(
+                    self.effective_max_turns(),
+                    engagement.limits.max_turns,
+                ),
+                subagent_budget: engagement.limits.subagent_budget,
                 permission: Some(engine.clone()),
                 mode: cfg.mode,
                 approval_mode: cfg.approval_mode,
@@ -4946,6 +4987,24 @@ impl Core {
         // the model either, because both come from the same entry.
         let mut session = session;
 
+        let active_goal_revision = session.active_goal_revision();
+        let relation =
+            vak_intent::classify_goal_update(&prompt.text_content(), active_goal_revision);
+        let goal_update = vak_intent::GoalUpdate {
+            revision: active_goal_revision.unwrap_or(0).saturating_add(1),
+            relation,
+            request: prompt.text_content(),
+            supersedes_revision: matches!(
+                relation,
+                vak_intent::GoalRelation::Corrects | vak_intent::GoalRelation::Replaces
+            )
+            .then_some(active_goal_revision)
+            .flatten(),
+        };
+        if let Err(error) = session.append_goal_update(goal_update) {
+            eprintln!("[goal] could not record this request relationship: {error}");
+        }
+
         // Durable work earns a commitment of its own before the turn runs, so
         // the episode brackets the work rather than being reconstructed from
         // it afterwards. A ledger failure is logged and dropped: losing the
@@ -4963,10 +5022,18 @@ impl Core {
         });
 
         if self.inner.config.intent.enabled {
+            let mut outcome_spec = vak_intent::OutcomeSpec::from_reading(
+                prompt.text_content(),
+                &resolved_intent.reading,
+                resolved_intent.provenance.resolver_version,
+            );
+            outcome_spec.evidence_max_age_secs =
+                Some(self.inner.config.intent.evidence_max_age_secs);
             let record = vak_session::types::IntentRecord {
                 reading: resolved_intent.reading.clone(),
                 engagement: resolved_intent.engagement.clone(),
                 provenance: resolved_intent.provenance.clone(),
+                outcome: Some(outcome_spec),
                 model_visible: resolved_intent.model_visible(),
                 commitment_id: episode
                     .as_ref()
@@ -5002,7 +5069,137 @@ impl Core {
                 outcome = &mut run => outcome,
             }
         };
-        let session = agent.into_session().await;
+        let mut session = agent.into_session().await;
+
+        // Record what the runtime actually produced separately from the
+        // earlier intent record. The outcome contract is append-only: a
+        // response may exist without satisfying its evidence requirements.
+        if self.inner.config.intent.enabled {
+            let response_text = match &outcome {
+                TurnOutcome::Completed { response } => Some(response.text_content()),
+                TurnOutcome::Aborted { partial } => {
+                    partial.as_ref().map(|message| message.text_content())
+                }
+                TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached => None,
+            };
+            let status = vak_intent::evaluate_response(
+                response_text.as_deref(),
+                matches!(
+                    outcome,
+                    TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached
+                ),
+                matches!(outcome, TurnOutcome::Aborted { .. }),
+            );
+            let turn = session
+                .chain_to_root()
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        &entry.payload,
+                        vak_session::types::EntryPayload::Message(record)
+                            if record.message.role == vak_llm::Role::User
+                                && record.message.content.iter().any(|block| {
+                                    matches!(block, vak_llm::ContentBlock::Text { .. })
+                                })
+                    )
+                })
+                .count();
+            let mut outcome_spec = vak_intent::OutcomeSpec::from_reading(
+                prompt_text,
+                &resolved_intent.reading,
+                resolved_intent.provenance.resolver_version,
+            );
+            outcome_spec.evidence_max_age_secs =
+                Some(self.inner.config.intent.evidence_max_age_secs);
+            let mut tool_calls = std::collections::HashSet::new();
+            let mut successful_receipts = std::collections::HashSet::new();
+            for entry in session.chain_to_root() {
+                if let vak_session::EntryPayload::Message(record) = &entry.payload {
+                    for block in &record.message.content {
+                        match block {
+                            vak_llm::ContentBlock::ToolUse { id, .. } => {
+                                tool_calls.insert(id.clone());
+                            }
+                            vak_llm::ContentBlock::ToolResult {
+                                tool_use_id,
+                                is_error: false,
+                                ..
+                            } if tool_calls.contains(tool_use_id) => {
+                                successful_receipts.insert(tool_use_id.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let evidence_state = session.successful_tool_receipts().last().map_or(
+                vak_intent::EvidenceState::None,
+                |(_, recorded_at)| {
+                    vak_intent::evidence_state_from_age(
+                        chrono::Utc::now(),
+                        *recorded_at,
+                        chrono::Duration::seconds(
+                            outcome_spec
+                                .evidence_max_age_secs
+                                .map_or(86_400, |seconds| seconds),
+                        ),
+                    )
+                },
+            );
+            let requirement_evaluations = vak_intent::evaluate_requirements_with_state(
+                &outcome_spec,
+                response_text.as_deref(),
+                evidence_state,
+            );
+            let completion =
+                vak_intent::evaluate_completion(status, &requirement_evaluations, &outcome_spec);
+            let human_review = vak_intent::human_review_state(completion);
+            let evidence_receipts = successful_receipts
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",");
+            let _ = session.append_activity(vak_session::types::ActivityRecord {
+                activity_id: format!("outcome-evaluation-{}", uuid_like()),
+                turn: Some(turn),
+                kind: vak_session::types::ActivityKind::Diagnostic,
+                status: vak_session::types::ActivityStatus::Succeeded,
+                label: "Outcome evaluation".into(),
+                detail: Some(format!("primary deliverable: {status:?}")),
+                data: std::collections::BTreeMap::from([
+                    ("status".into(), format!("{status:?}").to_ascii_lowercase()),
+                    (
+                        "completion".into(),
+                        format!("{completion:?}").to_ascii_lowercase(),
+                    ),
+                    ("evidence_receipts".into(), evidence_receipts),
+                    (
+                        "evidence_state".into(),
+                        format!("{evidence_state:?}").to_ascii_lowercase(),
+                    ),
+                    ("human_review".into(), human_review.into()),
+                    (
+                        "evidence_max_age_secs".into(),
+                        outcome_spec
+                            .evidence_max_age_secs
+                            .map_or_else(|| "none".into(), |value| value.to_string()),
+                    ),
+                    (
+                        "requirements".into(),
+                        outcome_spec
+                            .requirements
+                            .iter()
+                            .map(|requirement| requirement.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
+                    (
+                        "evaluation".into(),
+                        serde_json::to_string(&requirement_evaluations)
+                            .unwrap_or_else(|_| "[]".into()),
+                    ),
+                ]),
+            });
+        }
 
         // Was the reading right? The strongest answer is measured, not
         // guessed: if the engagement withheld a tool and the model then asked
@@ -7479,6 +7676,13 @@ mod override_deadlock {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod route_control_tests {
     use super::*;
+
+    #[test]
+    fn intent_turn_cap_can_only_narrow_the_runtime_cap() {
+        assert_eq!(effective_turn_cap(40, Some(2)), 2);
+        assert_eq!(effective_turn_cap(1, Some(2)), 1);
+        assert_eq!(effective_turn_cap(40, None), 40);
+    }
 
     #[test]
     fn provider_and_model_are_never_observed_as_a_torn_pair() {

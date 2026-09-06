@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implementation complete for shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added.
+Status: implementation complete for shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added. Outcome revisions and collaborative goal updates are recorded by the shared outcome-directed runtime (`docs/design/52-outcome-directed-runtime.md`), while this document remains the durable work-item contract.
 
 ## Mission
 
@@ -17,7 +17,9 @@ Given a complex request, Vak must be able to answer, from durable state:
 6. What evidence supports each result?
 7. Why is the overall work complete, incomplete, failed, or awaiting input?
 
-This document is an implementation contract for a long-running coding agent.
+This document is an implementation contract for long-running general-purpose
+agent work, including coding, research, writing, analysis, and operational
+tasks.
 An implementing agent must continue through every phase, preserve the
 invariants below, run the required verification after each phase, and leave a
 clear handoff if a phase cannot be completed. Do not mark the mission complete

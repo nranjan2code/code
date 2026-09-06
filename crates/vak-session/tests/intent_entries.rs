@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 
 use vak_llm::Message;
-use vak_session::SessionLog;
 use vak_session::types::{FrozenContract, IntentRecord, MessageRecord, SessionHeader};
+use vak_session::{SessionLog, SessionPath};
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -47,6 +47,7 @@ fn record(note: Option<&str>) -> IntentRecord {
             vak_intent::RESOLVER_VERSION,
             Vec::new(),
         ),
+        outcome: None,
         model_visible: note.map(str::to_string),
         commitment_id: None,
     }
@@ -70,7 +71,8 @@ fn user(text: &str) -> MessageRecord {
 #[test]
 fn an_intent_note_reaches_the_model_immediately_before_its_turn() {
     let dir = tempdir().unwrap();
-    let mut log = open(dir.path());
+    let path = SessionPath::new_session_file(dir.path(), &PathBuf::from("/tmp/proj"), "s-intent");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
     log.append_intent(record(Some("Cite your sources.")))
         .unwrap();
     log.append_message(user("what changed in the parser?"))
@@ -93,6 +95,34 @@ fn an_intent_note_reaches_the_model_immediately_before_its_turn() {
          of the conversation: {texts:?}"
     );
     assert!(texts[note_at].contains("<intent>"));
+}
+
+#[test]
+fn goal_projection_ignores_control_updates_when_finding_active_work() {
+    let dir = tempdir().unwrap();
+    let path = SessionPath::new_session_file(dir.path(), &PathBuf::from("/tmp/proj"), "s-intent");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 1,
+        relation: vak_intent::GoalRelation::New,
+        request: "build the report".into(),
+        supersedes_revision: None,
+    })
+    .unwrap();
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 2,
+        relation: vak_intent::GoalRelation::Status,
+        request: "what is the status?".into(),
+        supersedes_revision: None,
+    })
+    .unwrap();
+    assert_eq!(log.active_goal_revision(), Some(1));
+    let state = log.goal_state().expect("goal state exists");
+    assert_eq!(state.objective, "build the report");
+    assert_eq!(state.revision, 2);
+    drop(log);
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(reopened.goal_state(), Some(state));
 }
 
 /// Per-turn guidance must not accumulate. Five stale notes waste context and

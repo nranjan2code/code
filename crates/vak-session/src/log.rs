@@ -183,6 +183,54 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Goal(goal)))
     }
 
+    pub fn append_goal_update(
+        &mut self,
+        update: vak_intent::GoalUpdate,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::GoalUpdate(update)))
+    }
+
+    pub fn latest_goal_update(&self) -> Option<&vak_intent::GoalUpdate> {
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::GoalUpdate(update) => Some(update),
+                _ => None,
+            })
+    }
+
+    pub fn active_goal_revision(&self) -> Option<u64> {
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::GoalUpdate(update)
+                    if matches!(
+                        update.relation,
+                        vak_intent::GoalRelation::New
+                            | vak_intent::GoalRelation::AddsTo
+                            | vak_intent::GoalRelation::Corrects
+                            | vak_intent::GoalRelation::Replaces
+                    ) =>
+                {
+                    Some(update.revision)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn goal_state(&self) -> Option<vak_intent::GoalState> {
+        vak_intent::GoalState::from_updates(self.chain_to_root().iter().filter_map(|entry| {
+            if let EntryPayload::GoalUpdate(update) = &entry.payload {
+                Some(update.clone())
+            } else {
+                None
+            }
+        }))
+    }
+
     /// Appends a presentation/audit lifecycle fact. It is deliberately
     /// excluded from `derive_messages`.
     pub fn append_activity(
@@ -210,8 +258,19 @@ impl SessionLog {
         &mut self,
         status: crate::types::ChildRunStatus,
     ) -> Result<Entry, SessionError> {
+        self.append_child_run_result(status, None)
+    }
+
+    pub fn append_child_run_result(
+        &mut self,
+        status: crate::types::ChildRunStatus,
+        outcome: Option<vak_intent::OutcomeSpec>,
+    ) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
-        self.append(Entry::new(parent, EntryPayload::ChildRun { status }))
+        self.append(Entry::new(
+            parent,
+            EntryPayload::ChildRun { status, outcome },
+        ))
     }
 
     pub fn child_run_status(&self) -> Option<crate::types::ChildRunStatus> {
@@ -219,7 +278,17 @@ impl SessionLog {
             .iter()
             .rev()
             .find_map(|entry| match &entry.payload {
-                EntryPayload::ChildRun { status } => Some(status.clone()),
+                EntryPayload::ChildRun { status, .. } => Some(status.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn child_run_outcome(&self) -> Option<vak_intent::OutcomeSpec> {
+        self.chain_to_root()
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::ChildRun { outcome, .. } => outcome.clone(),
                 _ => None,
             })
     }
@@ -478,6 +547,34 @@ impl SessionLog {
             .collect()
     }
 
+    /// Successful tool-result receipts with the ledger timestamp at which
+    /// the result was recorded. This is a replay-safe source for evidence
+    /// freshness; callers choose the domain-specific validity window.
+    pub fn successful_tool_receipts(&self) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
+        let mut known_calls = std::collections::HashSet::new();
+        let mut receipts = Vec::new();
+        for entry in self.chain_to_root() {
+            if let EntryPayload::Message(record) = &entry.payload {
+                for block in &record.message.content {
+                    match block {
+                        vak_llm::ContentBlock::ToolUse { id, .. } => {
+                            known_calls.insert(id.clone());
+                        }
+                        vak_llm::ContentBlock::ToolResult {
+                            tool_use_id,
+                            is_error: false,
+                            ..
+                        } if known_calls.contains(tool_use_id) => {
+                            receipts.push((tool_use_id.clone(), entry.ts));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        receipts
+    }
+
     /// Distinct bash commands that ran GREEN on the active chain, in
     /// first-run order (docs/design/10-flows.md adoption substrate). A command is
     /// settled when its tool_result is not an error.
@@ -702,6 +799,7 @@ impl SessionLog {
                 EntryPayload::Header(_)
                 | EntryPayload::Receipt(_)
                 | EntryPayload::Goal(_)
+                | EntryPayload::GoalUpdate(_)
                 | EntryPayload::Activity(_)
                 | EntryPayload::Work(_)
                 | EntryPayload::TurnCapabilitiesBound(_)

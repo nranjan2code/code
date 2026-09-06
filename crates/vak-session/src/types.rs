@@ -478,6 +478,10 @@ pub struct IntentRecord {
     pub reading: vak_intent::Reading,
     pub engagement: vak_intent::Engagement,
     pub provenance: vak_intent::Provenance,
+    /// The requested outcome captured for this turn, when the host could
+    /// construct one without inventing requirements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     /// Exactly what the model was told, if anything. `None` when the
     /// engagement had nothing worth spending tokens to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -510,6 +514,9 @@ pub enum EntryPayload {
     Receipt(vak_llm::WorkReceipt),
     /// Goal lifecycle (docs/design/42-managed-work-contracts.md). Never model-visible.
     Goal(GoalEntry),
+    /// Relationship between this request and the active collaborative goal.
+    /// Never model-visible; the original request remains a Message entry.
+    GoalUpdate(vak_intent::GoalUpdate),
     /// UI/audit lifecycle facts; never model-visible.
     Activity(ActivityRecord),
     /// Durable managed-work lifecycle event. The projector is the source of
@@ -521,6 +528,8 @@ pub enum EntryPayload {
     /// result. Never model-visible.
     ChildRun {
         status: ChildRunStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<vak_intent::OutcomeSpec>,
     },
     /// Exact capability interface used by one provider turn.
     TurnCapabilitiesBound(TurnCapabilitiesBound),

@@ -806,5 +806,5 @@ export function resetSessionView(id: string) {
     setItemsBySession(key, []);
     setRunningMap(key, false);
   }
-  setPresentationBySession(id, { schema_version: 2, session_id: id, items: [], diagnostics: [] });
+  setPresentationBySession(id, { schema_version: 2, session_id: id, items: [], diagnostics: [], goal: null });
 }

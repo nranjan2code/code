@@ -1,6 +1,6 @@
 //! The public website, served at `/` (docs/design/48-web-client.md §4.6).
 //!
-//! Four static pages built from one source by `site/build.py` and embedded
+//! Five static pages built from one source by `site/build.py` and embedded
 //! here, the same way `/admin` and `/app` embed their bundles. It replaced a
 //! single hand-written `assets/landing.html` when the front door grew past
 //! one page: a shared rail, footer and design system copied four times drift
@@ -37,6 +37,7 @@ static SITE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/site/dist");
 /// cannot drift apart.
 pub(crate) const ROUTES: &[(&str, &str)] = &[
     ("/", "index.html"),
+    ("/outcomes", "outcomes/index.html"),
     ("/surfaces", "surfaces/index.html"),
     ("/security", "security/index.html"),
     ("/install", "install/index.html"),

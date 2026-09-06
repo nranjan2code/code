@@ -78,6 +78,24 @@ consumers.
 
 ## Semantics
 
+## Outcome-directed presentation
+
+The server is the canonical projection boundary for the shared outcome runtime
+(`docs/design/52-outcome-directed-runtime.md`). `GET
+/sessions/:id/presentation` returns an `OutputTimeline` whose result items carry
+their own status, evidence receipts, requirement links, diagnostics and exact
+fallback Markdown. The timeline may also carry the current projected
+`GoalState`, including the objective, additions, superseded revisions and
+control state.
+
+`GoalUpdate` entries are append-only collaboration records. A steering or
+follow-up message can add, correct, replace, pause, resume, reprioritise or
+cancel work; the runtime classifies the relation and applies only changes that
+fit the admitted authority. Changes that affect permissions, irreversible work
+or the frozen route continue through the existing approval path. Web, desktop
+and channel clients consume this same projection; a channel's shorter text
+fallback does not change the underlying outcome or evidence.
+
 - **Stream-open handshake**: the SSE handler subscribes to the broadcast
   ring *before* notifying, then publishes a `StreamOpened` marker. Clients
   fire `/run` only after seeing it — no subscribe/publish races, verified by

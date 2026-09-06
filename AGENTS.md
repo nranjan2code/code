@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.8 — all roadmap phases implemented and live-tested.**
+**Status: v3.0.10 — all roadmap phases implemented and repository-verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -64,7 +64,8 @@ multi-bot identity (34), Tavily (35), first-run onboarding (36),
 distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
-configuration (44), plus the 3.0.8 lifecycle-hardening release covering
+configuration (44), plus the 3.0.8 lifecycle-hardening release and the 3.0.10
+outcome-directed runtime release covering
 permission leases, approval gates, budget admission, child-run recovery, and
 commitment progress accounting. Each carries its own `Status:` line — read it before
 assuming a document describes shipped behaviour rather than a proposal.
@@ -466,6 +467,64 @@ assuming a document describes shipped behaviour rather than a proposal.
   scripts re-verify it and fail the build naming the stale file. Never
   weaken that check to get a build through — regenerate the bundle.
 - Config keys unknown to this version are ignored with a warning, never fatal.
+
+## Outcome-directed runtime contract
+
+The outcome-directed runtime is the canonical interpretation-to-delivery path
+for every surface, not a coding-only feature. A request is recorded as an
+`OutcomeSpec` during admission and carried through capability discovery,
+permission-bounded execution, child runs, evidence evaluation, and delivery.
+The specification is an interpretation and completion contract; it never
+grants authority. Permission, sandbox, broker, route, and approval contracts
+remain authoritative and may only narrow the admitted outcome.
+
+The durable chain is:
+
+`request → IntentRecord/OutcomeSpec → admitted limits → results/evidence → evaluation → OutputTimeline`
+
+`IntentRecord` is model-visible only through its recorded `model_visible`
+projection. Audit-only records never enter `derive_messages()`. Sessions are
+append-only: `GoalUpdate` records collaborative changes, `IntentRecord` records
+outcome revisions, and `ActivityRecord`/receipts record lifecycle and evidence.
+Replaying the ledger must reconstruct the model-visible input exactly.
+
+Each meaningful result is independent. A result may be complete, partial,
+failed, cancelled, or unknown; a typed renderer cannot upgrade an unsupported
+claim into observed evidence. Evidence is scoped to the result and requirement,
+and its strength, freshness, identity, and applicability are evaluated
+separately. Missing or stale evidence must remain visible as partial/unknown.
+Specialised presentation recipes are eligible only when the required typed
+result and evidence are present; otherwise deterministic Markdown fallback is
+used with a diagnostic. No surface may independently classify a result.
+
+Collaborative messages are classified as new work, additions, corrections,
+replacements, status requests, pauses, resumes, or cancellations. The
+`GoalState` projection exposes the current objective, additions, superseded
+revisions, and control state. Replan/reprioritise/add/remove requests use the
+existing intervention and approval path, create a new outcome revision, and
+queue work at a safe boundary. Human approval is required whenever the change
+would exceed the current authority or affect an irreversible action.
+
+`OutputTimeline` is the cross-surface contract for web, desktop, and channel
+delivery. It carries result outcome metadata, evidence references, diagnostics,
+and the projected goal state. Clients render the closed semantic AST or the
+exact fallback; they do not mount model-authored HTML or invent status. The
+desktop/web goal panel is observational, while the existing run-control bar is
+the single action surface for pause/resume/cancel and plan changes.
+
+New capabilities (renderer, skill, evidence adapter, hook, tool, evaluator, or
+environment provision) are workspace-scoped proposals until validated and
+promoted. Presentation/skill/evidence/evaluator/environment contributions may
+be auto-admitted only inside an existing envelope; hooks/tools and anything
+networked, secret-bearing, or externally effectful require human review.
+Promotion never silently activates a proposal, and revocation takes effect
+immediately without a restart.
+
+The evaluator must measure both usefulness and cost: pass rate, completion
+verdict, evidence state, human-review rate, latency, token use, and baseline vs
+outcome-directed deltas. Repository suites prove deterministic behavior;
+representative live workloads are operational validation and must not be
+presented as completed from fixture results alone.
 
 ## Layout
 

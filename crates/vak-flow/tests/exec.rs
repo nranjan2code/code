@@ -89,6 +89,17 @@ fn make_executor_with_policy(
     approver: Option<Arc<dyn vak_agent::Approver>>,
     cwd: std::path::PathBuf,
 ) -> Executor {
+    make_executor_with_outcome(provider, state_path, mode, approver, cwd, None)
+}
+
+fn make_executor_with_outcome(
+    provider: Arc<TaggedScripted>,
+    state_path: std::path::PathBuf,
+    mode: Mode,
+    approver: Option<Arc<dyn vak_agent::Approver>>,
+    cwd: std::path::PathBuf,
+    outcome: Option<vak_intent::OutcomeSpec>,
+) -> Executor {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -100,6 +111,7 @@ fn make_executor_with_policy(
         tools: vec![Arc::new(BashTool)],
         read_only_tools: vec![],
         max_turns: 4,
+        outcome,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode,
         approval_mode: vak_agent::ApprovalMode::Ask,
@@ -111,6 +123,56 @@ fn make_executor_with_policy(
         state_path,
         work: None,
     })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admitted_outcome_is_persisted_into_flow_state() {
+    let workspace = tempfile::tempdir().unwrap();
+    let toml = r#"
+[flow]
+name = "outcome"
+
+[[nodes]]
+id = "report"
+type = "bash"
+command = "echo admitted"
+"#;
+    let flow = vak_flow::parse_flow(toml).unwrap();
+    let expected = vak_intent::OutcomeSpec {
+        schema_version: 1,
+        revision: 4,
+        objective: "preserve the admitted objective".into(),
+        assumptions: vec!["the workspace is available".into()],
+        requirements: Vec::new(),
+        resolver_version: 1,
+        evidence_max_age_secs: Some(3600),
+        max_turns: Some(2),
+    };
+    let provider = Arc::new(TaggedScripted {
+        routes: Mutex::new(HashMap::new()),
+    });
+    let state_path = workspace.path().join("state.json");
+    let mut state = FlowState {
+        run_id: "outcome-run".into(),
+        flow_name: "outcome".into(),
+        definition_toml: toml.into(),
+        started_at: chrono::Utc::now(),
+        outcome: None,
+        nodes: Default::default(),
+    };
+    let executor = make_executor_with_outcome(
+        provider,
+        state_path.clone(),
+        Mode::FullAccess,
+        Some(Arc::new(AutoApprove)),
+        workspace.path().to_path_buf(),
+        Some(expected.clone()),
+    );
+
+    let _ = drain_run(&executor, &flow, &mut state).await;
+    assert_eq!(state.outcome, Some(expected));
+    let persisted = std::fs::read_to_string(state_path).unwrap();
+    assert!(persisted.contains("preserve the admitted objective"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -135,6 +197,7 @@ command = "echo escaped > should-not-exist.txt"
         flow_name: "permission-gate".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
     let executor = make_executor_with_policy(
@@ -208,6 +271,7 @@ deps = ["shout"]
         flow_name: "chain".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
 
@@ -259,6 +323,7 @@ deps = ["boom"]
         flow_name: "strict".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
     let executor = make_executor(provider, state_path.clone());
@@ -305,6 +370,7 @@ deps = ["flaky"]
         flow_name: "lenient".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
     let executor = make_executor(provider, state_path.clone());
@@ -353,6 +419,7 @@ deps = ["first"]
         flow_name: "resumable".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: [(
             "first".to_string(),
             vak_flow::NodeResult {
@@ -428,6 +495,7 @@ deps = ["build"]
         flow_name: "contract".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
     let outcome = executor
@@ -483,6 +551,7 @@ accept = ["verify: grep -q v1 artifact.txt"]
         flow_name: "contract-ok".into(),
         definition_toml: toml.into(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     };
     let outcome = executor

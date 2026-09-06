@@ -279,6 +279,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Compaction(_) => "compaction",
             EntryPayload::Receipt(_) => "receipt",
             EntryPayload::Goal(_) => "goal",
+            EntryPayload::GoalUpdate(_) => "goal-update",
             EntryPayload::Activity(_) => "activity",
             EntryPayload::Work(_) => "work",
             EntryPayload::Intent(_) => "intent",

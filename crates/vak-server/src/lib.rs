@@ -151,6 +151,8 @@ pub(crate) struct SessionHandle {
     /// best-of-N worktree).
     pub(crate) cwd: PathBuf,
     pub(crate) session: Arc<Mutex<Option<SessionLog>>>,
+    /// Latest host-admitted intent, retained while the runner owns the log.
+    pub(crate) intent: Arc<Mutex<Option<vak_session::types::IntentRecord>>>,
     pub(crate) steering: Arc<SteeringQueues>,
     /// Cancel for the CURRENT run only; replaced with a fresh token when a
     /// run ends so one `/cancel` doesn't poison every later run.
@@ -616,6 +618,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
         .route("/sessions/{id}/cancel", post(cancel_run))
+        .route("/sessions/{id}/pause", post(pause_run))
+        .route("/sessions/{id}/resume", post(resume_run))
+        .route("/sessions/{id}/control-state", get(control_state))
+        .route("/sessions/{id}/plan-change", post(plan_change))
         .route("/sessions/{id}/subagents", get(list_subagents))
         .route(
             "/sessions/{id}/subagents/{child}/steer",
@@ -623,6 +629,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/sessions/{id}/subagents/{child}/stop", post(stop_subagent))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
+        .route("/sessions/{id}/outcome-review", post(record_outcome_review))
         .route("/sessions/{id}/events", get(events_sse))
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route(
@@ -640,6 +647,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
+        .route("/config/intent/evidence", post(patch_evidence_policy))
         .route(
             "/config/global",
             get(get_global_config_layer).patch(patch_global_config),
@@ -2780,6 +2788,13 @@ pub(crate) fn register_handle(
     cwd: PathBuf,
     core: Core,
 ) -> Arc<SessionHandle> {
+    let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
+        if let vak_session::EntryPayload::Intent(record) = &entry.payload {
+            Some((**record).clone())
+        } else {
+            None
+        }
+    });
     let events_tx = events::EventBus::new();
     let side_events_tx = events::EventBus::new();
     let planner = delivery::merged_presentation_planner(&core);
@@ -2794,6 +2809,7 @@ pub(crate) fn register_handle(
         core,
         cwd,
         session: Arc::new(Mutex::new(Some(session))),
+        intent: Arc::new(Mutex::new(latest_intent)),
         steering: Arc::new(SteeringQueues::new()),
         cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
         events_tx,
@@ -3100,6 +3116,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Compaction(_) => {}
                         vak_session::EntryPayload::Receipt(_) => {}
                         vak_session::EntryPayload::Goal(_) => {}
+                        vak_session::EntryPayload::GoalUpdate(_) => {}
                         vak_session::EntryPayload::Activity(_) => {}
                         vak_session::EntryPayload::Work(_) => {}
                         vak_session::EntryPayload::Intent(_) => {}
@@ -3318,6 +3335,29 @@ async fn run_prompt(
             content: blocks,
         })
     };
+    let preview_message = prompt_message
+        .clone()
+        .unwrap_or_else(|| vak_llm::Message::user_text(expanded_prompt.clone()));
+    let preview_intent = core.resolve_turn_intent(&taken, &preview_message);
+    let mut preview_outcome = vak_intent::OutcomeSpec::from_reading(
+        &expanded_prompt,
+        &preview_intent.reading,
+        preview_intent.provenance.resolver_version,
+    );
+    preview_outcome.evidence_max_age_secs = Some(core.config().intent.evidence_max_age_secs);
+    preview_outcome.max_turns = preview_intent.engagement.limits.max_turns;
+    *handle
+        .intent
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(vak_session::types::IntentRecord {
+            reading: preview_intent.reading,
+            engagement: preview_intent.engagement,
+            provenance: preview_intent.provenance,
+            outcome: Some(preview_outcome),
+            model_visible: None,
+            commitment_id: None,
+        });
     if body.goal.is_some() && !body.attachments.is_empty() {
         *handle
             .session
@@ -3531,20 +3571,132 @@ async fn run_prompt(
 #[derive(serde::Deserialize)]
 struct SteeringBody {
     text: String,
+    /// Origin is metadata for the audit trail, never an authority grant.
+    #[serde(default = "default_intervention_source")]
+    source: String,
     /// Optional base64 images appended to the steered prompt, mirroring
     /// /run so queued input is never degraded to bare text.
     #[serde(default)]
     attachments: Vec<RunAttachment>,
 }
 
+fn default_intervention_source() -> String {
+    "human".into()
+}
+
 async fn send_steering(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<SteeringBody>,
-) -> StatusCode {
+) -> axum::response::Response {
     let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
+    let kind = vak_intent::classify_intervention(&body.text);
+    let evaluation = vak_intent::evaluate_intervention(vak_intent::InterventionRequest {
+        request_id: format!("intervention-{}", uuid::Uuid::now_v7()),
+        kind: kind.clone(),
+        text: body.text.clone(),
+        source: body.source.clone(),
+        target_revision: None,
+    });
+    record_activity_or_buffer(
+        &handle,
+        vak_session::ActivityRecord {
+            activity_id: evaluation.request.request_id.clone(),
+            turn: None,
+            kind: vak_session::ActivityKind::Diagnostic,
+            status: if evaluation.decision == vak_intent::InterventionDecision::Queued {
+                vak_session::ActivityStatus::Pending
+            } else {
+                vak_session::ActivityStatus::Succeeded
+            },
+            label: if evaluation.decision == vak_intent::InterventionDecision::Queued {
+                "Intervention queued"
+            } else {
+                "Intervention accepted"
+            }
+            .into(),
+            detail: Some(body.text.clone()),
+            data: std::collections::BTreeMap::from([
+                ("kind".into(), kind.as_str().into()),
+                ("decision".into(), evaluation.decision.as_str().into()),
+                ("source".into(), body.source.clone()),
+                ("reason".into(), evaluation.reason.clone()),
+            ]),
+        },
+    );
+    if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "request_id": evaluation.request.request_id,
+                "decision": evaluation.decision.as_str(),
+                "reason": evaluation.reason,
+            })),
+        )
+            .into_response();
+    }
+    match kind {
+        vak_intent::InterventionKind::Status => {
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "status_requested",
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Pause => {
+            handle.steering.pause();
+            record_control_activity(&handle, "Run paused", "pause");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "paused",
+                    "reason": evaluation.reason,
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Resume => {
+            handle.steering.resume();
+            record_control_activity(&handle, "Run resumed", "resume");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "resumed",
+                    "reason": evaluation.reason,
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Cancel => {
+            handle
+                .cancel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cancel();
+            record_control_activity(&handle, "Run cancelled", "cancel");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "cancelled",
+                    "reason": evaluation.reason,
+                })),
+            )
+                .into_response();
+        }
+        _ => {}
+    }
     let usable: Vec<&RunAttachment> = body
         .attachments
         .iter()
@@ -3565,7 +3717,15 @@ async fn send_steering(
             content: blocks,
         });
     }
-    StatusCode::ACCEPTED
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "request_id": evaluation.request.request_id,
+            "decision": evaluation.decision.as_str(),
+            "state": "steering_queued",
+        })),
+    )
+        .into_response()
 }
 
 async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
@@ -3577,12 +3737,322 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .cancel();
+    record_control_activity(&handle, "Run cancelled", "cancel");
     deny_pending_approvals(&handle);
     let _ = handle.events_tx.send(AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
         is_error: false,
     });
     StatusCode::ACCEPTED
+}
+
+async fn pause_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND;
+    };
+    handle.steering.pause();
+    record_control_activity(&handle, "Run paused", "pause");
+    StatusCode::ACCEPTED
+}
+
+async fn resume_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND;
+    };
+    handle.steering.resume();
+    record_control_activity(&handle, "Run resumed", "resume");
+    StatusCode::ACCEPTED
+}
+
+async fn control_state(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let running = handle
+        .session
+        .lock()
+        .map(|session| session.is_none())
+        .unwrap_or(false);
+    let revision = handle
+        .session
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard.as_ref().and_then(|session| {
+                session.chain_to_root().iter().rev().find_map(|entry| {
+                    if let vak_session::EntryPayload::Intent(record) = &entry.payload {
+                        record.outcome.as_ref().map(|outcome| outcome.revision)
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .or_else(|| {
+            handle.intent.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()?
+                    .outcome
+                    .as_ref()
+                    .map(|outcome| outcome.revision)
+            })
+        })
+        .unwrap_or(0);
+    Json(serde_json::json!({
+        "running": running,
+        "paused": handle.steering.is_paused(),
+        "revision": revision,
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PlanChangeBody {
+    text: String,
+    #[serde(default = "default_intervention_source")]
+    source: String,
+    #[serde(default)]
+    target_revision: Option<u64>,
+}
+
+fn apply_plan_change(
+    mut outcome: vak_intent::OutcomeSpec,
+    request: &vak_intent::InterventionRequest,
+) -> (vak_intent::OutcomeSpec, (String, String)) {
+    let before = outcome
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    match request.kind {
+        vak_intent::InterventionKind::AddRequirement => {
+            outcome.requirements.push(vak_intent::OutcomeRequirement {
+                id: format!("intervention-{}", request.request_id),
+                kind: vak_intent::RequirementKind::Deliverable,
+                description: request.text.clone(),
+                origin: vak_intent::RequirementOrigin::Explicit,
+                importance: vak_intent::RequirementImportance::Must,
+                target: None,
+            })
+        }
+        vak_intent::InterventionKind::RemoveRequirement => {
+            if let Some(target) = request.text.split_whitespace().last() {
+                outcome
+                    .requirements
+                    .retain(|requirement| requirement.id != target);
+            }
+        }
+        vak_intent::InterventionKind::Replan | vak_intent::InterventionKind::Reprioritize => {
+            outcome.assumptions.push(request.text.clone());
+        }
+        _ => {}
+    }
+    outcome.resolver_version = outcome.resolver_version.saturating_add(1);
+    outcome.revision = outcome.revision.saturating_add(1);
+    let after = outcome
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    (outcome, (before.join(","), after.join(",")))
+}
+
+async fn plan_change(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PlanChangeBody>,
+) -> axum::response::Response {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let kind = vak_intent::classify_intervention(&body.text);
+    if !matches!(
+        kind,
+        vak_intent::InterventionKind::Replan
+            | vak_intent::InterventionKind::Reprioritize
+            | vak_intent::InterventionKind::AddRequirement
+            | vak_intent::InterventionKind::RemoveRequirement
+    ) {
+        return (StatusCode::BAD_REQUEST, "request is not a plan change").into_response();
+    }
+    let revision = handle
+        .session
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard.as_ref().and_then(|session| {
+                session.chain_to_root().iter().rev().find_map(|entry| {
+                    if let vak_session::EntryPayload::Intent(record) = &entry.payload {
+                        record.outcome.as_ref().map(|outcome| outcome.revision)
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .unwrap_or(0);
+    if body
+        .target_revision
+        .is_some_and(|target| target != revision)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "decision": "rejected",
+                "reason": "plan revision is stale",
+                "revision": revision,
+            })),
+        )
+            .into_response();
+    }
+    let evaluation = vak_intent::evaluate_intervention(vak_intent::InterventionRequest {
+        request_id: format!("plan-change-{}", uuid::Uuid::now_v7()),
+        kind,
+        text: body.text.clone(),
+        source: body.source.clone(),
+        target_revision: Some(revision),
+    });
+    let mut admitted_revision = None;
+    let mut requirement_diff = None;
+    if evaluation.decision == vak_intent::InterventionDecision::Queued
+        && let Ok(mut guard) = handle.session.lock()
+        && let Some(session) = guard.as_mut()
+        && let Some(record) = session.chain_to_root().iter().rev().find_map(|entry| {
+            if let vak_session::EntryPayload::Intent(record) = &entry.payload {
+                Some(record.as_ref())
+            } else {
+                None
+            }
+        })
+        && let Some(outcome) = record.outcome.clone()
+    {
+        let (outcome, diff) = apply_plan_change(outcome, &evaluation.request);
+        requirement_diff = Some(diff);
+        let update = vak_session::types::IntentRecord {
+            reading: record.reading.clone(),
+            engagement: record.engagement.clone(),
+            provenance: record.provenance.clone(),
+            outcome: Some(outcome),
+            model_visible: None,
+            commitment_id: record.commitment_id.clone(),
+        };
+        if session.append_intent(update.clone()).is_ok() {
+            *handle
+                .intent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(update);
+            admitted_revision = Some(revision + 1);
+        }
+    }
+    if evaluation.decision == vak_intent::InterventionDecision::Queued
+        && admitted_revision.is_none()
+        && let Some(mut record) = handle.intent.lock().ok().and_then(|guard| guard.clone())
+        && let Some(outcome) = record.outcome.take()
+    {
+        let (outcome, diff) = apply_plan_change(outcome, &evaluation.request);
+        requirement_diff = Some(diff);
+        let update = vak_session::types::IntentRecord {
+            reading: record.reading,
+            engagement: record.engagement,
+            provenance: record.provenance,
+            outcome: Some(outcome.clone()),
+            model_visible: None,
+            commitment_id: record.commitment_id,
+        };
+        *handle
+            .intent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(update.clone());
+        handle.steering.push_outcome_update(update);
+        admitted_revision = Some(outcome.revision);
+    }
+    record_activity_or_buffer(
+        &handle,
+        vak_session::ActivityRecord {
+            activity_id: evaluation.request.request_id.clone(),
+            turn: None,
+            kind: vak_session::ActivityKind::Diagnostic,
+            status: if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
+                vak_session::ActivityStatus::Denied
+            } else {
+                vak_session::ActivityStatus::Pending
+            },
+            label: "Plan change evaluated".into(),
+            detail: Some(evaluation.reason.clone()),
+            data: std::collections::BTreeMap::from([
+                ("decision".into(), evaluation.decision.as_str().into()),
+                ("source".into(), body.source),
+                (
+                    "revision".into(),
+                    admitted_revision.unwrap_or(revision).to_string(),
+                ),
+                (
+                    "requirements_before".into(),
+                    requirement_diff
+                        .as_ref()
+                        .map(|diff| diff.0.clone())
+                        .unwrap_or_else(String::new),
+                ),
+                (
+                    "requirements_after".into(),
+                    requirement_diff
+                        .as_ref()
+                        .map(|diff| diff.1.clone())
+                        .unwrap_or_else(String::new),
+                ),
+                ("request".into(), body.text),
+            ]),
+        },
+    );
+    let status = if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
+        StatusCode::CONFLICT
+    } else {
+        handle
+            .steering
+            .push_steering(evaluation.request.text.clone());
+        StatusCode::ACCEPTED
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "request_id": evaluation.request.request_id,
+            "decision": evaluation.decision.as_str(),
+            "revision": admitted_revision.unwrap_or(revision),
+            "reason": evaluation.reason,
+        })),
+    )
+        .into_response()
+}
+
+pub(crate) fn record_control_activity(handle: &SessionHandle, label: &str, control: &str) {
+    record_activity_or_buffer(
+        handle,
+        vak_session::ActivityRecord {
+            activity_id: format!("control-{}", uuid::Uuid::now_v7()),
+            turn: None,
+            kind: vak_session::ActivityKind::Diagnostic,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: label.into(),
+            detail: Some("operator control-plane request".into()),
+            data: std::collections::BTreeMap::from([
+                ("control".into(), control.into()),
+                ("source".into(), "human".into()),
+            ]),
+        },
+    );
+}
+
+fn record_activity_or_buffer(handle: &SessionHandle, activity: vak_session::ActivityRecord) {
+    if let Ok(mut session) = handle.session.lock()
+        && let Some(session) = session.as_mut()
+    {
+        let _ = session.append_activity(activity);
+    } else if let Ok(mut activities) = handle.activity_buffer.lock() {
+        activities.push(activity);
+    }
 }
 
 fn deny_pending_approvals(handle: &SessionHandle) {
@@ -3657,6 +4127,63 @@ struct ApprovalBody {
     /// is a different and much heavier decision than answering one gate.
     #[serde(default)]
     remember: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct OutcomeReviewBody {
+    verdict: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// Record an operator's review of a computed outcome. This is deliberately
+/// separate from approval: reviewing a result never authorizes a tool call.
+async fn record_outcome_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<OutcomeReviewBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !matches!(
+        body.verdict.as_str(),
+        "accepted" | "needs_work" | "rejected"
+    ) {
+        return (StatusCode::BAD_REQUEST, "invalid outcome review verdict").into_response();
+    }
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(mut guard) = handle.session.lock() else {
+        return StatusCode::CONFLICT.into_response();
+    };
+    let Some(session) = guard.as_mut() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let reviewed_turn = session
+        .chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Activity(activity)
+                if activity.label == "Outcome evaluation" =>
+            {
+                activity.turn
+            }
+            _ => None,
+        })
+        .next_back();
+    let activity = vak_session::ActivityRecord {
+        activity_id: format!("outcome-review-{}", uuid::Uuid::now_v7()),
+        turn: reviewed_turn,
+        kind: vak_session::ActivityKind::Diagnostic,
+        status: vak_session::ActivityStatus::Succeeded,
+        label: "Outcome review".into(),
+        detail: body.note,
+        data: std::collections::BTreeMap::from([("verdict".into(), body.verdict)]),
+    };
+    if let Err(error) = session.append_activity(activity) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    Json(serde_json::json!({ "recorded": true })).into_response()
 }
 
 /// `POST /sessions/{id}/approvals/{req_id}` — answer one gate.
@@ -5119,6 +5646,7 @@ async fn intent_policy(State(state): State<AppState>) -> Json<serde_json::Value>
             "escalate": config.intent.escalate,
             "max_classify_usd": config.intent.max_classify_usd,
             "autonomy": config.intent.autonomy,
+            "evidence_max_age_secs": config.intent.evidence_max_age_secs,
         },
         "commitment": {
             "enabled": config.commitment.enabled,
@@ -7027,6 +7555,7 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "route_revision": route.revision,
         "max_tokens": cfg.max_tokens,
         "max_turns": state.core.effective_max_turns(),
+        "intent_evidence_max_age_secs": cfg.intent.evidence_max_age_secs,
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         // How an `Ask` gets resolved, and what the rules say — both were
         // absent here, which is why the desktop app could set the permission
@@ -7390,6 +7919,42 @@ async fn patch_global_config(
     Json(body): Json<ConfigPatch>,
 ) -> axum::response::Response {
     patch_config_scope(state, body, true).await
+}
+
+#[derive(serde::Deserialize)]
+struct EvidencePolicyBody {
+    seconds: i64,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn patch_evidence_policy(
+    State(state): State<AppState>,
+    Json(body): Json<EvidencePolicyBody>,
+) -> axum::response::Response {
+    let path = if body.scope.as_deref() == Some("user") {
+        let Some(path) = vak_config::global_path() else {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+        };
+        path
+    } else {
+        vak_config::project_path(state.core.cwd())
+    };
+    if let Err(error) = vak_config::persist_evidence_max_age(path, body.seconds) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response();
+    }
+    if state.core.refresh_persisted_preferences().is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not apply evidence policy",
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({"saved": true, "seconds": body.seconds.max(0)})).into_response()
 }
 
 /// Which keys this write landed on disk but did NOT put into force, because

@@ -59,6 +59,7 @@ pub struct ExecutorDeps {
     pub tools: Vec<Arc<dyn Tool>>,
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approval_mode: ApprovalMode,
@@ -110,6 +111,9 @@ impl Executor {
         cancel: CancellationToken,
         events: tokio::sync::mpsc::Sender<String>,
     ) -> FlowOutcome {
+        if state.outcome.is_none() {
+            state.outcome = self.deps.outcome.clone();
+        }
         let Ok(layer_list) = layers(flow) else {
             return FlowOutcome::Failed {
                 node: "<flow>".into(),
@@ -530,9 +534,14 @@ async fn execute_node(
                 .map_err(|e| format!("cannot create node session: {e}"))?;
 
             let mut cfg = AgentConfig::new(deps.system_prompt.clone());
+            cfg.outcome = deps.outcome.clone();
             cfg.model = deps.model.clone();
             cfg.tools = tools;
-            cfg.max_turns = deps.max_turns;
+            cfg.max_turns = deps
+                .outcome
+                .as_ref()
+                .and_then(|outcome| outcome.max_turns)
+                .map_or(deps.max_turns, |cap| deps.max_turns.min(cap));
             cfg.permission = deps.permission.clone();
             cfg.mode = mode;
             cfg.approval_mode = deps.approval_mode;

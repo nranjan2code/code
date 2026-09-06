@@ -39,6 +39,15 @@ advantages transfer directly:
 
 ## What we have today (assets to project)
 
+The desktop client consumes the same schema-v2 `OutputTimeline` as the browser
+client. Result-scoped outcome/evidence metadata and the projected `GoalState`
+are primary UI data: users should see what is complete, partial, blocked or
+still running, what evidence supports it, and how a mid-run request changed the
+goal. Renderer details remain inspectable, but `Why this rendering?` is not a
+substitute for the outcome, timeline or control state. The shared contract is
+owned by `docs/design/52-outcome-directed-runtime.md` and
+`docs/design/30-output-engineering.md`.
+
 | asset | crate | desktop use |
 |---|---|---|
 | HTTP+SSE contract: sessions/run/steering/cancel/approvals/events/transcript | vak-server | the entire agent protocol; zero new API surface |

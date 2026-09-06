@@ -171,7 +171,7 @@ pub(crate) async fn session_status(
 // ---- the front door --------------------------------------------------------
 //
 // `/` and its sub-pages moved to `site.rs` when the landing page grew from
-// one hand-written file into a four-page site built from one source
+// one hand-written file into a multi-page site built from one source
 // (docs/design/48-web-client.md §4.6). Only the build stamp those pages
 // read stayed here.
 

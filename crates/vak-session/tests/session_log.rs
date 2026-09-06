@@ -35,6 +35,39 @@ fn header() -> SessionHeader {
     }
 }
 
+#[test]
+fn successful_tool_receipts_retain_replay_timestamp() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("receipts.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_message(MessageRecord {
+        message: Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "tool-1".into(),
+                name: "read".into(),
+                input: serde_json::json!({"path":"notes.txt"}),
+            }],
+        },
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(MessageRecord {
+        message: Message {
+            role: Role::User,
+            content: vec![ContentBlock::tool_result("tool-1", "notes")],
+        },
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+    let reopened = SessionLog::open(path).unwrap();
+    let receipts = reopened.successful_tool_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].0, "tool-1");
+    assert!(receipts[0].1 <= chrono::Utc::now());
+}
+
 fn user_msg(text: &str) -> MessageRecord {
     MessageRecord {
         message: Message::user_text(text),

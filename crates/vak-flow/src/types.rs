@@ -78,5 +78,7 @@ pub struct FlowState {
     /// Frozen definition (raw TOML) captured at first run.
     pub definition_toml: String,
     pub started_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     pub nodes: BTreeMap<String, NodeResult>,
 }

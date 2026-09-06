@@ -59,13 +59,16 @@
 pub mod authority;
 pub mod axes;
 pub mod engage;
+pub mod goal;
 pub mod limits;
+pub mod outcome;
 pub mod reading;
 pub mod resolve;
 pub mod signals;
 
 pub use authority::{
-    ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, GateFallback, PermissionCeiling,
+    ApprovalCeiling, Authority, Autonomy, CapabilityDecision, CapabilityKind, CapabilityRequest,
+    Envelope, Escalation, GateFallback, PermissionCeiling,
 };
 pub use axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Satisfaction, Stakes};
 pub use engage::ORIENTATION_FLOOR;
@@ -73,7 +76,17 @@ pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
     OutputShape, Posture, StopProfile, Urgency, derive,
 };
+pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update};
 pub use limits::{CapabilitySlice, Limits};
+pub use outcome::{
+    CompletionVerdict, EvidenceReceipt, EvidenceState, InterventionDecision,
+    InterventionEvaluation, InterventionKind, InterventionRequest, OutcomeRequirement, OutcomeSpec,
+    OutcomeStatus, RequirementEvaluation, RequirementImportance, RequirementKind,
+    RequirementOrigin, RequirementStatus, classify_intervention, evaluate_completion,
+    evaluate_intervention, evaluate_requirements, evaluate_requirements_with_evidence,
+    evaluate_requirements_with_state, evaluate_response, evidence_state_from_age,
+    human_review_state,
+};
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{
     Classification, Declared, RESOLVER_VERSION, Resolution, ResolverConfig, apply_classification,

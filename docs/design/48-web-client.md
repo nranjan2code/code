@@ -377,7 +377,8 @@ keeps it scoped.
 `/` used to answer a bare 401 with an empty body: someone opening
 `http://box:8901/` learned nothing — not that the product had two
 surfaces, not where they were, not even that anything was listening. It is
-now a four-page public site (`crates/vak-server/site/`), auth-exempt and
+now a five-page public site (`crates/vak-server/site/`), including the
+outcome-directed runtime story, auth-exempt and
 embedded with `include_dir!` like the two UI bundles, with each page's CSS
 and script inline and only one shared, deferred asset: the front door must
 render before, and independently of, anything else being up.

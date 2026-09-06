@@ -909,6 +909,9 @@ async fn run_flow_exec(
     let mut state = load_state(&state_path, &name, &toml_str);
 
     let prepared = core.prepare_turn().await;
+    let mut outcome =
+        vak_intent::OutcomeSpec::from_reading(name.clone(), &vak_intent::Reading::default(), 0);
+    outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
         provider,
         system_prompt: prepared.system_prompt,
@@ -916,6 +919,7 @@ async fn run_flow_exec(
         tools: prepared.tools,
         read_only_tools: prepared.read_only_tools,
         max_turns: core.effective_max_turns(),
+        outcome: Some(outcome),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
@@ -1026,6 +1030,7 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
         flow_name: flow_name.to_string(),
         definition_toml: definition_toml.to_string(),
         started_at: chrono::Utc::now(),
+        outcome: None,
         nodes: Default::default(),
     }
 }
@@ -1657,6 +1662,9 @@ async fn run_plan(
     };
 
     let prepared = core.prepare_turn().await;
+    let mut outcome =
+        vak_intent::OutcomeSpec::from_reading(task.clone(), &vak_intent::Reading::default(), 0);
+    outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
         provider,
         system_prompt: prepared.system_prompt,
@@ -1664,6 +1672,7 @@ async fn run_plan(
         tools: prepared.tools,
         read_only_tools: prepared.read_only_tools,
         max_turns: core.effective_max_turns(),
+        outcome: Some(outcome),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,

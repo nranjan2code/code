@@ -2051,6 +2051,89 @@ async fn gateway_inbound(
     let preview: String = text.chars().take(80).collect();
     let expanded_text = text.clone();
     state.hub.emit_gateway_inbound(&body.surface, who, &preview);
+    let intervention = vak_intent::classify_intervention(&text);
+    let session_id = binding_session(&state, &key);
+    if matches!(
+        intervention,
+        vak_intent::InterventionKind::Replan
+            | vak_intent::InterventionKind::Reprioritize
+            | vak_intent::InterventionKind::AddRequirement
+            | vak_intent::InterventionKind::RemoveRequirement
+    ) && let Some(id) = session_id.clone()
+    {
+        return crate::plan_change(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id),
+            axum::Json(crate::PlanChangeBody {
+                text: text.clone(),
+                source: "human".into(),
+                target_revision: None,
+            }),
+        )
+        .await;
+    }
+    match intervention {
+        vak_intent::InterventionKind::Status => {
+            crate::record_control_activity(&handle, "Run status requested", "status");
+            let paused = handle.steering.is_paused();
+            let running = handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none();
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "state": "status",
+                    "session_id": session_id,
+                    "running": running,
+                    "paused": paused,
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Pause => {
+            handle.steering.pause();
+            crate::record_control_activity(&handle, "Run paused", "pause");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "state": "paused",
+                    "session_id": session_id,
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Resume => {
+            handle.steering.resume();
+            crate::record_control_activity(&handle, "Run resumed", "resume");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "state": "resumed",
+                    "session_id": session_id,
+                })),
+            )
+                .into_response();
+        }
+        vak_intent::InterventionKind::Cancel => {
+            handle
+                .cancel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cancel();
+            crate::record_control_activity(&handle, "Run cancelled", "cancel");
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "state": "cancelled",
+                    "session_id": session_id,
+                })),
+            )
+                .into_response();
+        }
+        _ => {}
+    }
     let busy = handle
         .session
         .lock()
@@ -2068,7 +2151,7 @@ async fn gateway_inbound(
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
                 "state": "steering_queued",
-                "session_id": binding_session(&state, &key).unwrap_or_default(),
+                "session_id": session_id.unwrap_or_default(),
             })),
         )
             .into_response();
@@ -2133,36 +2216,57 @@ async fn gateway_inbound(
             .into_response();
     }
     match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
-        Ok(Ok(text)) => match crate::delivery::render_response(
-            &core,
-            body.surface.trim(),
-            body.chat.trim(),
-            text.clone(),
-            body.capabilities.as_ref(),
-        )
-        .await
-        {
-            Ok(delivery) => (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "state": "completed",
-                    "text": text,
-                    "session_id": binding_session(&state, &key),
-                    "delivery": delivery,
-                })),
+        Ok(Ok(text)) => {
+            let outcome_metadata = binding_session(&state, &key)
+                .as_deref()
+                .and_then(|session_id| state.get(session_id))
+                .and_then(|handle| {
+                    handle.presentation.lock().ok().map(|timeline| {
+                        timeline
+                            .items
+                            .iter()
+                            .rev()
+                            .find_map(|item| match &item.content {
+                                vak_delivery::OutputContent::Document { document } => {
+                                    Some(document.metadata.clone())
+                                }
+                                _ => None,
+                            })
+                    })
+                })
+                .flatten();
+            match crate::delivery::render_response(
+                &core,
+                body.surface.trim(),
+                body.chat.trim(),
+                text.clone(),
+                body.capabilities.as_ref(),
+                outcome_metadata,
             )
-                .into_response(),
-            Err(error) => (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "state": "completed",
-                    "text": text,
-                    "session_id": binding_session(&state, &key),
-                    "delivery_error": error,
-                })),
-            )
-                .into_response(),
-        },
+            .await
+            {
+                Ok(delivery) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "state": "completed",
+                        "text": text,
+                        "session_id": session_id,
+                        "delivery": delivery,
+                    })),
+                )
+                    .into_response(),
+                Err(error) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "state": "completed",
+                        "text": text,
+                        "session_id": session_id,
+                        "delivery_error": error,
+                    })),
+                )
+                    .into_response(),
+            }
+        }
         Ok(Err(_)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "turn chain ended without a reply"})),
@@ -2184,6 +2288,11 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
         .snapshot()
         .into_iter()
         .map(|(target, binding)| {
+            let paused = binding
+                .session_id
+                .as_deref()
+                .and_then(|id| state.get(id))
+                .is_some_and(|handle| handle.steering.is_paused());
             serde_json::json!({
                 "target": target,
                 "session_id": binding.session_id,
@@ -2191,6 +2300,7 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
                 "model": binding.model,
                 "workspace": binding.workspace,
                 "route_revision": binding.route_revision,
+                "paused": paused,
             })
         })
         .collect();

@@ -121,6 +121,7 @@ export default function Settings() {
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
+  const [evidenceAgeHours, setEvidenceAgeHours] = createSignal(24);
   const [loading, setLoading] = createSignal(true);
   // Background-service states (docs/design/27-operations.md); polled while
   // the Services page is open.
@@ -553,6 +554,7 @@ export default function Settings() {
       setProvider(next.provider);
       setModel(next.model);
       setMaxTurns(next.max_turns);
+      setEvidenceAgeHours(Math.max(0, Math.round((next.intent_evidence_max_age_secs ?? 86400) / 3600)));
     } catch (error) {
       setNotice({ kind: "error", text: `Could not load settings: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -659,7 +661,7 @@ export default function Settings() {
   const agentDirty = () => {
     const c = config();
     if (!c) return false;
-    return provider() !== c.provider || model() !== c.model || maxTurns() !== c.max_turns;
+    return provider() !== c.provider || model() !== c.model || maxTurns() !== c.max_turns || evidenceAgeHours() * 3600 !== (c.intent_evidence_max_age_secs ?? 86400);
   };
 
   const applyAgent = async () => {
@@ -667,6 +669,8 @@ export default function Settings() {
     try {
       if (scope() === "user") await api.patchGlobalConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
       else await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
+      const saved = await api.patchEvidencePolicy(evidenceAgeHours() * 3600, capabilityScope());
+      setConfig((current) => current ? { ...current, intent_evidence_max_age_secs: saved.seconds } : current);
       await Promise.all([load(), loadHealth()]);
       setNotice({ kind: "info", text: "Agent defaults updated for new tasks." });
     } catch (error) {
@@ -899,6 +903,7 @@ export default function Settings() {
                   </Show>
                 </Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
+                <Row title="Evidence freshness" description="How long a successful tool receipt remains fresh for outcome verification."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
                 <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
               </Group>
               <Group title="Credentials">

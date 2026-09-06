@@ -23,6 +23,10 @@ use crate::{
 };
 
 pub struct TaskDeps {
+    /// Parent outcome context carried into the child for alignment only.
+    pub outcome_objective: Option<String>,
+    /// The parent's admitted outcome, narrowed for this child at dispatch.
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     /// Prompts for named roles, admitted up front by the host exactly like
     /// capabilities are. A child can only ever run under a role that was
     /// resolvable when the parent session was admitted, so an unknown or
@@ -41,6 +45,9 @@ pub struct TaskDeps {
     /// `readonly: true`; children get these plus ReadOnly permission mode.
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
+    /// Parent intent budget for child delegation. `Some(0)` is an enforced
+    /// denial; `None` leaves delegation available to the parent policy.
+    pub subagent_budget: Option<usize>,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approval_mode: ApprovalMode,
@@ -281,6 +288,9 @@ impl Tool for TaskTool {
 
 impl TaskTool {
     async fn execute_inner(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+        if self.deps.subagent_budget == Some(0) {
+            return ToolOutput::error("subagent delegation is not allowed for this turn");
+        }
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: prompt");
         };
@@ -336,7 +346,7 @@ impl TaskTool {
         // An unknown role is refused rather than quietly ignored: a child
         // that silently ran under the default prompt when a role was asked
         // for would be the hardest kind of misconfiguration to notice.
-        let child_system_prompt = match args.get("role").and_then(|r| r.as_str()) {
+        let mut child_system_prompt = match args.get("role").and_then(|r| r.as_str()) {
             Some(role) if !role.trim().is_empty() => {
                 match self.deps.role_prompts.get(role.trim()) {
                     Some(prompt) => prompt.clone(),
@@ -358,6 +368,15 @@ impl TaskTool {
             }
             _ => self.deps.system_prompt.clone(),
         };
+        if let Some(objective) = self.deps.outcome_objective.as_deref()
+            && !objective.trim().is_empty()
+        {
+            child_system_prompt.push_str("\n\nParent outcome objective: ");
+            child_system_prompt.push_str(objective.trim());
+            child_system_prompt.push_str(
+                "\nTreat this as alignment context; permissions and completion remain runtime decisions.",
+            );
+        }
         let child_tool_names = child_tools
             .iter()
             .map(|tool| tool.name())
@@ -425,6 +444,7 @@ impl TaskTool {
             });
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
+        cfg.outcome = self.deps.outcome.clone();
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();
         cfg.mode = child_mode;
@@ -514,7 +534,7 @@ impl TaskTool {
             .session
             .lock()
             .await
-            .append_child_run_status(child_status);
+            .append_child_run_result(child_status, self.deps.outcome.clone());
         if let Some(events) = &self.deps.events {
             let _ = events
                 .send(crate::AgentEvent::SubagentFinished {

@@ -564,6 +564,11 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                     .map(|_| vec!["session_missing"])
                     .unwrap_or_default()
             });
+        let paused = binding
+            .session_id
+            .as_deref()
+            .and_then(|session_id| state.get(session_id))
+            .is_some_and(|handle| handle.steering.is_paused());
         bindings.push(serde_json::json!({
             "target": target,
             "session_id": binding.session_id,
@@ -587,6 +592,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
             })),
             "stale": !stale_reasons.is_empty(),
             "stale_reasons": stale_reasons,
+            "paused": paused,
         }));
     }
     // An approved channel does not acquire a runtime binding until its first
@@ -1779,6 +1785,22 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["total"], 0);
         assert!(json["approvals"].is_array());
+    }
+
+    #[tokio::test]
+    async fn outcome_review_rejects_unknown_verdict() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/sessions/missing/outcome-review")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"verdict":"maybe"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     /// These three were read by the console and never sent. The console's

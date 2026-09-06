@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
+use tokio::sync::Notify;
 
 use vak_llm::Message;
 
@@ -21,6 +23,7 @@ const MAX_QUEUE_LEN: usize = 200;
 struct Queues {
     steering: VecDeque<Message>,
     follow_up: VecDeque<Message>,
+    outcome_updates: VecDeque<vak_session::types::IntentRecord>,
 }
 
 /// Two queues with two polling sites: steering interrupts the current run,
@@ -31,11 +34,37 @@ struct Queues {
 #[derive(Debug, Default)]
 pub struct SteeringQueues {
     q: Mutex<Queues>,
+    paused: AtomicBool,
+    resumed: Notify,
 }
 
 impl SteeringQueues {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Pause at the next agent-turn boundary. Queued input remains durable.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::Release);
+    }
+
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::Release);
+        self.resumed.notify_waiters();
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
+    }
+
+    pub async fn wait_if_paused(&self, cancel: &tokio_util::sync::CancellationToken) -> bool {
+        while self.is_paused() {
+            tokio::select! {
+                _ = self.resumed.notified() => {}
+                _ = cancel.cancelled() => return false,
+            }
+        }
+        true
     }
 
     pub fn push_steering(&self, text: impl Into<String>) {
@@ -56,6 +85,18 @@ impl SteeringQueues {
         while q.follow_up.len() > MAX_QUEUE_LEN {
             q.follow_up.pop_front();
         }
+    }
+
+    pub fn push_outcome_update(&self, update: vak_session::types::IntentRecord) {
+        let mut q = self.lock();
+        q.outcome_updates.push_back(update);
+        while q.outcome_updates.len() > MAX_QUEUE_LEN {
+            q.outcome_updates.pop_front();
+        }
+    }
+
+    pub fn take_outcome_update(&self) -> Option<vak_session::types::IntentRecord> {
+        self.lock().outcome_updates.pop_front()
     }
 
     pub fn drain(&self, mode: DrainMode) -> Vec<Message> {
@@ -80,7 +121,7 @@ impl SteeringQueues {
 
     pub fn has_pending(&self) -> bool {
         let q = self.lock();
-        !q.steering.is_empty() || !q.follow_up.is_empty()
+        !q.steering.is_empty() || !q.follow_up.is_empty() || !q.outcome_updates.is_empty()
     }
 
     /// Merge drained messages into one prompt turn. Same-role block

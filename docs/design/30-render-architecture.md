@@ -1,8 +1,15 @@
 # 30-render-architecture — Cross-surface rendering architecture
 
-Status: **design spec (greenfield rewrite)**
+Status: **implemented contract, with explicitly listed future extensions**. The
+schema-v2 semantic timeline, result-scoped eligibility/evidence metadata,
+collaborative goal projection, deterministic fallback, and cross-surface
+delivery path are shipped in 3.0.10. The open questions at the end are not
+claims about missing core behavior.
 
-This document specifies the world-class rendering architecture for vak's output
+This document specifies the rendering architecture for vak's output. Result
+eligibility, evidence state, and collaborative goal state come from the shared
+outcome-directed runtime; this document owns only semantic projection and
+surface rendering.
 delivery system. It is the design contract that the implementation follows,
 replacing the ad-hoc wiring that left `project_structured_fences` as dead code
 and `DeliveryPacket.presentation` as inert data.
@@ -367,8 +374,8 @@ requests, regardless of which model or provider produced the original output.
 
 - **Cross-surface golden fixtures:** A test harness that renders the same
   `AnswerDraft` on all chat surfaces and asserts semantic equivalence (same
-  text content, different formatting). Blocked on Gap 4 (Telegram actions
-  split) being fully resolved.
+  text content, different formatting). This is an additional regression
+  harness, not a prerequisite for the shipped Telegram action split.
 - **Streaming to chat surfaces:** Push `TextDelta` events to chat surfaces
   during model generation, not just final-state delivery. Requires a
   streaming delivery posture and per-channel connection state.

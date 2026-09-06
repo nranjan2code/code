@@ -10,6 +10,7 @@ fn base(id: &str, description: &str) -> EvalCase {
         files: Vec::new(),
         prompt: String::new(),
         script: Vec::new(),
+        outcome: None,
         verify: "true".into(),
     }
 }
@@ -133,7 +134,147 @@ pub fn general_suite() -> Vec<EvalCase> {
         general_doc_conversion(),
         general_inventory_index(),
         general_error_adapts_noncode(),
+        general_schedule(),
+        general_decision_matrix(),
     ]
+}
+
+/// A small held-out-style corpus kept separate from the broad smoke suite.
+/// These cases deliberately vary language, context length, and deliverable
+/// shape so optimization work cannot overfit the named general cases.
+pub fn held_out_suite() -> Vec<EvalCase> {
+    vec![
+        held_out_multilingual_note(),
+        held_out_mixed_deliverables(),
+        held_out_recovery_after_bad_artifact(),
+    ]
+}
+
+fn held_out_multilingual_note() -> EvalCase {
+    let mut c = base(
+        "held-out-multilingual-note",
+        "summarize a Spanish note into an English action brief",
+    );
+    c.files = vec![(
+        "nota.txt".into(),
+        "La reunión es el martes. Ana enviará el presupuesto.\n".into(),
+    )];
+    c.prompt =
+        "Read nota.txt and write brief.md in English with the meeting date and owner.".into();
+    c.script = vec![
+        ScriptedTurn::tool("read", serde_json::json!({"path": "nota.txt"})),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({"path": "brief.md", "content": "# Action brief\n\n- Meeting: Tuesday\n- Owner: Ana (budget)\n"}),
+        ),
+        ScriptedTurn::Text("briefed".into()),
+    ];
+    let mut outcome = vak_intent::OutcomeSpec::from_reading(
+        &c.prompt,
+        &vak_intent::Reading::general(),
+        vak_intent::RESOLVER_VERSION,
+    );
+    outcome.requirements.push(vak_intent::OutcomeRequirement {
+        id: "brief-deliverable".into(),
+        kind: vak_intent::RequirementKind::Deliverable,
+        description: "English action brief is written to brief.md".into(),
+        origin: vak_intent::RequirementOrigin::Explicit,
+        importance: vak_intent::RequirementImportance::Must,
+        target: Some("brief.md".into()),
+    });
+    outcome.requirements.push(vak_intent::OutcomeRequirement {
+        id: "brief-evidence".into(),
+        kind: vak_intent::RequirementKind::Evidence,
+        description: "The brief cites the source note".into(),
+        origin: vak_intent::RequirementOrigin::Explicit,
+        importance: vak_intent::RequirementImportance::Must,
+        target: Some("nota.txt".into()),
+    });
+    c.outcome = Some(outcome);
+    c.verify = "grep -q Tuesday brief.md && grep -q Ana brief.md".into();
+    c
+}
+
+fn held_out_mixed_deliverables() -> EvalCase {
+    let mut c = base(
+        "held-out-mixed-deliverables",
+        "produce both a concise answer and a saved checklist",
+    );
+    c.prompt = "Give a one-line answer and save checklist.md with three launch checks.".into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({"path": "checklist.md", "content": "# Launch checklist\n\n- Back up data\n- Verify access\n- Announce release\n"}),
+        ),
+        ScriptedTurn::Text("Answer: ready after the checks are complete.".into()),
+    ];
+    c.verify = "grep -q 'Back up data' checklist.md && grep -q 'Verify access' checklist.md && grep -q 'Announce release' checklist.md".into();
+    c
+}
+
+fn held_out_recovery_after_bad_artifact() -> EvalCase {
+    let mut c = base(
+        "held-out-recovery-after-bad-artifact",
+        "repair a malformed output before reporting completion",
+    );
+    c.prompt = "Write checklist.md with exactly the line READY, then verify it.".into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({"path": "checklist.md", "content": "NOT READY\n"}),
+        ),
+        ScriptedTurn::tool(
+            "edit",
+            serde_json::json!({
+                "path": "checklist.md",
+                "edits": [{"old_text": "NOT READY", "new_text": "READY"}]
+            }),
+        ),
+        ScriptedTurn::Text("repaired and verified".into()),
+    ];
+    c.verify = "test \"$(cat checklist.md)\" = READY".into();
+    c
+}
+
+pub fn general_schedule() -> EvalCase {
+    let mut c = base(
+        "general-schedule",
+        "turn availability notes into a conflict-free schedule",
+    );
+    c.files = vec![(
+        "availability.txt".into(),
+        "Maya: 09:00-11:00\nDevon: 10:00-12:00\n".into(),
+    )];
+    c.prompt = "Read availability.txt and write schedule.md with a shared meeting time.".into();
+    c.script = vec![
+        ScriptedTurn::tool("read", serde_json::json!({"path": "availability.txt"})),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({"path": "schedule.md", "content": "# Meeting\n\nShared time: 10:00-11:00\n"}),
+        ),
+        ScriptedTurn::Text("scheduled".into()),
+    ];
+    c.verify = "grep -q '10:00-11:00' schedule.md".into();
+    c
+}
+
+pub fn general_decision_matrix() -> EvalCase {
+    let mut c = base(
+        "general-decision-matrix",
+        "compare options against explicit criteria",
+    );
+    c.prompt =
+        "Write decision.md comparing Option A and Option B, naming cost and reliability criteria."
+            .into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({"path": "decision.md", "content": "# Decision\n\n| Option | Cost | Reliability |\n|---|---|---|\n| Option A | low | medium |\n| Option B | medium | high |\n"}),
+        ),
+        ScriptedTurn::Text("compared".into()),
+    ];
+    c.verify = "grep -q 'Option A' decision.md && grep -q 'Reliability' decision.md && grep -q 'Cost' decision.md".into();
+    c
 }
 
 /// Multi-source synthesis: read three notes, merge key facts into a summary.

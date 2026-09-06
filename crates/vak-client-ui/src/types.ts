@@ -137,10 +137,21 @@ export interface OutputItem {
   role: OutputRole;
   kind: OutputKind;
   status: OutputStatus;
+  outcome?: ResultOutcome | null;
   content: OutputContent;
   provenance?: OutputProvenance | null;
   actions: OutputAction[];
   fallback_text: string;
+}
+
+export interface ResultOutcome {
+  result_id: string;
+  status: OutputStatus;
+  completion?: string | null;
+  evidence_state?: string | null;
+  requirement_ids: string[];
+  evidence_receipt_ids: string[];
+  human_review?: string | null;
 }
 
 export interface OutputTimeline {
@@ -149,6 +160,15 @@ export interface OutputTimeline {
   cursor?: string | null;
   items: OutputItem[];
   diagnostics: string[];
+  goal?: GoalState | null;
+}
+
+export interface GoalState {
+  revision: number;
+  objective: string;
+  additions: string[];
+  superseded_revisions: number[];
+  control: "active" | "paused" | "cancelled";
 }
 
 export type PresentationDelta =
@@ -296,6 +316,7 @@ export interface ConfigSnapshot {
   model_source?: string;
   max_tokens: number;
   max_turns: number;
+  intent_evidence_max_age_secs?: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
   /// How an `Ask` decision is resolved. Separate from the permission mode:
   /// it never widens the boundary or switches off the sandbox, it only

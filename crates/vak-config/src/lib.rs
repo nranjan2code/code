@@ -484,6 +484,7 @@ pub struct IntentSettings {
     pub max_classify_usd: Option<f64>,
     /// Standing delegation: "manual" | "assisted" | "delegated" | "autonomous".
     pub autonomy: Option<String>,
+    pub evidence_max_age_secs: Option<i64>,
 }
 
 /// Durable commitments (docs/design/47-commitment-kernel.md). NOT privileged:
@@ -1018,6 +1019,7 @@ pub struct IntentResolved {
     pub max_classify_usd: f64,
     /// Standing delegation for this workspace.
     pub autonomy: String,
+    pub evidence_max_age_secs: i64,
 }
 
 /// Resolved durable-commitment policy.
@@ -1208,6 +1210,7 @@ impl Default for Config {
                 classify_model: None,
                 max_classify_usd: 0.01,
                 autonomy: "assisted".into(),
+                evidence_max_age_secs: 86_400,
             },
             commitment: CommitmentResolved {
                 enabled: true,
@@ -1680,6 +1683,68 @@ fn persist_preferences_at(
         source,
     })?;
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
+/// Persist the evidence freshness policy in exactly one configuration layer.
+pub fn persist_evidence_max_age(path: PathBuf, seconds: i64) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let text = if path.is_file() {
+        std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        String::new()
+    };
+    let mut root = if text.is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    let intent = table
+        .entry("intent")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let Some(intent) = intent.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("intent config must be a TOML table"),
+        });
+    };
+    intent.insert(
+        "evidence_max_age_secs".into(),
+        toml::Value::Integer(seconds.max(0)),
+    );
+    let output = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".intent-config.{}.tmp", std::process::id()));
+    std::fs::write(&temp, output).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path.clone()).map_err(|source| ConfigError::Write { path, source })
 }
 
 /// Persist `[memory]` toggles for the current project without disturbing
@@ -2565,6 +2630,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             "assisted".into()
         }
     };
+    cfg.intent.evidence_max_age_secs = merged.intent.evidence_max_age_secs.unwrap_or(86_400).max(0);
 
     // --- durable commitments ---
     cfg.commitment.enabled = merged.commitment.enabled.unwrap_or(true);
@@ -3442,6 +3508,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.intent.autonomy.is_some() {
         base.intent.autonomy = over.intent.autonomy;
     }
+    if over.intent.evidence_max_age_secs.is_some() {
+        base.intent.evidence_max_age_secs = over.intent.evidence_max_age_secs;
+    }
     if over.commitment.enabled.is_some() {
         base.commitment.enabled = over.commitment.enabled;
     }
@@ -3731,6 +3800,30 @@ mod tests {
             std::fs::read_to_string(path).unwrap(),
             "provider = \"ollama\"\n"
         );
+    }
+
+    #[test]
+    fn evidence_policy_writer_preserves_other_layers_and_clamps_negative() {
+        let project = tempfile::tempdir().unwrap();
+        let path = project.path().join(".vak/config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "provider = \"ollama\"\n\n[ui]\ntheme = \"dark\"\n").unwrap();
+        persist_evidence_max_age(path.clone(), -5).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("provider = \"ollama\""));
+        assert!(text.contains("theme = \"dark\""));
+        assert!(text.contains("evidence_max_age_secs = 0"));
+    }
+
+    #[test]
+    fn evidence_policy_resolves_from_project_layer() {
+        let project = tempfile::tempdir().unwrap();
+        let path = project.path().join(".vak/config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[intent]\nevidence_max_age_secs = 120\n").unwrap();
+        let config = load_with_trust(project.path(), true).unwrap();
+        assert_eq!(config.intent.evidence_max_age_secs, 120);
+        assert!(config.intent.enabled);
     }
 
     /// `capped_by` is the single arithmetic the gateway's per-channel

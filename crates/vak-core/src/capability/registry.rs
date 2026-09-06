@@ -614,6 +614,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restoring_a_revoked_capability_requires_a_fresh_published_epoch() {
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let (registry, _rx) = CapabilityRegistry::new(provider);
+        registry.reconcile().await;
+        let id = CapabilityId::new(CapabilityKind::Tool, "read");
+        let before = registry.current().await.epoch;
+
+        registry.revoke(id.clone(), "operator disabled").await;
+        registry.reconcile().await;
+        assert!(registry.revoked_now(&id));
+        assert_eq!(registry.current().await.usable().count(), 0);
+
+        registry.restore(&id).await;
+        // Restore only removes the immediate deny. It cannot resurrect a
+        // capability in a bound turn before reconciliation publishes it.
+        assert!(!registry.revoked_now(&id));
+        assert_eq!(registry.current().await.usable().count(), 0);
+        registry.reconcile().await;
+        assert!(registry.current().await.epoch > before);
+        assert_eq!(registry.current().await.usable().count(), 1);
+    }
+
+    #[tokio::test]
     async fn backoff_accumulates_across_passes_rather_than_resetting() {
         let provider = Fake::new(vec![decl("tavily", CapabilityKind::McpServer, true)]);
         *provider.probe_ok.lock().unwrap() = false;

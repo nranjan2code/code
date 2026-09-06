@@ -489,7 +489,14 @@ export function workCommand(
   });
 }
 
-export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<void> {
+export type InterventionReceipt = {
+  request_id: string;
+  decision?: string;
+  state?: string;
+  reason?: string;
+};
+
+export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<InterventionReceipt> {
   return req(`/sessions/${id}/steering`, {
     method: "POST",
     body: JSON.stringify({ text, attachments: attachments ?? [] }),
@@ -498,6 +505,30 @@ export function steer(id: string, text: string, attachments?: { mime: string; da
 
 export function cancelRun(id: string): Promise<void> {
   return req(`/sessions/${id}/cancel`, { method: "POST" });
+}
+
+export function pauseRun(id: string): Promise<void> {
+  return req(`/sessions/${id}/pause`, { method: "POST" });
+}
+
+export function resumeRun(id: string): Promise<void> {
+  return req(`/sessions/${id}/resume`, { method: "POST" });
+}
+
+export function controlState(id: string): Promise<{ running: boolean; paused: boolean; revision: number }> {
+  return req(`/sessions/${id}/control-state`);
+}
+
+export function planChange(
+  id: string,
+  text: string,
+  source = "human",
+  targetRevision?: number,
+): Promise<{ request_id: string; decision: string; revision: number; reason: string }> {
+  return req(`/sessions/${id}/plan-change`, {
+    method: "POST",
+    body: JSON.stringify({ text, source, target_revision: targetRevision }),
+  });
 }
 
 export function runSide(id: string, question: string): Promise<void> {
@@ -589,6 +620,21 @@ export interface ConfigPatch {
 
 export function patchConfig(patch: ConfigPatch): Promise<void> {
   return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function recordOutcomeReview(
+  sessionId: string,
+  verdict: "accepted" | "needs_work" | "rejected",
+  note?: string,
+): Promise<{ recorded: boolean }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/outcome-review`, {
+    method: "POST",
+    body: JSON.stringify({ verdict, note }),
+  });
+}
+
+export function patchEvidencePolicy(seconds: number, scope: "user" | "workspace"): Promise<{ saved: boolean; seconds: number }> {
+  return req("/config/intent/evidence", { method: "POST", body: JSON.stringify({ seconds, scope }) });
 }
 
 

@@ -28,6 +28,7 @@ that owns its contract.
 | Layered configuration and scoped capabilities | `docs/design/05-config.md` |
 | Layered, editable prompt | `docs/design/45-prompt-layers.md` |
 | Intent kernel: behavioural reading, narrowing engagement, durable commitments | `docs/design/47-commitment-kernel.md` |
+| Outcome-directed runtime: bounded OutcomeSpec, evidence-aware evaluation, collaborative goal updates, and result-scoped cross-surface presentation | `docs/design/52-outcome-directed-runtime.md`, `docs/design/30-output-engineering.md` |
 | Service control plane, Operations Center | `docs/design/28-operations.md` |
 | Installed lifecycle: install, verify, status, update, uninstall | `docs/design/32-release-engineering.md` |
 
@@ -62,12 +63,12 @@ applies to every item.
 
 | Work | State |
 |---|---|
-| Managed work contracts — hardening | in progress; direct mode unchanged |
+| Managed work contracts — hardening and outcome-linked progress | shipped in 3.0.10; direct mode unchanged |
 | Discord and Slack real-time transports (gateway websocket, Socket Mode) | deferred; both bridges poll configured channel ids today |
 | Interactive approval components on Discord and Slack | deferred; typed yes/no fallback ships |
 | Skill intent-discovery | **subsumed** by the intent kernel (doc 47): skills are selected through the admitted capability slice rather than a separate discovery path |
 | Commitment kernel | shipped end to end (doc 47) |
-| Web client — the workspace surface in a browser, and a headless box you can *use* | shipped, Phases 0–4 (doc 48) |
+| Web client — the workspace surface in a browser, a headless box you can *use*, and a complete public product surface | shipped, Phases 0–4 plus outcome projection and public `/outcomes` page (docs 48, 52) |
 | Multi-user cloud (per-principal data homes, pooled Cores, quotas) | **explicitly out of scope** (doc 48 §8 E). A deployment is one operator's vak, and the token is a password to the whole box; the route shapes leave the seams open, nothing more |
 | Windows platform support | S11 |
 

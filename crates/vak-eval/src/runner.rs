@@ -133,6 +133,9 @@ pub struct EvalCase {
     pub files: Vec<(String, String)>,
     pub prompt: String,
     pub script: Vec<ScriptedTurn>,
+    /// Optional admitted contract for this case. When absent, the evaluator
+    /// uses the general-purpose baseline for compatibility with simple cases.
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     /// Bash command run in the workspace after the agent finishes; exit 0 = pass.
     pub verify: String,
 }
@@ -145,8 +148,126 @@ pub struct EvalReport {
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub duration_ms: u128,
+    pub outcome_status: String,
+    pub completion_verdict: String,
+    pub human_review: String,
+    pub verification_evidence: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Aggregate measurement for a corpus. This is deliberately computed from
+/// per-case production-loop reports so a green corpus cannot hide a failed
+/// case behind an average.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalSuiteReport {
+    pub cases: Vec<EvalReport>,
+    pub total: usize,
+    pub passed: usize,
+    pub pass_rate: f64,
+    pub mean_duration_ms: f64,
+    pub total_tokens_in: u64,
+    pub total_tokens_out: u64,
+    pub partial_or_unknown: usize,
+    pub human_review_recommended: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalComparisonReport {
+    pub task_id: String,
+    pub baseline: EvalReport,
+    pub outcome_directed: EvalReport,
+    pub latency_delta_ms: i128,
+    pub token_delta: i128,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalComparisonSuiteReport {
+    pub baseline: EvalSuiteReport,
+    pub outcome_directed: EvalSuiteReport,
+    pub pass_rate_delta: f64,
+    pub mean_duration_delta_ms: f64,
+    pub token_delta: i128,
+}
+
+pub async fn compare_case(case: &EvalCase) -> EvalComparisonReport {
+    let mut baseline_case = case.clone();
+    baseline_case.outcome = None;
+    let baseline = run_case(&baseline_case).await;
+    let outcome_directed = run_case(case).await;
+    EvalComparisonReport {
+        task_id: case.id.clone(),
+        latency_delta_ms: outcome_directed.duration_ms as i128 - baseline.duration_ms as i128,
+        token_delta: (outcome_directed.tokens_in + outcome_directed.tokens_out) as i128
+            - (baseline.tokens_in + baseline.tokens_out) as i128,
+        baseline,
+        outcome_directed,
+    }
+}
+
+pub async fn compare_suite(cases: &[EvalCase]) -> EvalComparisonSuiteReport {
+    let mut baseline_cases = Vec::with_capacity(cases.len());
+    for case in cases {
+        let mut baseline = case.clone();
+        baseline.outcome = None;
+        baseline_cases.push(baseline);
+    }
+    let baseline = run_suite(&baseline_cases).await;
+    let outcome_directed = run_suite(cases).await;
+    EvalComparisonSuiteReport {
+        pass_rate_delta: outcome_directed.pass_rate - baseline.pass_rate,
+        mean_duration_delta_ms: outcome_directed.mean_duration_ms - baseline.mean_duration_ms,
+        token_delta: (outcome_directed.total_tokens_in + outcome_directed.total_tokens_out) as i128
+            - (baseline.total_tokens_in + baseline.total_tokens_out) as i128,
+        baseline,
+        outcome_directed,
+    }
+}
+
+impl EvalSuiteReport {
+    fn from_cases(cases: Vec<EvalReport>) -> Self {
+        let total = cases.len();
+        let passed = cases.iter().filter(|case| case.passed).count();
+        let mean_duration_ms = if total == 0 {
+            0.0
+        } else {
+            cases
+                .iter()
+                .map(|case| case.duration_ms as f64)
+                .sum::<f64>()
+                / total as f64
+        };
+        EvalSuiteReport {
+            total,
+            passed,
+            pass_rate: if total == 0 {
+                0.0
+            } else {
+                passed as f64 / total as f64
+            },
+            mean_duration_ms,
+            total_tokens_in: cases.iter().map(|case| case.tokens_in).sum(),
+            total_tokens_out: cases.iter().map(|case| case.tokens_out).sum(),
+            partial_or_unknown: cases
+                .iter()
+                .filter(|case| matches!(case.completion_verdict.as_str(), "partial" | "unknown"))
+                .count(),
+            human_review_recommended: cases
+                .iter()
+                .filter(|case| case.human_review == "recommended")
+                .count(),
+            cases,
+        }
+    }
+}
+
+/// Run a corpus and retain every case report for inspection and comparison.
+pub async fn run_suite(cases: &[EvalCase]) -> EvalSuiteReport {
+    let mut reports = Vec::with_capacity(cases.len());
+    for case in cases {
+        reports.push(run_case(case).await);
+    }
+    EvalSuiteReport::from_cases(reports)
 }
 
 /// Runs one case with the built-in scripted provider (deterministic).
@@ -203,6 +324,10 @@ async fn run_case_with_tools(
                 tokens_in: 0,
                 tokens_out: 0,
                 duration_ms: start.elapsed().as_millis(),
+                outcome_status: "unknown".into(),
+                completion_verdict: "failed".into(),
+                human_review: "required_for_recovery".into(),
+                verification_evidence: "none".into(),
                 error: Some(format!("workspace setup failed: {e}")),
             };
         }
@@ -258,6 +383,7 @@ async fn run_case_with_tools(
     let mut cfg = AgentConfig::new(prepared.system_prompt);
     cfg.model = model.to_string();
     cfg.tools = prepared.tools;
+    cfg.outcome = case.outcome.clone();
     cfg.max_turns = 12;
     if deterministic {
         cfg.max_retries = 0;
@@ -283,7 +409,7 @@ async fn run_case_with_tools(
         let err = match outcome {
             TurnOutcome::Completed { .. } => None,
             TurnOutcome::Aborted { .. } => Some("aborted".to_string()),
-            TurnOutcome::Failed { error } => Some(error.to_string()),
+            TurnOutcome::Failed { ref error } => Some(error.to_string()),
             TurnOutcome::MaxTurnsReached => Some("max turns reached".to_string()),
         };
         (u.input_tokens, u.output_tokens, err)
@@ -308,6 +434,65 @@ async fn run_case_with_tools(
         tokens_in,
         tokens_out,
         duration_ms: start.elapsed().as_millis(),
+        outcome_status: format!(
+            "{:?}",
+            vak_intent::evaluate_response(
+                match &outcome {
+                    TurnOutcome::Completed { response } => Some(response.text_content()),
+                    TurnOutcome::Aborted { partial } => {
+                        partial.as_ref().map(|message| message.text_content())
+                    }
+                    TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached => None,
+                }
+                .as_deref(),
+                loop_error.is_some(),
+                matches!(outcome, TurnOutcome::Aborted { .. }),
+            )
+        )
+        .to_ascii_lowercase(),
+        completion_verdict: {
+            let response = match &outcome {
+                TurnOutcome::Completed { response } => Some(response.text_content()),
+                TurnOutcome::Aborted { partial } => {
+                    partial.as_ref().map(|message| message.text_content())
+                }
+                TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached => None,
+            };
+            let spec = case.outcome.clone().unwrap_or_else(|| {
+                vak_intent::OutcomeSpec::from_reading(
+                    &case.prompt,
+                    &vak_intent::Reading::general(),
+                    vak_intent::RESOLVER_VERSION,
+                )
+            });
+            let status = vak_intent::evaluate_response(
+                response.as_deref(),
+                loop_error.is_some(),
+                matches!(outcome, TurnOutcome::Aborted { .. }),
+            );
+            let evaluations = vak_intent::evaluate_requirements(&spec, response.as_deref());
+            let verdict = vak_intent::evaluate_completion(status, &evaluations, &spec);
+            if verify_out.is_error && matches!(verdict, vak_intent::CompletionVerdict::Complete) {
+                "partial".into()
+            } else {
+                format!("{verdict:?}").to_ascii_lowercase()
+            }
+        },
+        human_review: if verify_out.is_error
+            || case.outcome.as_ref().is_some_and(|outcome| {
+                outcome.requirements.iter().any(|requirement| {
+                    matches!(requirement.kind, vak_intent::RequirementKind::Evidence)
+                })
+            }) {
+            "recommended".into()
+        } else {
+            "not_required".into()
+        },
+        verification_evidence: if verify_out.is_error {
+            "observed_failure".into()
+        } else {
+            "observed_success".into()
+        },
         error: loop_error.or_else(|| {
             if verify_out.is_error {
                 Some(format!("verify failed: {}", verify_out.content))
@@ -328,6 +513,10 @@ fn fail(id: &str, msg: &str, start: &Instant, verify_exit: Option<i32>) -> EvalR
         tokens_in: 0,
         tokens_out: 0,
         duration_ms: start.elapsed().as_millis(),
+        outcome_status: "unknown".into(),
+        completion_verdict: "failed".into(),
+        human_review: "required_for_recovery".into(),
+        verification_evidence: "none".into(),
         error: Some(msg.to_string()),
     }
 }

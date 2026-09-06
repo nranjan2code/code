@@ -257,6 +257,10 @@ pub enum TurnOutcome {
 }
 
 pub struct AgentConfig {
+    /// The admitted result contract for this run. It is execution context,
+    /// not model-authored authority; permission and broker checks remain the
+    /// enforcement boundary.
+    pub outcome: Option<vak_intent::OutcomeSpec>,
     pub work_mode: WorkMode,
     pub work_enabled: bool,
     pub max_work_items: usize,
@@ -336,6 +340,7 @@ pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send +
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
+            outcome: None,
             work_mode: WorkMode::Direct,
             work_enabled: true,
             max_work_items: 20,
@@ -724,6 +729,7 @@ impl Agent {
         }
 
         let mut turn = 0usize;
+        let mut outcome_turns = 0usize;
         self.run_call_counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -738,12 +744,34 @@ impl Agent {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
             }
+            if !steering.wait_if_paused(&cancel).await {
+                return TurnOutcome::Aborted { partial: None };
+            }
             if turn >= self.config.max_turns {
+                return TurnOutcome::MaxTurnsReached;
+            }
+            if self
+                .config
+                .outcome
+                .as_ref()
+                .and_then(|outcome| outcome.max_turns)
+                .is_some_and(|max| outcome_turns >= max)
+            {
                 return TurnOutcome::MaxTurnsReached;
             }
 
             {
                 let mut session = self.session.lock().await;
+                while let Some(update) = steering.take_outcome_update() {
+                    self.config.outcome = update.outcome.clone();
+                    if let Err(error) = session.append_intent(update) {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "outcome revision write failed: {error}"
+                            )),
+                        };
+                    }
+                }
                 for message in steering.drain(DrainMode::OneAtATime) {
                     let message = match self.normalize_input(message) {
                         Ok(message) => message,
@@ -753,6 +781,29 @@ impl Agent {
                             };
                         }
                     };
+                    let request = message.text_content();
+                    let active_revision = session.active_goal_revision();
+                    let relation = vak_intent::classify_goal_update(&request, active_revision);
+                    let update = vak_intent::GoalUpdate {
+                        revision: session
+                            .latest_goal_update()
+                            .map(|update| update.revision)
+                            .unwrap_or(0)
+                            .saturating_add(1),
+                        relation,
+                        request: request.clone(),
+                        supersedes_revision: matches!(
+                            relation,
+                            vak_intent::GoalRelation::Corrects | vak_intent::GoalRelation::Replaces
+                        )
+                        .then_some(active_revision)
+                        .flatten(),
+                    };
+                    if let Err(error) = session.append_goal_update(update) {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!("goal update write failed: {error}")),
+                        };
+                    }
                     if StopPolicy::is_done_message(&message.text_content()) {
                         user_completion_released = true;
                     }
@@ -1155,6 +1206,8 @@ impl Agent {
                     }
                 }
             };
+
+            outcome_turns += 1;
 
             let usage = response.usage.clone();
             let mut settled_provider_slot: Option<String> = None;

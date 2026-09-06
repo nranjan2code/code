@@ -67,6 +67,13 @@ PAGES = [
         "before every effect, a receipt for every dispatch.",
     ),
     (
+        "outcomes.html",
+        "/outcomes",
+        "Outcomes",
+        "Outcomes — vak",
+        "How vak turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface.",
+    ),
+    (
         "surfaces.html",
         "/surfaces",
         "Surfaces",

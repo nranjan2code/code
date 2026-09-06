@@ -141,6 +141,7 @@ mod tests {
             flow_name: "g".into(),
             definition_toml: DEF.into(),
             started_at: chrono::Utc::now(),
+            outcome: None,
             nodes: Default::default(),
         };
         for (id, status) in nodes {

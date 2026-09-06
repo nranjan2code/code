@@ -10,6 +10,14 @@ known-workspaces picker, channel capability overlays, and now a first-class
 `Bot` identity independent of surface. See each phase section below for
 what landed.
 
+Channel delivery is a projection of the shared outcome contract, not a second
+conversation model. Goal updates, result status and evidence remain in the
+session ledger and `OutputTimeline`; Telegram, Discord and Slack receive the
+bounded text/action fallback their capabilities support. A shortened or
+non-interactive channel message must never change completion, approval or
+authority semantics. See `docs/design/52-outcome-directed-runtime.md` and
+`docs/design/30-output-engineering.md` for the cross-surface contract.
+
 Two sub-pieces are deliberately **deferred**, not silently dropped:
 
 1. **Real-time transports for the new bridges.** Discord's gateway

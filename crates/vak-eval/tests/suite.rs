@@ -31,6 +31,7 @@ async fn exhausted_script_is_reported_not_hung() {
         files: vec![],
         prompt: "loop forever".into(),
         script: vec![],
+        outcome: None,
         verify: "true".into(),
     };
     let _ = &mut case;

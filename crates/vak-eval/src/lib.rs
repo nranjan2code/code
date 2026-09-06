@@ -10,9 +10,10 @@ pub mod cases;
 pub mod context_gate;
 pub mod runner;
 
-pub use cases::{builtin_suite, general_suite, live_suite};
+pub use cases::{builtin_suite, general_suite, held_out_suite, live_suite};
 pub use context_gate::{ContextScorecard, MetricDirection, QualityMetric, run_context_scorecard};
 pub use runner::{
-    EvalCase, EvalReport, ScriptedTurn, run_case, run_case_brokered, run_case_with_provider,
-    run_case_with_provider_brokered,
+    EvalCase, EvalComparisonReport, EvalComparisonSuiteReport, EvalReport, EvalSuiteReport,
+    ScriptedTurn, compare_case, compare_suite, run_case, run_case_brokered, run_case_with_provider,
+    run_case_with_provider_brokered, run_suite,
 };

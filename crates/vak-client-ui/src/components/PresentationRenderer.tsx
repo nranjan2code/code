@@ -1,4 +1,4 @@
-import { createEffect, createMemo, ErrorBoundary, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type {
   DocumentBlock,
@@ -11,6 +11,7 @@ import { density, openInEditor, uiPreferences } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import { safeUrl } from "../safeUrl";
+import * as api from "../api";
 import { highlight, languageForFence } from "../highlight";
 import ResearchCards from "./presentation/ResearchCards";
 import DiffInspector from "./presentation/DiffInspector";
@@ -192,8 +193,13 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
 
 export function PresentationDocumentView(props: { document: PresentationDocument }) {
   const recipeId = () => props.document.metadata.recipe_id;
+  const outcomeStatus = () => props.document.metadata.outcome_status;
+  const completion = () => props.document.metadata.outcome_completion;
   return (
     <div class="semantic-document">
+      <Show when={completion()} fallback={<Show when={outcomeStatus()}><div class={`semantic-outcome-status ${outcomeStatus()}`} role="status">Result: {outcomeStatus()}</div></Show>}>
+        <div class={`semantic-outcome-status ${completion()}`} role="status">Completion: {completion()}</div>
+      </Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
@@ -205,10 +211,30 @@ export function PresentationDocumentView(props: { document: PresentationDocument
 function RenderAudit(props: { document: PresentationDocument }) {
   const metadata = props.document.metadata;
   const recipe = metadata.recipe_id;
-  return <Show when={recipe || props.document.diagnostics.length > 0}>
+  const outcome = metadata.outcome_objective;
+  const evaluation = () => {
+    if (!metadata.outcome_evaluation) return [];
+    try {
+      return JSON.parse(metadata.outcome_evaluation) as Array<{ requirement_id: string; status: string; reason: string }>;
+    } catch {
+      return [];
+    }
+  };
+  return <Show when={recipe || outcome || props.document.diagnostics.length > 0}>
     <details class="semantic-render-audit">
-      <summary>Why this rendering?</summary>
+      <summary>View details</summary>
       <dl>
+        <Show when={outcome}><div><dt>Requested</dt><dd>{outcome}</dd></div></Show>
+        <Show when={metadata.outcome_revision}><div><dt>Plan revision</dt><dd>{metadata.outcome_revision}</dd></div></Show>
+        <Show when={metadata.outcome_requirements}><div><dt>Requirements</dt><dd>{metadata.outcome_requirements}</dd></div></Show>
+        <Show when={metadata.outcome_completion}><div><dt>Completion</dt><dd>{metadata.outcome_completion}</dd></div></Show>
+        <Show when={metadata.outcome_status}><div><dt>Execution</dt><dd>{metadata.outcome_status}</dd></div></Show>
+        <Show when={metadata.outcome_evidence_receipts}><div><dt>Evidence receipts</dt><dd>{metadata.outcome_evidence_receipts}</dd></div></Show>
+        <Show when={metadata.outcome_evidence_state}><div><dt>Evidence freshness</dt><dd>{metadata.outcome_evidence_state}</dd></div></Show>
+        <Show when={metadata.outcome_human_review}><div><dt>Human review</dt><dd>{metadata.outcome_human_review}</dd></div></Show>
+        <Show when={metadata.outcome_review_verdict}><div><dt>Review verdict</dt><dd>{metadata.outcome_review_verdict}</dd></div></Show>
+        <Show when={metadata.outcome_requirement_rejections}><div><dt>Rejected checks</dt><dd>{metadata.outcome_requirement_rejections}</dd></div></Show>
+        <Show when={evaluation().length > 0}><div><dt>Checks</dt><dd><For each={evaluation()}>{(item) => <div class={`semantic-check ${item.status}`}><strong>{item.requirement_id}: {item.status}</strong> — {item.reason}</div>}</For></dd></div></Show>
         <Show when={recipe}><div><dt>Recipe</dt><dd>{recipe} · {metadata.recipe_version ?? "unknown version"}</dd></div></Show>
         <Show when={metadata.renderer}><div><dt>Renderer</dt><dd>{metadata.renderer}</dd></div></Show>
         <Show when={metadata.renderer_blocks}><div><dt>Blocks</dt><dd>{metadata.renderer_blocks}</dd></div></Show>
@@ -249,6 +275,34 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       </Show>
     </section>
   );
+}
+
+function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
+  const [busy, setBusy] = createSignal(false);
+  const review = async (verdict: "accepted" | "needs_work" | "rejected") => {
+    setBusy(true);
+    try {
+      await api.recordOutcomeReview(props.sessionId, verdict);
+      window.location.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Show when={props.item.actions.length > 0}>
+    <div class="outcome-review-actions" aria-label="Outcome review">
+      <For each={props.item.actions}>{(action) => <button class="settings-button" disabled={busy()} onClick={() => void review(action.data.verdict as "accepted" | "needs_work" | "rejected")}>{action.label}</button>}</For>
+    </div>
+  </Show>;
+}
+
+function ResultOutcomeSummary(props: { item: OutputItem }) {
+  const outcome = () => props.item.outcome;
+  return <Show when={outcome()}>{(value) => <div class={`result-outcome-summary ${value().status}`} role="status">
+    <strong>{value().status === "partial" ? "Partial result" : `Result ${value().status}`}</strong>
+    <Show when={value().completion}><span>Completion: {value().completion}</span></Show>
+    <Show when={value().evidence_state}><span>Evidence: {value().evidence_state}</span></Show>
+    <Show when={value().human_review}><span>Human review: {value().human_review}</span></Show>
+  </div>}</Show>;
 }
 
 function ActivityRow(props: { item: OutputItem }) {
@@ -324,8 +378,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
-    if (item.content.type === "document") return <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>;
-    if (item.content.type === "outcome") return <article class="semantic-outcome">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</article>;
+    if (item.content.type === "document") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><PresentationDocumentView document={item.content.document} /></article>;
+    if (item.content.type === "outcome") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} />;
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
@@ -352,5 +406,13 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
     }
     return order.map((id) => ({ id, items: grouped.get(id)! }));
   });
-  return <div class="semantic-timeline"><For each={turns()}>{(turn) => <Turn id={turn.id} items={turn.items} sessionId={props.sessionId} />}</For></div>;
+  return <div class="semantic-timeline">
+    <Show when={props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
+      <summary><span class="goal-state-label">Current goal</span><span class={`goal-state-control ${goal().control}`}>{goal().control}</span><span class="goal-state-revision">rev {goal().revision}</span></summary>
+      <p class="goal-state-objective">{goal().objective}</p>
+      <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
+      <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
+    </details>}</Show>
+    <For each={turns()}>{(turn) => <Turn id={turn.id} items={turn.items} sessionId={props.sessionId} />}</For>
+  </div>;
 }

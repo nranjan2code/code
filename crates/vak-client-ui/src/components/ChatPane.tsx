@@ -5,6 +5,7 @@ import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
+import * as api from "../api";
 
 /**
  * A new task's chat pane before anything has happened, and an existing
@@ -100,6 +101,80 @@ function hasSettledOutcome(id: string | null): boolean {
   return !!presentationOf(id)?.items.some(
     (item) => item.kind === "outcome" && item.status !== "running" && item.content.type === "document",
   );
+}
+
+function RunControls(props: { sessionId: string }) {
+  const [paused, setPaused] = createSignal(false);
+  const [revision, setRevision] = createSignal(0);
+  const [busy, setBusy] = createSignal(false);
+  const [changing, setChanging] = createSignal(false);
+  const [changeText, setChangeText] = createSignal("");
+  const [changeKind, setChangeKind] = createSignal("replan");
+  const [changeResult, setChangeResult] = createSignal("");
+  const refresh = () => void api.controlState(props.sessionId).then((state) => { setPaused(state.paused); setRevision(state.revision); }).catch(() => {});
+  onMount(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+  const toggle = async () => {
+    if (busy()) return;
+    setBusy(true);
+    try {
+      if (paused()) await api.resumeRun(props.sessionId);
+      else await api.pauseRun(props.sessionId);
+      setPaused(!paused());
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitChange = async () => {
+    const text = changeText().trim();
+    if (!text || busy()) return;
+    setBusy(true);
+    try {
+      const result = await api.planChange(props.sessionId, `${changeKind()}: ${text}`, "human", revision());
+      if (result.decision === "requires_human") {
+        setChangeResult(`Human review required · plan v${result.revision}`);
+      } else {
+        setRevision(result.revision);
+        setChangeResult(`${result.decision} · plan v${result.revision}`);
+      }
+      setChangeText("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Plan change failed";
+      if (message.includes("409")) {
+        refresh();
+        setChangeResult("Plan changed elsewhere; review the new revision");
+      } else {
+        setChangeResult(message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Show when={isRunning(props.sessionId)}>
+    <div class="run-controls" aria-label="Live task controls">
+      <button class="run-control" disabled={busy()} onClick={() => void toggle()}>{paused() ? "Resume" : "Pause"}</button>
+      <button class="run-control danger" disabled={busy()} onClick={() => void api.cancelRun(props.sessionId)}>Cancel</button>
+      <button class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
+      <span class="run-revision" title="Active outcome plan revision">Plan v{revision()}</span>
+      <Show when={paused()}><span class="run-paused" role="status">Paused at safe boundary</span></Show>
+    </div>
+    <Show when={changing()}>
+      <form class="plan-change" onSubmit={(event) => { event.preventDefault(); void submitChange(); }}>
+        <select aria-label="Plan change type" value={changeKind()} onChange={(event) => setChangeKind(event.currentTarget.value)}>
+          <option value="replan">Replan</option>
+          <option value="add requirement">Add requirement</option>
+          <option value="remove requirement">Remove requirement</option>
+          <option value="reprioritize">Reprioritize</option>
+        </select>
+        <input aria-label="Plan change" value={changeText()} placeholder="Add, remove, or reprioritize work…" onInput={(event) => setChangeText(event.currentTarget.value)} />
+        <button class="run-control" type="submit" disabled={busy() || !changeText().trim()}>Submit</button>
+        <Show when={changeResult()}><span role="status">{changeResult()}</span></Show>
+      </form>
+    </Show>
+  </Show>;
 }
 
 export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
@@ -404,6 +479,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
 
   return (
     <div class="chat-shell">
+      <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>

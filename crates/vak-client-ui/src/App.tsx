@@ -507,7 +507,10 @@ export async function sendPrompt(
   appendUser(id, text);
   try {
     if (isRunning(id)) {
-      await api.steer(id, text, attachments);
+      const receipt = await api.steer(id, text, attachments);
+      if (receipt.state === "steering_queued") {
+        appendSystem(id, `Steering queued · ${receipt.request_id}`);
+      }
     } else {
       markRunning(id, true);
       try {

@@ -4,17 +4,72 @@ use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
     OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationPlanner,
-    SignalContext, built_in_adapters, compile_markdown, link_previews_from_text,
+    ResultOutcome, SignalContext, built_in_adapters, compile_markdown, link_previews_from_text,
     signals_from_context, structured_markdown, structured_outputs_from_text,
     structured_outputs_from_tool_result,
 };
+
+fn status_for_completion(completion: Option<&str>) -> OutputStatus {
+    if completion.is_none() || completion.is_some_and(|value| value.trim() == "complete") {
+        OutputStatus::Succeeded
+    } else {
+        OutputStatus::Partial
+    }
+}
+
+fn result_outcome(
+    result_id: impl Into<String>,
+    status: OutputStatus,
+    admitted: Option<&vak_intent::OutcomeSpec>,
+    evaluation: Option<&str>,
+    evidence_state: Option<&String>,
+    human_review: Option<&String>,
+) -> Option<ResultOutcome> {
+    let completion = evaluation
+        .and_then(|value| value.split('|').nth(2))
+        .map(str::to_owned);
+    if admitted.is_none()
+        && completion.is_none()
+        && evidence_state.is_none()
+        && human_review.is_none()
+    {
+        return None;
+    }
+    Some(ResultOutcome {
+        result_id: result_id.into(),
+        status,
+        completion,
+        evidence_state: evidence_state.cloned(),
+        requirement_ids: admitted
+            .map(|outcome| {
+                outcome
+                    .requirements
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        evidence_receipt_ids: evaluation
+            .and_then(|value| value.split('|').nth(1))
+            .map(|value| {
+                value
+                    .split(',')
+                    .filter(|item| !item.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        evidence: Vec::new(),
+        human_review: human_review.cloned(),
+    })
+}
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 
 /// One tool call as the timeline needs it: name, input, result text, and
 /// whether the result was an error. Named because the inline tuple was wide
 /// enough that a reader had to count commas to find the error flag.
-type TurnTool = (String, serde_json::Value, Option<String>, bool);
+type TurnTool = (String, String, serde_json::Value, Option<String>, bool);
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let builtin = PresentationPlanner {
@@ -44,9 +99,15 @@ fn snapshot_inner(
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
+    let mut turn_outcomes: HashMap<usize, vak_intent::OutcomeSpec> = HashMap::new();
+    let mut turn_evaluations: HashMap<usize, String> = HashMap::new();
+    let mut turn_evidence_state: HashMap<usize, String> = HashMap::new();
+    let mut turn_human_review: HashMap<usize, String> = HashMap::new();
+    let mut turn_review_verdict: HashMap<usize, String> = HashMap::new();
     let mut successful_runs = std::collections::HashSet::new();
     let mut scan_turn = 0usize;
-    let mut turn_tools: HashMap<usize, Vec<TurnTool>> = HashMap::new();
+    let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
+    let mut pending_tool_context: Option<TurnTool> = None;
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -58,6 +119,7 @@ fn snapshot_inner(
                         .any(|block| matches!(block, ContentBlock::Text { .. }))
                 {
                     scan_turn += 1;
+                    pending_tool_context = None;
                 }
                 for block in &record.message.content {
                     match block {
@@ -71,16 +133,88 @@ fn snapshot_inner(
                         } => {
                             tool_results.insert(tool_use_id.clone(), (content.clone(), *is_error));
                             if let Some((name, input)) = tool_inputs.get(tool_use_id) {
-                                turn_tools.entry(scan_turn).or_default().push((
+                                let context = (
+                                    tool_use_id.clone(),
                                     name.clone(),
                                     input.clone(),
                                     Some(content.clone()),
                                     *is_error,
-                                ));
+                                );
+                                pending_tool_context = Some(context);
                             }
                         }
                         _ => {}
                     }
+                }
+                if record.message.role == Role::Assistant
+                    && record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, ContentBlock::Text { .. }))
+                    && let Some(context) = pending_tool_context.take()
+                {
+                    assistant_tool_context.insert(entry.id.clone(), context);
+                }
+            }
+            EntryPayload::Intent(record) => {
+                if let Some(outcome) = &record.outcome {
+                    turn_outcomes.insert(scan_turn, outcome.clone());
+                }
+            }
+            EntryPayload::Activity(activity)
+                if activity.kind == ActivityKind::Diagnostic
+                    && activity.label == "Outcome evaluation" =>
+            {
+                if let Some(turn) = activity.turn {
+                    if let Some(status) = activity.data.get("status") {
+                        turn_evaluations.insert(turn, status.clone());
+                    }
+                    if let Some(evidence_state) = activity.data.get("evidence_state") {
+                        turn_evidence_state.insert(turn, evidence_state.clone());
+                    }
+                    if let Some(review) = activity.data.get("human_review") {
+                        turn_human_review.insert(turn, review.clone());
+                    }
+                    if let Some(evaluation) = activity.data.get("evaluation") {
+                        let evaluation_status = match activity.data.get("status") {
+                            Some(value) => value.as_str(),
+                            None => "unknown",
+                        };
+                        turn_evaluations
+                            .insert(turn, format!("{}|{}", evaluation_status, evaluation));
+                    }
+                    if let Some(receipts) = activity.data.get("evidence_receipts") {
+                        let evaluation_status = activity
+                            .data
+                            .get("status")
+                            .map_or("unknown", |value| value.as_str());
+                        let evaluation = activity
+                            .data
+                            .get("evaluation")
+                            .map_or("[]", |value| value.as_str());
+                        let completion = activity
+                            .data
+                            .get("completion")
+                            .map_or("unknown", |value| value.as_str());
+                        turn_evaluations.insert(
+                            turn,
+                            format!(
+                                "{}|{}|{}|{}",
+                                evaluation_status, evaluation, receipts, completion
+                            ),
+                        );
+                    }
+                }
+            }
+            EntryPayload::Activity(activity)
+                if activity.kind == ActivityKind::Diagnostic
+                    && activity.label == "Outcome review" =>
+            {
+                if let Some(turn) = activity.turn
+                    && let Some(verdict) = activity.data.get("verdict")
+                {
+                    turn_review_verdict.insert(turn, verdict.clone());
                 }
             }
             EntryPayload::Activity(activity)
@@ -96,6 +230,7 @@ fn snapshot_inner(
     }
 
     let mut timeline = OutputTimeline::empty(session_id);
+    timeline.goal = session.goal_state();
     let mut turn = 0usize;
     for entry in chain {
         match &entry.payload {
@@ -122,13 +257,16 @@ fn snapshot_inner(
                             if assistant {
                                 candidates.extend(link_previews_from_text(text));
                             }
-                            let (tool_name, tool_input, tool_output, is_error) = turn_tools
-                                .get(&turn)
-                                .and_then(|tools| tools.last())
-                                .map(|(name, input, output, err)| {
-                                    (Some(name.as_str()), Some(input), output.as_deref(), *err)
-                                })
-                                .unwrap_or((None, None, None, false));
+                            let assistant_tool_call_id = assistant_tool_context
+                                .get(&entry.id)
+                                .map(|(id, ..)| id.clone());
+                            let (tool_name, tool_input, tool_output, is_error) =
+                                assistant_tool_context
+                                    .get(&entry.id)
+                                    .map(|(_, name, input, output, err)| {
+                                        (Some(name.as_str()), Some(input), output.as_deref(), *err)
+                                    })
+                                    .unwrap_or((None, None, None, false));
                             let ctx = SignalContext {
                                 text,
                                 tool_name,
@@ -138,6 +276,17 @@ fn snapshot_inner(
                             };
                             let signals = signals_from_context(&ctx);
                             let plan = planner.plan(&signals, "desktop", &[], &candidates);
+                            let mut projected_outcome = turn_outcomes.get(&turn).cloned();
+                            let mut rejected_outcome_requirements = Vec::new();
+                            if let Some(outcome) = projected_outcome.as_mut() {
+                                rejected_outcome_requirements =
+                                    plan.merge_outcome_requirements(outcome);
+                            }
+                            let output_status = status_for_completion(
+                                turn_evaluations
+                                    .get(&turn)
+                                    .and_then(|value| value.split('|').nth(2)),
+                            );
                             timeline.items.push(OutputItem {
                                 id: format!("{}-text-{index}", entry.id),
                                 timestamp: entry.ts.to_rfc3339(),
@@ -152,7 +301,7 @@ fn snapshot_inner(
                                 } else {
                                     OutputKind::Message
                                 },
-                                status: OutputStatus::Succeeded,
+                                status: output_status,
                                 content: OutputContent::Document {
                                     document: {
                                         let mut document = compile_markdown(text.clone());
@@ -187,6 +336,79 @@ fn snapshot_inner(
                                                     })
                                                     .collect::<Vec<_>>()
                                                     .join(", "),
+                        );
+                    }
+                                        if let Some(outcome) = projected_outcome.as_ref() {
+                                            document.metadata.insert(
+                                                "outcome_objective".into(),
+                                                outcome.objective.clone(),
+                                            );
+                                            document.metadata.insert(
+                                                "outcome_revision".into(),
+                                                outcome.revision.to_string(),
+                                            );
+                                            document.metadata.insert(
+                                                "outcome_requirements".into(),
+                                                outcome
+                                                    .requirements
+                                                    .iter()
+                                                    .map(|requirement| requirement.id.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join(","),
+                                            );
+                                        }
+                                        if !rejected_outcome_requirements.is_empty() {
+                                            document.metadata.insert(
+                                                "outcome_requirement_rejections".into(),
+                                                rejected_outcome_requirements.join("; "),
+                                            );
+                                        }
+                                        if let Some(status) = turn_evaluations.get(&turn) {
+                                            let mut parts = status.splitn(2, '|');
+                                            let outcome_status =
+                                                parts.next().map_or("unknown", |value| value);
+                                            document.metadata.insert(
+                                                "outcome_status".into(),
+                                                outcome_status.into(),
+                                            );
+                                            if let Some(evaluation) = parts.next() {
+                                                let evaluation_json =
+                                                    evaluation.split('|').next().map_or("[]", |value| value);
+                                                document.metadata.insert(
+                                                    "outcome_evaluation".into(),
+                                                    evaluation_json.into(),
+                                                );
+                                                if let Some(receipts) = evaluation.split('|').nth(1) {
+                                                    document.metadata.insert(
+                                                        "outcome_evidence_receipts".into(),
+                                                        receipts.into(),
+                                                    );
+                                                }
+                                                if let Some(completion) = evaluation.split('|').nth(2)
+                                                {
+                                                    document.metadata.insert(
+                                                        "outcome_completion".into(),
+                                                        completion.into(),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        if let Some(evidence_state) = turn_evidence_state.get(&turn) {
+                                            document.metadata.insert(
+                                                "outcome_evidence_state".into(),
+                                                evidence_state.clone(),
+                                            );
+                                        }
+                                        if let Some(review) = turn_human_review.get(&turn) {
+                                            document.metadata.insert(
+                                                "outcome_human_review".into(),
+                                                review.clone(),
+                                            );
+                                        }
+                                        if let Some(verdict) = turn_review_verdict.get(&turn) {
+                                            document.metadata.insert(
+                                                "outcome_review_verdict".into(),
+                                                verdict.clone(),
                                             );
                                         }
                                         document.diagnostics.extend(plan.rejected.iter().map(
@@ -213,10 +435,18 @@ fn snapshot_inner(
                                         document
                                     },
                                 },
+                                outcome: result_outcome(
+                                    format!("{}-text-{index}", entry.id),
+                                    output_status,
+                                    projected_outcome.as_ref(),
+                                    turn_evaluations.get(&turn).map(String::as_str),
+                                    turn_evidence_state.get(&turn),
+                                    turn_human_review.get(&turn),
+                                ),
                                 provenance: Some(OutputProvenance {
                                     session_id: Some(session_id.into()),
                                     entry_id: Some(entry.id.clone()),
-                                    tool_call_id: None,
+                                    tool_call_id: assistant_tool_call_id,
                                     source: Some("session_ledger".into()),
                                 }),
                                 actions: Vec::new(),
@@ -235,6 +465,7 @@ fn snapshot_inner(
                                     role: OutputRole::Assistant,
                                     kind: OutputKind::Information,
                                     status: OutputStatus::Succeeded,
+                                    outcome: None,
                                     content: OutputContent::Structured {
                                         output: preview.clone(),
                                     },
@@ -269,6 +500,7 @@ fn snapshot_inner(
                                 } else {
                                     OutputKind::Progress
                                 },
+                                outcome: None,
                                 status: if failed {
                                     OutputStatus::Failed
                                 } else {
@@ -336,6 +568,7 @@ fn snapshot_inner(
                                         role: OutputRole::Tool,
                                         kind: OutputKind::Information,
                                         status: OutputStatus::Succeeded,
+                                        outcome: None,
                                         fallback_text: structured_markdown(&output),
                                         content: OutputContent::Structured { output },
                                         provenance: Some(OutputProvenance {
@@ -360,6 +593,7 @@ fn snapshot_inner(
                                     role: OutputRole::Tool,
                                     kind: OutputKind::Artifact,
                                     status: OutputStatus::Succeeded,
+                                    outcome: None,
                                     content: OutputContent::Artifact {
                                         artifact: artifact.clone(),
                                     },
@@ -394,6 +628,44 @@ fn snapshot_inner(
                     &format!("turn-{}", activity.turn.unwrap_or(turn)),
                     activity,
                 ));
+            }
+            EntryPayload::GoalUpdate(update) => {
+                let label = match update.relation {
+                    vak_intent::GoalRelation::New => "Goal started",
+                    vak_intent::GoalRelation::AddsTo => "Goal expanded",
+                    vak_intent::GoalRelation::Corrects => "Goal corrected",
+                    vak_intent::GoalRelation::Replaces => "Goal revised",
+                    vak_intent::GoalRelation::Status => "Status requested",
+                    vak_intent::GoalRelation::Pauses => "Goal paused",
+                    vak_intent::GoalRelation::Resumes => "Goal resumed",
+                    vak_intent::GoalRelation::Cancels => "Goal cancelled",
+                };
+                timeline.items.push(OutputItem {
+                    id: format!("goal-update-{}", entry.id),
+                    timestamp: entry.ts.to_rfc3339(),
+                    turn_id: format!("turn-{turn}"),
+                    role: OutputRole::System,
+                    kind: OutputKind::Progress,
+                    status: match update.relation {
+                        vak_intent::GoalRelation::Pauses => OutputStatus::Partial,
+                        vak_intent::GoalRelation::Cancels => OutputStatus::Cancelled,
+                        _ => OutputStatus::Succeeded,
+                    },
+                    outcome: None,
+                    content: OutputContent::Progress {
+                        label: label.into(),
+                        detail: Some(update.request.clone()),
+                        percent: None,
+                    },
+                    provenance: Some(OutputProvenance {
+                        session_id: Some(session_id.into()),
+                        entry_id: Some(entry.id.clone()),
+                        tool_call_id: None,
+                        source: Some("goal_update".into()),
+                    }),
+                    actions: Vec::new(),
+                    fallback_text: format!("{label}: {}", update.request),
+                });
             }
             _ => {}
         }
@@ -500,6 +772,35 @@ fn activity_item(
                 reason: activity.detail.clone().unwrap_or_default(),
             },
         ),
+        ActivityKind::Diagnostic if activity.label == "Outcome evaluation" => (
+            OutputRole::System,
+            OutputKind::Outcome,
+            OutputContent::Outcome {
+                summary: activity
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| activity.label.clone()),
+                document: None,
+            },
+        ),
+        ActivityKind::Diagnostic
+            if matches!(
+                activity.label.as_str(),
+                "Run paused" | "Run resumed" | "Run cancelled" | "Intervention queued"
+            ) =>
+        {
+            (
+                OutputRole::System,
+                OutputKind::Information,
+                OutputContent::Information {
+                    label: activity.label.clone(),
+                    detail: activity
+                        .detail
+                        .clone()
+                        .or_else(|| activity.data.get("reason").cloned()),
+                },
+            )
+        }
         ActivityKind::RouteFallback | ActivityKind::Diagnostic => (
             OutputRole::System,
             OutputKind::Information,
@@ -556,7 +857,24 @@ fn activity_item(
             },
         ),
     };
-    let actions = if kind == OutputKind::Approval && status == OutputStatus::Pending {
+    let actions = if activity.label == "Outcome evaluation" && status == OutputStatus::Succeeded {
+        [
+            ("accepted", "Accept result"),
+            ("needs_work", "Mark needs work"),
+            ("rejected", "Reject result"),
+        ]
+        .into_iter()
+        .map(|(verdict, label)| DeliveryAction {
+            id: format!("review-{verdict}-{}", activity.activity_id),
+            label: label.into(),
+            verb: "record_outcome_review".into(),
+            data: BTreeMap::from([
+                ("session_id".into(), session_id.into()),
+                ("verdict".into(), verdict.into()),
+            ]),
+        })
+        .collect()
+    } else if kind == OutputKind::Approval && status == OutputStatus::Pending {
         let request_id = activity.data.get("request_id").cloned().unwrap_or_default();
         vec![
             DeliveryAction {
@@ -588,6 +906,7 @@ fn activity_item(
         role,
         kind,
         status,
+        outcome: None,
         content,
         provenance: Some(OutputProvenance {
             session_id: Some(session_id.into()),
@@ -614,6 +933,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 role: OutputRole::Assistant,
                 kind: OutputKind::Outcome,
                 status: OutputStatus::Running,
+                outcome: None,
                 content: OutputContent::Document {
                     document: compile_markdown(""),
                 },
@@ -821,6 +1141,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 role: OutputRole::System,
                 kind: OutputKind::Approval,
                 status: OutputStatus::Pending,
+                outcome: None,
                 content: OutputContent::Approval {
                     request_id: id.clone(),
                     tool,
@@ -970,6 +1291,7 @@ fn live_item(
         role,
         kind,
         status,
+        outcome: None,
         content,
         provenance: Some(OutputProvenance {
             session_id: Some(session_id.into()),
@@ -985,6 +1307,7 @@ fn live_item(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+    use super::activity_item;
     use super::{artifact_from_tool, snapshot};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -1004,6 +1327,31 @@ mod tests {
         .expect("write should produce an artifact");
         assert_eq!(artifact.name, "report.md");
         assert_eq!(artifact.media_type.as_deref(), Some("text/markdown"));
+    }
+
+    #[test]
+    fn outcome_evaluation_exposes_review_actions() {
+        let item = activity_item(
+            "session-1",
+            "activity-1",
+            "2026-01-01T00:00:00Z",
+            "turn-1",
+            &ActivityRecord {
+                activity_id: "evaluation-1".into(),
+                turn: Some(1),
+                kind: ActivityKind::Diagnostic,
+                status: ActivityStatus::Succeeded,
+                label: "Outcome evaluation".into(),
+                detail: Some("partial".into()),
+                data: BTreeMap::new(),
+            },
+        );
+        assert_eq!(item.actions.len(), 3);
+        assert!(
+            item.actions
+                .iter()
+                .all(|action| action.verb == "record_outcome_review")
+        );
     }
 
     #[test]
@@ -1073,6 +1421,41 @@ mod tests {
             })
             .expect("append approval state");
         }
+        log.append_activity(ActivityRecord {
+            activity_id: "evaluation-1".into(),
+            turn: Some(1),
+            kind: ActivityKind::Diagnostic,
+            status: ActivityStatus::Succeeded,
+            label: "Outcome evaluation".into(),
+            detail: Some("primary deliverable: produced".into()),
+            data: BTreeMap::from([
+                ("status".into(), "produced".into()),
+                ("completion".into(), "unknown".into()),
+                ("evaluation".into(), "[]".into()),
+                ("evidence_receipts".into(), String::new()),
+            ]),
+        })
+        .expect("append outcome evaluation");
+        log.append_activity(ActivityRecord {
+            activity_id: "review-1".into(),
+            turn: Some(1),
+            kind: ActivityKind::Diagnostic,
+            status: ActivityStatus::Succeeded,
+            label: "Outcome review".into(),
+            detail: None,
+            data: BTreeMap::from([(String::from("verdict"), String::from("accepted"))]),
+        })
+        .expect("append outcome review");
+        log.append_activity(ActivityRecord {
+            activity_id: "review-2".into(),
+            turn: Some(1),
+            kind: ActivityKind::Diagnostic,
+            status: ActivityStatus::Succeeded,
+            label: "Outcome review".into(),
+            detail: Some("superseding review".into()),
+            data: BTreeMap::from([(String::from("verdict"), String::from("needs_work"))]),
+        })
+        .expect("append superseding outcome review");
 
         let first = snapshot("session-1", &log);
         let second = snapshot("session-1", &log);
@@ -1116,6 +1499,13 @@ mod tests {
         assert_eq!(
             document.metadata.get("renderer").map(String::as_str),
             Some("native:structured")
+        );
+        assert_eq!(
+            document
+                .metadata
+                .get("outcome_review_verdict")
+                .map(String::as_str),
+            Some("needs_work")
         );
         assert!(first.items.iter().any(|item| matches!(
             item.content,
@@ -1209,6 +1599,18 @@ mod tests {
         assert_eq!(recovered.kind, OutputKind::Progress);
         assert_eq!(recovered.status, OutputStatus::Failed);
         assert!(recovered.fallback_text.contains("Unknown tool"));
+        let outcome = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Outcome)
+            .expect("assistant outcome");
+        assert_eq!(
+            outcome
+                .provenance
+                .as_ref()
+                .and_then(|provenance| provenance.tool_call_id.as_deref()),
+            Some("tool-failed")
+        );
     }
 
     #[test]
@@ -1398,5 +1800,22 @@ mod tests {
                 "expected a rendered {expected_type} item for the {persona} scenario"
             );
         }
+    }
+
+    #[test]
+    fn completion_status_requires_exact_complete_verdict() {
+        assert_eq!(super::status_for_completion(None), OutputStatus::Succeeded);
+        assert_eq!(
+            super::status_for_completion(Some("complete")),
+            OutputStatus::Succeeded
+        );
+        assert_eq!(
+            super::status_for_completion(Some("incomplete")),
+            OutputStatus::Partial
+        );
+        assert_eq!(
+            super::status_for_completion(Some("unknown")),
+            OutputStatus::Partial
+        );
     }
 }

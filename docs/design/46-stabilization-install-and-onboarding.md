@@ -1,15 +1,16 @@
 # 46 — Stabilization: one bundle, one install, one first run
 
-Status: proposal. Supersedes `docs/design/36-first-run-onboarding.md` and
+Status: **historical proposal, superseded by the shipped 2.0.0 baseline and
+3.0.10 lifecycle hardening**. Supersedes `docs/design/36-first-run-onboarding.md` and
 `docs/design/37-distribution.md`, which are correct in analysis and stalled
 in delivery; deletes `docs/design/35-tavily-integration.md`, whose premise
 (one integration is "first-class") is withdrawn. `docs/design/32-release-engineering.md`
 keeps the installed lifecycle contract and is amended, not replaced.
 
-This doc exists because the product is at 1.0.3 with a complete runtime and
-**no way for a person who is not us to get it onto a machine and reach a
-working state.** Everything below is the work of closing exactly that gap,
-with no compatibility owed to anything shipped before it.
+This document preserves the stabilization analysis and acceptance criteria
+that led to the shipped baseline. Its dated audit below is historical; current
+behavior is owned by `docs/design/00-roadmap.md`,
+`docs/design/32-release-engineering.md`, and the current implementation.
 
 ## Scope discipline
 
@@ -1162,4 +1163,3 @@ implied by silence.
 
 The one part already portable is the wizard: on Windows, first run would be
 the same page (D7).
-

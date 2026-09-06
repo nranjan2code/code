@@ -1,6 +1,7 @@
 # 30 — Output engineering and channel delivery
 
-Status: schema-v2 semantic timeline, deterministic CommonMark compiler,
+Status: schema-v2 semantic timeline with result-scoped outcome/evidence metadata
+and projected collaborative goal state, deterministic CommonMark compiler,
 universal recipe catalog (research, coding diffs/tests, telemetry charts,
 spreadsheet grids, terminal sessions, culinary recipes) and tool-provenance signal
 engine, desktop native presentation suite (ResearchCards, DiffInspector,

@@ -124,6 +124,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         tools: vec![Arc::new(BashTool)],
         read_only_tools: vec![],
         max_turns: 4,
+        outcome: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: Mode::FullAccess,
         approval_mode: vak_agent::ApprovalMode::Ask,

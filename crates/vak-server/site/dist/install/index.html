@@ -550,7 +550,7 @@ html.js .reveal.in {
 }
 
 /* ==========================================================================
-   Site chrome added when the front door became four pages.
+   Site chrome shared by the public pages.
    ========================================================================== */
 
 /* ---- scroll progress on the rail ----------------------------------------
@@ -732,6 +732,7 @@ html.js .reveal.in {
     </a>
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
+      <a href="/outcomes">Outcomes</a>
       <a href="/surfaces">Surfaces</a>
       <a href="/security">Security</a>
       <a href="/install" class="on" aria-current="page">Install</a>
@@ -959,7 +960,7 @@ html.js .reveal.in {
       </li>
       <li class="step-row">
         <span class="step-n">3</span>
-        <span class="step-what"><b>This site</b><span>Four pages from one source; <code>cargo build</code> refuses to embed a stale <code>dist/</code>.</span></span>
+        <span class="step-what"><b>This site</b><span>Five pages from one source; <code>cargo build</code> refuses to embed a stale <code>dist/</code>.</span></span>
         <code class="step-cmd" id="b3">python3 crates/vak-server/site/build.py</code>
         <button class="btn sm copy" type="button" data-copy="b3">Copy</button>
       </li>

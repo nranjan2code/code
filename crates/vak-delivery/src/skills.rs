@@ -20,6 +20,10 @@ pub const PRESENTATION_SKILL_API: &str = "presentation.v1";
 pub struct PresentationRecipe {
     pub id: String,
     pub version: String,
+    /// Capability that owns this recipe when it is contributed by a plugin.
+    /// Built-in recipes leave this unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_skill: Option<String>,
     #[serde(default)]
     pub priority: i32,
     #[serde(default)]
@@ -76,6 +80,10 @@ pub struct PresentationPlan {
     /// document may contain several semantic types with different renderers.
     #[serde(default)]
     pub renderers: Vec<RendererDecision>,
+    /// Requirements contributed by the skills that actually own accepted
+    /// outputs. Unvalidated or rejected plugin declarations never appear.
+    #[serde(default)]
+    pub outcome_requirements: Vec<OutcomeRequirementDeclaration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +108,26 @@ pub struct PlanDiagnostic {
 pub struct PresentationPlanner {
     pub skills: SkillRegistry,
     pub recipes: RecipeCatalog,
+}
+
+impl PresentationPlan {
+    /// Merge requirements from accepted typed outputs into the shared intent
+    /// contract. Rejected outputs and plugin authority are never propagated.
+    pub fn merge_outcome_requirements(&self, outcome: &mut vak_intent::OutcomeSpec) -> Vec<String> {
+        let mut rejected = Vec::new();
+        for declaration in &self.outcome_requirements {
+            if let Err(reason) = outcome.merge_declared_requirement(
+                declaration.id.clone(),
+                &declaration.kind,
+                declaration.description.clone(),
+                &declaration.importance,
+                Some("typed-output".into()),
+            ) {
+                rejected.push(format!("{}: {reason}", declaration.id));
+            }
+        }
+        rejected
+    }
 }
 
 impl PresentationPlanner {
@@ -137,6 +165,17 @@ impl PresentationPlanner {
             .iter()
             .map(|candidate| candidate.semantic_type.clone())
             .collect();
+        let mut outcome_requirements = Vec::new();
+        for semantic_type in &available {
+            for declaration in self.skills.outcome_requirements_for_type(semantic_type) {
+                if !outcome_requirements
+                    .iter()
+                    .any(|existing: &OutcomeRequirementDeclaration| existing.id == declaration.id)
+                {
+                    outcome_requirements.push(declaration.clone());
+                }
+            }
+        }
         let mut recipe = self.recipes.choose_for_types(signals, surface, &available);
         if let Some(decision) = recipe.as_mut() {
             decision.renderer = renderer_summary(&renderers);
@@ -147,6 +186,7 @@ impl PresentationPlanner {
             accepted,
             rejected,
             renderers,
+            outcome_requirements,
         }
     }
 }
@@ -219,6 +259,15 @@ impl RecipeCatalog {
         Ok(())
     }
 
+    pub fn remove_revoked_skills(&mut self, revoked: &std::collections::BTreeSet<String>) {
+        self.recipes.retain(|recipe| {
+            recipe
+                .owner_skill
+                .as_ref()
+                .is_none_or(|owner| !revoked.contains(owner))
+        });
+    }
+
     /// Merge plugin-contributed recipe definitions. Plugins declare
     /// presentation files in their manifest `components.presentation` list.
     /// Each file is a JSON-encoded `PresentationRecipe`. Unknown files are
@@ -263,6 +312,15 @@ impl RecipeCatalog {
                 if !supported_surface {
                     return None;
                 }
+                if recipe.requires_typed_output
+                    && !recipe.typed_output_types.iter().any(|required| {
+                        available_types.iter().any(|candidate| {
+                            type_matches(required, std::slice::from_ref(candidate))
+                        })
+                    })
+                {
+                    return None;
+                }
                 if !recipe.default_recipe
                     && !available_types.is_empty()
                     && !recipe
@@ -299,6 +357,11 @@ impl RecipeCatalog {
                         right.recipe_id.as_str(),
                         right.recipe_version.as_str(),
                     ))
+            })
+            .filter(|decision| {
+                !(decision.recipe_id == "answer.basic"
+                    && decision.matched_signals.is_empty()
+                    && !signals.is_empty())
             })
     }
 }
@@ -401,6 +464,7 @@ pub fn built_in_recipes() -> RecipeCatalog {
         let _ = catalog.register(PresentationRecipe {
             id: recipe.0.into(),
             version: "1.0.0".into(),
+            owner_skill: None,
             priority: 0,
             match_signals: recipe.1.into_iter().map(String::from).collect(),
             primary: recipe.2.into_iter().map(String::from).collect(),
@@ -408,9 +472,15 @@ pub fn built_in_recipes() -> RecipeCatalog {
             fallback: BTreeMap::new(),
             surfaces: recipe.3.into_iter().map(String::from).collect(),
             default_recipe: recipe.0 == "answer.basic",
-            requires_typed_output: matches!(recipe.0, "answer.research" | "research.synthesis"),
-            typed_output_types: if matches!(recipe.0, "answer.research" | "research.synthesis") {
-                vec!["research.synthesis".into()]
+            requires_typed_output: matches!(recipe.0, "coding.test_report"),
+            typed_output_types: if matches!(recipe.0, "coding.test_report") {
+                vec![
+                    match recipe.0 {
+                        "coding.test_report" => "test.report",
+                        _ => "research.synthesis",
+                    }
+                    .into(),
+                ]
             } else {
                 Vec::new()
             },
@@ -469,6 +539,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
         .collect(),
         renderers,
         schema: None,
+        outcome_requirements: Vec::new(),
     });
     registry
 }
@@ -592,10 +663,23 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         .filter_map(|(signal, needles)| {
             needles
                 .iter()
-                .any(|needle| lower.contains(needle))
+                .any(|needle| signal_text_hit(&lower, needle))
                 .then_some((*signal).into())
         })
         .collect()
+}
+
+/// Match standalone lexical terms without allowing incidental substrings in
+/// ordinary prose. Compound phrases retain substring matching because their
+/// spaces provide the boundary. Presentation signals are hints only; typed
+/// result provenance remains the authority for specialized recipes.
+fn signal_text_hit(lower: &str, needle: &str) -> bool {
+    if needle.chars().any(char::is_whitespace) {
+        return lower.contains(needle);
+    }
+    lower
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|token| token == needle)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -752,6 +836,19 @@ pub struct PresentationSkillManifest {
     /// renderer owns correctness of its data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
+    /// Declarative requirements that a consumer may merge into its shared
+    /// outcome contract when this skill owns the produced semantic type.
+    #[serde(default)]
+    pub outcome_requirements: Vec<OutcomeRequirementDeclaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutcomeRequirementDeclaration {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    #[serde(default)]
+    pub importance: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -988,6 +1085,15 @@ impl SkillRegistry {
         if manifest.provides.iter().any(|kind| kind.trim().is_empty()) {
             return Err(SkillError::InvalidManifest("empty semantic type".into()));
         }
+        if manifest.outcome_requirements.iter().any(|requirement| {
+            requirement.id.trim().is_empty()
+                || requirement.kind.trim().is_empty()
+                || requirement.description.trim().is_empty()
+        }) {
+            return Err(SkillError::InvalidManifest(
+                "outcome requirements need id, kind, and description".into(),
+            ));
+        }
         if self.skills.iter().any(|(id, existing)| {
             id != &manifest.id
                 && manifest
@@ -1001,6 +1107,20 @@ impl SkillRegistry {
         }
         self.skills.insert(manifest.id.clone(), manifest);
         Ok(())
+    }
+
+    /// Return plugin-declared requirements for a validated semantic type.
+    /// Declarations are data only; the runtime still evaluates them and
+    /// applies its own permission and evidence rules.
+    pub fn outcome_requirements_for_type(
+        &self,
+        semantic_type: &str,
+    ) -> Vec<&OutcomeRequirementDeclaration> {
+        self.skills
+            .values()
+            .filter(|skill| skill.provides.iter().any(|kind| kind == semantic_type))
+            .flat_map(|skill| skill.outcome_requirements.iter())
+            .collect()
     }
 
     /// Merge plugin-contributed skill manifests into this registry.
@@ -1360,6 +1480,7 @@ mod tests {
                     provides: vec!["chart".into()],
                     renderers,
                     schema: None,
+                    outcome_requirements: Vec::new(),
                 })
                 .is_ok()
         );
@@ -1391,6 +1512,7 @@ mod tests {
             provides: vec!["data.grid".into()],
             renderers: BTreeMap::new(),
             schema: None,
+            outcome_requirements: Vec::new(),
         });
         assert!(
             matches!(result, Err(SkillError::InvalidManifest(reason)) if reason.contains("already owned"))
@@ -1407,6 +1529,7 @@ mod tests {
                 .register(PresentationRecipe {
                     id: "weather.forecast".into(),
                     version: "1.0.0".into(),
+                    owner_skill: None,
                     priority: 0,
                     match_signals: vec!["temperature".into(), "forecast".into()],
                     primary: vec!["metric.group".into()],
@@ -1426,6 +1549,56 @@ mod tests {
             assert_eq!(decision.matched_signals.len(), 2);
             assert_eq!(decision.disposition, DecisionDisposition::Unresolved);
         }
+    }
+
+    #[test]
+    fn revoked_recipe_owner_is_removed_without_affecting_builtins() {
+        let mut catalog = RecipeCatalog::default();
+        catalog
+            .register(PresentationRecipe {
+                id: "plugin.report".into(),
+                version: "1.0.0".into(),
+                owner_skill: Some("plugin.report_skill".into()),
+                priority: 10,
+                match_signals: vec!["report".into()],
+                primary: vec!["plugin.report".into()],
+                optional: Vec::new(),
+                fallback: BTreeMap::from([(
+                    String::from("desktop"),
+                    String::from("markdown:native"),
+                )]),
+                surfaces: vec!["desktop".into()],
+                default_recipe: false,
+                requires_typed_output: false,
+                typed_output_types: Vec::new(),
+            })
+            .expect("valid recipe");
+        catalog
+            .register(PresentationRecipe {
+                id: "builtin.report".into(),
+                version: "1.0.0".into(),
+                owner_skill: None,
+                priority: 0,
+                match_signals: vec!["report".into()],
+                primary: vec!["report".into()],
+                optional: Vec::new(),
+                fallback: BTreeMap::from([(
+                    String::from("desktop"),
+                    String::from("markdown:native"),
+                )]),
+                surfaces: vec!["desktop".into()],
+                default_recipe: false,
+                requires_typed_output: false,
+                typed_output_types: Vec::new(),
+            })
+            .expect("valid recipe");
+
+        catalog.remove_revoked_skills(&std::collections::BTreeSet::from([String::from(
+            "plugin.report_skill",
+        )]));
+
+        assert_eq!(catalog.recipes.len(), 1);
+        assert_eq!(catalog.recipes[0].id, "builtin.report");
     }
 
     #[test]
@@ -1449,6 +1622,7 @@ mod tests {
                     provides: vec!["chart".into()],
                     renderers,
                     schema: None,
+                    outcome_requirements: Vec::new(),
                 })
                 .is_ok()
         );
@@ -1458,6 +1632,7 @@ mod tests {
                 .register(PresentationRecipe {
                     id: "answer.basic".into(),
                     version: "1.0.0".into(),
+                    owner_skill: None,
                     priority: 0,
                     match_signals: vec![],
                     primary: vec!["chart".into()],
@@ -1627,10 +1802,7 @@ mod tests {
         // 3. Test report
         let test_text = "Test suite executed: 42 passed, 0 failures.";
         let sigs = signals_from_text(test_text);
-        let decision = catalog
-            .choose(&sigs, "desktop")
-            .expect("test report decision");
-        assert_eq!(decision.recipe_id, "coding.test_report");
+        assert!(catalog.choose(&sigs, "desktop").is_none());
 
         // 4. Terminal session from bash tool context
         let cmd = serde_json::json!({"command": "docker ps -a"});
@@ -1658,11 +1830,83 @@ mod tests {
         let decision = catalog.choose(&sigs, "desktop").expect("grid decision");
         assert_eq!(decision.recipe_id, "data.spreadsheet_grid");
 
+        // Incidental substrings in news prose must not select a coding report.
+        let news = "Protests continued while the market surpassed expectations.";
+        let sigs = signals_from_text(news);
+        assert!(!sigs.iter().any(|signal| signal == "tests"));
+        assert!(!sigs.iter().any(|signal| signal == "pass_fail"));
+        assert_ne!(
+            catalog.choose(&sigs, "desktop").map(|d| d.recipe_id),
+            Some("coding.test_report".into())
+        );
+
         // 7. Multi chart
         let chart_text =
             "Telemetry metrics chart showing p99 latency trend and req/sec throughput.";
         let sigs = signals_from_text(chart_text);
         let decision = catalog.choose(&sigs, "desktop").expect("chart decision");
         assert_eq!(decision.recipe_id, "data.multi_chart");
+    }
+
+    #[test]
+    fn accepted_plugin_output_surfaces_declared_outcome_requirements() {
+        let mut skills = SkillRegistry::default();
+        let mut renderers = BTreeMap::new();
+        renderers.insert(
+            "desktop".into(),
+            RendererBinding {
+                renderer: "native:custom".into(),
+                interactive: false,
+                requires: Vec::new(),
+            },
+        );
+        assert!(
+            skills
+                .register(PresentationSkillManifest {
+                    id: "planning".into(),
+                    version: "1.0.0".into(),
+                    api: PRESENTATION_SKILL_API.into(),
+                    provides: vec!["plan".into()],
+                    renderers,
+                    schema: None,
+                    outcome_requirements: vec![OutcomeRequirementDeclaration {
+                        id: "plan-next-steps".into(),
+                        kind: "constraint".into(),
+                        description: "include next steps".into(),
+                        importance: "must".into(),
+                    }],
+                })
+                .is_ok()
+        );
+        let planner = PresentationPlanner {
+            skills,
+            recipes: RecipeCatalog::default(),
+        };
+        let plan = planner.plan(
+            &[],
+            "desktop",
+            &[],
+            &[StructuredOutput {
+                semantic_type: "plan".into(),
+                schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+                skill_id: "planning".into(),
+                skill_version: "1.0.0".into(),
+                payload: serde_json::json!({"steps": []}),
+            }],
+        );
+        assert_eq!(plan.outcome_requirements.len(), 1);
+        assert_eq!(plan.outcome_requirements[0].id, "plan-next-steps");
+        let mut outcome = vak_intent::OutcomeSpec::from_reading(
+            "make a plan",
+            &vak_intent::Reading::general(),
+            1,
+        );
+        assert!(plan.merge_outcome_requirements(&mut outcome).is_empty());
+        assert!(
+            outcome
+                .requirements
+                .iter()
+                .any(|requirement| requirement.id == "plan-next-steps")
+        );
     }
 }
