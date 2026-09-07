@@ -158,11 +158,11 @@ mod tests {
         let long_code = "x".repeat(3000);
         sink.emit_execution_started("bash", &long_code, "bash", "/workspace");
 
-        if let SandboxEvent::ExecutionStarted { code_preview, .. } = rx.try_recv().unwrap() {
+        let ev = rx.try_recv().unwrap();
+        assert!(matches!(ev, SandboxEvent::ExecutionStarted { .. }));
+        if let SandboxEvent::ExecutionStarted { code_preview, .. } = ev {
             assert!(code_preview.len() < 2100);
             assert!(code_preview.ends_with('…'));
-        } else {
-            panic!("expected ExecutionStarted");
         }
     }
 
