@@ -17,7 +17,12 @@ WORKDIR /src
 COPY . .
 # `vak` pulls in vak-server (the HTTP+SSE + embedded bundles). `vak-delivery`
 # also produces the `vak-delivery-worker` binary. Neither needs Tauri.
-RUN cargo build --release --package vak --package vak-delivery
+# `--locked` pins the same dependency graph the release gate tested (invariant
+# 15); the `VAK_GIT_SHA` ARG stamps the commit into the binary so a running
+# container can name its own build, matching the release binary.
+ARG VAK_GIT_SHA=unknown
+ENV VAK_GIT_SHA=${VAK_GIT_SHA}
+RUN cargo build --release --locked --package vak --package vak-delivery
 
 # ---- runtime -------------------------------------------------------------
 # version is authoritative in Cargo.toml and baked into the binary
