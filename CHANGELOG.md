@@ -5,6 +5,25 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.20 — 2026-09-07
+
+### Sandbox package installation robustness & Docker build reproducibility
+
+- **Default sandbox network seeding for package installation.**
+  `seed_shared_capabilities` now automatically seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
+  into the Shared layer (`~/vak-home/.vak/config.toml`) via `seed_plugins_network_allow_if_empty`
+  and `seed_global_plugins_network_allow_if_empty` in `vak-config`. The LLM can dynamically install
+  any required Python packages (via `python_eval`'s `install_packages`) and load React preview assets
+  out-of-the-box without manual configuration, while preserving strict operator governance via `network_deny`
+  and channel policies.
+- **Robust pip argument quoting and diagnostics.**
+  `python_runner` now properly shell-quotes each package argument in `pip install` individually
+  (handling specifiers like `pandas>=2.0` without shell redirects) and falls back to stdout if stderr is
+  empty to guarantee complete diagnostic reporting.
+- **Reproducible Docker container builds.**
+  The Dockerfile cargo build now enforces `--locked` dependency resolution and receives `VAK_GIT_SHA`
+  as a build argument, guaranteeing container binaries match the workspace lockfile and carry commit provenance.
+
 ## 3.0.19 — 2026-09-07
 
 ### Connected sandbox runtimes: python_eval and react_preview
@@ -40,17 +59,6 @@ for those releases were removed from this file; `git log` holds them.
 - **Permission + delivery signals.** Runtime admission now carries
   permission descriptions in `vak-permission` and the corresponding
   presentation signals in `vak-delivery`.
-- **Default sandbox network seeding for package installation.**
-  `seed_shared_capabilities` now automatically seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
-  into the Shared layer (`~/vak-home/.vak/config.toml`) via `seed_plugins_network_allow_if_empty`
-  and `seed_global_plugins_network_allow_if_empty` in `vak-config`. The LLM can dynamically install
-  any required Python packages (via `python_eval`'s `install_packages`) and load React preview assets
-  out-of-the-box without manual configuration, while preserving strict operator governance via `network_deny`
-  and channel policies.
-- **Robust pip argument quoting and diagnostics.**
-  `python_runner` now properly shell-quotes each package argument in `pip install` individually
-  (handling specifiers like `pandas>=2.0` without shell redirects) and falls back to stdout if stderr is
-  empty to guarantee complete diagnostic reporting.
 
 ## 3.0.18 — 2026-09-07
 
