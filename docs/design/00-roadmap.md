@@ -69,7 +69,7 @@ applies to every item.
 | Skill intent-discovery | **subsumed** by the intent kernel (doc 47): skills are selected through the admitted capability slice rather than a separate discovery path |
 | Commitment kernel | shipped end to end (doc 47) |
 | Web client — the workspace surface in a browser, a headless box you can *use*, and a complete public product surface | shipped, Phases 0–4 plus outcome projection and public `/outcomes` page (docs 48, 52) |
-| Sandboxed workspace execution runtimes (Python & React runtime plugins, quarantined scratch containment under `.vak/scratch/`, dual-mode Right Bar Preview dock, and in-stream UI preview presentation cards) | shipped in 3.0.16 (doc 39 Phase 6) |
+| Sandboxed workspace execution runtime (Neutral `bash` execution engine with streaming events, live stdout/stderr Workbench panel visibility, quarantined scratch containment under `.vak/scratch/`, and package tracking) | shipped in 3.0.21 |
 | Multi-user cloud (per-principal data homes, pooled Cores, quotas) | **explicitly out of scope** (doc 48 §8 E). A deployment is one operator's vak, and the token is a password to the whole box; the route shapes leave the seams open, nothing more |
 | Windows platform support | S11 |
 
