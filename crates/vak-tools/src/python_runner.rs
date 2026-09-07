@@ -121,17 +121,23 @@ execution duration is strictly bounded."
 
         // Handle package installations if requested
         if let Some(packages) = args.get("install_packages").and_then(Value::as_array) {
-            let pkg_list: Vec<&str> = packages.iter().filter_map(Value::as_str).collect();
+            let pkg_list: Vec<String> = packages
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
             if !pkg_list.is_empty() {
                 if !self.network {
                     return ToolOutput::error(
                         "Package installation denied: network access is disabled for python-sandbox in configuration",
                     );
                 }
+                let quoted_pkgs: Vec<String> = pkg_list.iter().map(|p| shell_quote(p)).collect();
                 let pip_cmd = format!(
                     "python3 -m pip install --quiet --no-warn-script-location --target {} {}",
                     shell_quote(&site_packages.display().to_string()),
-                    pkg_list.join(" ")
+                    quoted_pkgs.join(" ")
                 );
                 let effective_pip = match &ctx.sandbox {
                     Some(sb) => sb.wrap(&pip_cmd),
@@ -149,10 +155,17 @@ execution duration is strictly bounded."
                 }
                 match pip_proc.output().await {
                     Ok(out) if !out.status.success() => {
-                        let err = String::from_utf8_lossy(&out.stderr);
+                        let stderr_msg = String::from_utf8_lossy(&out.stderr);
+                        let stdout_msg = String::from_utf8_lossy(&out.stdout);
+                        let err_detail = if !stderr_msg.trim().is_empty() {
+                            stderr_msg.trim()
+                        } else if !stdout_msg.trim().is_empty() {
+                            stdout_msg.trim()
+                        } else {
+                            "command failed with non-zero exit status"
+                        };
                         return ToolOutput::error(format!(
-                            "pip install failed (check network permissions): {}",
-                            err.trim()
+                            "pip install failed (check network permissions): {err_detail}"
                         ));
                     }
                     Err(e) => {
@@ -506,6 +519,20 @@ mod tests {
         let res = tool.execute(&args, &ctx).await;
         assert!(res.is_error);
         assert!(res.content.contains("network access is disabled"));
+    }
+
+    #[tokio::test]
+    async fn python_allows_network_package_install_when_network_enabled() {
+        let dir = tempdir().unwrap();
+        let tool = PythonTool::new(true);
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let args = serde_json::json!({
+            "code": "import six; print('six_imported_successfully')",
+            "install_packages": ["six>=1.0"]
+        });
+        let res = tool.execute(&args, &ctx).await;
+        assert!(!res.is_error, "failed: {}", res.content);
+        assert!(res.content.contains("six_imported_successfully"));
     }
 
     #[tokio::test]

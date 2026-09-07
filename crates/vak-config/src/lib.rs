@@ -939,6 +939,80 @@ pub fn seed_global_hooks_if_empty(hooks: &[HookConfig]) -> Result<bool, ConfigEr
     Ok(true)
 }
 
+/// Seed the default sandboxed execution runtimes (`python-sandbox`, `react-sandbox`)
+/// into the given config file's `[plugins] network_allow` table if unconfigured.
+pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigError> {
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("top-level config must be a TOML table"),
+    })?;
+    if let Some(plugins) = table.get("plugins").and_then(toml::Value::as_table) {
+        if plugins.contains_key("network_allow") {
+            return Ok(false);
+        }
+    }
+    let plugins = table
+        .entry("plugins")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let Some(plugins) = plugins.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("[plugins] must be a TOML table"),
+        });
+    };
+    plugins.insert(
+        "network_allow".into(),
+        toml::Value::Array(vec![
+            toml::Value::String("python-sandbox".into()),
+            toml::Value::String("react-sandbox".into()),
+        ]),
+    );
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(true)
+}
+
+/// Seed the default sandboxed execution runtimes (`python-sandbox`, `react-sandbox`)
+/// into the Shared layer's `[plugins] network_allow` table once if unconfigured.
+pub fn seed_global_plugins_network_allow_if_empty() -> Result<bool, ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<shared>"),
+        source: std::io::Error::other("shared workspace unavailable"),
+    })?;
+    seed_plugins_network_allow_if_empty(&path)
+}
+
 fn default_hook_config_enabled() -> bool {
     true
 }
@@ -4543,6 +4617,7 @@ mod tests {
 
     #[test]
     fn plugins_network_allow_persists_and_clears_in_place() {
+        crate::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         write_project_config(
             dir.path(),
@@ -4562,6 +4637,31 @@ mod tests {
         assert!(!cfg.plugins.is_network_allowed("python-sandbox"));
         assert_eq!(cfg.plugins.network_deny, vec!["older-plugin"]);
         assert_eq!(cfg.deny, vec!["bash"]);
+    }
+
+    #[test]
+    fn seed_plugins_network_allow_if_empty_seeds_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".vak/config.toml");
+
+        // First run: seeds [plugins] network_allow
+        assert!(seed_plugins_network_allow_if_empty(&path).unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("network_allow"));
+        assert!(text.contains("python-sandbox"));
+        assert!(text.contains("react-sandbox"));
+
+        // Second run: no-op, returns false
+        assert!(!seed_plugins_network_allow_if_empty(&path).unwrap());
+
+        // Custom config with existing network_allow is preserved
+        let dir2 = tempfile::tempdir().unwrap();
+        let path2 = dir2.path().join(".vak/config.toml");
+        std::fs::create_dir_all(path2.parent().unwrap()).unwrap();
+        std::fs::write(&path2, "[plugins]\nnetwork_allow = [\"custom\"]\n").unwrap();
+        assert!(!seed_plugins_network_allow_if_empty(&path2).unwrap());
+        let text2 = std::fs::read_to_string(&path2).unwrap();
+        assert_eq!(text2, "[plugins]\nnetwork_allow = [\"custom\"]\n");
     }
 
     fn hook(command: &str, enabled: bool) -> HookConfig {

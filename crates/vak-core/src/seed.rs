@@ -120,6 +120,9 @@ pub fn seed_shared_capabilities() {
     if let Err(error) = vak_config::seed_global_hooks_if_empty(&hooks) {
         eprintln!("warning: Shared automation seed failed: {error}");
     }
+    if let Err(error) = vak_config::seed_global_plugins_network_allow_if_empty() {
+        eprintln!("warning: Shared plugin network seed failed: {error}");
+    }
 }
 
 fn seed_skills(root: &Path) -> std::io::Result<()> {

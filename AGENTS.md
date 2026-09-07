@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.17 — all roadmap phases implemented and repository-verified.**
+**Status: v3.0.19 — all roadmap phases implemented and repository-verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -68,8 +68,10 @@ configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
 outcome-directed runtime release, and the 3.0.16 sandboxed execution runtimes
 (Python & React plugin capabilities, quarantined scratch isolation in
 `.vak/scratch/`, dual-mode Right Bar Preview dock, and in-stream UI preview
-presentation cards). Each carries its own `Status:` line — read it before
-assuming a document describes shipped behaviour rather than a proposal.
+presentation cards; v3.0.19 seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
+in the Shared user configuration so dynamic package installation succeeds out-of-the-box).
+Each carries its own `Status:` line — read it before assuming a document describes
+shipped behaviour rather than a proposal.
 
 ## Non-negotiable invariants
 
@@ -457,11 +459,12 @@ assuming a document describes shipped behaviour rather than a proposal.
     trees or git-tracked directories unless explicitly copied as an outcome
     artifact requested by the user. Package installation and egress follow the
     privileged network model (`network = true | false` via `plugins_network_deny` /
-    channel policies); without explicit network authorization, package managers
-    (`pip`) fail closed and preview HTML enforces a strict Content Security Policy
-    (`connect-src 'none'`). Frontend client preview frames must be sandboxed
-    (`sandbox="allow-scripts"`) within safe error boundaries to protect the client
-    host from untrusted script execution.
+    channel policies); the Shared user configuration seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
+    so dynamic package installation into quarantined site-packages works out-of-the-box,
+    while operators and channels can restrict egress via `network_deny` or channel `plugins_network_deny`
+    (under which `pip` fails closed and preview HTML enforces a strict Content Security Policy `connect-src 'none'`).
+    Frontend client preview frames must be sandboxed (`sandbox="allow-scripts"`) within safe error boundaries
+    to protect the client host from untrusted script execution.
 
 36. **Multi-turn continuity and conversational drift are harness-guaranteed, model-agnostic invariants.**
     The harness guarantees multi-turn execution and conversational drift continuity

@@ -40,6 +40,17 @@ for those releases were removed from this file; `git log` holds them.
 - **Permission + delivery signals.** Runtime admission now carries
   permission descriptions in `vak-permission` and the corresponding
   presentation signals in `vak-delivery`.
+- **Default sandbox network seeding for package installation.**
+  `seed_shared_capabilities` now automatically seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
+  into the Shared layer (`~/vak-home/.vak/config.toml`) via `seed_plugins_network_allow_if_empty`
+  and `seed_global_plugins_network_allow_if_empty` in `vak-config`. The LLM can dynamically install
+  any required Python packages (via `python_eval`'s `install_packages`) and load React preview assets
+  out-of-the-box without manual configuration, while preserving strict operator governance via `network_deny`
+  and channel policies.
+- **Robust pip argument quoting and diagnostics.**
+  `python_runner` now properly shell-quotes each package argument in `pip install` individually
+  (handling specifiers like `pandas>=2.0` without shell redirects) and falls back to stdout if stderr is
+  empty to guarantee complete diagnostic reporting.
 
 ## 3.0.18 — 2026-09-07
 

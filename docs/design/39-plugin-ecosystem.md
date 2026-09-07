@@ -363,7 +363,12 @@ servers and broker tools:
   `plugins_enabled` and `plugins_network_deny`. Outbound egress is granted by
   the privileged `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
   key (deny-by-default when absent) and is refused for an untrusted project
-  layer — the trusted user config is the grant site. The desktop Settings
+  layer — the trusted user config is the grant site. Shared capability seeding
+  (`seed_shared_capabilities` / `vak setup seed`) seeds this key into
+  `~/vak-home/.vak/config.toml` by default so package installations (`pip install`)
+  and preview CDN assets succeed out-of-the-box without requiring manual TOML editing,
+  while operators can restrict them at any time via `network_deny` or an explicit
+  custom `network_allow`. The desktop Settings
   **Plugins** tab exposes a per-plugin "Allow network" toggle that persists
   this key and applies it from the next turn (no session rotation), and the
   plugin listing reports the effective `network_allowed`/`network_denied`/
