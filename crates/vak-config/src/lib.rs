@@ -958,10 +958,10 @@ pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigEr
         path: path.to_path_buf(),
         source: std::io::Error::other("top-level config must be a TOML table"),
     })?;
-    if let Some(plugins) = table.get("plugins").and_then(toml::Value::as_table) {
-        if plugins.contains_key("network_allow") {
-            return Ok(false);
-        }
+    if let Some(plugins) = table.get("plugins").and_then(toml::Value::as_table)
+        && plugins.contains_key("network_allow")
+    {
+        return Ok(false);
     }
     let plugins = table
         .entry("plugins")
