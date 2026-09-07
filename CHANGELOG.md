@@ -4,6 +4,21 @@
 unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
+## 3.0.21 — 2026-09-07
+
+### Unified Bash Sandbox with Workbench Live Observability
+
+- **Unified neutral `bash` sandbox execution.** Replaced fragmented language-specific runners
+  (`python_eval`, `react_preview`) with a single universal, stack-neutral `bash` execution engine.
+  Any programming stack (Python, Node/TypeScript, Rust, Go, shell scripts) can be run and installed directly.
+- **Real-time execution streaming in Workbench.** Added live event streaming (`SandboxEvent::Stdout`,
+  `SandboxEvent::Stderr`, `ExecutionStarted`, `ExecutionFinished`) to `vak-tools` and `vak-agent`,
+  broadcasting real-time execution telemetry directly to the client Workbench panel.
+- **Package installation tracking & scratch isolation.** Automatically tracks package installations
+  (`pip`, `npm`, `cargo`) and provides complete visibility into execution lifecycle, duration, and
+  quarantined intermediate artifacts in `.vak/scratch/`.
+- **Complete legacy cleanup.** Thoroughly removed obsolete tools, runtimes, plugin seeds, and
+  presentation adapters across permissions, config, core, delivery, server, and client UI.
 
 ## 3.0.20 — 2026-09-07
 
