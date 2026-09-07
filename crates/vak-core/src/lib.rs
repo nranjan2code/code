@@ -434,6 +434,11 @@ struct CoreInner {
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     subagents_override: std::sync::Mutex<Option<bool>>,
     work_override: std::sync::Mutex<Option<vak_config::WorkResolved>>,
+    /// Same no-pin, always-take-latest shape. `None` follows the cached
+    /// `inner.config.plugins`; `refresh_persisted_preferences` re-derives
+    /// it from disk after every persist, so a capability or egress change
+    /// lands on the next turn (docs/design/41-capability-registry.md).
+    plugins_override: std::sync::Mutex<Option<vak_config::PluginResolved>>,
     /// Live overrides for `[finops]` budget caps (docs/design/15-reliability.md).
     /// `None` = follow the persisted value; `Some(None)` = explicitly
     /// cleared (no cap); `Some(Some(v))` = pinned to `v`. Distinct from
@@ -591,6 +596,44 @@ pub struct Core {
     /// attended. Unattended surfaces (the gateway without forward mode,
     /// the heartbeat) set it false, matching the `AutoDeny` they install.
     approver_answerable: bool,
+}
+
+/// Whether a runtime plugin id passes the enable/allow/deny admission tiers.
+///
+/// Deny always wins; `plugins_allow` narrows when present; a plugin left
+/// unspecified is enabled when `plugins_enabled` is empty and gated by it
+/// otherwise.
+fn runtime_plugin_allowed(
+    plugins: &vak_config::PluginResolved,
+    policy: Option<&vak_config::ChannelPolicy>,
+    id: &str,
+) -> bool {
+    plugins.is_enabled(id)
+        && policy
+            .map(|p| {
+                p.plugins_allow
+                    .as_ref()
+                    .map(|list| list.contains(&id.to_string()))
+                    .unwrap_or(true)
+            })
+            .unwrap_or(true)
+        && policy
+            .map(|p| !p.plugins_deny.contains(&id.to_string()))
+            .unwrap_or(true)
+}
+
+/// Whether a runtime plugin id may open egress. The config tier decides
+/// first (deny list wins over the `network_allow` list; an absent allowlist
+/// denies by default) and the channel tier can only take egress away.
+fn runtime_network(
+    plugins: &vak_config::PluginResolved,
+    policy: Option<&vak_config::ChannelPolicy>,
+    id: &str,
+) -> bool {
+    plugins.is_network_allowed(id)
+        && policy
+            .map(|p| !p.plugins_network_deny.contains(&id.to_string()))
+            .unwrap_or(true)
 }
 
 fn effective_turn_cap(base: usize, intent_cap: Option<usize>) -> usize {
@@ -886,6 +929,7 @@ impl Core {
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
                 subagents_override: std::sync::Mutex::new(None),
                 work_override: std::sync::Mutex::new(None),
+                plugins_override: std::sync::Mutex::new(None),
                 finops_max_run_usd_override: std::sync::Mutex::new(None),
                 finops_max_day_usd_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
@@ -931,6 +975,78 @@ impl Core {
 
     pub fn apply_persisted_work(&self, work: vak_config::WorkResolved) {
         Self::write_override(&self.inner.work_override, Some(work));
+    }
+
+    pub fn effective_plugins(&self) -> vak_config::PluginResolved {
+        Self::read_override(&self.inner.plugins_override).unwrap_or_else(|| {
+            let resolved: &vak_config::PluginResolved = &self.inner.config.plugins;
+            resolved.clone()
+        })
+    }
+
+    pub fn apply_persisted_plugins(&self, plugins: vak_config::PluginResolved) {
+        Self::write_override(&self.inner.plugins_override, Some(plugins));
+    }
+
+    /// Runtime plugin tools admitted under the effective plugin policy and
+    /// channel overlay.
+    ///
+    /// One definition feeds every admission surface (`agent_tools` and the
+    /// `names` packet) so the two can never drift the way separate
+    /// constructions did before. The string keys here are the two *built-in*
+    /// runtime plugins shipped with the harness; third-party runtime
+    /// capabilities are data in the plugin store and never appear here.
+    pub fn built_in_runtime_plugin_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
+        let plugins = self.effective_plugins();
+        let policy = self.channel_policy();
+        let mut tools: Vec<Arc<dyn vak_tools::Tool>> = Vec::new();
+        if self.runtime_plugin_package_enabled("python-sandbox")
+            && runtime_plugin_allowed(&plugins, policy.as_ref(), "python-sandbox")
+        {
+            tools.push(Arc::new(vak_tools::PythonTool::new(runtime_network(
+                &plugins,
+                policy.as_ref(),
+                "python-sandbox",
+            ))));
+        }
+        if self.runtime_plugin_package_enabled("react-sandbox")
+            && runtime_plugin_allowed(&plugins, policy.as_ref(), "react-sandbox")
+        {
+            tools.push(Arc::new(vak_tools::ReactPreviewTool::new(runtime_network(
+                &plugins,
+                policy.as_ref(),
+                "react-sandbox",
+            ))));
+        }
+        tools
+    }
+
+    /// Whether the plugin *package* that owns a built-in runtime tool is
+    /// installed and enabled in the plugin store.
+    ///
+    /// The store is the package-lifecycle owner (install/enable/disable/
+    /// remove) — the Settings row's buttons write it — so a runtime tool
+    /// must live and die with its package, not drift behind it. `[plugins]`
+    /// stays the privileged overlay on top. A registry that has never been
+    /// written is vacuous (a pre-setup home, or a synthetic test home), and
+    /// there the config layer alone decides, keeping built-ins reachable
+    /// before setup and tests deterministic. Once any capability root's
+    /// registry exists, that package's own enabled flag — or its absence,
+    /// for a removal — decides, workspace-first then shared, before the
+    /// config overlay runs.
+    fn runtime_plugin_package_enabled(&self, id: &str) -> bool {
+        let mut saw_registry = false;
+        for root in self.capability_roots() {
+            let store = vak_plugin::PluginStore::new(root.path);
+            let Ok(items) = store.list() else {
+                continue;
+            };
+            if let Some(package) = items.iter().find(|package| package.name == id) {
+                return package.enabled;
+            }
+            saw_registry |= store.registry_path().exists();
+        }
+        !saw_registry
     }
 
     /// Session-scoped routing beliefs (Phase R): domain-weighted doubt
@@ -1102,60 +1218,7 @@ impl Core {
             self.inner.cwd.display().to_string(),
         )));
 
-        let cfg = self.config();
-        let channel_policy = self.channel_policy();
-
-        let python_allowed = cfg.plugins.is_enabled("python-sandbox")
-            && channel_policy
-                .as_ref()
-                .map(|p| {
-                    p.plugins_allow
-                        .as_ref()
-                        .map(|l| l.contains(&"python-sandbox".to_string()))
-                        .unwrap_or(true)
-                })
-                .unwrap_or(true)
-            && channel_policy
-                .as_ref()
-                .map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string()))
-                .unwrap_or(true);
-        if python_allowed {
-            let net = cfg.plugins.is_network_allowed("python-sandbox")
-                && channel_policy
-                    .as_ref()
-                    .map(|p| {
-                        !p.plugins_network_deny
-                            .contains(&"python-sandbox".to_string())
-                    })
-                    .unwrap_or(true);
-            tools.push(Arc::new(vak_tools::PythonTool::new(net)));
-        }
-
-        let react_allowed = cfg.plugins.is_enabled("react-sandbox")
-            && channel_policy
-                .as_ref()
-                .map(|p| {
-                    p.plugins_allow
-                        .as_ref()
-                        .map(|l| l.contains(&"react-sandbox".to_string()))
-                        .unwrap_or(true)
-                })
-                .unwrap_or(true)
-            && channel_policy
-                .as_ref()
-                .map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string()))
-                .unwrap_or(true);
-        if react_allowed {
-            let net = cfg.plugins.is_network_allowed("react-sandbox")
-                && channel_policy
-                    .as_ref()
-                    .map(|p| {
-                        !p.plugins_network_deny
-                            .contains(&"react-sandbox".to_string())
-                    })
-                    .unwrap_or(true);
-            tools.push(Arc::new(vak_tools::ReactPreviewTool::new(net)));
-        }
+        tools.extend(self.built_in_runtime_plugin_tools());
 
         self.filter_builtin_tools(tools)
     }
@@ -1663,7 +1726,14 @@ impl Core {
                             })
                             .unwrap_or_default();
                         let key = format!("plugin.{}.{}", plugin.name, name);
-                        let net_allowed = self.config().plugins.is_network_allowed(&plugin.name)
+                        // Same effective-policy seam the runtime tools read:
+                        // the persisted `network_allow`/`network_deny` override
+                        // refreshes `effective_plugins()` live, so a Settings
+                        // toggle reaches a plugin-contributed server exactly
+                        // like it reaches its runner tool. Reading the base
+                        // config instead would keep this server stale for the
+                        // whole process after an override lands.
+                        let net_allowed = self.effective_plugins().is_network_allowed(&plugin.name)
                             && self
                                 .channel_policy()
                                 .as_ref()
@@ -2374,6 +2444,7 @@ impl Core {
         self.apply_persisted_tools(config.tools.web_fetch, config.tools.browse);
         self.apply_persisted_commitment(config.commitment.enabled);
         self.apply_persisted_approval_mode(config.approval_mode);
+        self.apply_persisted_plugins(config.plugins.clone());
         Ok(config.permission_mode)
     }
 
@@ -3007,41 +3078,8 @@ impl Core {
             names.push("propose_skill".into());
         }
 
-        let cfg = self.config();
-        let channel_policy = self.channel_policy();
-        let python_allowed = cfg.plugins.is_enabled("python-sandbox")
-            && channel_policy
-                .as_ref()
-                .map(|p| {
-                    p.plugins_allow
-                        .as_ref()
-                        .map(|l| l.contains(&"python-sandbox".to_string()))
-                        .unwrap_or(true)
-                })
-                .unwrap_or(true)
-            && channel_policy
-                .as_ref()
-                .map(|p| !p.plugins_deny.contains(&"python-sandbox".to_string()))
-                .unwrap_or(true);
-        if python_allowed {
-            names.push("python_eval".into());
-        }
-        let react_allowed = cfg.plugins.is_enabled("react-sandbox")
-            && channel_policy
-                .as_ref()
-                .map(|p| {
-                    p.plugins_allow
-                        .as_ref()
-                        .map(|l| l.contains(&"react-sandbox".to_string()))
-                        .unwrap_or(true)
-                })
-                .unwrap_or(true)
-            && channel_policy
-                .as_ref()
-                .map(|p| !p.plugins_deny.contains(&"react-sandbox".to_string()))
-                .unwrap_or(true);
-        if react_allowed {
-            names.push("react_preview".into());
+        for tool in self.built_in_runtime_plugin_tools() {
+            names.push(tool.name().into());
         }
         names
             .into_iter()
@@ -5776,7 +5814,7 @@ mod capability_contract_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod channel_mcp_network_tests {
-    use super::Core;
+    use super::{Core, runtime_network};
     use std::collections::BTreeMap;
 
     fn core_with_servers(dir: &std::path::Path, servers: &[(&str, bool)]) -> Core {
@@ -5901,6 +5939,263 @@ mod channel_mcp_network_tests {
                 .any(|n| matches!(n.as_str(), "remember" | "propose_skill" | "session_search"))
         );
         assert!(!core.channel_tool_allowed("remember"));
+    }
+
+    /// The sandboxed execution runtimes are first-class plugin capabilities:
+    /// the SAME resolved vector that becomes `TaskDeps.tools` (child agents
+    /// inherit every parent tool except the `flow` dispatcher, vak-agent
+    /// task.rs) must contain `python_eval` and `react_preview` whenever the
+    /// `python-sandbox`/`react-sandbox` plugins pass admission, and a
+    /// persisted `network_allow` grant must reach the effective policy the
+    /// tool constructors read without a session rotation.
+    #[test]
+    fn runtime_plugins_flow_into_agent_and_subagent_tools_and_hot_persist() {
+        super::isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+
+        let names: Vec<String> = core
+            .agent_tools()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        for expected in ["python_eval", "react_preview"] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "{expected} missing from agent_tools(): {names:?}"
+            );
+        }
+        // The same names pass turn admission (`tool_names`), so children are
+        // spawned with the same tools: `TaskTool::new(TaskDeps {
+        // tools: tools.clone(), .. })` hands the child this exact vector
+        // (minus the `flow` dispatcher), making the runtimes subagent-capable
+        // by construction.
+        let admitted = core.tool_names();
+        for expected in ["python_eval", "react_preview"] {
+            assert!(
+                admitted.iter().any(|name| name == expected),
+                "{expected} missing from admitted tool_names(): {admitted:?}"
+            );
+        }
+
+        // A persisted grant reaches the effective policy the runtime tool
+        // constructors read — the seam the settings toggle crosses.
+        assert!(
+            !core
+                .effective_plugins()
+                .is_network_allowed("python-sandbox")
+        );
+        core.apply_persisted_plugins(vak_config::PluginResolved {
+            network_allow: Some(vec!["python-sandbox".into()]),
+            ..core.effective_plugins()
+        });
+        assert!(
+            core.effective_plugins()
+                .is_network_allowed("python-sandbox")
+        );
+        assert!(!core.effective_plugins().is_network_allowed("react-sandbox"));
+        let refreshed: Vec<String> = core
+            .agent_tools()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        assert!(
+            refreshed.iter().any(|name| name == "python_eval"),
+            "admission is level-triggered: the runtime stays reachable after a persisted grant"
+        );
+
+        // Revocation is level-triggered too, and it is the next construction
+        // of the runtime tool that observes it: the network flag is resolved
+        // from the effective policy at `agent_tools()` time, so a persisted
+        // revoke lands before the next turn's tools are handed out. An
+        // in-flight call keeps its earlier snapshot (tool struct field).
+        core.apply_persisted_plugins(vak_config::PluginResolved {
+            network_allow: None,
+            ..core.effective_plugins()
+        });
+        assert!(
+            !core
+                .effective_plugins()
+                .is_network_allowed("python-sandbox")
+        );
+        assert!(!runtime_network(
+            &core.effective_plugins(),
+            core.channel_policy().as_ref(),
+            "python-sandbox"
+        ));
+        assert!(core.agent_tools().iter().any(|t| t.name() == "python_eval"));
+
+        // The two network tiers compose with deny always winning: a deny
+        // entry beats an allowlist entry, and an absent allowlist denies by
+        // default.
+        let granted = vak_config::PluginResolved {
+            network_allow: Some(vec!["python-sandbox".into()]),
+            network_deny: vec!["python-sandbox".into()],
+            ..core.effective_plugins()
+        };
+        assert!(
+            !granted.is_network_allowed("python-sandbox"),
+            "config deny must beat config allow on the same plugin"
+        );
+        assert!(!runtime_network(&granted, None, "python-sandbox"));
+        // Channel deny layering: with a grant in place, the channel can take
+        // egress away but cannot grant it.
+        let denied_channel = |channel_deny: bool| {
+            let policy = channel_deny.then(|| vak_config::ChannelPolicy {
+                plugins_network_deny: vec!["python-sandbox".into()],
+                ..vak_config::ChannelPolicy::default()
+            });
+            runtime_network(&granted, policy.as_ref(), "python-sandbox")
+        };
+        assert!(!denied_channel(true));
+        assert!(!denied_channel(false));
+        let no_grant = vak_config::PluginResolved {
+            network_allow: None,
+            network_deny: vec![],
+            ..core.effective_plugins()
+        };
+        assert!(!no_grant.is_network_allowed("python-sandbox"));
+        assert!(!runtime_network(&no_grant, None, "python-sandbox"));
+
+        // The tool-NAME tier is a separate key-space from the plugin-NAME
+        // tier: the channel can filter the runtimes by their executable
+        // names (`python_eval` / `react_preview`) exactly like any other
+        // built-in. A deny here removes the tool from BOTH surfaces, and a
+        // narrowing allow list keeps only what it names — symmetry between
+        // the tool vector and the name packet is the property being pinned.
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_deny: vec!["python_eval".into()],
+            ..vak_config::ChannelPolicy::default()
+        });
+        let names: Vec<String> = core
+            .agent_tools()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        assert!(
+            !names.iter().any(|name| name == "python_eval"),
+            "agent_tools must drop python_eval when tools_deny names it: {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "react_preview"),
+            "tools_deny on one tool name is scoped, not a blanket plugin kill"
+        );
+        let admitted = core.tool_names();
+        assert!(
+            !admitted.iter().any(|name| name == "python_eval"),
+            "tool_names must drop python_eval identically: {admitted:?}"
+        );
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(vec!["python_eval".into()]),
+            ..vak_config::ChannelPolicy::default()
+        });
+        let names: Vec<String> = core
+            .agent_tools()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["python_eval"],
+            "a narrowing tools_allow keeps only the named runtime tool"
+        );
+        assert_eq!(
+            core.tool_names(),
+            vec!["python_eval"],
+            "the name packet must narrow identically to the tool vector"
+        );
+        // Cross-tier composition: a plugin-tier deny removes the runtime
+        // even when the tool-name tier still names it.
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(vec!["python_eval".into()]),
+            plugins_deny: vec!["python-sandbox".into()],
+            ..vak_config::ChannelPolicy::default()
+        });
+        assert!(
+            !core
+                .agent_tools()
+                .iter()
+                .any(|tool| tool.name() == "python_eval"),
+            "plugin-tier deny must win over a tool-name allow"
+        );
+        assert!(
+            !core.tool_names().iter().any(|name| name == "python_eval"),
+            "name packet must agree under cross-tier deny"
+        );
+    }
+
+    /// The plugin *store* owns the runtime package lifecycle. The Settings
+    /// row's Enable/Disable/Remove buttons write the store, so the built-in
+    /// runtime tool must live and die with its package — a store-driven
+    /// disable or removal has to actually take `python_eval` out of the
+    /// tool vector and the name packet, and re-enabling has to bring it
+    /// back. A store that was never written stays vacuous (config decides).
+    #[test]
+    fn store_package_lifecycle_owns_the_runtime_tool() {
+        super::isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+
+        // No store yet: the config layer alone decides, so the built-in
+        // runtime is reachable — the pre-setup contract.
+        assert!(
+            core.agent_tools().iter().any(|t| t.name() == "python_eval"),
+            "vacuous store must leave the runtime governed by the config layer"
+        );
+
+        let vak = dir.path().join(".vak");
+        std::fs::create_dir_all(&vak).unwrap();
+        let package = dir.path().join("pkg");
+        std::fs::create_dir_all(package.join("skills")).unwrap();
+        std::fs::write(
+            package.join("vak-plugin.json"),
+            r#"{"schema":1,"name":"python-sandbox","version":"1.0.0","description":"T","license":"MIT","components":{"skills":["skills"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("skills/SKILL.md"),
+            "---\nname: demo\ndescription: demo skill\n---\n\nbody\n",
+        )
+        .unwrap();
+        let store = vak_plugin::PluginStore::new(&vak);
+        let installed = store
+            .install_local(&package, vak_plugin::InstallOptions::default())
+            .unwrap();
+        if !installed.enabled {
+            store.enable("python-sandbox").unwrap();
+        }
+        assert!(
+            core.agent_tools().iter().any(|t| t.name() == "python_eval"),
+            "installing + enabling the owning package admits the runtime"
+        );
+
+        // Settings Disable writes the store: the runtime must follow.
+        store.disable("python-sandbox").unwrap();
+        assert!(
+            !core.agent_tools().iter().any(|t| t.name() == "python_eval"),
+            "a store disable must remove the runtime tool"
+        );
+        assert!(
+            !core.tool_names().iter().any(|n| n == "python_eval"),
+            "the name packet must agree after a store disable"
+        );
+
+        store.enable("python-sandbox").unwrap();
+        assert!(
+            core.agent_tools().iter().any(|t| t.name() == "python_eval"),
+            "re-enabling the package must restore the runtime"
+        );
+
+        // Settings Remove writes the store: removal is removal.
+        store.remove("python-sandbox").unwrap();
+        assert!(
+            !core.agent_tools().iter().any(|t| t.name() == "python_eval"),
+            "removing the package must remove the runtime too"
+        );
+        assert!(
+            !core.tool_names().iter().any(|n| n == "python_eval"),
+            "the name packet must agree after a store removal"
+        );
     }
 
     #[test]
@@ -7044,6 +7339,32 @@ mod plugin_runtime_tests {
         store.enable("tools-pack").unwrap();
         let first = core.mcp_manager().unwrap();
         assert_eq!(first.server_names(), vec!["plugin.tools-pack.lookup"]);
+
+        // The contributed server's egress follows the SAME effective-policy
+        // seam the runner tools read: deny-by-default, and a hot persisted
+        // grant reaches it next time `effective_mcp` resolves - not after a
+        // restart. (Regression for a base-config read that left the server
+        // stale for the whole process once an override landed.)
+        assert!(
+            !core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            "plugin-contributed MCP server must deny egress by default"
+        );
+        core.apply_persisted_plugins(vak_config::PluginResolved {
+            network_allow: Some(vec!["tools-pack".into()]),
+            ..core.effective_plugins()
+        });
+        assert!(
+            core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            "persisted grant must reach the contributed MCP server live"
+        );
+        core.apply_persisted_plugins(vak_config::PluginResolved {
+            network_allow: None,
+            ..core.effective_plugins()
+        });
+        assert!(
+            !core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            "persisted revoke must take the contributed server's egress away"
+        );
 
         // Same server set: same manager instance (no respawn/reconnect).
         let second = core.mcp_manager().unwrap();

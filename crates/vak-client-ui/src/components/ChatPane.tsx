@@ -7,6 +7,19 @@ import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
 import * as api from "../api";
 
+/// The typed-output transport fence: a ` ```vak ``` ` block in a tool
+/// result carries structured envelope JSON the presentation timeline renders
+/// as a card. The legacy tool row strips it so the same call is not shown
+/// twice (raw JSON here, card above) — the pre-fence human summary stays.
+function stripVakFence(text: string): string {
+  const fence = text.indexOf("```vak");
+  if (fence < 0) return text;
+  const end = text.indexOf("```", fence + 6);
+  if (end < 0) return text.slice(0, fence).trim();
+  const rest = `${text.slice(0, fence)}${text.slice(end + 3)}`.trim();
+  return rest || "Structured output rendered in the presentation timeline.";
+}
+
 /**
  * A new task's chat pane before anything has happened, and an existing
  * task with nothing rendered at the current density. Previously both
@@ -239,7 +252,10 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   const status = () => props.item.isError ? "Failed" : props.item.done ? "Completed" : "Running";
   const result = () => {
     const value = props.item.preview?.trim();
-    if (value) return value.slice(0, density() === "audit" ? 4000 : 800);
+    if (value) {
+      const shown = stripVakFence(value);
+      return shown.slice(0, density() === "audit" ? 4000 : 800);
+    }
     return props.item.done ? "No output returned." : "Waiting for a result…";
   };
   const previewArtifactPath = createMemo(() => {

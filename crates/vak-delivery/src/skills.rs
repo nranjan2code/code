@@ -460,7 +460,19 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["artifact.collection"],
             vec!["desktop", "terminal", "telegram"],
         ),
+        (
+            "ui.preview",
+            vec![],
+            vec!["react.preview"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
     ] {
+        let requires_typed_output = matches!(recipe.0, "coding.test_report" | "ui.preview");
+        let typed_output_types: Vec<String> = match recipe.0 {
+            "coding.test_report" => vec!["test.report".into()],
+            "ui.preview" => vec!["react.preview".into()],
+            _ => Vec::new(),
+        };
         let _ = catalog.register(PresentationRecipe {
             id: recipe.0.into(),
             version: "1.0.0".into(),
@@ -472,18 +484,8 @@ pub fn built_in_recipes() -> RecipeCatalog {
             fallback: BTreeMap::new(),
             surfaces: recipe.3.into_iter().map(String::from).collect(),
             default_recipe: recipe.0 == "answer.basic",
-            requires_typed_output: matches!(recipe.0, "coding.test_report"),
-            typed_output_types: if matches!(recipe.0, "coding.test_report") {
-                vec![
-                    match recipe.0 {
-                        "coding.test_report" => "test.report",
-                        _ => "research.synthesis",
-                    }
-                    .into(),
-                ]
-            } else {
-                Vec::new()
-            },
+            requires_typed_output,
+            typed_output_types,
         });
     }
     catalog
@@ -735,6 +737,11 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
                 signals.push("research".into());
                 signals.push("synthesis".into());
                 signals.push("takeaways".into());
+            }
+            "react_preview" => {
+                signals.push("react".into());
+                signals.push("preview".into());
+                signals.push("component".into());
             }
             _ => {}
         }
@@ -1723,6 +1730,58 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].semantic_type, "metric");
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
+    }
+
+    #[test]
+    fn react_preview_envelope_parses_and_selects_the_preview_recipe() {
+        let runner_output = format!(
+            "rendered\n\n```vak\n{}\n```",
+            serde_json::json!({
+                "semantic_type": "react.preview",
+                "payload": {
+                    "status": "ready",
+                    "preview_id": "pv-1",
+                    "title": "Counter",
+                    "artifact_path": ".vak/scratch/previews/pv-1.html",
+                    "sandbox": "allow-scripts",
+                    "connect_src": "blocked"
+                }
+            })
+        );
+        let outputs = structured_outputs_from_text(&runner_output);
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].semantic_type, "react.preview");
+        assert_eq!(outputs[0].skill_id, "core");
+        assert_eq!(
+            outputs[0].payload["artifact_path"],
+            ".vak/scratch/previews/pv-1.html"
+        );
+
+        let planner = PresentationPlanner {
+            skills: built_in_skill_registry(),
+            recipes: built_in_recipes(),
+        };
+        let plan = planner.plan(
+            &signals_from_context(&SignalContext {
+                text: "",
+                tool_name: Some("react_preview"),
+                tool_input: None,
+                tool_output: None,
+                is_error: false,
+            }),
+            "desktop",
+            &["data.grid".to_string()],
+            &outputs,
+        );
+        let doc = plan.recipe.expect("preview recipe");
+        assert_eq!(doc.recipe_id, "ui.preview");
+        assert!(
+            plan.accepted
+                .iter()
+                .any(|candidate| candidate.semantic_type == "react.preview")
+        );
+        assert_eq!(plan.renderers.len(), 1);
+        assert_eq!(plan.renderers[0].renderer, "native:structured");
     }
 
     #[test]

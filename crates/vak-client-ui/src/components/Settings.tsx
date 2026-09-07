@@ -354,6 +354,36 @@ export default function Settings() {
     } finally { setPluginBusy(false); }
   }
 
+  async function togglePluginNetwork(name: string, on: boolean) {
+    const scope = capabilityScope();
+    if (pluginBusy()) return;
+    const plugin = plugins().find((p) => p.name === name);
+    // Deny always wins: a plugin on plugins.network_deny cannot be granted
+    // egress from the toggle, because the config tier re-evaluates the deny
+    // list on every admission.
+    if (on && plugin?.network_denied) {
+      setNotice({ kind: "error", text: `${name} is blocked by plugins.network_deny; remove the deny entry to grant sandbox egress.` });
+      return;
+    }
+    setPluginBusy(true);
+    try {
+      // Preserve any existing grant for other plugins: toggling one plugin
+      // must never silently revoke egress another already enjoys. The
+      // effective allowlist is reported per plugin by the server.
+      const current = plugin?.network_allow ?? [];
+      const set = new Set(on ? [...current, name] : current.filter((n) => n !== name));
+      const grant = [...set].sort();
+      // Grants are privileged: the route below is the same patch the server
+      // validates, and it refuses a grant into an untrusted project layer.
+      if (scope === "user") await api.patchGlobalConfig({ plugins_network_allow: grant });
+      else await api.patchConfig({ plugins_network_allow: grant });
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: on ? `${name} may now reach the network from its sandbox (applies from the next turn).` : `${name} sandbox egress blocked.` });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Network setting failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setPluginBusy(false); }
+  }
+
   async function registerPluginSource() {
     const path = sourcePath().trim();
     if (!path || pluginBusy()) return;
@@ -1309,7 +1339,7 @@ export default function Settings() {
                   <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
                   <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div><Show when={marketplaceEntries().length > 0}><div class="capability-list"><For each={marketplaceEntries()}>{(entry) => <div class="capability-item"><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small><p>{entry.description || "No description"}</p><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 16)}</code><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div></Show>
                   <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
-                    <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
+                    <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="mcp-controls"><Show when={!plugin.network_denied} fallback={<span class="capability-state muted">Blocked by plugins.network_deny</span>}><label class="mcp-network"><Switch checked={plugin.network_allowed} label={`Allow network for ${plugin.name}`} onChange={(v) => void togglePluginNetwork(plugin.name, v)} /><span title="Deny entries (plugins.network_deny) always win; the allowlist grants egress otherwise. Privileged: set at the trusted (user) level for an untrusted workspace.">{plugin.network_allowed ? "Network allowed from sandbox" : "Local only"}</span></label></Show></div><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
                   </Show>
                   <Show when={scope() === "workspace" && inheritedPlugins().length > 0}>
                     <div class="inherited-capabilities-group">

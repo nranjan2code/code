@@ -120,12 +120,15 @@ with strict CSP (network connect-src blocked unless allowed) and an ErrorBoundar
 
         let rel_path = format!(".vak/scratch/previews/{preview_filename}");
         let response_payload = serde_json::json!({
-            "status": "ready",
-            "preview_id": preview_id,
-            "title": title,
-            "artifact_path": rel_path,
-            "sandbox": "allow-scripts",
-            "connect_src": if self.network { "allowed" } else { "blocked" }
+            "semantic_type": "react.preview",
+            "payload": {
+                "status": "ready",
+                "preview_id": preview_id,
+                "title": title,
+                "artifact_path": rel_path,
+                "sandbox": "allow-scripts",
+                "connect_src": if self.network { "allowed" } else { "blocked" }
+            }
         });
 
         let summary = format!(
@@ -138,11 +141,14 @@ Status: Ready for presentation and preview dock rendering."
         );
 
         let mut output = ToolOutput::ok(ctx.truncate_output(summary));
-        // Append structured metadata if needed
-        output.content.push_str(&format!(
-            "\n\n```vak:presentation\n{}\n```",
-            response_payload
-        ));
+        // The delivery pipeline (`vak-delivery::skills::structured_outputs_from_text`)
+        // recognizes a self-declared envelope inside a ```vak fence and turns it
+        // into an `OutputTimeline` item whose card the desktop and web clients
+        // render (semantic_type `react.preview`). Adapters never guess shape;
+        // the tool opts in by declaring what it produced.
+        output
+            .content
+            .push_str(&format!("\n\n```vak\n{}\n```", response_payload));
         output
     }
 }

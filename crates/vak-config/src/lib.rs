@@ -666,7 +666,9 @@ pub struct PluginSettings {
     pub deny: Vec<String>,
     /// Plugins permitted outbound network access. Privileged.
     pub network_allow: Option<Vec<String>>,
-    /// Plugins forbidden outbound network access.
+    /// Plugins forbidden outbound network access. Precedence: an entry
+    /// here always beats `network_allow` (channel `plugins_network_deny`
+    /// layers on top of both and can only take egress away).
     pub network_deny: Vec<String>,
 }
 
@@ -2216,6 +2218,94 @@ pub fn persist_work_preferences(
         source,
     })?;
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
+/// Persist `[plugins] network_allow` at the given layer path.
+///
+/// `grant` is a three-state override: `Some(names)` grants egress to those
+/// plugins, `Some(vec![])` removes the key entirely (so the layer reads as
+/// deny-by-default and a narrower layer may inherit from a wider one), and
+/// `None` leaves the file untouched. Grants are privileged and are also
+/// demoted on read for untrusted project layers; callers must still refuse
+/// a non-empty grant into an untrusted project rather than writing a value
+/// the loader would silently discard.
+pub fn persist_plugins_network_allow(
+    path: &Path,
+    grant: Option<Vec<String>>,
+) -> Result<(), ConfigError> {
+    if let Some(names) = &grant
+        && names.iter().any(|name| name.trim().is_empty())
+    {
+        return Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("plugin names cannot be empty"),
+        });
+    }
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    let plugins = table
+        .entry("plugins")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let Some(plugins) = plugins.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("plugins config must be a TOML table"),
+        });
+    };
+    match grant {
+        Some(names) if names.is_empty() => {
+            plugins.remove("network_allow");
+        }
+        Some(names) => {
+            plugins.insert(
+                "network_allow".into(),
+                toml::Value::Array(names.into_iter().map(toml::Value::String).collect()),
+            );
+        }
+        None => {}
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
@@ -4449,6 +4539,29 @@ mod tests {
         assert_eq!(cfg.ui.theme, "dark");
         assert_eq!(cfg.deny, vec!["bash"]);
         assert_eq!(cfg.route.objective, "quality-critical");
+    }
+
+    #[test]
+    fn plugins_network_allow_persists_and_clears_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "deny = [\"bash\"]\n[plugins]\nnetwork_deny = [\"older-plugin\"]\n",
+        );
+        let grant = Some(vec!["python-sandbox".into(), "react-sandbox".into()]);
+        persist_plugins_network_allow(&project_path(dir.path()), grant).unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.plugins.is_network_allowed("python-sandbox"));
+        assert!(cfg.plugins.is_network_allowed("react-sandbox"));
+        assert!(!cfg.plugins.is_network_allowed("web-search-plugin"));
+        assert!(cfg.plugins.network_deny.contains(&"older-plugin".into()));
+        assert_eq!(cfg.deny, vec!["bash"]);
+
+        persist_plugins_network_allow(&project_path(dir.path()), Some(vec![])).unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.plugins.is_network_allowed("python-sandbox"));
+        assert_eq!(cfg.plugins.network_deny, vec!["older-plugin"]);
+        assert_eq!(cfg.deny, vec!["bash"]);
     }
 
     fn hook(command: &str, enabled: bool) -> HookConfig {

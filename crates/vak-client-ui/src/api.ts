@@ -266,6 +266,9 @@ export interface InstalledPlugin {
   format: string;
   scope: "workspace" | "user";
   enabled: boolean;
+  network_allowed: boolean;
+  network_denied: boolean;
+  network_allow: string[] | null;
   trace_id: string;
   capabilities: Record<string, unknown>;
   warnings: string[];
@@ -616,6 +619,10 @@ export interface ConfigPatch {
   /// one control deciding how gates resolve was browser-only.
   approval_mode?: string;
   theme?: string;
+  /// Grants `[plugins] network_allow` for the selected layer. An empty
+  /// array clears the layer's grant (deny-by-default); absent leaves the
+  /// layer untouched. Non-empty grants are refused for untrusted projects.
+  plugins_network_allow?: string[];
 }
 
 export function patchConfig(patch: ConfigPatch): Promise<void> {

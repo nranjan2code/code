@@ -5000,6 +5000,14 @@ async fn transcript(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    // `count` is the number of model-visible messages in the derived
+    // projection (`derive_messages().len()`), not a raw ledger-entry count.
+    // Since v3.0.17 the projection may legitimately exceed the exchanged
+    // messages: the multi-turn continuity layer injects a synthetic
+    // `<conversation_thread>` (and context compaction may add entries), so a
+    // two-message exchange can project as five. Both numbers are
+    // reconstructable from the append-only ledger; `count` describes exactly
+    // what the model consumed.
     if let Some(handle) = state.get(&id) {
         let guard = handle
             .session
@@ -6248,20 +6256,29 @@ async fn list_plugins(
     let mut plugins = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
         if let Ok(items) = plugin_store(&state, scope).list() {
-            plugins.extend(items.into_iter().map(|plugin| {
-                serde_json::json!({
-                    "name": plugin.name,
-                    "version": plugin.version,
-                    "digest": plugin.digest,
-                    "description": plugin.description,
-                    "format": plugin.format,
-                    "scope": plugin.scope,
-                    "enabled": plugin.enabled,
-                    "trace_id": plugin.trace_id,
-                    "capabilities": plugin.capabilities,
-                    "warnings": plugin.warnings,
-                })
-            }));
+            let policy = state.core.effective_plugins();
+            plugins.extend(
+                items
+                    .into_iter()
+                    .map(|plugin| {
+                        serde_json::json!({
+                            "name": plugin.name,
+                            "version": plugin.version,
+                            "digest": plugin.digest,
+                            "description": plugin.description,
+                            "format": plugin.format,
+                            "scope": plugin.scope,
+                            "enabled": plugin.enabled,
+                            "network_allowed": policy.is_network_allowed(&plugin.name),
+                            "network_denied": policy.network_deny.contains(&plugin.name),
+                            "network_allow": policy.network_allow,
+                            "trace_id": plugin.trace_id,
+                            "capabilities": plugin.capabilities,
+                            "warnings": plugin.warnings,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            );
         }
     }
     Json(serde_json::json!({ "plugins": plugins }))
@@ -7918,6 +7935,12 @@ struct ConfigPatch {
     inherit_commands: Option<bool>,
     #[serde(default)]
     inherit_plugins: Option<bool>,
+    /// `[plugins] network_allow` grants for the selected layer (docs/design/
+    /// 39-plugin-ecosystem.md). `Some(names)` grants egress to those plugins;
+    /// `Some(vec![])` clears the key (deny-by-default); absent leaves alone.
+    /// Grants are privileged and refused for an untrusted project layer.
+    #[serde(default)]
+    plugins_network_allow: Option<Vec<String>>,
 }
 
 async fn patch_config(
@@ -8000,6 +8023,9 @@ fn shadowed_by_project(state: &AppState, body: &ConfigPatch) -> Vec<&'static str
     }
     if body.approval_mode.is_some() && project.approval_mode.is_some() {
         out.push("approval_mode");
+    }
+    if body.plugins_network_allow.is_some() && project.plugins.network_allow.is_some() {
+        out.push("plugins_network_allow");
     }
     out
 }
@@ -8265,6 +8291,48 @@ async fn patch_config_scope(
             state.core.effective_work().default_mode,
             state.core.effective_work().enabled
         ));
+    }
+    if let Some(grant) = &body.plugins_network_allow {
+        if !grant.is_empty() && !global && !state.core.project_config_trusted() {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": "plugins.network_allow is a privileged key: an untrusted \
+                              workspace may not grant its execution plugins network \
+                              egress. Set it from the Trusted (global) settings instead."
+                })),
+            )
+                .into_response();
+        }
+        let path = if global {
+            vak_config::global_path().ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+        } else {
+            Ok(vak_config::project_path(state.core.cwd()))
+        };
+        let Ok(path) = path else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        if vak_config::persist_plugins_network_allow(&path, Some(grant.clone())).is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        if state.core.refresh_persisted_preferences().is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        if shadowed.contains(&"plugins_network_allow") {
+            changes.push(format!(
+                "plugins_network_allow={grant:?} (persisted, shadowed by project)"
+            ));
+        } else {
+            let resolved_plugins = state.core.effective_plugins();
+            let python_net = if resolved_plugins.is_network_allowed("python-sandbox") {
+                "python-allowed"
+            } else {
+                "python-blocked"
+            };
+            changes.push(format!(
+                "plugins_network_allow={grant:?}, effective={python_net}"
+            ));
+        }
     }
     if body.inherit_mcp.is_some()
         || body.inherit_hooks.is_some()

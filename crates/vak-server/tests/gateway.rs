@@ -256,7 +256,9 @@ async fn inbound_wait_roundtrip_reuses_binding() {
         .json()
         .await
         .unwrap();
-    assert_eq!(t["count"].as_u64(), Some(4));
+    // Derived projection includes the injected `<conversation_thread>` control
+    // message (v3.0.17 multi-turn continuity), so two exchanges project as 5.
+    assert_eq!(t["count"].as_u64(), Some(5));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -420,7 +422,7 @@ async fn bindings_survive_process_restart() {
         .json()
         .await
         .unwrap();
-    assert_eq!(t["count"].as_u64(), Some(4), "history continued");
+    assert_eq!(t["count"].as_u64(), Some(5), "history continued");
 }
 
 fn urlencoding_escape(s: &str) -> String {
