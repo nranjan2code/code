@@ -74,7 +74,12 @@ execution duration is strictly bounded."
 
     fn claims(&self, args: &Value) -> crate::ResourceClaims {
         let mut paths = Vec::new();
-        if let Some(path) = args.get("script_path").and_then(Value::as_str) {
+        if let Some(path) = args
+            .get("script_path")
+            .or_else(|| args.get("path"))
+            .or_else(|| args.get("file"))
+            .and_then(Value::as_str)
+        {
             paths.push(path.to_string());
         }
         crate::ResourceClaims {
@@ -85,8 +90,16 @@ execution duration is strictly bounded."
     }
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
-        let code = args.get("code").and_then(Value::as_str);
-        let script_path = args.get("script_path").and_then(Value::as_str);
+        let code = args
+            .get("code")
+            .or_else(|| args.get("script"))
+            .or_else(|| args.get("python"))
+            .and_then(Value::as_str);
+        let script_path = args
+            .get("script_path")
+            .or_else(|| args.get("path"))
+            .or_else(|| args.get("file"))
+            .and_then(Value::as_str);
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(Value::as_u64)
@@ -116,7 +129,7 @@ execution duration is strictly bounded."
                     );
                 }
                 let pip_cmd = format!(
-                    "pip install --quiet --no-warn-script-location --target {} {}",
+                    "python3 -m pip install --quiet --no-warn-script-location --target {} {}",
                     shell_quote(&site_packages.display().to_string()),
                     pkg_list.join(" ")
                 );
@@ -150,15 +163,18 @@ execution duration is strictly bounded."
             }
         }
 
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
         // Prepare the script target
         let target_script = if let Some(code_content) = code {
-            let now_nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
             let filename = format!("exec_{now_nanos}.py");
             let file_path = scratch_dir.join(&filename);
-            if let Err(e) = std::fs::write(&file_path, code_content) {
+            let mut full_code = String::from(code_content);
+            full_code.push_str("\n\n# Vak sandbox automatic plot capture hook\ntry:\n    import matplotlib.pyplot as _vak_plt\n    if _vak_plt.get_fignums():\n        import os as _vak_os, time as _vak_time\n        _vak_scratch = _vak_os.environ.get('VAK_SCRATCH_DIR', '.')\n        _vak_out = _vak_os.path.join(_vak_scratch, f'plot_{int(_vak_time.time())}.png')\n        _vak_plt.savefig(_vak_out, bbox_inches='tight')\nexcept Exception:\n    pass\n");
+            if let Err(e) = std::fs::write(&file_path, full_code) {
                 return ToolOutput::error(format!(
                     "failed to stage Python code in scratch directory: {e}"
                 ));
@@ -219,6 +235,8 @@ execution duration is strictly bounded."
         // Configure Python runtime isolation
         cmd.env("PYTHONDONTWRITEBYTECODE", "1");
         cmd.env("PYTHONUNBUFFERED", "1");
+        cmd.env("MPLBACKEND", "Agg");
+        cmd.env("VAK_SCRATCH_DIR", scratch_dir.display().to_string());
         let python_path = if site_packages.exists() {
             format!("{}:{}", site_packages.display(), ctx.cwd.display())
         } else {
@@ -282,6 +300,9 @@ execution duration is strictly bounded."
                     text.push_str(&err_text);
                 }
 
+                // Quarantine any image/data artifacts created in cwd during the run to scratch_dir (Invariant 10)
+                quarantine_cwd_artifacts(&ctx.cwd, &scratch_dir, now_nanos / 1_000_000_000);
+
                 // Look for generated plot or data artifacts in scratch
                 let artifacts = find_generated_artifacts(&scratch_dir);
                 if !artifacts.is_empty() {
@@ -292,6 +313,22 @@ execution duration is strictly bounded."
                 }
 
                 if !status.success() {
+                    if err_text.contains("ModuleNotFoundError: No module named") {
+                        if let Some(pos) = err_text.find("ModuleNotFoundError: No module named ") {
+                            let after = &err_text[pos + "ModuleNotFoundError: No module named ".len()..];
+                            let mod_name = after
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("")
+                                .trim_matches('\'')
+                                .trim_matches('"');
+                            if !mod_name.is_empty() {
+                                text.push_str(&format!(
+                                    "\n[debug hint] Missing module '{mod_name}'. You can install it into the sandbox by passing `\"install_packages\": [\"{mod_name}\"]`."
+                                ));
+                            }
+                        }
+                    }
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
                     return ToolOutput {
                         content: ctx.truncate_output(text),
@@ -304,6 +341,39 @@ execution duration is strictly bounded."
                 }
 
                 ToolOutput::ok(ctx.truncate_output(text))
+            }
+        }
+    }
+}
+
+fn quarantine_cwd_artifacts(cwd: &Path, scratch_dir: &Path, min_mtime_secs: u128) {
+    let Ok(entries) = std::fs::read_dir(cwd) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && let Some(ext) = path.extension().and_then(|s| s.to_str())
+        {
+            let ext_lower = ext.to_ascii_lowercase();
+            if matches!(
+                ext_lower.as_str(),
+                "png" | "svg" | "jpg" | "jpeg" | "csv" | "parquet"
+            ) {
+                if let Ok(meta) = path.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        let mtime = modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as u128)
+                            .unwrap_or(0);
+                        if mtime >= min_mtime_secs.saturating_sub(2) {
+                            if let Some(name) = path.file_name() {
+                                let dest = scratch_dir.join(name);
+                                let _ = std::fs::rename(&path, &dest);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -437,4 +507,42 @@ mod tests {
         assert!(res.is_error);
         assert!(res.content.contains("network access is disabled"));
     }
+
+    #[tokio::test]
+    async fn python_eval_accepts_parameter_aliases_and_quarantines_loose_cwd_artifacts() {
+        let dir = tempdir().unwrap();
+        let tool = PythonTool::new(false);
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+        // Use alias "script" instead of "code" and write a plot in cwd
+        let args = serde_json::json!({
+            "script": "with open('sample_plot.png', 'wb') as f:\n    f.write(b'fakepng')\nprint('saved')"
+        });
+        let res = tool.execute(&args, &ctx).await;
+        assert!(!res.is_error, "failed: {}", res.content);
+        assert!(res.content.contains("saved"));
+
+        // Verify that sample_plot.png was quarantined into .vak/scratch/python/
+        let scratch_file = dir.path().join(".vak/scratch/python/sample_plot.png");
+        assert!(scratch_file.is_file(), "artifact was not quarantined to scratch");
+
+        // Verify cwd does not contain loose sample_plot.png
+        let cwd_file = dir.path().join("sample_plot.png");
+        assert!(!cwd_file.exists(), "loose file remained in workspace cwd");
+    }
+
+    #[tokio::test]
+    async fn python_eval_provides_debug_hint_on_missing_module() {
+        let dir = tempdir().unwrap();
+        let tool = PythonTool::new(false);
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let args = serde_json::json!({
+            "code": "import non_existent_package_xyz123"
+        });
+        let res = tool.execute(&args, &ctx).await;
+        assert!(res.is_error);
+        assert!(res.content.contains("ModuleNotFoundError"));
+        assert!(res.content.contains("[debug hint] Missing module 'non_existent_package_xyz123'"));
+        assert!(res.content.contains("\"install_packages\": [\"non_existent_package_xyz123\"]"));
+    }
 }
+

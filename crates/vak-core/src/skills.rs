@@ -186,7 +186,12 @@ impl vak_tools::Tool for SkillTool {
                 r#"{"type":"invalid_arguments","capability":"skill","message":"missing required string 'name'"}"#,
             );
         };
-        let Some(skill) = self.skills.get(name) else {
+        let skill = self
+            .skills
+            .get(name)
+            .or_else(|| self.skills.get(&name.replace('_', "-")))
+            .or_else(|| self.skills.get(&name.replace('-', "_")));
+        let Some(skill) = skill else {
             return vak_tools::ToolOutput::error(format!(
                 r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
                 json_string(name)

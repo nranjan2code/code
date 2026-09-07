@@ -743,6 +743,11 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
                 signals.push("preview".into());
                 signals.push("component".into());
             }
+            "python_eval" => {
+                signals.push("python".into());
+                signals.push("telemetry".into());
+                signals.push("charts".into());
+            }
             _ => {}
         }
     }

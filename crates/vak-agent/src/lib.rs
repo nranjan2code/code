@@ -1327,7 +1327,10 @@ impl Agent {
                 return TurnOutcome::Completed { response };
             }
 
-            let calls = extract_tool_calls(&response);
+            let calls = extract_tool_calls(&response)
+                .into_iter()
+                .map(normalize_tool_call)
+                .collect::<Vec<_>>();
             if calls.is_empty() {
                 if let Some(reason) = self
                     .stop_gate(
@@ -2774,6 +2777,7 @@ impl Agent {
             .clone();
         let calls = calls
             .into_iter()
+            .map(normalize_tool_call)
             .map(|call| normalize_mcp_alias(call, &aliases))
             .collect::<Vec<_>>();
         let n = calls.len();
@@ -3287,6 +3291,60 @@ impl Agent {
     }
 }
 
+fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
+    let canonical = vak_tools::canonical_tool_name(&call.name);
+    if canonical != call.name {
+        call.name = canonical.to_string();
+    }
+    if call.name == "react_preview" && call.input.is_object() {
+        if let Some(obj) = call.input.as_object_mut() {
+            if !obj.contains_key("component_code") {
+                if let Some(code) = obj
+                    .get("code")
+                    .or_else(|| obj.get("component"))
+                    .or_else(|| obj.get("jsx"))
+                    .or_else(|| obj.get("tsx"))
+                    .cloned()
+                {
+                    obj.insert("component_code".into(), code);
+                }
+            }
+        }
+    } else if call.name == "python_eval" && call.input.is_object() {
+        if let Some(obj) = call.input.as_object_mut() {
+            if !obj.contains_key("code") {
+                if let Some(script) = obj.get("script").or_else(|| obj.get("python")).cloned() {
+                    let is_path = script
+                        .as_str()
+                        .is_some_and(|s| s.ends_with(".py") && !s.contains('\n'));
+                    if is_path && !obj.contains_key("script_path") {
+                        obj.insert("script_path".into(), script);
+                    } else {
+                        obj.insert("code".into(), script);
+                    }
+                }
+            }
+            if !obj.contains_key("script_path") {
+                if let Some(path) = obj.get("path").or_else(|| obj.get("file")).cloned() {
+                    obj.insert("script_path".into(), path);
+                }
+            }
+        }
+    } else if (call.name == "read" || call.name == "write" || call.name == "edit")
+        && call.input.is_object()
+    {
+        if let Some(obj) = call.input.as_object_mut() {
+            if !obj.contains_key("path") {
+                if let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned()
+                {
+                    obj.insert("path".into(), file_path);
+                }
+            }
+        }
+    }
+    call
+}
+
 fn normalize_mcp_alias(
     mut call: PendingToolCall,
     aliases: &std::collections::HashMap<String, McpToolAlias>,
@@ -3436,12 +3494,21 @@ async fn execute_one(
     let hook_name = call.name.clone();
     let hook_input = call.input.clone();
 
+    let matched_skill = skill_names.iter().find(|name| {
+        name.as_str() == call.name
+            || name.replace('-', "_") == call.name
+            || name.as_str() == call.name.replace('_', "-")
+    });
+
     let mut output = match tool {
-        None if skill_names.iter().any(|name| name == &call.name) => ToolRunOutput::Err(format!(
-            r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
-            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into())
-        )),
+        None if matched_skill.is_some() => {
+            let actual_skill = matched_skill.unwrap();
+            ToolRunOutput::Err(format!(
+                r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
+                serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+                serde_json::to_string(actual_skill).unwrap_or_else(|_| "\"invalid\"".into())
+            ))
+        }
         None => ToolRunOutput::Err(format!(
             r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
             serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
@@ -3878,4 +3945,56 @@ mod tool_recovery_tests {
         assert!(tool_recovery_hint("cancelled").is_none());
         assert!(tool_recovery_hint("429 rate limit").is_none());
     }
+
+    #[test]
+    fn test_normalize_tool_call_aliases() {
+        use super::{PendingToolCall, normalize_tool_call};
+
+        // Python alias and argument normalization
+        let python_call = PendingToolCall {
+            id: "call_1".into(),
+            name: "python_execution".into(),
+            input: serde_json::json!({
+                "script": "import matplotlib.pyplot as plt\nplt.plot([1, 2])"
+            }),
+        };
+        let normalized_py = normalize_tool_call(python_call);
+        assert_eq!(normalized_py.name, "python_eval");
+        assert_eq!(
+            normalized_py.input.get("code").and_then(|v| v.as_str()),
+            Some("import matplotlib.pyplot as plt\nplt.plot([1, 2])")
+        );
+
+        // React alias and argument normalization
+        let react_call = PendingToolCall {
+            id: "call_2".into(),
+            name: "react_component_preview".into(),
+            input: serde_json::json!({
+                "title": "Widget",
+                "code": "export default function Widget() { return <div/>; }"
+            }),
+        };
+        let normalized_react = normalize_tool_call(react_call);
+        assert_eq!(normalized_react.name, "react_preview");
+        assert_eq!(
+            normalized_react.input.get("component_code").and_then(|v| v.as_str()),
+            Some("export default function Widget() { return <div/>; }")
+        );
+
+        // Read file alias normalization
+        let read_call = PendingToolCall {
+            id: "call_3".into(),
+            name: "read_file".into(),
+            input: serde_json::json!({
+                "file_path": "src/main.rs"
+            }),
+        };
+        let normalized_read = normalize_tool_call(read_call);
+        assert_eq!(normalized_read.name, "read");
+        assert_eq!(
+            normalized_read.input.get("path").and_then(|v| v.as_str()),
+            Some("src/main.rs")
+        );
+    }
 }
+

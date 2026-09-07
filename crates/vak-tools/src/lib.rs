@@ -282,6 +282,48 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
         .collect()
 }
 
+/// Canonical tool name resolution for aliases and common model hallucinations.
+pub fn canonical_tool_name(name: &str) -> &str {
+    let trimmed = name.trim();
+    if trimmed.eq_ignore_ascii_case("python_eval")
+        || trimmed.eq_ignore_ascii_case("python-eval")
+        || trimmed.eq_ignore_ascii_case("python_execution")
+        || trimmed.eq_ignore_ascii_case("python-execution")
+        || trimmed.eq_ignore_ascii_case("python_sandbox")
+        || trimmed.eq_ignore_ascii_case("python-sandbox")
+        || trimmed.eq_ignore_ascii_case("python")
+        || trimmed.eq_ignore_ascii_case("py_eval")
+    {
+        return "python_eval";
+    }
+    if trimmed.eq_ignore_ascii_case("react_preview")
+        || trimmed.eq_ignore_ascii_case("react-preview")
+        || trimmed.eq_ignore_ascii_case("react_component_preview")
+        || trimmed.eq_ignore_ascii_case("react-component-preview")
+        || trimmed.eq_ignore_ascii_case("react_sandbox")
+        || trimmed.eq_ignore_ascii_case("react-sandbox")
+        || trimmed.eq_ignore_ascii_case("react_component")
+    {
+        return "react_preview";
+    }
+    if trimmed.eq_ignore_ascii_case("session-search") {
+        return "session_search";
+    }
+    if trimmed.eq_ignore_ascii_case("propose-skill") {
+        return "propose_skill";
+    }
+    if trimmed.eq_ignore_ascii_case("read-file") || trimmed.eq_ignore_ascii_case("read_file") {
+        return "read";
+    }
+    if trimmed.eq_ignore_ascii_case("write-file") || trimmed.eq_ignore_ascii_case("write_file") {
+        return "write";
+    }
+    if trimmed.eq_ignore_ascii_case("edit-file") || trimmed.eq_ignore_ascii_case("edit_file") {
+        return "edit";
+    }
+    name
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,4 +388,49 @@ mod tests {
         assert_eq!(ok.classify(), ToolErrorKind::Unknown);
         assert!(!ok.classify().is_correctable());
     }
+
+    #[test]
+    fn canonical_tool_name_resolves_common_hallucinations_and_aliases() {
+        for python_variant in [
+            "python_eval",
+            "python-eval",
+            "python_execution",
+            "python-execution",
+            "python_sandbox",
+            "python-sandbox",
+            "python",
+            "py_eval",
+            " PYTHON_EXECUTION ",
+        ] {
+            assert_eq!(
+                canonical_tool_name(python_variant),
+                "python_eval",
+                "failed for variant: {python_variant}"
+            );
+        }
+
+        for react_variant in [
+            "react_preview",
+            "react-preview",
+            "react_component_preview",
+            "react-component-preview",
+            "react_sandbox",
+            "react-sandbox",
+            "react_component",
+            " React_Component_Preview ",
+        ] {
+            assert_eq!(
+                canonical_tool_name(react_variant),
+                "react_preview",
+                "failed for variant: {react_variant}"
+            );
+        }
+
+        assert_eq!(canonical_tool_name("read_file"), "read");
+        assert_eq!(canonical_tool_name("write_file"), "write");
+        assert_eq!(canonical_tool_name("edit_file"), "edit");
+        assert_eq!(canonical_tool_name("session-search"), "session_search");
+        assert_eq!(canonical_tool_name("unknown_tool"), "unknown_tool");
+    }
 }
+
