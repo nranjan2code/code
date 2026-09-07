@@ -41,6 +41,13 @@ pub enum SandboxEvent {
         size_bytes: u64,
     },
 
+    /// Periodic resource usage telemetry for long-running executions.
+    ProcessTelemetry {
+        elapsed_ms: u64,
+        cpu_percent: f32,
+        memory_bytes: u64,
+    },
+
     /// The execution finished.
     ExecutionFinished {
         exit_code: i32,
@@ -120,6 +127,14 @@ impl SandboxEventSink {
         });
     }
 
+    pub fn emit_telemetry(&self, elapsed_ms: u64, cpu_percent: f32, memory_bytes: u64) {
+        self.emit(SandboxEvent::ProcessTelemetry {
+            elapsed_ms,
+            cpu_percent,
+            memory_bytes,
+        });
+    }
+
     pub fn emit_finished(&self, exit_code: i32, duration_ms: u64, artifacts: Vec<String>) {
         self.emit(SandboxEvent::ExecutionFinished {
             exit_code,
@@ -127,6 +142,30 @@ impl SandboxEventSink {
             artifacts,
         });
     }
+}
+
+/// Folds carriage returns (`\r`) in terminal output so progress bars and
+/// in-place line rewrites don't produce duplicate or chaotic lines.
+pub fn fold_carriage_returns(text: &str) -> String {
+    if !text.contains('\r') {
+        return text.to_string();
+    }
+    let has_trailing_newline = text.ends_with('\n');
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains('\r') {
+            if let Some(last) = line.split('\r').rfind(|s| !s.is_empty()) {
+                out.push_str(last);
+            }
+        } else {
+            out.push_str(line);
+        }
+        if i + 1 < lines.len() || has_trailing_newline {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -171,5 +210,23 @@ mod tests {
         let (sink, mut rx) = SandboxEventSink::new();
         sink.emit_stdout("");
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn telemetry_emitted_and_collected() {
+        let (sink, mut rx) = SandboxEventSink::new();
+        sink.emit_telemetry(1500, 12.5, 45_000_000);
+        let ev = rx.try_recv().unwrap();
+        assert!(matches!(ev, SandboxEvent::ProcessTelemetry { elapsed_ms: 1500, memory_bytes: 45_000_000, .. }));
+    }
+
+    #[test]
+    fn test_fold_carriage_returns() {
+        let raw = "Downloading: 10%\rDownloading: 50%\rDownloading: 100%\nDone!\n";
+        let folded = fold_carriage_returns(raw);
+        assert_eq!(folded, "Downloading: 100%\nDone!\n");
+
+        let no_cr = "hello\nworld\n";
+        assert_eq!(fold_carriage_returns(no_cr), no_cr);
     }
 }

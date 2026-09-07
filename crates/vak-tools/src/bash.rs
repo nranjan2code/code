@@ -66,9 +66,13 @@ impl Tool for BashTool {
             isolate_process_group(&mut cmd);
         }
 
+        let scratch_dir = ctx.cwd.join(".vak").join("scratch");
+        let _ = std::fs::create_dir_all(&scratch_dir);
+        let before_scratch = collect_scratch_files(&scratch_dir);
+
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
-            sink.emit_execution_started("bash", command, "bash", &ctx.cwd.display().to_string());
+            sink.emit_execution_started("bash", command, "bash", &scratch_dir.display().to_string());
         }
 
         let mut child = match cmd.spawn() {
@@ -81,6 +85,29 @@ impl Tool for BashTool {
                 return ToolOutput::error(format!("spawn failed: {e}"));
             }
         };
+
+        let child_pid = child.id();
+        let telemetry_cancel = tokio_util::sync::CancellationToken::new();
+        let telemetry_token = telemetry_cancel.clone();
+        let telemetry_sink = ctx.sandbox_sink.clone();
+        let telemetry_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+            let t0 = std::time::Instant::now();
+            loop {
+                tokio::select! {
+                    _ = telemetry_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        if let Some(ref sink) = telemetry_sink {
+                            let elapsed = t0.elapsed().as_millis() as u64;
+                            if elapsed >= 400 {
+                                let rss = probe_process_memory(child_pid);
+                                sink.emit_telemetry(elapsed, 0.0, rss);
+                            }
+                        }
+                    }
+                }
+            }
+        });
 
         let mut stdout = child.stdout.take();
         let mut stderr = child.stderr.take();
@@ -103,6 +130,8 @@ impl Tool for BashTool {
         let cancelled = ctx.cancel.cancelled();
         tokio::select! {
             _ = timeout => {
+                telemetry_cancel.cancel();
+                let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
@@ -112,6 +141,8 @@ impl Tool for BashTool {
                 return ToolOutput::error(format!("command timed out after {timeout_ms}ms"));
             }
             _ = cancelled => {
+                telemetry_cancel.cancel();
+                let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
@@ -121,6 +152,8 @@ impl Tool for BashTool {
                 return ToolOutput::error("command cancelled");
             }
             status = child.wait() => {
+                telemetry_cancel.cancel();
+                let _ = telemetry_handle.await;
                 let status = match status {
                     Ok(s) => s,
                     Err(e) => {
@@ -135,13 +168,19 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
 
+                let new_artifacts = scan_new_scratch_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                let mut artifact_paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
+                    for (rel_path, mime, size) in &new_artifacts {
+                        sink.emit_artifact(rel_path, mime, *size);
+                        artifact_paths.push(rel_path.clone());
+                    }
                     if status.success()
                         && let Some(packages) = detect_installed_packages(command)
                     {
                         sink.emit_packages_installed(&packages);
                     }
-                    sink.emit_finished(status.code().unwrap_or(-1), duration_ms, Vec::new());
+                    sink.emit_finished(status.code().unwrap_or(-1), duration_ms, artifact_paths);
                 }
 
                 let mut text = String::new();
@@ -273,6 +312,112 @@ async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+fn probe_process_memory(pid: Option<u32>) -> u64 {
+    let Some(pid) = pid else { return 0 };
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(statm) = std::fs::read_to_string(format!("/proc/{pid}/statm")) {
+            let mut parts = statm.split_whitespace();
+            if let Some(pages_str) = parts.nth(1) {
+                if let Ok(pages) = pages_str.parse::<u64>() {
+                    return pages * 4096;
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            && out.status.success()
+        {
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if let Ok(kb) = text.parse::<u64>() {
+                return kb * 1024;
+            }
+        }
+    }
+    0
+}
+
+fn collect_scratch_files(
+    dir: &std::path::Path,
+) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
+    let mut map = std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && let Ok(meta) = path.metadata()
+            {
+                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                map.insert(path, mtime);
+            }
+        }
+    }
+    map
+}
+
+fn scan_new_scratch_artifacts(
+    scratch_dir: &std::path::Path,
+    before: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+    cwd: &std::path::Path,
+) -> Vec<(String, String, u64)> {
+    let mut artifacts = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(scratch_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && let Ok(meta) = path.metadata()
+            {
+                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                let is_new = match before.get(&path) {
+                    None => true,
+                    Some(&prev) => mtime > prev,
+                };
+                if is_new {
+                    let rel = path
+                        .strip_prefix(cwd)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    let mime = guess_mime_type(&path);
+                    artifacts.push((rel, mime, meta.len()));
+                }
+            }
+        }
+    }
+    artifacts
+}
+
+fn guess_mime_type(path: &std::path::Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
+        "md" => "text/markdown",
+        "txt" | "log" => "text/plain",
+        "pdf" => "application/pdf",
+        "zip" | "tar" | "gz" => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
 fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() >= 3 && ((parts[0] == "pip" || parts[0] == "pip3") && parts[1] == "install") {
@@ -304,6 +449,24 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
         if !pkgs.is_empty() {
             return Some(pkgs);
         }
+    } else if parts.len() >= 3 && (parts[0] == "uv" && (parts[1] == "add" || parts[1] == "pip")) {
+        let pkgs: Vec<String> = parts[2..]
+            .iter()
+            .filter(|p| !p.starts_with('-') && **p != "install")
+            .map(|p| p.to_string())
+            .collect();
+        if !pkgs.is_empty() {
+            return Some(pkgs);
+        }
+    } else if parts.len() >= 3 && (parts[0] == "pnpm" || parts[0] == "yarn") && (parts[1] == "add") {
+        let pkgs: Vec<String> = parts[2..]
+            .iter()
+            .filter(|p| !p.starts_with('-'))
+            .map(|p| p.to_string())
+            .collect();
+        if !pkgs.is_empty() {
+            return Some(pkgs);
+        }
     }
     None
 }
@@ -322,5 +485,41 @@ mod tests {
                 .get_envs()
                 .all(|(key, _)| key != "VAK_TEST_SECRET")
         );
+    }
+
+    #[test]
+    fn package_detection_covers_multiple_ecosystems() {
+        use super::detect_installed_packages;
+        assert_eq!(
+            detect_installed_packages("pip install numpy pandas"),
+            Some(vec!["numpy".into(), "pandas".into()])
+        );
+        assert_eq!(
+            detect_installed_packages("npm i -D typescript solid-js"),
+            Some(vec!["typescript".into(), "solid-js".into()])
+        );
+        assert_eq!(
+            detect_installed_packages("cargo add tokio serde"),
+            Some(vec!["tokio".into(), "serde".into()])
+        );
+        assert_eq!(
+            detect_installed_packages("uv add fastapi uvicorn"),
+            Some(vec!["fastapi".into(), "uvicorn".into()])
+        );
+        assert_eq!(
+            detect_installed_packages("pnpm add tailwindcss"),
+            Some(vec!["tailwindcss".into()])
+        );
+        assert_eq!(detect_installed_packages("ls -la"), None);
+    }
+
+    #[test]
+    fn mime_type_guessing() {
+        use super::guess_mime_type;
+        use std::path::Path;
+        assert_eq!(guess_mime_type(Path::new("chart.png")), "image/png");
+        assert_eq!(guess_mime_type(Path::new("index.html")), "text/html");
+        assert_eq!(guess_mime_type(Path::new("data.csv")), "text/csv");
+        assert_eq!(guess_mime_type(Path::new("unknown.xyz")), "application/octet-stream");
     }
 }

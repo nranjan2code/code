@@ -205,6 +205,7 @@ export type SandboxEvent =
   | { kind: "Stderr"; chunk: string }
   | { kind: "PackageInstalled"; packages: string[] }
   | { kind: "ArtifactGenerated"; path: string; mime_type: string; size_bytes: number }
+  | { kind: "ProcessTelemetry"; elapsed_ms: number; cpu_percent: number; memory_bytes: number }
   | { kind: "ExecutionFinished"; exit_code: number; duration_ms: number; artifacts: string[] };
 
 export type AgentEvent =

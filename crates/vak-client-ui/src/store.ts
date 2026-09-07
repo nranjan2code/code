@@ -120,6 +120,8 @@ export interface WorkbenchExecution {
   status: "running" | "completed" | "failed";
   exitCode?: number;
   durationMs?: number;
+  memoryBytes?: number;
+  cpuPercent?: number;
   packages: string[];
   artifacts: Array<{ path: string; mimeType: string; sizeBytes: number }>;
   timestamp: string;
@@ -897,6 +899,22 @@ export function applyEvent(
                     ...e.artifacts,
                     { path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes },
                   ],
+                }
+              : e
+          )
+        );
+      }
+    } else if (sb.kind === "ProcessTelemetry") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) =>
+            e.id === active
+              ? {
+                  ...e,
+                  durationMs: sb.elapsed_ms,
+                  memoryBytes: sb.memory_bytes,
+                  cpuPercent: sb.cpu_percent,
                 }
               : e
           )
