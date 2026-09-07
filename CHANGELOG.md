@@ -5,6 +5,30 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.18 — 2026-09-07
+
+### Plugin runtime admission unifies on the store, and network knobs speak one language
+
+- **One admission decision point, one tool set.** `built_in_runtime_plugin_tools`
+  is now the single place the built-in `python_eval`/`react_preview` runtime
+  tools are decided; the plugin-tier and tool-name-tier filter sets agree, so
+  the tool vector, the derived name packet, and the per-channel filter all
+  describe the same executable surface (invariant 30).
+- **Network is a strict lattice, decided once.** Config-level `network_deny`
+  beats `network_allow` (entry wins, `*` wins), an absent allowlist denies by
+  default, and the channel overlay can only narrow egress — never grant it.
+  The Settings toggle persists its grant atomically and the server refuses a
+  non-empty grant for an untrusted project layer.
+- **The plugin store owns package lifecycle, and the runtime follows it.**
+  Enable/Disable/Remove on a runtime package now changes the executable
+  surface, not just the listing: the runtimes live and die with their owning
+  plugin. A store that was never written is vacuous (config alone decides),
+  so pre-setup homes and synthetic test homes stay deterministic. `[plugins]`
+  remains the privileged overlay above.
+- **`react.preview` becomes a real typed result.** The preview tool emits a
+  semantic envelope, the exact single-render invariant holds (projection emits
+  one structured item), and `count` equals the model-visible projection length.
+
 ## 3.0.17 — 2026-09-06
 
 ### Multi-turn continuity, conversational drift handling, and local context discovery
