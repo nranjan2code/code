@@ -4,6 +4,32 @@
 unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
+## 3.0.23 — 2026-09-07
+
+### Distributed Event & Message Fabric (`crates/vak-bus`, Doc 53)
+
+- **Green-field distributed event fabric for multi-agent fleets.**
+  Added `crates/vak-bus` providing high-throughput, zero-trust event distribution and durable
+  asynchronous work queues for thousands of concurrent agents across local, headless Linux, hybrid,
+  and multi-cloud environments.
+- **Universal CloudEvents 1.0 with Merkle Causal Lineage & W3C Tracing.**
+  Standard CloudEvents 1.0 envelope (`id`, `source`, `type`, `time`, `subject`, `data`) augmented with
+  W3C Distributed Tracing (`traceparent`, `tracestate`, `child_span`) and SHA-256 Merkle causal hash chaining
+  for cryptographic provenance and causal verification across multi-agent workflows.
+- **Defense-in-depth zero-trust envelope security.**
+  End-to-end authenticated AES-256-GCM encryption with HKDF-SHA256 key derivation and 12-byte random nonces.
+  Binds event ID, type, workspace, and sequence via Authenticated Additional Data (AAD), failing fast on tampering.
+- **Deterministic hierarchical subject algebra & least-privilege ACLs.**
+  Structured taxonomy for broadcast events (`vak.events.<ws>.<sess>.*`), durable work queues
+  (`vak.work.<ws>.<role>.task`), direct inboxes (`vak.agent.<ws>.<agent>.inbox`), and dead letters
+  (`vak.dlq.<ws>.<agent>.failed`). Governed by role-based `AclPolicy` rules.
+- **Lock-free telemetry, W3C context propagation & Dead-Letter Queues.**
+  Atomic performance counters (`BusMetrics`), automated cross-process W3C trace propagation, and
+  dead-letter event routing with poison-pill quarantine and diagnostic logs.
+- **Production NATS Core + JetStream engine and zero-dependency InMemoryBus.**
+  Native asynchronous `NatsBus` with pull-consumer work claiming, ACK/NAK semantics, alongside a
+  real, zero-dependency `InMemoryBus` for local development and CI testing. Zero mocks or stubs.
+
 ## 3.0.22 — 2026-09-07
 
 ### 2026 State-of-the-Art Sandboxed Execution Engine across CLI, Desktop, and Headless Linux
