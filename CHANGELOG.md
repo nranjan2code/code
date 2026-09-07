@@ -5,6 +5,42 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.19 — 2026-09-07
+
+### Connected sandbox runtimes: python_eval and react_preview
+
+- **Connected write→execute→debug→result loop.** The system prompt now
+  establishes `python_eval` and `react_preview` as first-class sandbox
+  runtimes with an explicit write→execute→debug→result cycle, and documents
+  the shared scratch-space connection between them: Python processes data and
+  generates figures, and React components consume that data via props or
+  scratch files to render interactive visualizers inside the chat and the
+  Preview Dock.
+- **Dual-artifact scratch management for react_preview.** Components are
+  written as `.tsx` source and compiled into an isolated `.html` preview under
+  `.vak/scratch/previews/`, with `component_path` support. Window `error` and
+  `unhandledrejection` diagnostics are injected into the preview HTML so
+  client-side failures surface inside the sandbox instead of vanishing into a
+  blank frame.
+- **Headless Python + Matplotlib.** `python_eval` runs headless (Agg) and
+  auto-captures figures into `.vak/scratch/python/`; `python3 -m pip install`
+  is supported with cross-platform package management, and `ModuleNotFoundError`
+  now carries targeted debug hints. All artifacts are quarantined to
+  `.vak/scratch/python/` and never contaminate the project source tree.
+- **Quarantined, scrubbed-execution runtimes.** Both runtimes execute in
+  disconnected process groups with fully scrubbed environments (`env_clear`),
+  zero parent API keys or secrets leaked, and a strict CSP
+  (`connect-src 'none'`) on previews — `pip install` is network-gated by the
+  same privileged network model as MCP (invariant 35).
+- **Broker-level tool normalization + canonical resolution.** `vak-agent`
+  normalizes tool calls through a single normalization seam, and `vak-tools`
+  resolves built-in runtime tool names canonically so the tool vector, the
+  derived name packet, and the per-channel filter all describe the same
+  executable surface (invariant 30).
+- **Permission + delivery signals.** Runtime admission now carries
+  permission descriptions in `vak-permission` and the corresponding
+  presentation signals in `vak-delivery`.
+
 ## 3.0.18 — 2026-09-07
 
 ### Plugin runtime admission unifies on the store, and network knobs speak one language
