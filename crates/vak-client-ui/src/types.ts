@@ -193,6 +193,20 @@ type StreamEvent =
   | { ToolInputDelta: { index: number; delta: string; partial: AssistantMessage } }
   | { End: { message: AssistantMessage } };
 
+export type SandboxEvent =
+  | {
+      kind: "ExecutionStarted";
+      tool: string;
+      code_preview: string;
+      language: string;
+      scratch_dir: string;
+    }
+  | { kind: "Stdout"; chunk: string }
+  | { kind: "Stderr"; chunk: string }
+  | { kind: "PackageInstalled"; packages: string[] }
+  | { kind: "ArtifactGenerated"; path: string; mime_type: string; size_bytes: number }
+  | { kind: "ExecutionFinished"; exit_code: number; duration_ms: number; artifacts: string[] };
+
 export type AgentEvent =
   | { TurnStart: { turn: number } }
   | { Stream: StreamEvent }
@@ -219,7 +233,8 @@ export type AgentEvent =
   | { SubagentToolCall: { label: string; name: string; is_error: boolean } }
   | { SubagentUsage: { label: string; input_tokens: number; output_tokens: number } }
   | { SubagentFinished: { label: string; is_error: boolean; elapsed_ms: number } }
-  | { RunFinished: { summary: string; is_error: boolean } };
+  | { RunFinished: { summary: string; is_error: boolean } }
+  | { Sandbox: SandboxEvent };
 
 export interface SessionSummary {
   session_id: string;

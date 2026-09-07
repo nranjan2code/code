@@ -92,6 +92,7 @@ import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
 import PreviewPane from "./components/PreviewPane";
+import WorkbenchPanel from "./components/WorkbenchPanel";
 import SubagentsPanel from "./components/SubagentsPanel";
 import CommitmentsPanel from "./components/CommitmentsPanel";
 import WorkspaceGate from "./components/WorkspaceGate";
@@ -1099,10 +1100,11 @@ export default function App() {
               <div class="dock" data-dock={tab()}>
                 <div class="dock-tabs">
                   <For each={[
+                    ["workbench", "Workbench", "terminal"],
                     ["preview", "Preview", "preview"],
                     ["diff", "Changes", "diff"],
-                    ["terminal", "Terminal", "terminal"],
-                    ["editor", "Editor", "code"],
+                    ["terminal", "Terminal", "code"],
+                    ["editor", "Editor", "file"],
                     ["pr", "Pull request", "git"],
                     ["agents", "Subagents", "grid"],
                     ["feeds", "Feeds", "bell"],
@@ -1128,6 +1130,9 @@ export default function App() {
                     <Icon name="close" />
                   </button>
                 </div>
+                <Show when={tab() === "workbench"}>
+                  <WorkbenchPanel />
+                </Show>
                 <Show when={tab() === "diff"}>
                   <DiffPane sessionId={diffTarget() ?? activeId()} />
                 </Show>

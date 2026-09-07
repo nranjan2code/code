@@ -939,8 +939,8 @@ pub fn seed_global_hooks_if_empty(hooks: &[HookConfig]) -> Result<bool, ConfigEr
     Ok(true)
 }
 
-/// Seed the default sandboxed execution runtimes (`python-sandbox`, `react-sandbox`)
-/// into the given config file's `[plugins] network_allow` table if unconfigured.
+/// Seed the default execution plugin policy into the given config file's
+/// `[plugins] network_allow` table if unconfigured.
 pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigError> {
     let mut root = if path.is_file() {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -974,10 +974,7 @@ pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigEr
     };
     plugins.insert(
         "network_allow".into(),
-        toml::Value::Array(vec![
-            toml::Value::String("python-sandbox".into()),
-            toml::Value::String("react-sandbox".into()),
-        ]),
+        toml::Value::Array(vec![]),
     );
     let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
         path: path.to_path_buf(),
@@ -1003,8 +1000,7 @@ pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigEr
     Ok(true)
 }
 
-/// Seed the default sandboxed execution runtimes (`python-sandbox`, `react-sandbox`)
-/// into the Shared layer's `[plugins] network_allow` table once if unconfigured.
+/// Seed the Shared layer's `[plugins] network_allow` table once if unconfigured.
 pub fn seed_global_plugins_network_allow_if_empty() -> Result<bool, ConfigError> {
     let path = global_path().ok_or_else(|| ConfigError::Write {
         path: PathBuf::from("<shared>"),
@@ -4623,18 +4619,18 @@ mod tests {
             dir.path(),
             "deny = [\"bash\"]\n[plugins]\nnetwork_deny = [\"older-plugin\"]\n",
         );
-        let grant = Some(vec!["python-sandbox".into(), "react-sandbox".into()]);
+        let grant = Some(vec!["plugin-alpha".into(), "plugin-beta".into()]);
         persist_plugins_network_allow(&project_path(dir.path()), grant).unwrap();
         let cfg = load_with_trust(dir.path(), true).unwrap();
-        assert!(cfg.plugins.is_network_allowed("python-sandbox"));
-        assert!(cfg.plugins.is_network_allowed("react-sandbox"));
+        assert!(cfg.plugins.is_network_allowed("plugin-alpha"));
+        assert!(cfg.plugins.is_network_allowed("plugin-beta"));
         assert!(!cfg.plugins.is_network_allowed("web-search-plugin"));
         assert!(cfg.plugins.network_deny.contains(&"older-plugin".into()));
         assert_eq!(cfg.deny, vec!["bash"]);
 
         persist_plugins_network_allow(&project_path(dir.path()), Some(vec![])).unwrap();
         let cfg = load_with_trust(dir.path(), true).unwrap();
-        assert!(!cfg.plugins.is_network_allowed("python-sandbox"));
+        assert!(!cfg.plugins.is_network_allowed("plugin-alpha"));
         assert_eq!(cfg.plugins.network_deny, vec!["older-plugin"]);
         assert_eq!(cfg.deny, vec!["bash"]);
     }
@@ -4648,8 +4644,6 @@ mod tests {
         assert!(seed_plugins_network_allow_if_empty(&path).unwrap());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("network_allow"));
-        assert!(text.contains("python-sandbox"));
-        assert!(text.contains("react-sandbox"));
 
         // Second run: no-op, returns false
         assert!(!seed_plugins_network_allow_if_empty(&path).unwrap());
@@ -4796,40 +4790,40 @@ mod channel_autonomy_tests {
     #[test]
     fn plugin_resolved_allow_deny_network_matrix() {
         let mut resolved = PluginResolved::default();
-        assert!(resolved.is_enabled("python-sandbox"));
-        assert!(!resolved.is_network_allowed("python-sandbox"));
+        assert!(resolved.is_enabled("test-plugin"));
+        assert!(!resolved.is_network_allowed("test-plugin"));
 
         // Enable network
-        resolved.network_allow = Some(vec!["python-sandbox".into()]);
-        assert!(resolved.is_network_allowed("python-sandbox"));
+        resolved.network_allow = Some(vec!["test-plugin".into()]);
+        assert!(resolved.is_network_allowed("test-plugin"));
 
         // Global or channel deny takes priority
-        resolved.network_deny.push("python-sandbox".into());
-        assert!(!resolved.is_network_allowed("python-sandbox"));
-        assert!(resolved.is_enabled("python-sandbox"));
+        resolved.network_deny.push("test-plugin".into());
+        assert!(!resolved.is_network_allowed("test-plugin"));
+        assert!(resolved.is_enabled("test-plugin"));
 
         // Disabling or denying plugin shuts it off completely
-        resolved.disabled.push("python-sandbox".into());
-        assert!(!resolved.is_enabled("python-sandbox"));
-        assert!(!resolved.is_network_allowed("python-sandbox"));
+        resolved.disabled.push("test-plugin".into());
+        assert!(!resolved.is_enabled("test-plugin"));
+        assert!(!resolved.is_network_allowed("test-plugin"));
     }
 
     #[test]
     fn channel_policy_merges_plugin_network_and_allow_deny() {
         let bot = ChannelPolicy {
-            plugins_allow: Some(vec!["python-sandbox".into(), "react-sandbox".into()]),
+            plugins_allow: Some(vec!["test-plugin-a".into(), "test-plugin-b".into()]),
             plugins_deny: vec!["untrusted-plugin".into()],
-            plugins_network_deny: vec!["react-sandbox".into()],
+            plugins_network_deny: vec!["test-plugin-b".into()],
             ..ChannelPolicy::default()
         };
         let chat = ChannelPolicy {
-            plugins_allow: Some(vec!["python-sandbox".into()]),
+            plugins_allow: Some(vec!["test-plugin-a".into()]),
             plugins_deny: vec!["banned-plugin".into()],
-            plugins_network_deny: vec!["python-sandbox".into()],
+            plugins_network_deny: vec!["test-plugin-a".into()],
             ..ChannelPolicy::default()
         };
         let merged = ChannelPolicy::merge(&bot, &chat);
-        assert_eq!(merged.plugins_allow, Some(vec!["python-sandbox".into()]));
+        assert_eq!(merged.plugins_allow, Some(vec!["test-plugin-a".into()]));
         assert!(
             merged
                 .plugins_deny
@@ -4839,12 +4833,12 @@ mod channel_autonomy_tests {
         assert!(
             merged
                 .plugins_network_deny
-                .contains(&"react-sandbox".to_string())
+                .contains(&"test-plugin-b".to_string())
         );
         assert!(
             merged
                 .plugins_network_deny
-                .contains(&"python-sandbox".to_string())
+                .contains(&"test-plugin-a".to_string())
         );
     }
 }

@@ -30,6 +30,7 @@ pub struct ToolContext {
     pub cancel: CancellationToken,
     pub limits: OutputLimits,
     pub sandbox: Option<Arc<dyn crate::sandbox::Sandbox>>,
+    pub sandbox_sink: Option<crate::sandbox_events::SandboxEventSink>,
 }
 
 impl ToolContext {
@@ -39,7 +40,13 @@ impl ToolContext {
             cancel: CancellationToken::new(),
             limits: OutputLimits::default(),
             sandbox: None,
+            sandbox_sink: None,
         }
+    }
+
+    pub fn with_sandbox_sink(mut self, sink: crate::sandbox_events::SandboxEventSink) -> Self {
+        self.sandbox_sink = Some(sink);
+        self
     }
 
     pub fn resolve(&self, p: &Path) -> PathBuf {
@@ -95,6 +102,12 @@ impl ToolContext {
             "{head}\n[… {omitted} chars truncated …]{spill_note}\n{tail}",
             omitted = total_chars.saturating_sub(head_chars + tail_chars)
         )
+    }
+}
+
+impl Default for ToolContext {
+    fn default() -> Self {
+        Self::new(PathBuf::new())
     }
 }
 

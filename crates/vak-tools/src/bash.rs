@@ -66,22 +66,35 @@ impl Tool for BashTool {
             isolate_process_group(&mut cmd);
         }
 
+        let start_instant = std::time::Instant::now();
+        if let Some(ref sink) = ctx.sandbox_sink {
+            sink.emit_execution_started("bash", command, "bash", &ctx.cwd.display().to_string());
+        }
+
         let mut child = match cmd.spawn() {
             Ok(c) => c,
-            Err(e) => return ToolOutput::error(format!("spawn failed: {e}")),
+            Err(e) => {
+                let duration_ms = start_instant.elapsed().as_millis() as u64;
+                if let Some(ref sink) = ctx.sandbox_sink {
+                    sink.emit_finished(-1, duration_ms, Vec::new());
+                }
+                return ToolOutput::error(format!("spawn failed: {e}"));
+            }
         };
 
         let mut stdout = child.stdout.take();
         let mut stderr = child.stderr.take();
+        let sink_out = ctx.sandbox_sink.clone();
+        let sink_err = ctx.sandbox_sink.clone();
         let out_fut = tokio::spawn(async move {
             match stdout.as_mut() {
-                Some(r) => read_capped(r).await,
+                Some(r) => read_capped_streaming(r, sink_out, false).await,
                 None => String::new(),
             }
         });
         let err_fut = tokio::spawn(async move {
             match stderr.as_mut() {
-                Some(r) => read_capped(r).await,
+                Some(r) => read_capped_streaming(r, sink_err, true).await,
                 None => String::new(),
             }
         });
@@ -92,20 +105,44 @@ impl Tool for BashTool {
             _ = timeout => {
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                let duration_ms = start_instant.elapsed().as_millis() as u64;
+                if let Some(ref sink) = ctx.sandbox_sink {
+                    sink.emit_finished(-1, duration_ms, Vec::new());
+                }
                 return ToolOutput::error(format!("command timed out after {timeout_ms}ms"));
             }
             _ = cancelled => {
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                let duration_ms = start_instant.elapsed().as_millis() as u64;
+                if let Some(ref sink) = ctx.sandbox_sink {
+                    sink.emit_finished(-1, duration_ms, Vec::new());
+                }
                 return ToolOutput::error("command cancelled");
             }
             status = child.wait() => {
                 let status = match status {
                     Ok(s) => s,
-                    Err(e) => return ToolOutput::error(format!("wait failed: {e}")),
+                    Err(e) => {
+                        let duration_ms = start_instant.elapsed().as_millis() as u64;
+                        if let Some(ref sink) = ctx.sandbox_sink {
+                            sink.emit_finished(-1, duration_ms, Vec::new());
+                        }
+                        return ToolOutput::error(format!("wait failed: {e}"));
+                    }
                 };
                 let out = out_fut.await.unwrap_or_default();
                 let err = err_fut.await.unwrap_or_default();
+                let duration_ms = start_instant.elapsed().as_millis() as u64;
+
+                if let Some(ref sink) = ctx.sandbox_sink {
+                    if status.success()
+                        && let Some(packages) = detect_installed_packages(command)
+                    {
+                        sink.emit_packages_installed(&packages);
+                    }
+                    sink.emit_finished(status.code().unwrap_or(-1), duration_ms, Vec::new());
+                }
 
                 let mut text = String::new();
                 if !out.is_empty() {
@@ -205,7 +242,11 @@ pub fn kill_process_group(pid: &Option<u32>) {
     }
 }
 
-async fn read_capped<R: AsyncReadExt + Unpin>(r: &mut R) -> String {
+async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
+    r: &mut R,
+    sink: Option<crate::sandbox_events::SandboxEventSink>,
+    is_stderr: bool,
+) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
@@ -213,7 +254,16 @@ async fn read_capped<R: AsyncReadExt + Unpin>(r: &mut R) -> String {
             Ok(0) | Err(_) => break,
             Ok(n) => {
                 let space = MAX_CAPTURE.saturating_sub(buf.len());
-                buf.extend_from_slice(&chunk[..n.min(space)]);
+                let taken = n.min(space);
+                buf.extend_from_slice(&chunk[..taken]);
+                if let Some(ref sink) = sink {
+                    let chunk_str = String::from_utf8_lossy(&chunk[..n]);
+                    if is_stderr {
+                        sink.emit_stderr(&chunk_str);
+                    } else {
+                        sink.emit_stdout(&chunk_str);
+                    }
+                }
                 if buf.len() >= MAX_CAPTURE {
                     break;
                 }
@@ -221,6 +271,41 @@ async fn read_capped<R: AsyncReadExt + Unpin>(r: &mut R) -> String {
         }
     }
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.len() >= 3 && ((parts[0] == "pip" || parts[0] == "pip3") && parts[1] == "install") {
+        let pkgs: Vec<String> = parts[2..]
+            .iter()
+            .filter(|p| !p.starts_with('-'))
+            .map(|p| p.to_string())
+            .collect();
+        if !pkgs.is_empty() {
+            return Some(pkgs);
+        }
+    } else if parts.len() >= 3
+        && (parts[0] == "npm" && (parts[1] == "install" || parts[1] == "i" || parts[1] == "add"))
+    {
+        let pkgs: Vec<String> = parts[2..]
+            .iter()
+            .filter(|p| !p.starts_with('-'))
+            .map(|p| p.to_string())
+            .collect();
+        if !pkgs.is_empty() {
+            return Some(pkgs);
+        }
+    } else if parts.len() >= 3 && (parts[0] == "cargo" && parts[1] == "add") {
+        let pkgs: Vec<String> = parts[2..]
+            .iter()
+            .filter(|p| !p.starts_with('-'))
+            .map(|p| p.to_string())
+            .collect();
+        if !pkgs.is_empty() {
+            return Some(pkgs);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

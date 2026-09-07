@@ -43,8 +43,6 @@ fn builtin_domains(name: &str) -> Serves {
         "session_search" => &[Memory],
         "remember" | "propose_skill" => &[Memory],
         "commitments" => &[Memory, Orchestration],
-        "python_eval" => &[CodeExec, Documents],
-        "react_preview" => &[Web, Documents],
         // A tool this build does not classify stays undeclared, which means
         // it is never sliced away. Failing open is correct here: slicing
         // saves context, it does not enforce policy.

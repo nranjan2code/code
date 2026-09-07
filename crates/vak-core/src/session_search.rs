@@ -202,6 +202,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             limits: Default::default(),
             sandbox: None,
+            sandbox_sink: None,
         };
 
         let out = tool
@@ -236,6 +237,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             limits: Default::default(),
             sandbox: None,
+            sandbox_sink: None,
         };
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)

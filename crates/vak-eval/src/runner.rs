@@ -421,6 +421,7 @@ async fn run_case_with_tools(
         cancel: CancellationToken::new(),
         limits: Default::default(),
         sandbox: None,
+        sandbox_sink: None,
     };
     let verify_tool = BashTool;
     let verify_out = verify_tool

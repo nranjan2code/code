@@ -549,6 +549,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             limits: Default::default(),
             sandbox: None,
+            sandbox_sink: None,
         };
         let loaded = tool
             .execute(&serde_json::json!({"name": "code-task"}), &ctx)

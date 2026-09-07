@@ -8323,14 +8323,8 @@ async fn patch_config_scope(
                 "plugins_network_allow={grant:?} (persisted, shadowed by project)"
             ));
         } else {
-            let resolved_plugins = state.core.effective_plugins();
-            let python_net = if resolved_plugins.is_network_allowed("python-sandbox") {
-                "python-allowed"
-            } else {
-                "python-blocked"
-            };
             changes.push(format!(
-                "plugins_network_allow={grant:?}, effective={python_net}"
+                "plugins_network_allow={grant:?}"
             ));
         }
     }
@@ -10795,6 +10789,7 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
         cancel: CancellationToken::new(),
         limits: vak_tools::OutputLimits::default(),
         sandbox: core.agent_sandbox(),
+        sandbox_sink: None,
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
     let out = bash.execute(&args, &ctx).await;

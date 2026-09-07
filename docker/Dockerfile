@@ -50,7 +50,7 @@ FROM debian:bookworm-slim AS runtime
 # git:             worktrees and checkpoints are git operations, not optional.
 # bash:            the `bash` tool runs real commands.
 # curl:            the healthcheck below, and nothing else.
-# python3:         sandboxed execution runtimes (python_eval in .vak/scratch/python).
+# python3:         execution runtime support.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \

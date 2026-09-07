@@ -16,6 +16,7 @@ fn ctx_with(cwd: &std::path::Path, mode: SandboxMode) -> ToolContext {
         cancel: tokio_util::sync::CancellationToken::new(),
         limits: Default::default(),
         sandbox: Some(Arc::new(Seatbelt::new(mode, cwd))),
+        sandbox_sink: None,
     }
 }
 

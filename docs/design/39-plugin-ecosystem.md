@@ -312,20 +312,18 @@ present stale activation as current.
 | P3 | Git and signed catalogs, publisher identities, revocation, Discover/Sources UI | catalog compromise cannot change an installed digest or silently activate code |
 | P4 | remote MCP/OAuth, isolated MCP Apps UI adapter, organization policies | external connectors remain least-privilege and headless-compatible |
 | P5 | curated daily-user collection, quality/security review automation | useful cross-domain catalog with reproducible review evidence and no privileged shortcuts |
-| P6 | sandboxed workspace execution runtimes (Python & React), quarantined `.vak/scratch/` execution, network gating, UI preview cards and dual-mode preview dock | live in v3.0.16; zero secret leakage, isolated scratch containment, safe client iframe rendering |
+| P6 | sandboxed workspace execution runtimes (unified neutral `bash` runtime, live Workbench streaming, quarantined `.vak/scratch/` execution, and package detection) | live in v3.0.20; zero secret leakage, isolated scratch containment, real-time stdout/stderr streaming in Workbench |
 
-## Sandboxed execution runtimes (Phase 6 / v3.0.16)
+## Sandboxed execution runtimes (Phase 6 / v3.0.20)
 
-Vak workspaces require safe, repeatable execution for modern programming and
-frontend development workflows without compromising host security or workspace
-purity. Shipped in v3.0.16, execution runtimes are provided as built-in,
-governed capability plugins:
+Vak workspaces require safe, repeatable, and transparent execution for modern programming
+and development workflows without compromising host security or workspace purity. Rather
+than maintaining fragmented, stack-specific sandboxes (such as specialized Python or React eval
+runners), execution is unified under a single, neutral `bash` execution engine backed by
+the versioned broker boundary and observable in real-time in the Workbench panel.
 
-1. **`python-sandbox`** — provides the `python_eval` tool for executing Python
-   scripts, data analysis routines, and package-backed workflows.
-2. **`react-sandbox`** — provides the `react_preview` tool for compiling,
-   validating, and rendering self-contained React/Tailwind/Lucide component
-   bundles.
+Any stack—Python, Node/TypeScript, Rust, Go, shell scripts—can be installed and executed
+directly.
 
 ### Quarantined scratch execution
 
@@ -333,9 +331,8 @@ Workspaces maintain strict isolation between project source code and intermediat
 execution artifacts:
 
 - All generated execution scripts, virtual environments (`venv`), installed
-  packages (`site-packages`), compilation caches, and preview HTML bundles are
-  quarantined under `<workspace>/.vak/scratch/` (specifically
-  `.vak/scratch/python/` and `.vak/scratch/previews/`).
+  packages (`site-packages`, `node_modules`), compilation caches, and scratch files are
+  quarantined under `<workspace>/.vak/scratch/`.
 - The `.vak/` directory is gitignored by default; ephemeral execution artifacts
   never pollute the user's project git status or source tree.
 - Ephemeral assets are promoted into the project source tree only when the user
@@ -354,99 +351,18 @@ preventing ambient secret leakage:
 - Execution is strictly rooted in the canonical workspace directory; paths
   attempting directory traversal outside the workspace boundary fail closed.
 
-### Network governance and package management
+### Live Workbench observability and event streaming
 
-Runtime plugins adhere to the privileged network model established for MCP
-servers and broker tools:
+Execution commands stream live telemetry into the frontend Workbench panel:
 
-- Configured globally or per-workspace via `[plugins]` in `.vak/config.toml`:
-  `plugins_enabled` and `plugins_network_deny`. Outbound egress is granted by
-  the privileged `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
-  key (deny-by-default when absent) and is refused for an untrusted project
-  layer — the trusted user config is the grant site. Shared capability seeding
-  (`seed_shared_capabilities` / `vak setup seed`) seeds this key into
-  `~/vak-home/.vak/config.toml` by default so package installations (`pip install`)
-  and preview CDN assets succeed out-of-the-box without requiring manual TOML editing,
-  while operators can restrict them at any time via `network_deny` or an explicit
-  custom `network_allow`. The desktop Settings
-  **Plugins** tab exposes a per-plugin "Allow network" toggle that persists
-  this key and applies it from the next turn (no session rotation), and the
-  plugin listing reports the effective `network_allowed`/`network_denied`/
-  `network_allow` so a UI never edits a merged view.
-- The plugin store owns the runtime package lifecycle: a built-in runtime
-  tool is admitted only while its owning package is installed *and* enabled
-  in the store, so the Settings row's Enable/Disable/Remove buttons change
-  the executable surface, not just the listing. A store that was never
-  written is vacuous (config alone decides; pre-setup homes and synthetic
-  test homes stay deterministic); once any root's registry exists, the
-  package's own flag decides, workspace-first then shared, and `[plugins]`
-  remains the privileged overlay above.
-- Network precedence is a strict lattice, decided once at admission: the
-  plugin-level `network_deny` list always beats `network_allow` (entry wins,
-  `*` wins); an absent allowlist denies by default; the channel overlay's
-  `plugins_network_deny` stacks on top of the resolved result and can only
-  take egress away. There is exactly one decision point —
-  `built_in_runtime_plugin_tools`/`runtime_network` in `vak-core` — shared by
-  the tool admission and the name packet, so the two surfaces can never drift.
-  A plugin-contributed MCP server's `network` flag resolves through the same
-  `effective_plugins()` read, so the Settings toggle and a channel overlay
-  reach a contributed server exactly like they reach its runner tool.
-- Inbound channel overlays support `plugins_allow`, `plugins_deny`, and
-  `plugins_network_deny`.
-- When network access is disallowed (`plugins_network_deny = true` or lack of
-  explicit workspace network entitlement):
-  - Package installation (`pip install`) fails closed with an informative
-    diagnostic.
-  - Generated React preview bundles enforce a strict Content Security Policy
-    (`connect-src 'none'`) preventing client-side network egress.
-
-### Cross-surface preview presentation
-
-Compiled React previews integrate seamlessly across client surfaces:
-
-- **Delivery projection**: Rendered previews emit a self-declared structured
-  envelope (`semantic_type: "react.preview"` inside a `vak` fence) carrying
-  `preview_id`, `title`, `artifact_path`, `sandbox`, and `connect_src`. The
-  delivery worker parses it into an `OutputTimeline` item and the `ui.preview`
-  recipe (`crates/vak-delivery/src/skills.rs`) resolves a preview-first layout
-  on desktop with deterministic markdown fallback on terminal/telegram.
-- **In-stream Chat Cards**: `UIPreviewCard` mounts in the continuous chat
-  timeline with responsive viewport controls (Mobile 375px, Tablet 768px,
-  Desktop 1024px, Full width), safe iframe sandboxing (`sandbox="allow-scripts"`),
-  and React `ErrorBoundary` containment.
-- **Right Bar Preview Dock**: Upgraded to dual-mode operation supporting both
-  external dev server URLs (`http://localhost:...`) and live compiled Sandboxed
-  React UI previews with real-time reload and error inspection.
-- **Python envelope parity**: `python_eval` returns its captured stdout/stderr
-  verbatim (no surrounding fence, no wrapper), so a `vak` fence a script prints
-  is indistinguishable from one a model emits and is consumed by the same
-  name-agnostic parser (`structured_outputs_from_text`). There is deliberately
-  no python-specific adapter: every tool result — React runner, python, bash —
-  opts into a typed envelope the single way. The legacy chat tool row strips a
-  `vak` fence from its raw preview so the same call is not rendered twice
-  (JSON here, `UIPreviewCard` above); the pre-fence human summary survives.
-- **Runtime admission is one decision**: `built_in_runtime_plugin_tools` in
-  `vak-core` plus the `runtime_plugin_allowed`/`runtime_network` predicates
-  feed *both* the tool vector and the admitted-name packet, so the two can
-  never drift the way separate constructions did (docs/design/41). The two
-  string keys there (`python-sandbox`, `react-sandbox`) are the built-in
-  runtime plugins shipped with the harness; third-party runtime capabilities
-  are classified data in the plugin store, never harness-side tables. Each
-  network surface has its own decision point — plugin *runner* egress via
-  `runtime_network`, and a plugin-contributed *MCP server's* egress via its
-  own server config in `effective_mcp` — and both layer the channel deny over
-  the resolved result.
-- **Subagent previews stay child-scoped**: a subagent runs as its own
-  session, so a `react_preview` it renders lives in the child's ledger and
-  scratch, reachable through the child's own presentation surface. The
-  `task` tool returns only the child's final reply *text* into the parent, so
-  no preview fence crosses the boundary by default. Bubbling a child preview
-  into the parent timeline is deliberately not automatic: it would require
-  either the child echoing the fence in its final text (which the common
-  generic parser would already surface) or a recursive child-ledger
-  projection, and neither is compositional with an append-only single
-  session. A child that must present a preview says so in its reply, exactly
-  as any tool result does.
+- **Streaming output**: Real-time stdout and stderr streams arrive via `SandboxEvent::Stdout`
+  and `SandboxEvent::Stderr` without blocking until process completion.
+- **Package installation tracking**: Automatically detects package manager activity (`pip install`,
+  `npm install`, `cargo add`) and records installed dependencies in the execution metadata.
+- **Inspect in Workbench**: Every execution tool call in chat includes an direct link to inspect
+  live execution, console output, exit status, and scratch artifacts in the Workbench dock.
+- **Safe preview containment**: Client preview frames remain sandboxed (`sandbox="allow-scripts"`)
+  within error boundaries to protect the client host from untrusted script execution.
 
 ## Non-goals
 

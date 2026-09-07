@@ -80,6 +80,7 @@ async fn call_output_is_bounded_before_entering_the_session() {
             spill_to_disk: false,
         },
         sandbox: None,
+        sandbox_sink: None,
     };
     let out = tool
         .execute(

@@ -20,6 +20,7 @@ async fn verify_accept(
             cancel: cancel.child_token(),
             limits: Default::default(),
             sandbox: deps.sandbox.clone(),
+            sandbox_sink: None,
         };
         let args = serde_json::json!({"command": command});
         authorize_flow_tool("bash", &args, deps).await?;
@@ -476,6 +477,7 @@ async fn execute_node(
                 cancel: cancel.child_token(),
                 limits: Default::default(),
                 sandbox: deps.sandbox.clone(),
+                sandbox_sink: None,
             };
             let tool = deps
                 .tools

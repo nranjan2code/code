@@ -65,11 +65,10 @@ distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
 configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
-outcome-directed runtime release, and the 3.0.16 sandboxed execution runtimes
-(Python & React plugin capabilities, quarantined scratch isolation in
-`.vak/scratch/`, dual-mode Right Bar Preview dock, and in-stream UI preview
-presentation cards; v3.0.19 seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
-in the Shared user configuration so dynamic package installation succeeds out-of-the-box).
+outcome-directed runtime release, and the unified sandboxed execution runtime
+(`bash` execution engine with streaming events, live stdout/stderr visibility in
+the Workbench panel, quarantined scratch isolation in `.vak/scratch/`, and package
+installation tracking).
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 
@@ -446,23 +445,19 @@ shipped behaviour rather than a proposal.
     just a credential in an access log. The web terminal is off by default
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
-35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/`, and network-contained.**
-    Built-in execution plugins (`python-sandbox`, `react-sandbox`) providing
-    `python_eval` and `react_preview` execute in quarantined operational
-    environments strictly confined to the canonical workspace boundary (`<ws>`).
+35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/`, and observable in Workbench.**
+    Universal execution via `bash` executes in quarantined operational environments
+    strictly confined to the canonical workspace boundary (`<ws>`).
     Execution processes run with scrubbed environments (`env_clear`), passing only
     minimal operational paths (`PATH`, `HOME`, virtual environment paths) and zero
     parent credentials or model API keys. Intermediate execution artifacts, virtual
-    environments, site-packages, compiled bundles, and generated preview files are
-    strictly quarantined under `.vak/scratch/` (`.vak/scratch/python/` and
-    `.vak/scratch/previews/`) and must never contaminate workspace project source
-    trees or git-tracked directories unless explicitly copied as an outcome
-    artifact requested by the user. Package installation and egress follow the
-    privileged network model (`network = true | false` via `plugins_network_deny` /
-    channel policies); the Shared user configuration seeds `[plugins] network_allow = ["python-sandbox", "react-sandbox"]`
-    so dynamic package installation into quarantined site-packages works out-of-the-box,
-    while operators and channels can restrict egress via `network_deny` or channel `plugins_network_deny`
-    (under which `pip` fails closed and preview HTML enforces a strict Content Security Policy `connect-src 'none'`).
+    environments, site-packages, compiled bundles, and generated files are
+    strictly quarantined under `.vak/scratch/` and must never contaminate workspace
+    project source trees or git-tracked directories unless explicitly copied as an
+    outcome artifact requested by the user. All executions stream live stdout,
+    stderr, package detection events, and status directly to the Workbench panel
+    for full operator observability. Egress and permissions follow the broker
+    security model, failing closed when unapproved.
     Frontend client preview frames must be sandboxed (`sandbox="allow-scripts"`) within safe error boundaries
     to protect the client host from untrusted script execution.
 

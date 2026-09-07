@@ -246,6 +246,8 @@ pub enum AgentEvent {
         /// errors are values (see SubagentFinished above).
         is_error: bool,
     },
+    /// Live execution events from sandbox or bash commands.
+    Sandbox(vak_tools::SandboxEvent),
 }
 
 #[derive(Debug)]
@@ -2267,6 +2269,7 @@ impl Agent {
             cancel: cancel.child_token(),
             limits: Default::default(),
             sandbox: Some(sandbox),
+            sandbox_sink: None,
         };
         let input = serde_json::json!({ "command": cmd });
         let out = match tokio::time::timeout(
@@ -3296,40 +3299,7 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     if canonical != call.name {
         call.name = canonical.to_string();
     }
-    if call.name == "react_preview"
-        && call.input.is_object()
-        && let Some(obj) = call.input.as_object_mut()
-        && !obj.contains_key("component_code")
-        && let Some(code) = obj
-            .get("code")
-            .or_else(|| obj.get("component"))
-            .or_else(|| obj.get("jsx"))
-            .or_else(|| obj.get("tsx"))
-            .cloned()
-    {
-        obj.insert("component_code".into(), code);
-    } else if call.name == "python_eval"
-        && call.input.is_object()
-        && let Some(obj) = call.input.as_object_mut()
-    {
-        if !obj.contains_key("code")
-            && let Some(script) = obj.get("script").or_else(|| obj.get("python")).cloned()
-        {
-            let is_path = script
-                .as_str()
-                .is_some_and(|s| s.ends_with(".py") && !s.contains('\n'));
-            if is_path && !obj.contains_key("script_path") {
-                obj.insert("script_path".into(), script);
-            } else {
-                obj.insert("code".into(), script);
-            }
-        }
-        if !obj.contains_key("script_path")
-            && let Some(path) = obj.get("path").or_else(|| obj.get("file")).cloned()
-        {
-            obj.insert("script_path".into(), path);
-        }
-    } else if (call.name == "read" || call.name == "write" || call.name == "edit")
+    if (call.name == "read" || call.name == "write" || call.name == "edit")
         && call.input.is_object()
         && let Some(obj) = call.input.as_object_mut()
         && !obj.contains_key("path")
@@ -3513,15 +3483,25 @@ async fn execute_one(
             }
         }
         Some(tool) => {
+            let (sandbox_sink, mut sandbox_rx) = vak_tools::SandboxEventSink::new();
+            let events_tx = events.clone();
+            let forwarder = tokio::spawn(async move {
+                while let Some(sb_ev) = sandbox_rx.recv().await {
+                    let _ = events_tx.send(AgentEvent::Sandbox(sb_ev)).await;
+                }
+            });
+
             let ctx = vak_tools::ToolContext {
                 cwd: cwd.to_path_buf(),
                 cancel: cancel.child_token(),
                 limits: Default::default(),
                 sandbox: sandbox.cloned(),
+                sandbox_sink: Some(sandbox_sink),
             };
             let result_ctx = ctx.clone();
             let tool = tool.clone();
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
+            forwarder.abort();
             match res {
                 Ok(out) if out.is_error => {
                     ToolRunOutput::Err(result_ctx.truncate_output(out.content))
@@ -3947,39 +3927,6 @@ mod tool_recovery_tests {
     fn test_normalize_tool_call_aliases() {
         use super::{PendingToolCall, normalize_tool_call};
 
-        // Python alias and argument normalization
-        let python_call = PendingToolCall {
-            id: "call_1".into(),
-            name: "python_execution".into(),
-            input: serde_json::json!({
-                "script": "import matplotlib.pyplot as plt\nplt.plot([1, 2])"
-            }),
-        };
-        let normalized_py = normalize_tool_call(python_call);
-        assert_eq!(normalized_py.name, "python_eval");
-        assert_eq!(
-            normalized_py.input.get("code").and_then(|v| v.as_str()),
-            Some("import matplotlib.pyplot as plt\nplt.plot([1, 2])")
-        );
-
-        // React alias and argument normalization
-        let react_call = PendingToolCall {
-            id: "call_2".into(),
-            name: "react_component_preview".into(),
-            input: serde_json::json!({
-                "title": "Widget",
-                "code": "export default function Widget() { return <div/>; }"
-            }),
-        };
-        let normalized_react = normalize_tool_call(react_call);
-        assert_eq!(normalized_react.name, "react_preview");
-        assert_eq!(
-            normalized_react
-                .input
-                .get("component_code")
-                .and_then(|v| v.as_str()),
-            Some("export default function Widget() { return <div/>; }")
-        );
 
         // Read file alias normalization
         let read_call = PendingToolCall {

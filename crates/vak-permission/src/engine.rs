@@ -281,23 +281,6 @@ fn describe(tool: &str, args: &Value) -> String {
                 });
             format!("task '{label}'")
         }
-        "python_eval" => {
-            if let Some(script) = args.get("script_path").and_then(|p| p.as_str()) {
-                format!("python_eval {script}")
-            } else if let Some(code) = args.get("code").and_then(|c| c.as_str()) {
-                let preview: String = code.chars().take(80).collect();
-                format!("python_eval `{preview}`")
-            } else {
-                "python_eval".into()
-            }
-        }
-        "react_preview" => {
-            if let Some(title) = args.get("title").and_then(|t| t.as_str()) {
-                format!("react_preview '{title}'")
-            } else {
-                "react_preview".into()
-            }
-        }
         other => other.to_string(),
     }
 }
@@ -366,29 +349,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_describe_formats_python_and_react() {
-        let py_args = serde_json::json!({
-            "code": "import matplotlib.pyplot as plt\nplt.plot([1, 2])"
+    fn test_describe_formats_task() {
+        let task_args = serde_json::json!({
+            "label": "build project"
         });
         assert_eq!(
-            describe("python_eval", &py_args),
-            "python_eval `import matplotlib.pyplot as plt\nplt.plot([1, 2])`"
-        );
-
-        let py_script_args = serde_json::json!({
-            "script_path": "scripts/plot.py"
-        });
-        assert_eq!(
-            describe("python_eval", &py_script_args),
-            "python_eval scripts/plot.py"
-        );
-
-        let react_args = serde_json::json!({
-            "title": "Counter Preview"
-        });
-        assert_eq!(
-            describe("react_preview", &react_args),
-            "react_preview 'Counter Preview'"
+            describe("task", &task_args),
+            "task 'build project'"
         );
     }
 }

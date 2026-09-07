@@ -107,7 +107,33 @@ export function setDensity(value: Density) {
   setDensitySignal(value);
   localStorage.setItem("vak.density", value);
 }
-export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments" | null>(null);
+export const [dockTab, setDockTab] = createSignal<"workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments" | null>(null);
+
+export interface WorkbenchExecution {
+  id: string;
+  tool: string;
+  command: string;
+  language: string;
+  scratchDir: string;
+  stdout: string;
+  stderr: string;
+  status: "running" | "completed" | "failed";
+  exitCode?: number;
+  durationMs?: number;
+  packages: string[];
+  artifacts: Array<{ path: string; mimeType: string; sizeBytes: number }>;
+  timestamp: string;
+}
+
+export const [workbenchExecutions, setWorkbenchExecutions] = createSignal<WorkbenchExecution[]>([]);
+export const [activeExecutionId, setActiveExecutionId] = createSignal<string | null>(null);
+
+export function openWorkbenchExecution(execId?: string) {
+  if (execId) {
+    setActiveExecutionId(execId);
+  }
+  setDockTab("workbench");
+}
 
 export interface ActiveComponentPreview {
   id: string;
@@ -819,6 +845,80 @@ export function applyEvent(
     void speak(ev.RunFinished.is_error ? "Task failed." : "Done.");
     cueTurnFinish(ev.RunFinished.is_error);
     opts.onFinish?.(ev.RunFinished.summary);
+  } else if ("Sandbox" in ev) {
+    const sb = ev.Sandbox;
+    if (sb.kind === "ExecutionStarted") {
+      const execId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const newExec: WorkbenchExecution = {
+        id: execId,
+        tool: sb.tool,
+        command: sb.code_preview,
+        language: sb.language,
+        scratchDir: sb.scratch_dir,
+        stdout: "",
+        stderr: "",
+        status: "running",
+        packages: [],
+        artifacts: [],
+        timestamp: new Date().toLocaleTimeString(),
+      };
+      setWorkbenchExecutions((prev) => [...prev, newExec]);
+      setActiveExecutionId(execId);
+    } else if (sb.kind === "Stdout") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) => (e.id === active ? { ...e, stdout: e.stdout + sb.chunk } : e))
+        );
+      }
+    } else if (sb.kind === "Stderr") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) => (e.id === active ? { ...e, stderr: e.stderr + sb.chunk } : e))
+        );
+      }
+    } else if (sb.kind === "PackageInstalled") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) => (e.id === active ? { ...e, packages: [...e.packages, ...sb.packages] } : e))
+        );
+      }
+    } else if (sb.kind === "ArtifactGenerated") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) =>
+            e.id === active
+              ? {
+                  ...e,
+                  artifacts: [
+                    ...e.artifacts,
+                    { path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes },
+                  ],
+                }
+              : e
+          )
+        );
+      }
+    } else if (sb.kind === "ExecutionFinished") {
+      const active = activeExecutionId();
+      if (active) {
+        setWorkbenchExecutions((prev) =>
+          prev.map((e) =>
+            e.id === active
+              ? {
+                  ...e,
+                  status: sb.exit_code === 0 ? "completed" : "failed",
+                  exitCode: sb.exit_code,
+                  durationMs: sb.duration_ms,
+                }
+              : e
+          )
+        );
+      }
+    }
   }
 }
 

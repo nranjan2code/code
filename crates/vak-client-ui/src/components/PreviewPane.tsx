@@ -249,7 +249,7 @@ export default function PreviewPane() {
               No active component preview
             </div>
             <div class="hint" style="max-width: 260px; line-height: 1.5;">
-              Ask Vak to prototype a React component or run <code>react_preview</code> in chat to inspect interactive live UI here.
+              Open an interactive HTML preview or static site to inspect live UI here.
             </div>
           </div>
         }>

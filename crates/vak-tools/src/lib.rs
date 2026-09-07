@@ -12,10 +12,9 @@ pub mod glob;
 pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
-pub mod python_runner;
-pub mod react_runner;
 pub mod read;
 pub mod sandbox;
+pub mod sandbox_events;
 pub mod webbrowse;
 pub mod webfetch;
 pub mod write;
@@ -25,8 +24,7 @@ use serde_json::Value;
 
 pub use context::{OutputLimits, ToolContext};
 pub use contract::validate_input;
-pub use python_runner::PythonTool;
-pub use react_runner::ReactPreviewTool;
+pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 
@@ -285,27 +283,6 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
 /// Canonical tool name resolution for aliases and common model hallucinations.
 pub fn canonical_tool_name(name: &str) -> &str {
     let trimmed = name.trim();
-    if trimmed.eq_ignore_ascii_case("python_eval")
-        || trimmed.eq_ignore_ascii_case("python-eval")
-        || trimmed.eq_ignore_ascii_case("python_execution")
-        || trimmed.eq_ignore_ascii_case("python-execution")
-        || trimmed.eq_ignore_ascii_case("python_sandbox")
-        || trimmed.eq_ignore_ascii_case("python-sandbox")
-        || trimmed.eq_ignore_ascii_case("python")
-        || trimmed.eq_ignore_ascii_case("py_eval")
-    {
-        return "python_eval";
-    }
-    if trimmed.eq_ignore_ascii_case("react_preview")
-        || trimmed.eq_ignore_ascii_case("react-preview")
-        || trimmed.eq_ignore_ascii_case("react_component_preview")
-        || trimmed.eq_ignore_ascii_case("react-component-preview")
-        || trimmed.eq_ignore_ascii_case("react_sandbox")
-        || trimmed.eq_ignore_ascii_case("react-sandbox")
-        || trimmed.eq_ignore_ascii_case("react_component")
-    {
-        return "react_preview";
-    }
     if trimmed.eq_ignore_ascii_case("session-search") {
         return "session_search";
     }
@@ -391,40 +368,6 @@ mod tests {
 
     #[test]
     fn canonical_tool_name_resolves_common_hallucinations_and_aliases() {
-        for python_variant in [
-            "python_eval",
-            "python-eval",
-            "python_execution",
-            "python-execution",
-            "python_sandbox",
-            "python-sandbox",
-            "python",
-            "py_eval",
-            " PYTHON_EXECUTION ",
-        ] {
-            assert_eq!(
-                canonical_tool_name(python_variant),
-                "python_eval",
-                "failed for variant: {python_variant}"
-            );
-        }
-
-        for react_variant in [
-            "react_preview",
-            "react-preview",
-            "react_component_preview",
-            "react-component-preview",
-            "react_sandbox",
-            "react-sandbox",
-            "react_component",
-            " React_Component_Preview ",
-        ] {
-            assert_eq!(
-                canonical_tool_name(react_variant),
-                "react_preview",
-                "failed for variant: {react_variant}"
-            );
-        }
 
         assert_eq!(canonical_tool_name("read_file"), "read");
         assert_eq!(canonical_tool_name("write_file"), "write");

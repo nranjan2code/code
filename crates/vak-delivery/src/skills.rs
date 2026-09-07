@@ -738,16 +738,6 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
                 signals.push("synthesis".into());
                 signals.push("takeaways".into());
             }
-            "react_preview" => {
-                signals.push("react".into());
-                signals.push("preview".into());
-                signals.push("component".into());
-            }
-            "python_eval" => {
-                signals.push("python".into());
-                signals.push("telemetry".into());
-                signals.push("charts".into());
-            }
             _ => {}
         }
     }
@@ -1737,57 +1727,6 @@ mod tests {
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
     }
 
-    #[test]
-    fn react_preview_envelope_parses_and_selects_the_preview_recipe() {
-        let runner_output = format!(
-            "rendered\n\n```vak\n{}\n```",
-            serde_json::json!({
-                "semantic_type": "react.preview",
-                "payload": {
-                    "status": "ready",
-                    "preview_id": "pv-1",
-                    "title": "Counter",
-                    "artifact_path": ".vak/scratch/previews/pv-1.html",
-                    "sandbox": "allow-scripts",
-                    "connect_src": "blocked"
-                }
-            })
-        );
-        let outputs = structured_outputs_from_text(&runner_output);
-        assert_eq!(outputs.len(), 1);
-        assert_eq!(outputs[0].semantic_type, "react.preview");
-        assert_eq!(outputs[0].skill_id, "core");
-        assert_eq!(
-            outputs[0].payload["artifact_path"],
-            ".vak/scratch/previews/pv-1.html"
-        );
-
-        let planner = PresentationPlanner {
-            skills: built_in_skill_registry(),
-            recipes: built_in_recipes(),
-        };
-        let plan = planner.plan(
-            &signals_from_context(&SignalContext {
-                text: "",
-                tool_name: Some("react_preview"),
-                tool_input: None,
-                tool_output: None,
-                is_error: false,
-            }),
-            "desktop",
-            &["data.grid".to_string()],
-            &outputs,
-        );
-        let doc = plan.recipe.expect("preview recipe");
-        assert_eq!(doc.recipe_id, "ui.preview");
-        assert!(
-            plan.accepted
-                .iter()
-                .any(|candidate| candidate.semantic_type == "react.preview")
-        );
-        assert_eq!(plan.renderers.len(), 1);
-        assert_eq!(plan.renderers[0].renderer, "native:structured");
-    }
 
     #[test]
     fn semantic_context_requires_complete_periods_and_evidence_shape() {

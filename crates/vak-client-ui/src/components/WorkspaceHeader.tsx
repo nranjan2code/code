@@ -34,11 +34,12 @@ const INBOX_POLL_MS = 20_000;
 /** Badge counters stay one glyph wide: 100+ collapses to 99+. */
 const countLabel = (n: number) => (n > 99 ? "99+" : String(n));
 
-const tools: { id: "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
+const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
+  { id: "workbench", label: "Workbench", icon: "terminal" },
   { id: "preview", label: "Preview", icon: "preview" },
   { id: "diff", label: "Changes", icon: "diff" },
-  { id: "terminal", label: "Terminal", icon: "terminal" },
-  { id: "editor", label: "Editor", icon: "code" },
+  { id: "terminal", label: "Terminal", icon: "code" },
+  { id: "editor", label: "Editor", icon: "file" },
   { id: "pr", label: "Pull request", icon: "git" },
 ];
 
