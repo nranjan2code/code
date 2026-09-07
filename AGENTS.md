@@ -65,11 +65,13 @@ distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
 configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
-outcome-directed runtime release, and the 2026 unified sandboxed execution runtime
+outcome-directed runtime release, the 2026 unified sandboxed execution runtime
 (`bash` execution engine with streaming events, live ANSI terminal rendering with
 `\r` carriage return folding, 500ms process telemetry with RSS memory and duration
 badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/`
-with live sandboxed iframe/image/code artifact preview, and package installation tracking).
+with live sandboxed iframe/image/code artifact preview, and package installation tracking),
+and the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
+NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues).
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 

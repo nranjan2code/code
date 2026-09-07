@@ -70,6 +70,7 @@ applies to every item.
 | Commitment kernel | shipped end to end (doc 47) |
 | Web client — the workspace surface in a browser, a headless box you can *use*, and a complete public product surface | shipped, Phases 0–4 plus outcome projection and public `/outcomes` page (docs 48, 52) |
 | Sandboxed workspace execution runtime (2026 unified `bash` execution engine with streaming events, ANSI line folding, real-time process telemetry, live stdout/stderr Workbench visibility, quarantined scratch containment under `.vak/scratch/`, and package tracking) | shipped in 3.0.22 |
+| Distributed Event & Message Fabric (`crates/vak-bus`, NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, Dead-Letter Queues) | shipped in 3.0.22 (doc 53) |
 | Multi-user cloud (per-principal data homes, pooled Cores, quotas) | **explicitly out of scope** (doc 48 §8 E). A deployment is one operator's vak, and the token is a password to the whole box; the route shapes leave the seams open, nothing more |
 | Windows platform support | S11 |
 

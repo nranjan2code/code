@@ -21,6 +21,7 @@ members = [
     "crates/vak-ops",
     "crates/vak-tray",
     "crates/vak-desktop",
+    "crates/vak-bus",
     "crates/vak",
 ]
 
@@ -31,6 +32,7 @@ license = "MIT"
 repository = "https://github.com/vak/vak"
 
 [workspace.dependencies]
+vak-bus = { path = "crates/vak-bus" }
 vak-llm = { path = "crates/vak-llm" }
 vak-ops = { path = "crates/vak-ops" }
 vak-server = { path = "crates/vak-server" }
