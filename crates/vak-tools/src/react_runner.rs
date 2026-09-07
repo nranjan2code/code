@@ -108,7 +108,11 @@ with strict CSP (network connect-src blocked unless allowed) and an ErrorBoundar
                         }
                         match std::fs::read_to_string(&canon) {
                             Ok(content) => content,
-                            Err(e) => return ToolOutput::error(format!("failed to read component file '{rel}': {e}")),
+                            Err(e) => {
+                                return ToolOutput::error(format!(
+                                    "failed to read component file '{rel}': {e}"
+                                ));
+                            }
                         }
                     }
                     Err(e) => {
@@ -246,7 +250,8 @@ fn prepare_component_code(code: &str) -> (String, Vec<String>) {
                 continue;
             } else if after_export.starts_with("class ") || after_export.starts_with("class\t") {
                 let class_part = after_export["class".len()..].trim_start();
-                if let Some(name_end) = class_part.find(|c: char| !c.is_alphanumeric() && c != '_') {
+                if let Some(name_end) = class_part.find(|c: char| !c.is_alphanumeric() && c != '_')
+                {
                     let class_name = &class_part[..name_end];
                     if !class_name.is_empty() {
                         detected_names.push(class_name.to_string());
@@ -269,7 +274,11 @@ fn prepare_component_code(code: &str) -> (String, Vec<String>) {
             let func_part = trimmed["function".len()..].trim_start();
             if let Some(name_end) = func_part.find(|c: char| !c.is_alphanumeric() && c != '_') {
                 let fn_name = &func_part[..name_end];
-                if fn_name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                if fn_name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase())
+                {
                     detected_names.push(fn_name.to_string());
                 }
             }
@@ -284,7 +293,11 @@ fn prepare_component_code(code: &str) -> (String, Vec<String>) {
                 .trim_start();
             if let Some(name_end) = decl_part.find(|c: char| !c.is_alphanumeric() && c != '_') {
                 let var_name = &decl_part[..name_end];
-                if var_name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                if var_name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase())
+                {
                     detected_names.push(var_name.to_string());
                 }
             }
@@ -516,12 +529,24 @@ mod tests {
             .unwrap()
             .flatten()
             .collect();
-        assert_eq!(entries.len(), 2, "expected .html and .tsx artifacts, found: {:?}", entries);
-        let has_html = entries.iter().any(|e| e.path().extension().is_some_and(|ext| ext == "html"));
-        let has_tsx = entries.iter().any(|e| e.path().extension().is_some_and(|ext| ext == "tsx"));
+        assert_eq!(
+            entries.len(),
+            2,
+            "expected .html and .tsx artifacts, found: {:?}",
+            entries
+        );
+        let has_html = entries
+            .iter()
+            .any(|e| e.path().extension().is_some_and(|ext| ext == "html"));
+        let has_tsx = entries
+            .iter()
+            .any(|e| e.path().extension().is_some_and(|ext| ext == "tsx"));
         assert!(has_html && has_tsx);
 
-        let html_entry = entries.iter().find(|e| e.path().extension().is_some_and(|ext| ext == "html")).unwrap();
+        let html_entry = entries
+            .iter()
+            .find(|e| e.path().extension().is_some_and(|ext| ext == "html"))
+            .unwrap();
         let html = std::fs::read_to_string(html_entry.path()).unwrap();
         assert!(html.contains("Content-Security-Policy"));
         assert!(html.contains("connect-src 'none'"));
@@ -605,7 +630,11 @@ mod tests {
 
         // Write a component file in the workspace
         let comp_file = dir.path().join("Widget.tsx");
-        std::fs::write(&comp_file, "export default function Widget() { return <span>Loaded from file</span>; }").unwrap();
+        std::fs::write(
+            &comp_file,
+            "export default function Widget() { return <span>Loaded from file</span>; }",
+        )
+        .unwrap();
 
         let args = serde_json::json!({
             "title": "File Widget",
@@ -617,4 +646,3 @@ mod tests {
         assert!(res.content.contains("Widget.tsx"));
     }
 }
-

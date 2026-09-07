@@ -3335,8 +3335,7 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     {
         if let Some(obj) = call.input.as_object_mut() {
             if !obj.contains_key("path") {
-                if let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned()
-                {
+                if let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned() {
                     obj.insert("path".into(), file_path);
                 }
             }
@@ -3977,7 +3976,10 @@ mod tool_recovery_tests {
         let normalized_react = normalize_tool_call(react_call);
         assert_eq!(normalized_react.name, "react_preview");
         assert_eq!(
-            normalized_react.input.get("component_code").and_then(|v| v.as_str()),
+            normalized_react
+                .input
+                .get("component_code")
+                .and_then(|v| v.as_str()),
             Some("export default function Widget() { return <div/>; }")
         );
 
@@ -3997,4 +3999,3 @@ mod tool_recovery_tests {
         );
     }
 }
-

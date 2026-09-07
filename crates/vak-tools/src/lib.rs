@@ -433,4 +433,3 @@ mod tests {
         assert_eq!(canonical_tool_name("unknown_tool"), "unknown_tool");
     }
 }
-

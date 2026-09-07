@@ -523,7 +523,10 @@ mod tests {
 
         // Verify that sample_plot.png was quarantined into .vak/scratch/python/
         let scratch_file = dir.path().join(".vak/scratch/python/sample_plot.png");
-        assert!(scratch_file.is_file(), "artifact was not quarantined to scratch");
+        assert!(
+            scratch_file.is_file(),
+            "artifact was not quarantined to scratch"
+        );
 
         // Verify cwd does not contain loose sample_plot.png
         let cwd_file = dir.path().join("sample_plot.png");
@@ -541,8 +544,13 @@ mod tests {
         let res = tool.execute(&args, &ctx).await;
         assert!(res.is_error);
         assert!(res.content.contains("ModuleNotFoundError"));
-        assert!(res.content.contains("[debug hint] Missing module 'non_existent_package_xyz123'"));
-        assert!(res.content.contains("\"install_packages\": [\"non_existent_package_xyz123\"]"));
+        assert!(
+            res.content
+                .contains("[debug hint] Missing module 'non_existent_package_xyz123'")
+        );
+        assert!(
+            res.content
+                .contains("\"install_packages\": [\"non_existent_package_xyz123\"]")
+        );
     }
 }
-
