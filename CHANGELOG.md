@@ -4,6 +4,32 @@
 unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
+## 3.0.22 — 2026-09-07
+
+### 2026 State-of-the-Art Sandboxed Execution Engine across CLI, Desktop, and Headless Linux
+
+- **High-fidelity ANSI terminal & progress bar streaming.**
+  Added streaming line folding for carriage returns (`\r`) in `crates/vak-tools` and `crates/vak` so
+  progress bars (`npm`, `pip`, `cargo`, `docker`, `curl`) update smoothly in-place without log noise.
+  Implemented a lightweight 16-color ANSI-to-HTML parser in the SolidJS Workbench panel with auto-scrolling
+  to bottom during streaming.
+- **Sub-second real-time process telemetry.**
+  Added `SandboxEvent::ProcessTelemetry` emitting elapsed execution time (ms) and resident set size (RSS)
+  memory every 500ms during execution. Probes `/proc/<pid>/statm` directly on Linux and Docker containers,
+  and queries `ps -o rss=` on macOS. Displayed live as RAM and timer badges in the Workbench header and CLI
+  execution box footer.
+- **Quarantined scratch artifact auto-detection & in-situ preview.**
+  Intermediate scripts, assets, and data files are isolated in `.vak/scratch/`. Automatically detects newly
+  generated scratch files upon command completion, classifies MIME types, and provides in-situ visualizers:
+  sandboxed HTML/web apps in isolated `<iframe>` with `srcdoc`, image inspection with click-to-zoom modal,
+  and syntax-formatted code and data viewers.
+- **Interactive process controls.**
+  Added one-click "Stop Process" in Desktop and Web Workbench calling `api.cancelRun()` to cleanly terminate
+  commands via process group signaling (`SIGTERM` -> `SIGKILL`), along with one-click "Copy Output".
+- **Cross-surface parity.**
+  Full feature parity verified across CLI terminal box, Desktop App (`/Applications/Vak.app`), Web UI,
+  and Headless Linux on Docker (`vak:local`).
+
 ## 3.0.21 — 2026-09-07
 
 ### Unified Bash Sandbox with Workbench Live Observability

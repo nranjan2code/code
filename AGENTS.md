@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.21 — all roadmap phases implemented and repository-verified.**
+**Status: v3.0.22 — all roadmap phases implemented and repository-verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -65,10 +65,11 @@ distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global
 configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
-outcome-directed runtime release, and the unified sandboxed execution runtime
-(`bash` execution engine with streaming events, live stdout/stderr visibility in
-the Workbench panel, quarantined scratch isolation in `.vak/scratch/`, and package
-installation tracking).
+outcome-directed runtime release, and the 2026 unified sandboxed execution runtime
+(`bash` execution engine with streaming events, live ANSI terminal rendering with
+`\r` carriage return folding, 500ms process telemetry with RSS memory and duration
+badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/`
+with live sandboxed iframe/image/code artifact preview, and package installation tracking).
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 

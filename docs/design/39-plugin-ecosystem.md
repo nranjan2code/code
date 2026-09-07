@@ -312,9 +312,9 @@ present stale activation as current.
 | P3 | Git and signed catalogs, publisher identities, revocation, Discover/Sources UI | catalog compromise cannot change an installed digest or silently activate code |
 | P4 | remote MCP/OAuth, isolated MCP Apps UI adapter, organization policies | external connectors remain least-privilege and headless-compatible |
 | P5 | curated daily-user collection, quality/security review automation | useful cross-domain catalog with reproducible review evidence and no privileged shortcuts |
-| P6 | sandboxed workspace execution runtimes (unified neutral `bash` runtime, live Workbench streaming, quarantined `.vak/scratch/` execution, and package detection) | live in v3.0.20; zero secret leakage, isolated scratch containment, real-time stdout/stderr streaming in Workbench |
+| P6 | sandboxed workspace execution runtimes (unified neutral `bash` runtime, live Workbench streaming, ANSI terminal folding, real-time telemetry, quarantined `.vak/scratch/` execution, and package detection) | live in v3.0.22; zero secret leakage, isolated scratch containment, real-time stdout/stderr streaming in Workbench |
 
-## Sandboxed execution runtimes (Phase 6 / v3.0.20)
+## Sandboxed execution runtimes (Phase 6 / v3.0.22)
 
 Vak workspaces require safe, repeatable, and transparent execution for modern programming
 and development workflows without compromising host security or workspace purity. Rather
