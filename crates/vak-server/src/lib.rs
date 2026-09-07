@@ -8323,9 +8323,7 @@ async fn patch_config_scope(
                 "plugins_network_allow={grant:?} (persisted, shadowed by project)"
             ));
         } else {
-            changes.push(format!(
-                "plugins_network_allow={grant:?}"
-            ));
+            changes.push(format!("plugins_network_allow={grant:?}"));
         }
     }
     if body.inherit_mcp.is_some()

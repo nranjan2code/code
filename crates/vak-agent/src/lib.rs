@@ -3927,7 +3927,6 @@ mod tool_recovery_tests {
     fn test_normalize_tool_call_aliases() {
         use super::{PendingToolCall, normalize_tool_call};
 
-
         // Read file alias normalization
         let read_call = PendingToolCall {
             id: "call_3".into(),

@@ -1726,7 +1726,6 @@ mod tests {
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
     }
 
-
     #[test]
     fn semantic_context_requires_complete_periods_and_evidence_shape() {
         let valid = r#"{"semantic_type":"metric","payload":{"label":"Close","value":10,"context":{"domain":"market","as_of":"2026-09-04T16:00:00+05:30","period":{"start":"2026-08-31","end":"2026-09-04","timezone":"Asia/Kolkata"},"comparison_basis":"prior_close_to_period_close","evidence":[{"id":"source-1","kind":"cited"}]}}}"#;

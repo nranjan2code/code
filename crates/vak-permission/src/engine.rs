@@ -353,9 +353,6 @@ mod tests {
         let task_args = serde_json::json!({
             "label": "build project"
         });
-        assert_eq!(
-            describe("task", &task_args),
-            "task 'build project'"
-        );
+        assert_eq!(describe("task", &task_args), "task 'build project'");
     }
 }

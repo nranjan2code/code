@@ -598,7 +598,6 @@ pub struct Core {
     approver_answerable: bool,
 }
 
-
 fn effective_turn_cap(base: usize, intent_cap: Option<usize>) -> usize {
     intent_cap.map(|cap| cap.min(base)).unwrap_or(base)
 }
@@ -5854,7 +5853,6 @@ mod channel_mcp_network_tests {
         );
         assert!(!core.channel_tool_allowed("remember"));
     }
-
 
     #[test]
     fn default_prompt_documents_identity_and_dynamic_tool_boundaries() {

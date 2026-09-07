@@ -972,10 +972,7 @@ pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigEr
             source: std::io::Error::other("[plugins] must be a TOML table"),
         });
     };
-    plugins.insert(
-        "network_allow".into(),
-        toml::Value::Array(vec![]),
-    );
+    plugins.insert("network_allow".into(), toml::Value::Array(vec![]));
     let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
         path: path.to_path_buf(),
         source: std::io::Error::other(error.to_string()),

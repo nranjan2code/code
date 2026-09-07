@@ -146,7 +146,10 @@ mod tests {
         let ev2 = rx.try_recv().unwrap();
         assert!(matches!(ev2, SandboxEvent::Stdout { .. }));
         let ev3 = rx.try_recv().unwrap();
-        assert!(matches!(ev3, SandboxEvent::ExecutionFinished { exit_code: 0, .. }));
+        assert!(matches!(
+            ev3,
+            SandboxEvent::ExecutionFinished { exit_code: 0, .. }
+        ));
     }
 
     #[test]

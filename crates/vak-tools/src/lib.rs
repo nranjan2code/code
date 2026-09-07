@@ -368,7 +368,6 @@ mod tests {
 
     #[test]
     fn canonical_tool_name_resolves_common_hallucinations_and_aliases() {
-
         assert_eq!(canonical_tool_name("read_file"), "read");
         assert_eq!(canonical_tool_name("write_file"), "write");
         assert_eq!(canonical_tool_name("edit_file"), "edit");
