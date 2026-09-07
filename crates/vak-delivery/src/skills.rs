@@ -463,14 +463,14 @@ pub fn built_in_recipes() -> RecipeCatalog {
         (
             "ui.preview",
             vec![],
-            vec!["react.preview"],
+            vec!["ui.preview"],
             vec!["desktop", "terminal", "telegram"],
         ),
     ] {
         let requires_typed_output = matches!(recipe.0, "coding.test_report" | "ui.preview");
         let typed_output_types: Vec<String> = match recipe.0 {
             "coding.test_report" => vec!["test.report".into()],
-            "ui.preview" => vec!["react.preview".into()],
+            "ui.preview" => vec!["ui.preview".into()],
             _ => Vec::new(),
         };
         let _ = catalog.register(PresentationRecipe {
@@ -536,7 +536,6 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "data.grid",
             "recipe.card",
             "ui.preview",
-            "react.preview",
         ]
         .into_iter()
         .map(String::from)
@@ -948,7 +947,7 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
                 .map(Value::to_string)
                 .unwrap_or_else(|| "not supplied".into())
         )),
-        "ui.preview" | "react.preview" => lines.push(format!(
+        "ui.preview" => lines.push(format!(
             "Preview: {}\nFile: {}",
             title,
             p["artifact_path"].as_str().unwrap_or_default()

@@ -171,7 +171,7 @@ export default function PreviewPane() {
             class="chip sm"
             classList={{ on: activeTab() === "component" }}
             onClick={() => setActiveTab("component")}
-            title="Preview sandboxed React / UI components"
+            title="Preview interactive UI / HTML components"
           >
             Component
           </button>

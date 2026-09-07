@@ -352,7 +352,7 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   if (props.output.semantic_type === "recipe.card") {
     return <RecipeCard data={payload} />;
   }
-  if (props.output.semantic_type === "ui.preview" || props.output.semantic_type === "react.preview") {
+  if (props.output.semantic_type === "ui.preview") {
     return <UIPreviewCard data={payload} />;
   }
   if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
