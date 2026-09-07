@@ -313,20 +313,18 @@ execution duration is strictly bounded."
                 }
 
                 if !status.success() {
-                    if err_text.contains("ModuleNotFoundError: No module named") {
-                        if let Some(pos) = err_text.find("ModuleNotFoundError: No module named ") {
-                            let after = &err_text[pos + "ModuleNotFoundError: No module named ".len()..];
-                            let mod_name = after
-                                .split_whitespace()
-                                .next()
-                                .unwrap_or("")
-                                .trim_matches('\'')
-                                .trim_matches('"');
-                            if !mod_name.is_empty() {
-                                text.push_str(&format!(
-                                    "\n[debug hint] Missing module '{mod_name}'. You can install it into the sandbox by passing `\"install_packages\": [\"{mod_name}\"]`."
-                                ));
-                            }
+                    if let Some(pos) = err_text.find("ModuleNotFoundError: No module named ") {
+                        let after = &err_text[pos + "ModuleNotFoundError: No module named ".len()..];
+                        let mod_name = after
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim_matches('\'')
+                            .trim_matches('"');
+                        if !mod_name.is_empty() {
+                            text.push_str(&format!(
+                                "\n[debug hint] Missing module '{mod_name}'. You can install it into the sandbox by passing `\"install_packages\": [\"{mod_name}\"]`."
+                            ));
                         }
                     }
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
@@ -352,30 +350,32 @@ fn quarantine_cwd_artifacts(cwd: &Path, scratch_dir: &Path, min_mtime_secs: u128
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file()
-            && let Some(ext) = path.extension().and_then(|s| s.to_str())
-        {
-            let ext_lower = ext.to_ascii_lowercase();
-            if matches!(
-                ext_lower.as_str(),
-                "png" | "svg" | "jpg" | "jpeg" | "csv" | "parquet"
-            ) {
-                if let Ok(meta) = path.metadata() {
-                    if let Ok(modified) = meta.modified() {
-                        let mtime = modified
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs() as u128)
-                            .unwrap_or(0);
-                        if mtime >= min_mtime_secs.saturating_sub(2) {
-                            if let Some(name) = path.file_name() {
-                                let dest = scratch_dir.join(name);
-                                let _ = std::fs::rename(&path, &dest);
-                            }
-                        }
-                    }
-                }
-            }
+        let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let ext_lower = ext.to_ascii_lowercase();
+        if !matches!(
+            ext_lower.as_str(),
+            "png" | "svg" | "jpg" | "jpeg" | "csv" | "parquet"
+        ) {
+            continue;
         }
+        let Ok(meta) = path.metadata() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        let mtime = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as u128)
+            .unwrap_or(0);
+        if mtime < min_mtime_secs.saturating_sub(2) {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let dest = scratch_dir.join(name);
+        let _ = std::fs::rename(&path, &dest);
     }
 }
 

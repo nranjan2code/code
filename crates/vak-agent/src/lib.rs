@@ -3296,50 +3296,46 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     if canonical != call.name {
         call.name = canonical.to_string();
     }
-    if call.name == "react_preview" && call.input.is_object() {
-        if let Some(obj) = call.input.as_object_mut() {
-            if !obj.contains_key("component_code") {
-                if let Some(code) = obj
-                    .get("code")
-                    .or_else(|| obj.get("component"))
-                    .or_else(|| obj.get("jsx"))
-                    .or_else(|| obj.get("tsx"))
-                    .cloned()
-                {
-                    obj.insert("component_code".into(), code);
-                }
+    if call.name == "react_preview"
+        && call.input.is_object()
+        && let Some(obj) = call.input.as_object_mut()
+        && !obj.contains_key("component_code")
+        && let Some(code) = obj
+            .get("code")
+            .or_else(|| obj.get("component"))
+            .or_else(|| obj.get("jsx"))
+            .or_else(|| obj.get("tsx"))
+            .cloned()
+    {
+        obj.insert("component_code".into(), code);
+    } else if call.name == "python_eval"
+        && call.input.is_object()
+        && let Some(obj) = call.input.as_object_mut()
+    {
+        if !obj.contains_key("code")
+            && let Some(script) = obj.get("script").or_else(|| obj.get("python")).cloned()
+        {
+            let is_path = script
+                .as_str()
+                .is_some_and(|s| s.ends_with(".py") && !s.contains('\n'));
+            if is_path && !obj.contains_key("script_path") {
+                obj.insert("script_path".into(), script);
+            } else {
+                obj.insert("code".into(), script);
             }
         }
-    } else if call.name == "python_eval" && call.input.is_object() {
-        if let Some(obj) = call.input.as_object_mut() {
-            if !obj.contains_key("code") {
-                if let Some(script) = obj.get("script").or_else(|| obj.get("python")).cloned() {
-                    let is_path = script
-                        .as_str()
-                        .is_some_and(|s| s.ends_with(".py") && !s.contains('\n'));
-                    if is_path && !obj.contains_key("script_path") {
-                        obj.insert("script_path".into(), script);
-                    } else {
-                        obj.insert("code".into(), script);
-                    }
-                }
-            }
-            if !obj.contains_key("script_path") {
-                if let Some(path) = obj.get("path").or_else(|| obj.get("file")).cloned() {
-                    obj.insert("script_path".into(), path);
-                }
-            }
+        if !obj.contains_key("script_path")
+            && let Some(path) = obj.get("path").or_else(|| obj.get("file")).cloned()
+        {
+            obj.insert("script_path".into(), path);
         }
     } else if (call.name == "read" || call.name == "write" || call.name == "edit")
         && call.input.is_object()
+        && let Some(obj) = call.input.as_object_mut()
+        && !obj.contains_key("path")
+        && let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned()
     {
-        if let Some(obj) = call.input.as_object_mut() {
-            if !obj.contains_key("path") {
-                if let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned() {
-                    obj.insert("path".into(), file_path);
-                }
-            }
-        }
+        obj.insert("path".into(), file_path);
     }
     call
 }
@@ -3500,20 +3496,22 @@ async fn execute_one(
     });
 
     let mut output = match tool {
-        None if matched_skill.is_some() => {
-            let actual_skill = matched_skill.unwrap();
-            ToolRunOutput::Err(format!(
-                r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
-                serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-                serde_json::to_string(actual_skill).unwrap_or_else(|_| "\"invalid\"".into())
-            ))
+        None => {
+            if let Some(actual_skill) = matched_skill {
+                ToolRunOutput::Err(format!(
+                    r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
+                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+                    serde_json::to_string(actual_skill).unwrap_or_else(|_| "\"invalid\"".into())
+                ))
+            } else {
+                ToolRunOutput::Err(format!(
+                    r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
+                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+                    serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
+                        .unwrap_or_else(|_| "[]".into())
+                ))
+            }
         }
-        None => ToolRunOutput::Err(format!(
-            r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
-            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-            serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
-                .unwrap_or_else(|_| "[]".into())
-        )),
         Some(tool) => {
             let ctx = vak_tools::ToolContext {
                 cwd: cwd.to_path_buf(),

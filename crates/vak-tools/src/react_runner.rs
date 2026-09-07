@@ -236,29 +236,35 @@ fn prepare_component_code(code: &str) -> (String, Vec<String>) {
         }
 
         // Handle export default variants
-        if trimmed.starts_with("export default ") {
-            let after_export = &trimmed["export default ".len()..];
+        if let Some(after_export) = trimmed.strip_prefix("export default ") {
             if after_export.starts_with("function ") || after_export.starts_with("function\t") {
-                let func_part = after_export["function".len()..].trim_start();
-                if let Some(name_end) = func_part.find(|c: char| !c.is_alphanumeric() && c != '_') {
-                    let fn_name = &func_part[..name_end];
-                    if !fn_name.is_empty() {
-                        detected_names.push(fn_name.to_string());
+                if let Some(rest) = after_export.strip_prefix("function") {
+                    let func_part = rest.trim_start();
+                    if let Some(name_end) =
+                        func_part.find(|c: char| !c.is_alphanumeric() && c != '_')
+                    {
+                        let fn_name = &func_part[..name_end];
+                        if !fn_name.is_empty() {
+                            detected_names.push(fn_name.to_string());
+                        }
                     }
+                    processed_lines.push(format!("window.__vak_default_export = {after_export};"));
+                    continue;
                 }
-                processed_lines.push(format!("window.__vak_default_export = {after_export};"));
-                continue;
             } else if after_export.starts_with("class ") || after_export.starts_with("class\t") {
-                let class_part = after_export["class".len()..].trim_start();
-                if let Some(name_end) = class_part.find(|c: char| !c.is_alphanumeric() && c != '_')
-                {
-                    let class_name = &class_part[..name_end];
-                    if !class_name.is_empty() {
-                        detected_names.push(class_name.to_string());
+                if let Some(rest) = after_export.strip_prefix("class") {
+                    let class_part = rest.trim_start();
+                    if let Some(name_end) =
+                        class_part.find(|c: char| !c.is_alphanumeric() && c != '_')
+                    {
+                        let class_name = &class_part[..name_end];
+                        if !class_name.is_empty() {
+                            detected_names.push(class_name.to_string());
+                        }
                     }
+                    processed_lines.push(format!("window.__vak_default_export = {after_export};"));
+                    continue;
                 }
-                processed_lines.push(format!("window.__vak_default_export = {after_export};"));
-                continue;
             } else {
                 let expr = after_export.trim_end_matches(';');
                 if expr.chars().all(|c| c.is_alphanumeric() || c == '_') && !expr.is_empty() {
