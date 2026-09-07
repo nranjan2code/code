@@ -1295,7 +1295,12 @@ async fn run_exec(
             AgentEvent::Sandbox(sb_ev) => {
                 use vak_tools::sandbox_events::{SandboxEvent, fold_carriage_returns};
                 match sb_ev {
-                    SandboxEvent::ExecutionStarted { tool, code_preview, scratch_dir, .. } => {
+                    SandboxEvent::ExecutionStarted {
+                        tool,
+                        code_preview,
+                        scratch_dir,
+                        ..
+                    } => {
                         let first_line = code_preview.lines().next().unwrap_or("").trim();
                         let display_cmd = if first_line.len() > 60 {
                             format!("{}…", &first_line[..60])
@@ -1326,18 +1331,32 @@ async fn run_exec(
                     SandboxEvent::PackageInstalled { packages } => {
                         eprintln!("  │  📦 packages: {}", packages.join(", "));
                     }
-                    SandboxEvent::ArtifactGenerated { path, mime_type, size_bytes } => {
+                    SandboxEvent::ArtifactGenerated {
+                        path,
+                        mime_type,
+                        size_bytes,
+                    } => {
                         eprintln!("  │  📄 artifact: {path} ({size_bytes} B, {mime_type})");
                     }
-                    SandboxEvent::ProcessTelemetry { elapsed_ms, memory_bytes, .. } => {
+                    SandboxEvent::ProcessTelemetry {
+                        elapsed_ms,
+                        memory_bytes,
+                        ..
+                    } => {
                         if memory_bytes > 0 {
                             let mb = memory_bytes as f64 / (1024.0 * 1024.0);
                             eprintln!("  │  ⏱ {}ms | RSS: {:.1}MB", elapsed_ms, mb);
                         }
                     }
-                    SandboxEvent::ExecutionFinished { exit_code, duration_ms, artifacts } => {
+                    SandboxEvent::ExecutionFinished {
+                        exit_code,
+                        duration_ms,
+                        artifacts,
+                    } => {
                         let status_sym = if exit_code == 0 { "✓" } else { "✗" };
-                        let mut summary = format!("  └─ {status_sym} finished in {duration_ms}ms (exit: {exit_code})");
+                        let mut summary = format!(
+                            "  └─ {status_sym} finished in {duration_ms}ms (exit: {exit_code})"
+                        );
                         if !artifacts.is_empty() {
                             summary.push_str(&format!(" [{} artifact(s)]", artifacts.len()));
                         }

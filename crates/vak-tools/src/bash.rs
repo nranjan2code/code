@@ -72,7 +72,12 @@ impl Tool for BashTool {
 
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
-            sink.emit_execution_started("bash", command, "bash", &scratch_dir.display().to_string());
+            sink.emit_execution_started(
+                "bash",
+                command,
+                "bash",
+                &scratch_dir.display().to_string(),
+            );
         }
 
         let mut child = match cmd.spawn() {
@@ -458,7 +463,8 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
         if !pkgs.is_empty() {
             return Some(pkgs);
         }
-    } else if parts.len() >= 3 && (parts[0] == "pnpm" || parts[0] == "yarn") && (parts[1] == "add") {
+    } else if parts.len() >= 3 && (parts[0] == "pnpm" || parts[0] == "yarn") && (parts[1] == "add")
+    {
         let pkgs: Vec<String> = parts[2..]
             .iter()
             .filter(|p| !p.starts_with('-'))
@@ -520,6 +526,9 @@ mod tests {
         assert_eq!(guess_mime_type(Path::new("chart.png")), "image/png");
         assert_eq!(guess_mime_type(Path::new("index.html")), "text/html");
         assert_eq!(guess_mime_type(Path::new("data.csv")), "text/csv");
-        assert_eq!(guess_mime_type(Path::new("unknown.xyz")), "application/octet-stream");
+        assert_eq!(
+            guess_mime_type(Path::new("unknown.xyz")),
+            "application/octet-stream"
+        );
     }
 }

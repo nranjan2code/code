@@ -217,7 +217,14 @@ mod tests {
         let (sink, mut rx) = SandboxEventSink::new();
         sink.emit_telemetry(1500, 12.5, 45_000_000);
         let ev = rx.try_recv().unwrap();
-        assert!(matches!(ev, SandboxEvent::ProcessTelemetry { elapsed_ms: 1500, memory_bytes: 45_000_000, .. }));
+        assert!(matches!(
+            ev,
+            SandboxEvent::ProcessTelemetry {
+                elapsed_ms: 1500,
+                memory_bytes: 45_000_000,
+                ..
+            }
+        ));
     }
 
     #[test]
