@@ -5,6 +5,38 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.25 — 2026-09-08
+
+### Retired Tool Lifecycle & Plugin Cleanup
+
+- **Retired tools registry.** Added `crates/vak-tools/src/retired.rs` — a
+  compiled-in, append-only list of tool names that no longer exist
+  (`python_eval`, `react_preview`). Each entry carries the retirement
+  version and the replacement instruction (`bash`). This is the single
+  source of truth for tool retirements; there is no second list.
+- **Plugin retirement detection.** `PluginStore::retired_plugins()` scans
+  installed plugin packages for `SKILL.md` files referencing retired tool
+  names. A startup warning fires in `Core::new_with_trust`; `vak doctor`
+  flags them as a failed check; `vak doctor --repair` and `vak setup seed`
+  remove them automatically.
+- **Skill validation at discovery.** `skills::validate()` rejects any
+  `SKILL.md` whose description or body text backtick-references a retired
+  tool name, so stale skills never enter the model's capability contract.
+- **Tool name aliasing.** `canonical_tool_name()` redirects retired tool
+  names to `bash`, so a model that still reaches for `python_eval` gets a
+  `Correctable` error (missing `command` arg) instead of `unknown_capability`
+  and can self-repair.
+- **Config scrubbing.** `vak_config::prune_plugins_network_allow()` removes
+  stale entries from `[plugins] network_allow` when a retired plugin is
+  removed.
+- **Admin API.** `GET /plugins/retired` lists retired plugins;
+  `DELETE /plugins/retired` removes them all and prunes config.
+- **Local install remediation.** Removed `python-sandbox` and
+  `react-sandbox` plugin packages (v1.0.0 and v1.0.1) that survived the
+  3.0.21 sandbox unification and still instructed the model to call
+  `python_eval`/`react_preview`. Fixed `permission_mode` from `full-access`
+  to `workspace-write` to restore sandbox enforcement.
+
 ## 3.0.24 — 2026-09-08
 
 ### Sandboxed Broker Wrapping, Env Scrub Security & Auto-Approval Verification
