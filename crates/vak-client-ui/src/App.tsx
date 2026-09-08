@@ -125,15 +125,10 @@ export async function refreshSessions() {
     const res = await api.listSessions();
     if (source === api.backendUrl()) {
       setSessions(res.sessions);
-      // Reattach the most recent persisted task after a browser/server
-      // restart. Without this, Workbench opened on a blank New task even
-      // though the session ledger and sandbox execution ledger were intact.
-      // Only do this when there is no active task, so an intentional New
-      // task remains empty and the operator's current context is untouched.
-      if (!activeId() && !inboxOpen() && res.sessions.length > 0) {
-        const latest = res.sessions.find((session) => !session.archived) ?? res.sessions[0];
-        if (latest) void activate(latest.session_id);
-      }
+      // Startup is intentionally a fresh state. Persisted sessions remain
+      // available in the sidebar, but opening the app must never resurrect
+      // the last task (including an archived one). A task is rendered only
+      // after the operator explicitly selects it or sends a new prompt.
       // The other pane's session was deleted elsewhere — collapse the split
       // rather than showing a ghost.
       const other = splitId();
