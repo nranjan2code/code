@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.27 — 2026-09-08
+
+### Fresh Startup & Workspace Panel Controls
+
+- Start web and desktop with a fresh task canvas instead of reopening the
+  latest persisted task.
+- Keep the workspace More menus visible above the header and add a shared
+  right-panel expand/collapse control.
+
 ## 3.0.26 — 2026-09-08
 
 ### Sandbox Acceptance & Documentation
