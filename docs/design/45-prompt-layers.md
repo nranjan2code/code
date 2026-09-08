@@ -1,4 +1,5 @@
 # 45 — Editable prompt layers
+Status: implemented in 2.0.0
 
 ## Problem
 

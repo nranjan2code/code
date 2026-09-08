@@ -1,4 +1,5 @@
 # 01 — LLM layer (vak-llm)
+Status: implemented in 2.0.0
 
 ## Decisions
 

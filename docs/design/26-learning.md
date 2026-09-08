@@ -1,4 +1,5 @@
 # 26 — Learning loop: memory write-path + skill proposals
+Status: implemented in 2.0.0
 
 Closes pillars M2 (memory write-path) and G5 (self-improving skills behind
 review). Hermes differentiates itself with a closed loop — experience becomes

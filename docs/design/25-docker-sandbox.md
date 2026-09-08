@@ -1,4 +1,5 @@
 # 25 — Docker execution backend
+Status: implemented in 2.0.0
 
 G3 of the platform plan (`22-gateway.md`): remote/containerized execution so
 a hosted core can run agent commands off-host, and local runs get a harder

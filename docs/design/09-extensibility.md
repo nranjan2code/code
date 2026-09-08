@@ -1,4 +1,5 @@
 # 09 — Extensibility (skills · subagents · hooks · MCP · custom commands)
+Status: implemented in 2.0.0
 
 ## Skills (shipped)
 

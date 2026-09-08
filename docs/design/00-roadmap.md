@@ -1,4 +1,5 @@
 # 00 — Roadmap
+Status: historical
 
 **Baseline: 2.0.0.** Versions before it are unsupported and not described
 here (`docs/design/46-stabilization-install-and-onboarding.md`, Part VII.1).

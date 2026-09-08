@@ -1,4 +1,5 @@
 # 12 — Eval harness
+Status: implemented in 2.0.0
 
 The Binding-Constraint Thesis (harness variance beats model variance) made
 operational: `vak eval` runs a deterministic suite that exercises the

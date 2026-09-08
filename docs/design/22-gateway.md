@@ -1,4 +1,5 @@
 # 22 — Gateway: always-on surfaces + cron delivery
+Status: implemented in 2.0.0
 
 Closes the platform gap versus always-on personal agent platforms whose core
 differentiator is a gateway that routes many chat surfaces to persistent agent

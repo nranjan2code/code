@@ -1,4 +1,5 @@
 # 32 — Release engineering
+Status: implemented in 2.0.0
 
 The practical runbook — what to run, and what a person on each platform
 gets — is `docs/release-and-install.md`. This document owns the contract.

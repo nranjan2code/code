@@ -70,6 +70,7 @@ pub(crate) fn pin_test_data_home() {
 
 mod admin;
 mod admin_ui;
+mod bus;
 mod channels;
 mod client_ui;
 mod core_pool;
@@ -690,6 +691,15 @@ fn router_with_state(state: AppState) -> Router {
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
         )
+        // Distributed event bus status (vak-bus, docs/design/53).
+        // Credentials are never returned; only the connection state and
+        // metrics are exposed.
+        .route(
+            "/config/bus",
+            get(get_bus_config)
+                .put(put_bus_config)
+                .delete(delete_bus_config),
+        )
         // The approval policy: whether an `Ask` raised on an unattended
         // chat surface reaches a human at all. Read-only everywhere until
         // now, which made `vak_core::reach`'s own printed remedy an action
@@ -1204,6 +1214,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         "runs": runs,
         "tasks": operation_tasks(&state),
         "outbox": { "pending": outbox_pending, "dead_letter": outbox_dead, "records": outbox, "error": outbox_error },
+        "bus": state.hub.bus_status(),
         "security": security,
         "incidents": incidents,
         "actions": operations::recent_actions(&state.core.sessions_home(), 50),
@@ -2323,6 +2334,31 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
     (app, token)
 }
 
+/// Initialize the distributed event bus from config and attach it to the
+/// global `EventHub`. Called from `serve_with` (async) so NATS connection
+/// retries don't block request handling.
+pub async fn init_server_bus(core: &Core) {
+    let config = core.config().server.bus.clone();
+    if config.nats_url.is_none() {
+        return;
+    }
+    let sessions_home = core.sessions_home();
+    let workspace_id = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(sessions_home.to_string_lossy().as_bytes());
+        let result = hasher.finalize();
+        // First 6 bytes → 12 hex chars, a compact workspace-scoped subject prefix.
+        let prefix = &result[..6];
+        let hex: String = prefix.iter().map(|b| format!("{b:02x}")).collect();
+        format!("ws_{}", hex)
+    };
+    let bus = crate::bus::ServerBus::from_resolved(&workspace_id, &config).await;
+    if let Some(mut hub) = crate::events::global() {
+        hub.set_server_bus(std::sync::Arc::new(bus));
+    }
+}
+
 pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()> {
     serve_with(core, addr, false).await
 }
@@ -2351,7 +2387,10 @@ pub async fn serve_with(
     // bearer token; /health stays open.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let actual_addr = listener.local_addr()?;
-    let (app, token) = secured_router_with_port(core, force_gateway, actual_addr.port());
+    let (app, token) = secured_router_with_port(core.clone(), force_gateway, actual_addr.port());
+    // Initialize the distributed event bus (vak-bus, docs/design/53).
+    // Falls back to InMemoryBus when NATS is absent or unreachable.
+    init_server_bus(&core).await;
     eprintln!("Vak server listening on http://{actual_addr}");
     // Same source the real token-selection logic above (auth_token, in
     // AppState::new) already checks: `vak_config::get_var` also sees a
@@ -7292,6 +7331,146 @@ async fn put_provider_key(
         )
             .into_response(),
     }
+}
+
+// ---- Distributed event bus (vak-bus, docs/design/53) -------------------
+
+#[derive(serde::Deserialize)]
+struct BusConfigBody {
+    nats_url: Option<String>,
+    /// NATS credentials JWT. Stored in the workspace .env file and read
+    /// on next server start. Never returned by GET.
+    #[serde(default)]
+    nats_credentials_jwt: Option<String>,
+    /// NATS nkey seed. Stored in the workspace .env file and read
+    /// on next server start. Never returned by GET.
+    #[serde(default)]
+    nats_nkey_seed: Option<String>,
+    /// Name of the env var holding the workspace encryption secret.
+    #[serde(default)]
+    workspace_secret_env: Option<String>,
+}
+
+/// GET /config/bus — bus status and configuration (non-secret fields only).
+async fn get_bus_config(State(state): State<AppState>) -> axum::response::Response {
+    let cfg = state.core.config().server.bus.clone();
+    let status = state.hub.bus_status();
+    Json(serde_json::json!({
+        "nats_url": cfg.nats_url,
+        "encrypted": cfg.workspace_secret.is_some(),
+        "runtime": status,
+    }))
+    .into_response()
+}
+
+/// PUT /config/bus — store NATS credentials in the workspace .env file.
+/// Takes effect on the next server restart (the ServerBus is initialized
+/// at startup; runtime reconnection is a future enhancement).
+/// Credentials are never returned by GET /config/bus once set.
+async fn put_bus_config(
+    State(state): State<AppState>,
+    Json(body): Json<BusConfigBody>,
+) -> axum::response::Response {
+    if body.nats_url.is_none()
+        && body.nats_credentials_jwt.is_none()
+        && body.nats_nkey_seed.is_none()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "at least one of nats_url, nats_credentials_jwt, or nats_nkey_seed must be provided"
+            })),
+        )
+            .into_response();
+    }
+
+    let env_updates: Vec<(String, String)> = [
+        body.nats_url.map(|v| ("VAK_BUS_NATS_URL".to_string(), v)),
+        body.nats_credentials_jwt
+            .map(|v| ("VAK_BUS_NATS_CREDENTIALS_JWT".to_string(), v)),
+        body.nats_nkey_seed
+            .map(|v| ("VAK_BUS_NATS_NKEY_SEED".to_string(), v)),
+        body.workspace_secret_env
+            .map(|v| ("VAK_BUS_WORKSPACE_SECRET_ENV".to_string(), v)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let env_path = state.core.cwd().join(".vak/env");
+    let _ = std::fs::create_dir_all(state.core.cwd().join(".vak"));
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = existing.lines().map(String::from).collect();
+
+    for (key, val) in &env_updates {
+        let pattern = format!("{key}=");
+        if let Some(pos) = lines.iter().position(|l| l.starts_with(&pattern)) {
+            lines[pos] = format!("{key}={val}");
+        } else {
+            lines.push(format!("{key}={val}"));
+        }
+    }
+
+    let content = lines.join("\n") + "\n";
+    if let Err(e) = std::fs::write(&env_path, &content) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("failed to write .vak/env: {e}") })),
+        )
+            .into_response();
+    }
+    for (key, _val) in &env_updates {
+        state.hub.emit_config_changed("bus_credential_set", key);
+    }
+
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "bus_credential_set",
+        &format!(
+            "keys={}",
+            env_updates
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        None,
+    );
+
+    Json(serde_json::json!({
+        "configured": true,
+        "env_vars": env_updates.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+        "takes_effect": "on next server restart",
+    }))
+    .into_response()
+}
+
+/// DELETE /config/bus/credentials — remove NATS credentials from .vak/env.
+async fn delete_bus_config(State(state): State<AppState>) -> axum::response::Response {
+    let env_path = state.core.cwd().join(".vak/env");
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let keys = [
+        "VAK_BUS_NATS_URL",
+        "VAK_BUS_NATS_CREDENTIALS_JWT",
+        "VAK_BUS_NATS_NKEY_SEED",
+        "VAK_BUS_WORKSPACE_SECRET_ENV",
+    ];
+    let filtered: Vec<String> = existing
+        .lines()
+        .filter(|line| !keys.iter().any(|k| line.starts_with(&format!("{k}="))))
+        .map(String::from)
+        .collect();
+    let content = if filtered.is_empty() {
+        String::new()
+    } else {
+        filtered.join("\n") + "\n"
+    };
+    let _ = std::fs::write(&env_path, &content);
+    state
+        .hub
+        .emit_config_changed("bus_credential_cleared", "all");
+    Json(serde_json::json!({ "configured": false })).into_response()
 }
 
 #[derive(serde::Deserialize)]

@@ -40,10 +40,12 @@ portable-pty = { workspace = true }
 chrono = { workspace = true }
 walkdir = { workspace = true }
 toml = { workspace = true }
+sha2 = { workspace = true }
 # Script-task watchdogs execute through the same brokered BashTool the agent
 # loop uses (docs/design/29-personal-os.md P2); this pulls in the Tool
 # trait + ToolContext needed to drive it from the scheduler.
 vak-tools = { workspace = true }
+vak-bus = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }

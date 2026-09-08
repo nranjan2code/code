@@ -1,4 +1,5 @@
 # 39 — Plugin ecosystem: compatible packages, governed activation, trusted catalogs
+Status: implemented in 2.0.0
 
 ## Decision
 

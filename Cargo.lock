@@ -6480,6 +6480,7 @@ dependencies = [
  "tower-http",
  "uuid",
  "vak-agent",
+ "vak-bus",
  "vak-commit",
  "vak-config",
  "vak-core",

@@ -1,4 +1,5 @@
 # 20 — Tauri desktop app: competitive research & architecture
+Status: historical
 
 > **Since this was written, the UI moved.** The client itself now lives in
 > `crates/vak-client-ui` and is shared with the browser

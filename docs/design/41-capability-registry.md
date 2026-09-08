@@ -1,4 +1,5 @@
 # Capability registry
+Status: implemented in 2.0.0
 
 VAK treats every extension as a typed capability: tool, skill, MCP server,
 hook, command. One registry owns all five, one reconcile loop keeps them

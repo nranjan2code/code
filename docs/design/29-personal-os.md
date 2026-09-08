@@ -1,4 +1,5 @@
 # 29 — Personal OS
+Status: implemented in 2.0.0
 
 Personal-use completion pass. Source: 2026 market study (OpenClaw complaint
 taxonomy, Hermes Agent feature set, Claude Code friction) cross-referenced

@@ -1,4 +1,5 @@
 # 08 — Permissions (vak-permission)
+Status: implemented in 2.0.0
 
 ## Model
 

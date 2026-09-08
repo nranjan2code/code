@@ -1,4 +1,5 @@
 # 14 — Checkpoints & worktree isolation
+Status: implemented in 2.0.0
 
 ## Checkpoints
 

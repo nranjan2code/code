@@ -1,4 +1,5 @@
 # 11 — Dynamic planner
+Status: implemented in 2.0.0
 
 For open-ended tasks where a hand-authored flow does not exist,
 `vak plan "<task>" [--yes]` invokes the dynamic planner.

@@ -1,4 +1,5 @@
 # 07 — System prompt
+Status: implemented in 2.0.0
 
 Current seed: `crates/vak-core/src/system-prompt.md` (~770 tokens, block-marked),
 plus a runtime `Surface:` line of ~40 and any appended surface notes. Layer composition, editing surfaces, and

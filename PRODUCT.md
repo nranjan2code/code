@@ -48,7 +48,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 - README.md documents quick start, architecture ("one core, many surfaces"), and a features/documentation index.
 - `docs/design/` contains architecture design docs (e.g. `20-tauri-desktop.md`, `24-agent-security.md`, `00-roadmap.md`).
 - No testimonials, customer names, benchmarks, or pricing exist; future work must not fabricate them.
-- Current version: 2.0.1 (per README badge and CHANGELOG), actively developed.
+- Current version: 3.0.24 (per README badge and CHANGELOG), actively developed.
 
 ## Product Principles
 

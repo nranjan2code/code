@@ -34,7 +34,7 @@
 //! reproduces vak's pre-kernel behaviour, [`Limits::meet`] is the only
 //! composition operator offered, and there is deliberately no `join` to reach
 //! for by accident. [`Limits::is_at_most`] states the invariant as a
-//! predicate, and the property test in `tests/narrowing.rs` proves it holds
+//! predicate, and the inline tests in `limits.rs` prove it holds
 //! across every reading the resolver can produce.
 //!
 //! Two consequences worth stating explicitly:

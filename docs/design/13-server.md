@@ -1,4 +1,5 @@
 # 13 — Server mode
+Status: implemented in 2.0.0
 
 The client/server bet from the original architecture: one headless agent
 core, many surfaces. `vak serve --port 8901` exposes vak-core over

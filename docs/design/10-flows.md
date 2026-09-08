@@ -1,4 +1,5 @@
 # 10 — Flows (static DAGs)
+Status: implemented in 2.0.0
 
 ## Format
 

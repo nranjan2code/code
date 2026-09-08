@@ -1,4 +1,5 @@
 # 02 — Sessions (vak-session)
+Status: implemented in 2.0.0
 
 ## Format
 

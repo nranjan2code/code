@@ -1,4 +1,5 @@
 # 03 — Agent loop (vak-agent)
+Status: implemented in 2.0.0
 
 ## Shape
 

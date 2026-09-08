@@ -1,4 +1,5 @@
 # 38 — Voice & Personality (Gemini Live)
+Status: implemented in 2.0.0
 
 ## Problem
 

@@ -1,4 +1,5 @@
 # 28 — Operations: service control plane
+Status: implemented in 2.0.0
 
 Design notes behind `vak-ops`, the desktop-owned tray, and the `/ops` HTTP routes
 (operational how-to lives in `docs/hosting.md`).

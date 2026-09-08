@@ -1,4 +1,5 @@
 # 23 — Memory & cross-session recall
+Status: implemented in 2.0.0
 
 Pillar 2 of the platform plan (see `22-gateway.md` intro): Hermes' crown
 differentiator is not the loop — it is that **nothing learned is ever

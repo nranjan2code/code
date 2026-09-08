@@ -202,6 +202,28 @@ pub struct ServerSettings {
     pub workspace_roots: Option<Vec<String>>,
     #[serde(default)]
     pub web: WebSettings,
+    /// Distributed event fabric configuration (vak-bus, docs/design/53).
+    /// PRIVILEGED: a non-loopback NATS URL is network exposure, and the
+    /// workspace secret is a credential. Stripped for untrusted projects.
+    #[serde(default)]
+    pub bus: BusConfig,
+}
+
+/// Distributed event bus configuration (docs/design/53-distributed-bus.md).
+/// Lives inside `[server]` because a NATS endpoint is network exposure
+/// (rule 34) and the workspace secret is a credential (rule 8).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct BusConfig {
+    /// NATS server URL. Empty/unset = local InMemoryBus only.
+    pub nats_url: Option<String>,
+    /// Optional NATS credentials JWT for authenticated connections.
+    pub nats_credentials_jwt: Option<String>,
+    /// Optional NATS nkey seed for NKEY-authenticated connections.
+    pub nats_nkey_seed: Option<String>,
+    /// Name of the env var holding the workspace encryption secret.
+    /// The secret itself is never stored in config — only the env var name.
+    pub workspace_secret_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -240,6 +262,21 @@ pub struct ServerResolved {
     pub workspace_roots: Vec<std::path::PathBuf>,
     pub web_terminal: bool,
     pub web_terminal_requires_loopback: bool,
+    pub bus: BusResolved,
+}
+
+/// Resolved distributed event bus configuration.
+#[derive(Debug, Clone, Default)]
+pub struct BusResolved {
+    /// NATS server URL. None = local InMemoryBus only.
+    pub nats_url: Option<String>,
+    /// Optional NATS credentials JWT.
+    pub nats_credentials_jwt: Option<String>,
+    /// Optional NATS nkey seed.
+    pub nats_nkey_seed: Option<String>,
+    /// Resolved workspace encryption key (read from the env var named in
+    /// `BusConfig.workspace_secret_env`). Never the env var name itself.
+    pub workspace_secret: Option<Vec<u8>>,
 }
 
 impl ServerResolved {
@@ -1425,6 +1462,7 @@ impl Default for Config {
                 workspace_roots: Vec::new(),
                 web_terminal: false,
                 web_terminal_requires_loopback: true,
+                bus: BusResolved::default(),
             },
             plugins: PluginResolved::default(),
             warnings: Vec::new(),
@@ -2530,7 +2568,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, plugins.network_allow";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -3043,6 +3081,20 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .collect();
     cfg.server.web_terminal = sv.web.terminal.unwrap_or(false);
     cfg.server.web_terminal_requires_loopback = sv.web.terminal_requires_loopback.unwrap_or(true);
+    // Bus config: resolve the workspace encryption secret from the named env var.
+    // The env var name itself is never stored in the resolved config — only the
+    // secret bytes read from the environment at resolution time.
+    cfg.server.bus = BusResolved {
+        nats_url: sv.bus.nats_url.clone(),
+        nats_credentials_jwt: sv.bus.nats_credentials_jwt.clone(),
+        nats_nkey_seed: sv.bus.nats_nkey_seed.clone(),
+        workspace_secret: sv
+            .bus
+            .workspace_secret_env
+            .as_deref()
+            .and_then(|env_name| std::env::var(env_name).ok())
+            .map(|s| s.into_bytes()),
+    };
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(

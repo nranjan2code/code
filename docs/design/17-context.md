@@ -1,4 +1,5 @@
 # 17 — Long-horizon context
+Status: implemented in 2.0.0
 
 How multi-turn sessions survive context-window limits. Inspired by
 A prompt-budget protocol reduced to a coding-harness kernel.

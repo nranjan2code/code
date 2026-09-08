@@ -1,4 +1,5 @@
 # 15 — Reliability: QoS, crash, recovery, start/stop/resume
+Status: implemented in 2.0.0
 
 ## Tool and MCP error recovery
 

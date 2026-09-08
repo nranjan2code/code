@@ -1,9 +1,9 @@
 # 50 — Call and evidence contract
 
-**Status: implemented in 3.0.4 for schema admission and evidence-aware
+Status: implemented in 3.0.4 for schema admission and evidence-aware
 presentation; capability-driven renderer planning landed in 3.0.5; lifecycle
 and child-run evidence recovery landed in 3.0.8; result-scoped evidence
-receipts and requirement-linked outcome projection landed in 3.0.10.**
+receipts and requirement-linked outcome projection landed in 3.0.10.
 
 vak has one call boundary regardless of whether a turn is temporal, coding,
 research, data, or ordinary conversation. A provider proposal is not an

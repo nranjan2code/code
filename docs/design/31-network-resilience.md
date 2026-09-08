@@ -1,4 +1,5 @@
 # 31 — Network resilience
+Status: implemented in 2.0.0
 
 The always-on personal OS must survive DHCP renewals, network switching,
 outages, hibernation/wake, and full restarts **without any user action**.

@@ -1,4 +1,5 @@
 # 05 — Configuration and scoped capabilities (vak-config)
+Status: implemented in 2.0.0
 
 The single configuration contract. Merged from the former doc 44
 (`44-global-configuration.md`), which described the same layering from a

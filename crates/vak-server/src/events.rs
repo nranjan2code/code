@@ -8,6 +8,7 @@
 use std::sync::OnceLock;
 
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// Capacity of the global broadcast channel. Slow consumers that fall
@@ -88,22 +89,45 @@ pub struct AgentEventPayload {
 
 /// Global event hub singleton. Created once at server startup; every
 /// subsystem clones the `Sender` side. Consumers subscribe via `subscribe()`.
+///
+/// When a `ServerBus` has been attached via `set_server_bus`, `emit` also
+/// fans the event out to the distributed fabric (vak-bus, docs/design/53).
+/// This is fire-and-forget: the local broadcast is authoritative and the bus
+/// is supplementary for distributed subscribers.
 #[derive(Debug, Clone)]
 pub struct EventHub {
     tx: broadcast::Sender<SystemEvent>,
+    bus: Option<Arc<crate::bus::ServerBus>>,
 }
 
 impl EventHub {
     /// Create a new hub. Only call this once at server startup.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(HUB_CAPACITY);
-        EventHub { tx }
+        EventHub { tx, bus: None }
+    }
+
+    /// Attach a distributed event bus. Events emitted after this call are
+    /// also published to the bus fabric for remote subscribers.
+    pub fn set_server_bus(&mut self, bus: Arc<crate::bus::ServerBus>) {
+        self.bus = Some(bus);
     }
 
     /// Emit an event. Never blocks — dropped if no receivers are alive.
+    ///
+    /// When a `ServerBus` is attached, the event is also published to the
+    /// distributed fabric via a spawned tokio task (fire-and-forget).
     pub fn emit(&self, event: SystemEvent) {
-        // Best-effort: ignore Lagged/RecvError.
-        let _ = self.tx.send(event);
+        let _ = self.tx.send(event.clone());
+        if let Some(bus) = &self.bus {
+            let session_id = event_session_id(&event);
+            let bus = bus.clone();
+            tokio::spawn(async move {
+                if let Err(e) = bus.emit(&event, session_id.as_deref()).await {
+                    eprintln!("vak-server: ServerBus emit failed: {e}");
+                }
+            });
+        }
     }
 
     /// Create a new receiver. Lagged receivers get `Lagged` errors on
@@ -121,6 +145,26 @@ impl EventHub {
 impl Default for EventHub {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl EventHub {
+    /// Expose the attached `ServerBus` status, if any.
+    /// Used by `/config/bus` and `/ops/center` to report distributed-fabric
+    /// readiness to the admin console.
+    pub fn bus_status(&self) -> Option<serde_json::Value> {
+        self.bus.as_ref().map(|b| b.status())
+    }
+}
+
+/// Extract the session_id from a SystemEvent, if it carries one.
+/// Used for routing events to the correct vak-bus subject.
+fn event_session_id(event: &SystemEvent) -> Option<String> {
+    match event {
+        SystemEvent::SessionCreated { session_id, .. }
+        | SystemEvent::SessionEntryAppended { session_id, .. }
+        | SystemEvent::ApprovalRequested { session_id, .. } => Some(session_id.clone()),
+        _ => None,
     }
 }
 
