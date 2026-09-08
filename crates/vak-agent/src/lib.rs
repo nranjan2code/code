@@ -3951,11 +3951,8 @@ mod auto_approve_tests {
     use super::{ApprovalMode, Mode};
     use vak_permission::AskSource;
 
-    fn ws() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join("vak-agent-autoapprove-ws");
-        let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    fn ws() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
@@ -3970,7 +3967,7 @@ mod auto_approve_tests {
                     &serde_json::json!({"command": "ls"}),
                     Mode::WorkspaceWrite,
                     true,
-                    &cwd,
+                    cwd.path(),
                 ),
                 "AutoApprove must not override {source:?}"
             );
@@ -3988,7 +3985,7 @@ mod auto_approve_tests {
             &json,
             Mode::WorkspaceWrite,
             true,
-            &cwd,
+            cwd.path(),
         ));
     }
 
@@ -4005,7 +4002,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"command": "cargo test"}),
                 Mode::WorkspaceWrite,
                 true,
-                &cwd,
+                cwd.path(),
             ),
             "sandboxed bash in WorkspaceWrite should be auto-approved under ApproveSafe"
         );
@@ -4017,7 +4014,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"command": "cargo test"}),
                 Mode::ReadOnly,
                 true,
-                &cwd,
+                cwd.path(),
             ),
             "sandboxed bash in ReadOnly should be auto-approved under ApproveSafe"
         );
@@ -4037,7 +4034,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"command": "rm -rf /"}),
                 Mode::WorkspaceWrite,
                 false,
-                &cwd,
+                cwd.path(),
             ),
             "un-sandboxed bash must not be auto-approved"
         );
@@ -4049,7 +4046,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"command": "ls"}),
                 Mode::FullAccess,
                 true,
-                &cwd,
+                cwd.path(),
             ),
             "bash under FullAccess must not be auto-approved even with a sandbox"
         );
@@ -4067,7 +4064,7 @@ mod auto_approve_tests {
                     &serde_json::json!({}),
                     Mode::WorkspaceWrite,
                     false,
-                    &cwd,
+                    cwd.path(),
                 ),
                 "{tool} should be auto-approved under ApproveSafe"
             );
@@ -4088,7 +4085,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"path": "notes.txt", "content": "x"}),
                 Mode::WorkspaceWrite,
                 false,
-                &cwd,
+                cwd.path(),
             ),
             "writing inside the workspace should be auto-approved"
         );
@@ -4101,7 +4098,7 @@ mod auto_approve_tests {
                 &serde_json::json!({"path": outside.to_string_lossy(), "content": "x"}),
                 Mode::WorkspaceWrite,
                 false,
-                &cwd,
+                cwd.path(),
             ),
             "writing outside the workspace must not be auto-approved"
         );
@@ -4118,7 +4115,7 @@ mod auto_approve_tests {
             &serde_json::json!({"path": "ok.txt", "content": "x"}),
             Mode::WorkspaceWrite,
             false,
-            &cwd,
+            cwd.path(),
         ));
     }
 
@@ -4132,7 +4129,7 @@ mod auto_approve_tests {
             &serde_json::json!({}),
             Mode::WorkspaceWrite,
             true,
-            &cwd,
+            cwd.path(),
         ));
     }
 
@@ -4150,7 +4147,7 @@ mod auto_approve_tests {
                 &serde_json::json!({}),
                 Mode::WorkspaceWrite,
                 false,
-                &cwd,
+                cwd.path(),
             ),
             "un-sandboxed bash without command arg must not be auto-approved"
         );
@@ -4162,7 +4159,7 @@ mod auto_approve_tests {
                 &serde_json::json!({}),
                 Mode::WorkspaceWrite,
                 true,
-                &cwd,
+                cwd.path(),
             ),
             "sandboxed bash is auto-approved by the sand-boxing contract"
         );
