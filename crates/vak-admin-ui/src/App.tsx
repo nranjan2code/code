@@ -21,7 +21,7 @@ import {
 } from "./store";
 import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
-  ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
+  ConfigScope, ConfigLayer, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
@@ -42,7 +42,7 @@ createEffect(() => {
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
 const [configScope, setConfigScope] = createSignal<ConfigScope>(
-  (localStorage.getItem("vak_admin_config_scope") as ConfigScope) || "user",
+  localStorage.getItem("vak_admin_config_scope") === "project" ? "project" : "user",
 );
 
 function setConfigScopePersisted(scope: ConfigScope) {
@@ -2399,6 +2399,7 @@ function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory());
   const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
+  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope));
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
   const [noteText, setNoteText] = createSignal("");
@@ -2442,9 +2443,10 @@ function MemoryView() {
   ) => {
     setTogglingFlag(key);
     try {
-      await api.patchConfig({ [key]: next });
+      await api.patchConfigScope(configScope(), { [key]: next });
       await refetchConfig();
-      pushToast("info", `${next ? "Enabled" : "Disabled"}`);
+      void refetchLayer();
+      pushToast("info", `${next ? "Enabled" : "Disabled"} in ${configScope() === "user" ? "Global" : "Workspace"}`);
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -2496,13 +2498,14 @@ function MemoryView() {
   const flagCards: Array<{
     key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals";
     on: () => boolean;
+    setHere: () => boolean;
     title: string;
     desc: string;
   }> = [
-    { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, title: "Search past sessions", desc: "Lets vak look up earlier conversations mid-run." },
-    { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, title: "Write notes", desc: "Lets vak save what it learns mid-run, not just what you add here." },
-    { key: "memory_reflection", on: () => configData()?.memory?.reflection ?? false, title: "Reflect after each run", desc: "A short pass proposing notes/skills from what just happened." },
-    { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, title: "Propose skills", desc: "Lets reflection suggest new skills for you to review." },
+    { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, setHere: () => layer()?.memory?.search_enabled === true, title: "Search past sessions", desc: "Lets vak look up earlier conversations mid-run." },
+    { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, setHere: () => layer()?.memory?.write_enabled === true, title: "Write notes", desc: "Lets vak save what it learns mid-run, not just what you add here." },
+    { key: "memory_reflection", on: () => configData()?.memory?.reflection ?? false, setHere: () => layer()?.memory?.reflection === true, title: "Reflect after each run", desc: "A short pass proposing notes/skills from what just happened." },
+    { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, setHere: () => layer()?.memory?.skill_proposals === true, title: "Propose skills", desc: "Lets reflection suggest new skills for you to review." },
   ];
 
   return (
@@ -2521,8 +2524,12 @@ function MemoryView() {
       </div>
 
       <section class="panel">
-        <h2>Governance</h2>
-        <p class="dim" style="margin-top:-4px">What vak is allowed to do with memory, live — no restart needed.</p>
+        <div class="panel-title-row">
+          <div>
+            <h2>Governance</h2>
+            <p class="dim" style="margin-top:-4px">What vak is allowed to do with memory, live — no restart needed. Writing here affects <strong>{configScope() === "user" ? "Global" : "Workspace"}</strong> scope.</p>
+          </div>
+        </div>
         <div class="toggle-card-grid" style="margin-top:10px">
           <For each={flagCards}>
             {(f) => (
@@ -2530,6 +2537,12 @@ function MemoryView() {
                 <div class="toggle-card-body">
                   <strong>{f.title}</strong>
                   <span>{f.desc}</span>
+                  <Show when={() => f.setHere()}>
+                    <span class="chip chip-tone-success" style="margin-top:4px">set here</span>
+                  </Show>
+                  <Show when={() => !f.setHere()}>
+                    <span class="chip chip-tone-warning" style="margin-top:4px">inherited</span>
+                  </Show>
                 </div>
                 <label class="toggle">
                   <input
@@ -4975,7 +4988,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
               <select
                 onChange={(e) =>
                   void run("Model saved", () =>
-                    api.patchConfig({ provider: chosenProvider(), model: e.currentTarget.value }),
+                    api.patchConfigScope("project", { provider: chosenProvider(), model: e.currentTarget.value }),
                   )
                 }
               >
@@ -5569,6 +5582,13 @@ function Settings() {
   const [savingMaxTurns, setSavingMaxTurns] = createSignal(false);
   const [togglingSubagents, setTogglingSubagents] = createSignal(false);
 
+  const [busData, { refetch: refetchBus }] = createResource(() => api.busConfig());
+  const [busUrl, setBusUrl] = createSignal("");
+  const [busJwt, setBusJwt] = createSignal("");
+  const [busNkey, setBusNkey] = createSignal("");
+  const [busSecretEnv, setBusSecretEnv] = createSignal("");
+  const [savingBus, setSavingBus] = createSignal(false);
+
   let initializedScope = "";
   createEffect(() => {
     const c = config();
@@ -5615,6 +5635,38 @@ function Settings() {
       pushToast("info", ok);
       refetchConfig();
       refetchLayer();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    }
+  };
+
+  const saveBus = async () => {
+    if (savingBus()) return;
+    setSavingBus(true);
+    try {
+      const body: Record<string, string> = {};
+      if (busUrl().trim()) body.nats_url = busUrl().trim();
+      if (busJwt().trim()) body.nats_credentials_jwt = busJwt().trim();
+      if (busNkey().trim()) body.nats_nkey_seed = busNkey().trim();
+      if (busSecretEnv().trim()) body.workspace_secret_env = busSecretEnv().trim();
+      await api.putBusConfig(body);
+      pushToast("info", "Bus configuration saved — takes effect on next server restart");
+      void refetchBus();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setSavingBus(false);
+    }
+  };
+
+  const clearBus = async () => {
+    if (!confirmDestructive("Remove all NATS credentials from the workspace .env? The bus connection will stop on restart.")) return;
+    try {
+      await api.deleteBusConfig();
+      pushToast("info", "Bus credentials removed");
+      void refetchBus();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5836,6 +5888,86 @@ function Settings() {
                 </button>
               </Show>
             </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Event bus</h2>
+                <p class="dim">
+                  Distributed event fabric (vak-bus, docs/design/53). Configure NATS
+                  credentials to enable multi-server fan-out; leave unset for
+                  in-process-only (memory backend). Credentials are written to
+                  <code>.vak/env</code> and take effect on next restart.
+                </p>
+              </div>
+              <Show when={busData()}>
+                <span class={`chip chip-tone-${busData()?.runtime?.connected ? "success" : "warning"}`}>
+                  {busData()?.runtime?.backend === "nats" ? "connected" : busData()?.runtime?.backend === "memory" ? "in-process" : "not connected"}
+                </span>
+              </Show>
+            </div>
+            <Show when={busData()}>
+              <div class="form-row">
+                <label>NATS URL</label>
+                <input
+                  type="url"
+                  placeholder="nats://..."
+                  value={busData()?.nats_url ?? ""}
+                  onInput={(e) => setBusUrl(e.currentTarget.value)}
+                />
+              </div>
+              <div class="form-row">
+                <label>Credentials JWT (optional)</label>
+                <input
+                  type="password"
+                  autocomplete="off"
+                  placeholder="ey..."
+                  value={busJwt()}
+                  onInput={(e) => setBusJwt(e.currentTarget.value)}
+                />
+              </div>
+              <div class="form-row">
+                <label>NKey seed (optional)</label>
+                <input
+                  type="password"
+                  autocomplete="off"
+                  placeholder="SU..."
+                  value={busNkey()}
+                  onInput={(e) => setBusNkey(e.currentTarget.value)}
+                />
+              </div>
+              <div class="form-row">
+                <label>Workspace secret env var name</label>
+                <input
+                  type="text"
+                  class="mono"
+                  placeholder="VAK_ENCRYPTION_SECRET"
+                  value={busSecretEnv()}
+                  onInput={(e) => setBusSecretEnv(e.currentTarget.value)}
+                />
+              </div>
+              <Show when={busData()?.encrypted}>
+                <p class="dim" style="margin-top:8px">
+                  <span class="chip chip-tone-success">Credential envelope encrypted</span>
+                  AES-256-GCM envelope security is active for this workspace.
+                </p>
+              </Show>
+              <div class="row-gap" style="margin-top:10px">
+                <button disabled={savingBus()} onClick={() => void saveBus()}>
+                  {savingBus() ? "Saving…" : "Save bus config"}
+                </button>
+                <Show when={busData()?.encrypted || (busData()?.nats_url ?? "").trim() !== ""}>
+                  <button class="danger small" onClick={() => void clearBus()}>
+                    Remove credentials
+                  </button>
+                </Show>
+              </div>
+              <p class="dim" style="margin-top:8px">
+                Takes effect on next server restart. The runtime status above reflects the current
+                connection, not the pending configuration.
+              </p>
+            </Show>
           </section>
 
           <section class="panel">
@@ -6092,6 +6224,7 @@ const OPERATIONS_TABS = [
   { hash: "#/operations/automations", label: "Automations" },
   { hash: "#/operations/providers", label: "Providers" },
   { hash: "#/operations/incidents", label: "Incidents" },
+  { hash: "#/operations/sandbox", label: "Sandbox" },
 ] as const;
 
 const operationsTab = () => {

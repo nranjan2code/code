@@ -191,6 +191,7 @@ export interface GatewayBinding {
   } | null;
   stale: boolean;
   stale_reasons: string[];
+  paused: boolean;
 }
 
 export interface CorePoolEntry {
@@ -493,6 +494,124 @@ export interface OperationsSnapshot {
     persisted: boolean;
   }>;
   ops_port: number;
+  bus: BusStatus | null;
+}
+
+export interface BusStatus {
+  workspace_id: string;
+  backend: "nats" | "memory";
+  connected: boolean;
+  encrypted: boolean;
+  metrics: {
+    published_count: number;
+    received_count: number;
+    bytes_published: number;
+    bytes_received: number;
+    dead_letter_count: number;
+    active_queue_lag: number;
+  };
+}
+
+export interface BusConfig {
+  nats_url: string | null;
+  encrypted: boolean;
+  runtime: BusStatus | null;
+}
+
+export type SandboxRecordKind = "environment" | "candidate" | "promotion";
+
+export interface SandboxEnvironmentRecord {
+  kind: "environment";
+  record_id: string;
+  environment_id: string;
+  state: string;
+  plan: {
+    id: string;
+    outcome_revision: number;
+    backend: string;
+    image?: string | null;
+    network_policy: string;
+    input_root: string;
+    task_root: string;
+  };
+  updated_at: string;
+  detail?: string | null;
+}
+
+export interface SandboxCandidateRecord {
+  kind: "candidate";
+  record_id: string;
+  environment_id: string;
+  candidate: {
+    candidate_id: string;
+    source_root: string;
+    destination_root: string;
+    files: Array<{ path: string; candidate_hash: string; base_hash?: string | null; bytes: number }>;
+  };
+  verified: boolean;
+  updated_at: string;
+}
+
+export interface SandboxPromotionRecord {
+  kind: "promotion";
+  record_id: string;
+  candidate_id: string;
+  receipt: {
+    candidate_id: string;
+    applied: string[];
+    before_hashes: Array<[string, string | null]>;
+    after_hashes: Array<[string, string]>;
+    verification: Array<{ path: string; status: string; evidence: string }>;
+  };
+  updated_at: string;
+}
+
+export type SandboxRecord =
+  | SandboxEnvironmentRecord
+  | SandboxCandidateRecord
+  | SandboxPromotionRecord;
+
+export interface SandboxRecordsResponse {
+  records: SandboxRecord[];
+}
+
+export interface CandidateManifest {
+  candidate_id: string;
+  source_root: string;
+  destination_root: string;
+  files: CandidateFile[];
+}
+
+export interface CandidateFile {
+  path: string;
+  candidate_hash: string;
+  base_hash?: string | null;
+  bytes: number;
+}
+
+export interface PromotionReceipt {
+  candidate_id: string;
+  applied: string[];
+  before_hashes: Array<[string, string | null]>;
+  after_hashes: Array<[string, string]>;
+  verification: VerificationResult[];
+}
+
+export interface VerificationResult {
+  path: string;
+  status: string;
+  evidence: string;
+}
+
+export interface SandboxExecutionEvent {
+  event: string;
+  ts: string;
+  [key: string]: unknown;
+}
+
+export interface SandboxExecutionsResponse {
+  session_id: string;
+  events: SandboxExecutionEvent[];
 }
 
 export interface McpServerConfig {

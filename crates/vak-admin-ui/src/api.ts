@@ -5,6 +5,7 @@ import type {
   AllowlistRoute,
   ChannelPolicy,
   BestOfNRun,
+  BusConfig,
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
@@ -53,6 +54,10 @@ import type {
   WorkReceipt,
   WorkProjection,
   ActiveSubagent,
+  SandboxRecordsResponse,
+  SandboxExecutionsResponse,
+  CandidateManifest,
+  PromotionReceipt,
 } from "./types";
 
 export class AuthRequired extends Error {
@@ -233,6 +238,55 @@ export const api = {
   opsAction: (service: "gateway" | "bridges", action: "start" | "stop" | "restart" | "install" | "uninstall"): Promise<{ ok: boolean; action?: string; error?: string; receipt_id?: string; receipt_persisted?: boolean; verification?: { status: string; before: string; after: string; detail: string } }> =>
     fetch(`/ops/${service}/${action}`, { method: "POST" }).then((r) => handle(r)),
 
+  // ---- Distributed event bus (vak-bus, docs/design/53) -------------------
+
+  busConfig: (): Promise<BusConfig> =>
+    fetch("/config/bus").then((r) => handle<BusConfig>(r)),
+
+  putBusConfig: (body: {
+    nats_url?: string;
+    nats_credentials_jwt?: string;
+    nats_nkey_seed?: string;
+    workspace_secret_env?: string;
+  }): Promise<{ configured: boolean; env_vars: string[]; takes_effect: string }> =>
+    fetch("/config/bus", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
+  deleteBusConfig: (): Promise<void> =>
+    fetch("/config/bus/credentials", { method: "DELETE" }).then((r) => void handle(r)),
+
+  // ---- Sandbox (docs/design/2026-sandboxed-execution) --------------------
+
+  sandboxRecords: (): Promise<SandboxRecordsResponse> =>
+    fetch("/sandbox/records").then((r) => handle(r)),
+
+  sessionSandboxExecutions: (sessionId: string): Promise<SandboxExecutionsResponse> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions`).then((r) => handle(r)),
+
+  exportSandboxCandidate: (body: {
+    candidate_id: string;
+    source: string;
+    destination?: string;
+  }): Promise<CandidateManifest> =>
+    fetch("/sandbox/candidates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
+  promoteSandboxCandidate: (body: {
+    candidate: CandidateManifest;
+    record_id?: string;
+  }): Promise<PromotionReceipt> =>
+    fetch("/sandbox/promote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
   patchGatewayWorkspace: (workspace: string | null): Promise<{ workspace: string; restart_required: boolean }> =>
     fetch("/admin/api/gateway/workspace", {
       method: "PATCH",
@@ -366,25 +420,6 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode }),
-    }).then((r) => void handle(r)),
-
-  patchConfig: (patch: {
-    provider?: string;
-    model?: string;
-    max_turns?: number;
-    approval_mode?: "ask" | "approve-safe" | "auto-approve";
-    theme?: string;
-    subagents?: boolean;
-    /** `[memory]` toggles (docs/design/23-memory.md). Omitted = leave alone. */
-    memory_search_enabled?: boolean;
-    memory_write_enabled?: boolean;
-    memory_reflection?: boolean;
-    memory_skill_proposals?: boolean;
-  }): Promise<void> =>
-    fetch("/config", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
     }).then((r) => void handle(r)),
 
   cancelRun: (sessionId: string): Promise<void> =>

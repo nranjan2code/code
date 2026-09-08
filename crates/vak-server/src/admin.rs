@@ -923,6 +923,26 @@ fn is_scratch_workspace(path: &str) -> bool {
     {
         return true;
     }
+    // Windows temp dirs: %TEMP%, %TMP%, C:\Windows\Temp, C:\Temp.
+    // `std::env::temp_dir()` returns the OS canonical temp on every platform,
+    // so checking it catches redirected/user-specific temp roots that a
+    // literal path match would miss (e.g. on a managed Windows account).
+    #[cfg(windows)]
+    {
+        let temp = std::env::temp_dir();
+        if let Ok(temp_str) = temp.into_os_string().into_string() {
+            if path == temp_str || path.starts_with(&format!("{}\\", temp_str)) {
+                return true;
+            }
+        }
+        if path.eq_ignore_ascii_case(r"C:\Windows\Temp")
+            || path.starts_with(r"C:\Windows\Temp\")
+            || path.eq_ignore_ascii_case(r"C:\Temp")
+            || path.starts_with(r"C:\Temp\")
+        {
+            return true;
+        }
+    }
     std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
@@ -1069,6 +1089,7 @@ fn allowlist_entry_json(state: &AppState, e: &crate::gateway::AllowlistEntry) ->
         "policy": e.policy,
         "bot_id": e.bot_id,
         "inherit_bot_policy": e.inherit_bot_policy,
+        "voice": e.voice,
         "added_at": e.added_at,
         "added_by": e.added_by,
         "first_seen_text": e.first_seen_text,

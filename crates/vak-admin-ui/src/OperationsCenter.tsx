@@ -1,9 +1,9 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "./api";
 import { conn, navigate, pushToast, route } from "./store";
-import type { OperationsSnapshot } from "./types";
+import type { OperationsSnapshot, SandboxEnvironmentRecord, SandboxCandidateRecord, SandboxPromotionRecord } from "./types";
 
-type Section = "overview" | "work" | "runtime" | "channels" | "automations" | "providers" | "incidents";
+type Section = "overview" | "work" | "runtime" | "channels" | "automations" | "providers" | "incidents" | "sandbox";
 type TimeWindow = "live" | "1h" | "24h" | "7d" | "custom";
 
 const timeWindowLabels: Record<TimeWindow, string> = {
@@ -13,6 +13,13 @@ const timeWindowLabels: Record<TimeWindow, string> = {
   "7d": "Last 7 days",
   custom: "Custom window",
 };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 function operationPath(value = route()): string {
   return value.split("?", 1)[0] || "#/operations";
@@ -175,6 +182,7 @@ function Topology(props: { data: OperationsSnapshot; selected: string; onSelect:
     { id: "pool", label: "CorePool", value: `${props.data.pool.entries.length}/${props.data.pool.max}`, detail: "warm / capacity" },
     { id: "work", label: "Work", value: `${props.data.runs.length}`, detail: "live runs" },
     { id: "delivery", label: "Delivery", value: `${props.data.outbox.pending}`, detail: `${props.data.outbox.dead_letter} dead-lettered` },
+    { id: "sandbox", label: "Sandbox", value: `${props.data.health.sandbox || "—"}`, detail: "execution backend" },
   ];
   return <section class="panel operations-topology-panel">
     <div class="panel-title-row">
@@ -204,6 +212,7 @@ function Topology(props: { data: OperationsSnapshot; selected: string; onSelect:
       <Show when={props.selected === "pool"}><p>{props.data.pool.entries.length} warm Core instance(s) out of {props.data.pool.max}; idle eviction is {props.data.pool.idle_secs}s.</p></Show>
       <Show when={props.selected === "work"}><p>{props.data.runs.length} run(s) currently hold a live session handle. Open Live work for the approval and ledger trail.</p></Show>
       <Show when={props.selected === "delivery"}><p>{props.data.outbox.pending} pending job(s) and {props.data.outbox.dead_letter} dead-lettered job(s) are persisted in the outbox.</p></Show>
+      <Show when={props.selected === "sandbox"}><p>Execution backend: <StatusMark value={props.data.health.sandbox || "unset"} />. Staged, promoted, and quarantined environments live under <code>.vak/scratch/</code>. Open the Sandbox tab for the durable record ledger.</p></Show>
     </div>
   </section>;
 }
@@ -271,6 +280,24 @@ function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway"
         <div class="ops-pool-list"><For each={props.data.pool.entries}>{(entry) => <div class="ops-pool-row"><div class="ops-pool-name"><strong>{entry.workspace}</strong><span class="dim">{entry.is_default ? "default workspace" : "pooled workspace"}</span></div><div class="ops-pool-bar"><span style={{ width: `${Math.max(5, Math.min(100, 100 - (entry.idle_secs / Math.max(1, props.data.pool.idle_secs)) * 100))}%` }} /></div><div class="mono">{entry.idle_secs}s idle</div><StatusMark value={entry.effective_permission_mode} /></div>}</For></div>
       </Show>
     </section>
+    <Show when={props.data.bus !== null}>
+      <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Event fabric</span><h2>Distributed bus</h2><p class="dim">vak-bus (docs/design/53): NATS Core + JetStream with AES-256-GCM envelope security and W3C/Merkle causal lineage.</p></div><StatusMark value={props.data.bus!.connected ? "healthy" : "degraded"} /></div>
+        <div class="operations-metric-grid">
+          <Metric label="Backend" value={props.data.bus!.backend} />
+          <Metric label="Connected" value={props.data.bus!.connected ? "yes" : "no"} />
+          <Metric label="Encrypted" value={props.data.bus!.encrypted ? "yes" : "no"} />
+          <Metric label="Workspace ID" value={props.data.bus!.workspace_id.slice(0, 8) + "…"} />
+        </div>
+        <div class="operations-metric-grid" style="margin-top:8px">
+          <Metric label="Published" value={props.data.bus!.metrics.published_count} />
+          <Metric label="Received" value={props.data.bus!.metrics.received_count} />
+          <Metric label="Bytes out" value={formatBytes(props.data.bus!.metrics.bytes_published)} />
+          <Metric label="Bytes in" value={formatBytes(props.data.bus!.metrics.bytes_received)} />
+          <Metric label="Dead-lettered" value={props.data.bus!.metrics.dead_letter_count} tone={props.data.bus!.metrics.dead_letter_count > 0 ? "bad" : undefined} />
+          <Metric label="Queue lag" value={props.data.bus!.metrics.active_queue_lag} />
+        </div>
+      </section>
+    </Show>
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Action ledger</span><h2>Recent receipts</h2><p class="dim">Every service or delivery mutation records the request, post-action probe, and persistence result.</p></div><Metric label="Stored" value={props.data.actions.length} /></div>
       <Show when={props.data.actions.length > 0} fallback={<div class="empty">No operational actions have been recorded.</div>}>
         <div class="ops-event-list"><For each={props.data.actions.slice(0, 12)}>{(receipt) => <article><div><StatusMark value={receipt.verification.status} /><strong>{receipt.service} · {receipt.action}</strong><span class="mono dim">{receipt.receipt_id}</span></div><span class="mono dim">{time(receipt.completed_at)}</span><p>{receipt.verification.detail} <span class="mono">{receipt.verification.before} → {receipt.verification.after}</span></p></article>}</For></div>
@@ -304,12 +331,13 @@ function RunDetail(props: { data: OperationsSnapshot; sessionId: string }) {
   const [transcript, transcriptState] = createResource(() => props.sessionId, (id) => api.transcript(id, { limit: 200, refresh: true }));
   const [receipts, receiptsState] = createResource(() => props.sessionId, (id) => api.receipts(id));
   const [work, { refetch: refetchWork }] = createResource(() => props.sessionId, (id) => api.work(id));
+  const [sandboxExecs, sandboxState] = createResource(() => props.sessionId, (id) => api.sessionSandboxExecutions(id));
   const run = () => props.data.runs.find((item) => item.session_id === props.sessionId);
   const command = async (value: Record<string, unknown>) => {
     try { await api.workCommand(props.sessionId, value); await refetchWork(); pushToast("info", "Work ledger updated"); }
     catch (error) { pushToast("alert", `Work update failed: ${error}`); }
   };
-  return <div class="operations-stack"><Breadcrumbs path={operationPath()} /><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Run detail</span><h2 class="mono">{props.sessionId}</h2><p class="dim">A preserved trail from live handle to session ledger and provider receipts.</p></div><StatusMark value={run()?.state || "historical"} /></div><div class="operations-metric-grid"><Metric label="Workspace" value={run()?.workspace || "ledger"} /><Metric label="Approvals" value={run()?.pending_approvals.length || 0} /><Metric label="Ledger" value={transcript.loading ? "loading" : transcript.error ? "unavailable" : "available"} /><Metric label="Receipts" value={receipts.loading ? "loading" : receipts()?.length || 0} /></div><div class="ops-action-row"><button class="ghost small" onClick={() => navigate(`#/sessions/${encodeURIComponent(props.sessionId)}`)}>Open session console</button><button class="ghost small" onClick={() => navigate(operationHref("#/operations/work"))}>Back to live work</button></div></section><Show when={work()}>{(projection) => <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Managed work</span><h2>{projection().contract.objective}</h2><p class="dim">Contract <span class="mono">{projection().contract.contract_id}</span> · {projection().status}</p></div><StatusMark value={projection().status} /></div><div class="ops-check-list"><For each={Object.entries(projection().items)}>{([itemId, item]) => <div class="ops-check-row"><StatusMark value={item.status} /><strong class="mono">{itemId}</strong><span>attempt {item.attempt}{item.blocker ? ` · ${item.blocker}` : ""}</span><Show when={item.status === "failed" || item.status === "interrupted"}><button class="ghost small" onClick={() => void command({ operation: "retry", item_id: itemId, reason: "operator retry" })}>Retry</button></Show></div>}</For></div><Show when={projection().status === "blocked"}><div class="ops-action-row"><button class="primary small" onClick={() => void command({ operation: "resume", reason: "operator resumed contract" })}>Resume contract</button></div></Show></section>}</Show><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Timeline</span><h2>Ledger entries</h2><p class="dim">Chronological evidence from the append-only session log.</p></div></div><Show when={!transcript.loading} fallback={<div class="empty">Reading session ledger…</div>}><Show when={!transcript.error} fallback={<div class="error-state"><strong>Ledger unavailable</strong><p>{String(transcript.error)}</p></div>}><Show when={(transcript()?.entries.length ?? 0) > 0} fallback={<div class="empty">No ledger entries were returned.</div>}><div class="ops-timeline"><For each={transcript()?.entries ?? []}>{(entry) => <article classList={{ "ops-timeline-error": entry.is_error }}><span class="ops-timeline-dot" /><div><div class="panel-title-row"><strong>{entry.kind}</strong><span class="mono dim">{time(entry.ts)}</span></div><p class="dim">{entry.role || "system"}{entry.tool_name ? ` · ${entry.tool_name}` : ""}</p><pre class="mono ops-evidence-pre">{entry.content}</pre></div></article>}</For></div></Show></Show></Show></section><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Provider evidence</span><h2>Receipts</h2><p class="dim">Frozen provider/model attribution and settlement data.</p></div></div><Show when={!receipts.loading} fallback={<div class="empty">Reading receipts…</div>}><Show when={(receipts()?.length ?? 0) > 0} fallback={<div class="empty">No provider receipts recorded for this run.</div>}><div class="ops-receipt-list"><For each={receipts() ?? []}>{(receipt) => <pre class="mono ops-receipt">{JSON.stringify(receipt, null, 2)}</pre>}</For></div></Show></Show></section></div>;
+  return <div class="operations-stack"><Breadcrumbs path={operationPath()} /><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Run detail</span><h2 class="mono">{props.sessionId}</h2><p class="dim">A preserved trail from live handle to session ledger and provider receipts.</p></div><StatusMark value={run()?.state || "historical"} /></div><div class="operations-metric-grid"><Metric label="Workspace" value={run()?.workspace || "ledger"} /><Metric label="Approvals" value={run()?.pending_approvals.length || 0} /><Metric label="Ledger" value={transcript.loading ? "loading" : transcript.error ? "unavailable" : "available"} /><Metric label="Receipts" value={receipts.loading ? "loading" : receipts()?.length || 0} /></div><div class="ops-action-row"><button class="ghost small" onClick={() => navigate(`#/sessions/${encodeURIComponent(props.sessionId)}`)}>Open session console</button><button class="ghost small" onClick={() => navigate(operationHref("#/operations/work"))}>Back to live work</button></div></section><Show when={work()}>{(projection) => <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Managed work</span><h2>{projection().contract.objective}</h2><p class="dim">Contract <span class="mono">{projection().contract.contract_id}</span> · {projection().status}</p></div><StatusMark value={projection().status} /></div><div class="ops-check-list"><For each={Object.entries(projection().items)}>{([itemId, item]) => <div class="ops-check-row"><StatusMark value={item.status} /><strong class="mono">{itemId}</strong><span>attempt {item.attempt}{item.blocker ? ` · ${item.blocker}` : ""}</span><Show when={item.status === "failed" || item.status === "interrupted"}><button class="ghost small" onClick={() => void command({ operation: "retry", item_id: itemId, reason: "operator retry" })}>Retry</button></Show></div>}</For></div><Show when={projection().status === "blocked"}><div class="ops-action-row"><button class="primary small" onClick={() => void command({ operation: "resume", reason: "operator resumed contract" })}>Resume contract</button></div></Show></section>}</Show><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Timeline</span><h2>Ledger entries</h2><p class="dim">Chronological evidence from the append-only session log.</p></div></div><Show when={!transcript.loading} fallback={<div class="empty">Reading session ledger…</div>}><Show when={!transcript.error} fallback={<div class="error-state"><strong>Ledger unavailable</strong><p>{String(transcript.error)}</p></div>}><Show when={(transcript()?.entries.length ?? 0) > 0} fallback={<div class="empty">No ledger entries were returned.</div>}><div class="ops-timeline"><For each={transcript()?.entries ?? []}>{(entry) => <article classList={{ "ops-timeline-error": entry.is_error }}><span class="ops-timeline-dot" /><div><div class="panel-title-row"><strong>{entry.kind}</strong><span class="mono dim">{time(entry.ts)}</span></div><p class="dim">{entry.role || "system"}{entry.tool_name ? ` · ${entry.tool_name}` : ""}</p><pre class="mono ops-evidence-pre">{entry.content}</pre></div></article>}</For></div></Show></Show></Show></section><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Provider evidence</span><h2>Receipts</h2><p class="dim">Frozen provider/model attribution and settlement data.</p></div></div><Show when={!receipts.loading} fallback={<div class="empty">Reading receipts…</div>}><Show when={(receipts()?.length ?? 0) > 0} fallback={<div class="empty">No provider receipts recorded for this run.</div>}><div class="ops-receipt-list"><For each={receipts() ?? []}>{(receipt) => <pre class="mono ops-receipt">{JSON.stringify(receipt, null, 2)}</pre>}</For></div></Show></Show></section><Show when={!sandboxExecs.loading} fallback={<div class="empty">No sandbox executions for this session.</div>}><Show when={!sandboxExecs.error} fallback={<div class="error-state"><strong>Sandbox executions unavailable</strong><p>{String(sandboxExecs.error)}</p></div>}><Show when={(sandboxExecs()?.events?.length ?? 0) > 0}><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Sandbox executions</span><h2>Per-session event log</h2><p class="dim">Streaming stdout, stderr, telemetry, and status from quarantined runs in <code>.vak/scratch/</code>.</p></div></div><div class="ops-timeline"><For each={sandboxExecs()?.events ?? []}>{(event) => <article><span class="ops-timeline-dot" /><div><div class="panel-title-row"><strong class="mono">{(event as any).event || "event"}</strong><span class="mono dim">{time((event as any).ts)}</span></div><pre class="mono ops-evidence-pre">{JSON.stringify(event, null, 2)}</pre></div></article>}</For></div></section></Show></Show></Show></div>;
 }
 
 function BindingDetail(props: { data: OperationsSnapshot; target: string }) {
@@ -333,6 +361,85 @@ function IncidentDetail(props: { data: OperationsSnapshot; incidentId: string; o
   return <div class="operations-stack"><Breadcrumbs path={operationPath()} /><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Incident</span><h2>{incident()?.title || props.incidentId}</h2><p class="dim">{incident()?.detail || "This incident is no longer present in the current posture."}</p></div><StatusMark value={incident()?.status === "resolved" ? "resolved" : incident()?.severity || "unknown"} /></div><dl class="ops-detail-grid"><div><dt>Incident id</dt><dd class="mono">{props.incidentId}</dd></div><div><dt>Source</dt><dd>{incident()?.source || "historical"}</dd></div><div><dt>Scope</dt><dd class="mono">{incident()?.workspace || props.data.server.cwd}</dd></div><div><dt>First seen</dt><dd>{time(incident()?.first_seen)}</dd></div><div><dt>Last seen</dt><dd>{time(incident()?.last_seen || props.data.generated_at)}</dd></div><div><dt>Occurrences</dt><dd>{incident()?.occurrences ?? "—"}</dd></div></dl><Show when={incident()?.resolution}><div class="ops-related"><strong>Resolution</strong><p>{incident()?.resolution}</p></div></Show><div class="ops-action-row"><button class="primary small" onClick={props.onAskDoctor}>Ask doctor about this incident</button><button class="ghost small" onClick={() => navigate(operationHref("#/operations/incidents"))}>Back to incidents</button></div></section><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Correlated evidence</span><h2>What is affected now</h2></div></div><Show when={relatedRuns().length > 0} fallback={<div class="empty">No live runs are correlated with this incident.</div>}><div class="ops-related-list"><For each={relatedRuns()}>{(run) => <button class="ops-related-row" onClick={() => navigate(operationHref(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`))}><span class="mono">{run.session_id.slice(0, 12)}</span><StatusMark value={run.state} /><span>{run.pending_approvals.length} approval gates</span><span class="mono dim">{run.workspace}</span></button>}</For></div></Show><Show when={incident()?.evidence?.length}><div class="ops-check-list"><For each={incident()?.evidence}>{(evidence) => <div class="ops-check-row"><StatusMark value="evidence" /><span class="mono">{evidence}</span></div>}</For></div></Show><div class="ops-check-list"><For each={props.data.health.checks}>{(check) => <div class="ops-check-row"><StatusMark value={check.status} /><strong>{check.label}</strong><span>{check.detail}</span></div>}</For></div></section></div>;
 }
 
+function SandboxView(props: { data: OperationsSnapshot; refresh: () => void }) {
+  const [records, { refetch: refetchRecords }] = createResource(() => api.sandboxRecords());
+  const [promoting, setPromoting] = createSignal<string | null>(null);
+
+  const environments = createMemo(
+    () => (records()?.records ?? []).filter((r): r is SandboxEnvironmentRecord => r.kind === "environment"),
+  );
+  const candidates = createMemo(
+    () => (records()?.records ?? []).filter((r): r is SandboxCandidateRecord => r.kind === "candidate"),
+  );
+  const promotions = createMemo(
+    () => (records()?.records ?? []).filter((r): r is SandboxPromotionRecord => r.kind === "promotion"),
+  );
+
+  const refresh = () => {
+    void refetchRecords();
+    props.refresh();
+  };
+
+  return <div class="operations-stack">
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Environments</span><h2>Sandbox environments</h2><p class="dim">Quarantined execution environments in <code>.vak/scratch/</code>. Each streams live stdout, stderr, telemetry, and status to the Workbench panel.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
+      <Show when={environments().length > 0} fallback={<div class="empty">No sandbox environments have been staged yet.</div>}>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>ID</th><th>State</th><th>Backend</th><th>Image</th><th>Network policy</th><th>Updated</th></tr></thead><tbody><For each={environments()}>{(env) => <tr>
+          <td class="mono dim">{env.record_id}</td>
+          <td><StatusMark value={env.state} /></td>
+          <td><code>{env.plan.backend}</code></td>
+          <td class="mono">{env.plan.image || "—"}</td>
+          <td>{env.plan.network_policy}</td>
+          <td class="mono dim">{time(env.updated_at)}</td>
+        </tr>}</For></tbody></table></div>
+      </Show>
+    </section>
+
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Candidates</span><h2>Exported sandbox candidates</h2><p class="dim">Work products staged in <code>.vak/scratch/</code> and promoted to the workspace via the Promote action. Each candidate records its provenance (hashes before/after) and verification results.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
+      <Show when={candidates().length > 0} fallback={<div class="empty">No exported candidates yet. Run something in the sandbox to produce one.</div>}>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Candidate ID</th><th>Environment</th><th>Verified</th><th>Files</th><th>Updated</th><th /></tr></thead><tbody><For each={candidates()}>{(cand) => <tr>
+          <td class="mono dim">{cand.candidate.candidate_id}</td>
+          <td class="mono dim">{cand.environment_id}</td>
+          <td><StatusMark value={cand.verified ? "pass" : "fail"} /></td>
+          <td class="mono dim">{cand.candidate.files.length}</td>
+          <td class="mono dim">{time(cand.updated_at)}</td>
+          <td>
+            <Show when={cand.verified}>
+              <button
+                class="ghost small"
+                disabled={promoting() === cand.candidate.candidate_id}
+                onClick={async () => {
+                  setPromoting(cand.candidate.candidate_id);
+                  try {
+                    await api.promoteSandboxCandidate({ candidate: cand.candidate, record_id: cand.record_id });
+                    pushToast("info", `Promoted ${cand.candidate.candidate_id.slice(0, 8)} to workspace`);
+                    refresh();
+                  } catch (err) {
+                    pushToast("alert", `Promotion failed: ${err}`);
+                  } finally {
+                    setPromoting(null);
+                  }
+                }}
+              >
+                {promoting() === cand.candidate.candidate_id ? "Promoting…" : "Promote to workspace"}
+              </button>
+            </Show>
+          </td>
+        </tr>}</For></tbody></table></div>
+      </Show>
+    </section>
+
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Promotion ledger</span><h2>Promotion receipts</h2><p class="dim">Append-only record of every candidate promoted from sandbox to workspace, with hash verification evidence.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
+      <Show when={promotions().length > 0} fallback={<div class="empty">No promotions have been recorded yet.</div>}>
+        <div class="ops-event-list"><For each={promotions()}>{(p) => <article><div><strong>{p.candidate_id.slice(0, 12)}</strong><span class="mono dim"> · {p.receipt.applied.length} files applied</span></div><span class="mono dim">{time(p.updated_at)}</span><p class="mono dim">record: {p.record_id}</p>
+          <Show when={p.receipt.verification.length > 0}>
+            <div class="ops-check-list"><For each={p.receipt.verification}>{(v) => <div class="ops-check-row"><StatusMark value={v.status} /><strong>{v.path}</strong><span>{v.evidence}</span></div>}</For></div>
+          </Show>
+        </article>}</For></div>
+      </Show>
+    </section>
+  </div>;
+}
+
 export function OperationsCenter(props: { section?: Section }) {
   const [snapshot, { refetch }] = createResource(() => api.operations());
   const [selected, setSelected] = createSignal("server");
@@ -348,6 +455,7 @@ export function OperationsCenter(props: { section?: Section }) {
     if (current === "#/operations/automations") return "automations";
     if (current === "#/operations/providers") return "providers";
     if (current === "#/operations/incidents" || current.startsWith("#/operations/incidents/")) return "incidents";
+    if (current === "#/operations/sandbox" || current.startsWith("#/operations/sandbox/")) return "sandbox";
     return props.section ?? "overview";
   });
   const workspace = createMemo(() => operationQuery().get("workspace") || "all");
@@ -387,7 +495,7 @@ export function OperationsCenter(props: { section?: Section }) {
       setDoctorLoading(false);
     }
   };
-  const title = () => ({ overview: "Operations Center", work: "Live work", runtime: "Runtime and pools", channels: "Channels and delivery", automations: "Automations", providers: "Providers and spend", incidents: "Incidents" }[section()] ?? "Operations Center");
+  const title = () => ({ overview: "Operations Center", work: "Live work", runtime: "Runtime and pools", channels: "Channels and delivery", automations: "Automations", providers: "Providers and spend", incidents: "Incidents", sandbox: "Sandbox executions" }[section()] ?? "Operations Center");
   const path = createMemo(() => operationPath());
   const detailSession = createMemo(() => path().startsWith("#/operations/work/runs/") ? decodeURIComponent(path().slice("#/operations/work/runs/".length)) : null);
   const detailBinding = createMemo(() => path().startsWith("#/operations/channels/") && !path().startsWith("#/operations/channels/delivery/") ? decodeURIComponent(path().slice("#/operations/channels/".length)) : null);
@@ -414,6 +522,7 @@ export function OperationsCenter(props: { section?: Section }) {
             <Show when={section() === "automations"}><AutomationsView data={data()} /></Show>
             <Show when={section() === "providers"}><ProvidersView data={data()} /></Show>
             <Show when={section() === "incidents"}><IncidentsView data={data()} /></Show>
+            <Show when={section() === "sandbox"}><SandboxView data={data()} refresh={() => void refetch()} /></Show>
           </Show>
         </>}</Show>
       </Show>
