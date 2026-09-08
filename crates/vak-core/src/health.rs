@@ -382,6 +382,33 @@ fn capability_health_check(core: &Core) -> HealthCheck {
     }
 }
 
+/// Check whether any installed plugins reference retired tool names
+/// (e.g. `python_eval`, `react_preview`). These plugins survived a tool
+/// retirement and cause `unknown_capability` errors / model hallucinations.
+/// A failed check carries the repair instruction: run `vak setup seed`
+/// to auto-remove them, or `vak plugins remove <name>` to target one.
+pub fn retired_plugins_check(core: &Core) -> HealthCheck {
+    let flagged = core.check_retired_plugins();
+    let label = "retired plugins".to_string();
+    if flagged.is_empty() {
+        HealthCheck {
+            label,
+            detail: Ok("none".into()),
+        }
+    } else {
+        let names: Vec<_> = flagged.iter().map(|(name, _)| name.as_str()).collect();
+        let detail = format!(
+            "{} plugin(s) reference retired tools: {}. Run `vak setup seed` to remove.",
+            names.len(),
+            names.join(", ")
+        );
+        HealthCheck {
+            label,
+            detail: Err(detail),
+        }
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -424,6 +451,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     ));
     checks.push(layout_check());
     checks.push(version_parity_check(&install::resolve_manifest_path(None)));
+    checks.push(retired_plugins_check(core));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -662,7 +690,8 @@ mod tests {
                 "capability health",
                 "gateway channels",
                 "install layout",
-                "self version parity"
+                "self version parity",
+                "retired plugins"
             ]
         );
         assert_eq!(

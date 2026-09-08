@@ -87,6 +87,9 @@ pub fn seed_shared_capabilities() {
     if let Err(error) = seed_plugins(&root) {
         eprintln!("warning: Shared plugin seed failed: {error}");
     }
+    if let Err(error) = cleanup_retired_plugins(&root) {
+        eprintln!("warning: Retired plugin cleanup failed: {error}");
+    }
     let hooks = [HookConfig {
         event: "session_start".into(),
         matcher: None,
@@ -101,6 +104,36 @@ pub fn seed_shared_capabilities() {
     if let Err(error) = vak_config::seed_global_plugins_network_allow_if_empty() {
         eprintln!("warning: Shared plugin network seed failed: {error}");
     }
+}
+
+/// Remove plugin packages whose skill descriptions reference retired tool
+/// names (e.g. `python_eval`, `react_preview`). These plugins were shipped
+/// before the tool interface was unified on `bash` and their SKILL.md files
+/// still instruct the model to call tools that no longer exist — which
+/// causes `unknown_capability` errors and model hallucinations of tool
+/// output (docs/design/53, AGENTS.md invariants 9 and 29).
+///
+/// This runs during setup and update so stale plugins never survive a
+/// version bump. It also prunes stale `network_allow` entries so the
+/// retained allowlist stays consistent with the on-disk plugin store.
+fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let store = vak_plugin::PluginStore::new(root);
+    let flagged = store.retired_plugins()?;
+    for (name, retired_tools) in &flagged {
+        eprintln!(
+            "removing retired plugin '{name}' (references retired tools: {})",
+            retired_tools.join(", ")
+        );
+        if let Err(error) = store.remove(name) {
+            eprintln!("warning: could not remove retired plugin '{name}': {error}");
+        } else {
+            // Prune stale network_allow entries for the removed plugin.
+            if let Err(error) = vak_config::prune_plugins_network_allow(root, name) {
+                eprintln!("warning: could not prune network_allow for '{name}': {error}");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn seed_skills(root: &Path) -> std::io::Result<()> {

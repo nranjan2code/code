@@ -458,7 +458,8 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             // not a config detail.
             "gateway channels",
             "install layout",
-            "self version parity"
+            "self version parity",
+            "retired plugins"
         ]
     );
     assert!(

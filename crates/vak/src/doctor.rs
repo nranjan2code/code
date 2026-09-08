@@ -136,6 +136,13 @@ pub(crate) fn repair_known_failures(core: &Core, report: &health::HealthReport) 
                 });
             }
         }
+        if check.label == "retired plugins" {
+            lines.push(format!("retired plugins ({detail}): running cleanup…"));
+            vak_core::seed::seed_shared_capabilities();
+            lines.push(
+                "retired plugins: cleanup pass complete (run `vak doctor` to verify)".to_string(),
+            );
+        }
     }
     lines
 }

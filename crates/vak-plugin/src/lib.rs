@@ -1770,6 +1770,45 @@ impl PluginStore {
             .collect())
     }
 
+    /// Scan installed (enabled or disabled) plugins for references to retired
+    /// tool names in their skill descriptions or bodies. Returns each
+    /// `(plugin_name, retired_tool_name)` pair found, so callers can remove
+    /// the offending plugin and warn the operator.
+    ///
+    /// A plugin is flagged when any of its `SKILL.md` files — either the
+    /// `description` frontmatter field or the body text — contains a
+    /// backtick-quoted reference to a retired tool name (e.g.
+    /// `` `python_eval` ``).
+    pub fn retired_plugins(&self) -> Result<Vec<(String, Vec<String>)>, PluginError> {
+        let retired_names: std::collections::HashSet<&str> =
+            vak_tools::retired::retired_names().into_iter().collect();
+        let mut flagged: Vec<(String, Vec<String>)> = Vec::new();
+        for plugin in self.list()? {
+            let mut hits: Vec<String> = Vec::new();
+            // Walk all SKILL.md files in the package directory tree.
+            let walker = walkdir::WalkDir::new(&plugin.package_path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name() == "SKILL.md");
+            for entry in walker {
+                let Ok(text) = std::fs::read_to_string(entry.path()) else {
+                    continue;
+                };
+                let lower = text.to_lowercase();
+                for retired in &retired_names {
+                    let pattern = format!("`{}`", retired.to_lowercase());
+                    if lower.contains(&pattern) && !hits.iter().any(|h: &String| h == *retired) {
+                        hits.push((*retired).to_string());
+                    }
+                }
+            }
+            if !hits.is_empty() {
+                flagged.push((plugin.name, hits));
+            }
+        }
+        Ok(flagged)
+    }
+
     pub fn enabled_hooks(&self) -> Result<Vec<(InstalledPlugin, PluginHook)>, PluginError> {
         let mut hooks = Vec::new();
         for plugin in self.enabled()? {
@@ -2764,5 +2803,61 @@ mod tests {
             verify_ed25519_signature(b"catalog", &key, &sig),
             Err(PluginError::UnsafePackage(_))
         ));
+    }
+
+    #[test]
+    fn retired_plugin_scan_detects_references_to_retired_tools() {
+        let temp = tempfile::tempdir().unwrap();
+        // Build a plugin package that references `python_eval` in its skill
+        // description — the exact pattern that caused the hallucination.
+        write(
+            &temp.path().join("vak-plugin.json"),
+            r#"{
+  "schema": 1,
+  "name": "legacy-python",
+  "version": "1.0.0",
+  "description": "Legacy",
+  "license": "MIT",
+  "components": {"skills": ["skills"]}
+}"#,
+        );
+        write(
+            &temp.path().join("skills/python-exec/SKILL.md"),
+            "---\nname: python-exec\ndescription: Execute Python using the `python_eval` tool.\n---\nAlways use `python_eval`.\n",
+        );
+        let store = PluginStore::new(temp.path());
+        store
+            .install_local(
+                temp.path(),
+                InstallOptions {
+                    scope: InstallScope::Workspace,
+                    allow_unlicensed: false,
+                },
+            )
+            .unwrap();
+        store.enable("legacy-python").unwrap();
+        let flagged = store.retired_plugins().unwrap();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].0, "legacy-python");
+        assert!(flagged[0].1.contains(&"python_eval".to_string()));
+    }
+
+    #[test]
+    fn clean_plugin_is_not_flagged_as_retired() {
+        let temp = tempfile::tempdir().unwrap();
+        package(temp.path());
+        let store = PluginStore::new(temp.path());
+        store
+            .install_local(
+                temp.path(),
+                InstallOptions {
+                    scope: InstallScope::Workspace,
+                    allow_unlicensed: false,
+                },
+            )
+            .unwrap();
+        store.enable("daily-brief").unwrap();
+        let flagged = store.retired_plugins().unwrap();
+        assert!(flagged.is_empty());
     }
 }

@@ -13,6 +13,7 @@ pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
 pub mod read;
+pub mod retired;
 pub mod sandbox;
 pub mod sandbox_events;
 pub mod webbrowse;
@@ -281,6 +282,9 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
 }
 
 /// Canonical tool name resolution for aliases and common model hallucinations.
+/// Also remaps retired tool names (e.g. `python_eval`) to their replacement
+/// (`bash`), so a model that still reaches for a retired name is guided to
+/// the correct tool rather than producing an `unknown_capability` failure.
 pub fn canonical_tool_name(name: &str) -> &str {
     let trimmed = name.trim();
     if trimmed.eq_ignore_ascii_case("session-search") {
@@ -297,6 +301,17 @@ pub fn canonical_tool_name(name: &str) -> &str {
     }
     if trimmed.eq_ignore_ascii_case("edit-file") || trimmed.eq_ignore_ascii_case("edit_file") {
         return "edit";
+    }
+    // Retired tool names: redirect to their replacement (currently `bash`).
+    for tool in retired::RETIRED_TOOLS {
+        if tool.name.eq_ignore_ascii_case(trimmed) {
+            return tool
+                .replacement
+                .split(" — ")
+                .next()
+                .unwrap_or("bash")
+                .trim();
+        }
     }
     name
 }
@@ -373,5 +388,14 @@ mod tests {
         assert_eq!(canonical_tool_name("edit_file"), "edit");
         assert_eq!(canonical_tool_name("session-search"), "session_search");
         assert_eq!(canonical_tool_name("unknown_tool"), "unknown_tool");
+    }
+
+    #[test]
+    fn canonical_tool_name_redirects_retired_tools_to_bash() {
+        // python_eval and react_preview were retired in 3.0.21; the model
+        // may still reach for them. They must resolve to `bash`.
+        assert_eq!(canonical_tool_name("python_eval"), "bash");
+        assert_eq!(canonical_tool_name("react_preview"), "bash");
+        assert_eq!(canonical_tool_name("PYTHON_EVAL"), "bash");
     }
 }

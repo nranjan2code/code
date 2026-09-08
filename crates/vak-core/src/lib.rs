@@ -69,7 +69,7 @@ pub mod workspaces;
 pub mod worktree;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -824,6 +824,30 @@ fn route_source(cwd: &std::path::Path, key: &str) -> String {
     .to_string()
 }
 
+/// Scan plugin stores for packages whose skill descriptions reference
+/// retired tool names. Emits an `eprintln!` warning for each finding so
+/// operators see it in logs. Non-destructive: actual removal is handled by
+/// `seed::cleanup_retired_plugins` during `vak setup seed` / `vak self update`.
+///
+/// Checks both the workspace-local `.vak` and the shared home store.
+fn warn_retired_plugins(cwd: &Path, sessions_home: &Path, _config: &vak_config::Config) {
+    let roots: Vec<PathBuf> = vec![cwd.join(".vak"), sessions_home.to_path_buf()];
+    for root in roots {
+        if let Ok(store) = vak_plugin::PluginStore::new(&root).retired_plugins() {
+            for (plugin_name, retired) in &store {
+                eprintln!(
+                    "WARNING: plugin '{}' references retired tool(s): {}. \
+                     Run `vak setup seed` to remove it automatically, or \
+                     manually run `vak plugins remove {}`.",
+                    plugin_name,
+                    retired.join(", "),
+                    plugin_name
+                );
+            }
+        }
+    }
+}
+
 impl Core {
     pub fn new(cwd: PathBuf) -> Result<Self, CoreError> {
         Self::new_with_trust(cwd, true)
@@ -847,6 +871,12 @@ impl Core {
         } else {
             sessions_home
         };
+        // Warn about plugins whose skill descriptions reference retired
+        // tool names. These plugins can cause model hallucinations
+        // (e.g. `python_eval` → `unknown_capability` → fabricated output).
+        // Removal happens at setup time via `seed::cleanup_retired_plugins`;
+        // this is a loud non-destructive check so operators see it.
+        warn_retired_plugins(&cwd, &sessions_home, &config);
         let breaker = Arc::new(vak_agent::CircuitBreaker::new(
             vak_agent::CircuitBreakerConfig {
                 threshold: config.circuit_breaker_threshold,
@@ -1588,6 +1618,28 @@ impl Core {
             });
         }
         roots
+    }
+
+    /// Scan all plugin stores for packages whose skill descriptions reference
+    /// retired tool names (e.g. `python_eval`, `react_preview`). Returns each
+    /// `(plugin_name, retired_tool_names)` pair found.
+    ///
+    /// This is a **read-only** check: it never removes or disables plugins.
+    /// Removal is the job of `seed::cleanup_retired_plugins` during setup
+    /// (`vak setup seed` / `vak self update`). The check exists so a running
+    /// server or desktop session can surface a prominent warning and refuse
+    /// to advertise skills from retired-tool plugins in the capability
+    /// contract sent to the model (AGNS invariant 9: model catalogues are
+    /// discovered, never hardcoded; and invariant 29: pre-baseline or
+    /// retired state is refused, not partially read).
+    pub fn check_retired_plugins(&self) -> Vec<(String, Vec<String>)> {
+        let mut flagged = Vec::new();
+        for root in self.capability_roots() {
+            if let Ok(store) = vak_plugin::PluginStore::new(&root.path).retired_plugins() {
+                flagged.extend(store);
+            }
+        }
+        flagged
     }
 
     fn extend_enabled_plugin_mcp(&self, config: &mut vak_config::McpConfig) {

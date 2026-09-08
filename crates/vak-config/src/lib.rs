@@ -1043,6 +1043,61 @@ pub fn seed_global_plugins_network_allow_if_empty() -> Result<bool, ConfigError>
     seed_plugins_network_allow_if_empty(&path)
 }
 
+/// Remove a plugin name from `[plugins] network_allow` in the config at `path`.
+/// Called during retired-plugin cleanup so the allowlist stays consistent
+/// with the on-disk plugin store. Silently succeeds if the entry was not
+/// present.
+pub fn prune_plugins_network_allow(path: &Path, plugin_name: &str) -> Result<bool, ConfigError> {
+    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut root: toml::Value = toml::from_str(&text).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("top-level config must be a TOML table"),
+    })?;
+    let Some(plugins) = table.get_mut("plugins").and_then(|v| v.as_table_mut()) else {
+        return Ok(false);
+    };
+    let Some(allow) = plugins
+        .get_mut("network_allow")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return Ok(false);
+    };
+    let before = allow.len();
+    allow.retain(|v| v.as_str() != Some(plugin_name));
+    if allow.len() == before {
+        return Ok(false);
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, &text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(true)
+}
+
 fn default_hook_config_enabled() -> bool {
     true
 }

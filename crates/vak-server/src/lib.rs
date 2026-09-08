@@ -591,6 +591,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/plugins/audit", get(plugin_audit))
         .route("/plugins/invocations", get(plugin_invocations))
         .route(
+            "/plugins/retired",
+            get(list_retired_plugins).delete(remove_retired_plugins),
+        )
+        .route(
             "/plugins/sources",
             get(plugin_sources).post(plugin_register_source),
         )
@@ -6273,6 +6277,57 @@ fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
 #[derive(Debug, serde::Deserialize)]
 struct PluginScopeQuery {
     scope: Option<InstallScope>,
+}
+
+async fn list_retired_plugins(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut retired = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        if let Ok(flagged) = plugin_store(&state, scope).retired_plugins() {
+            for (name, tools) in flagged {
+                retired.push(serde_json::json!({
+                    "name": name,
+                    "retired_tools": tools,
+                    "repair": "run `vak setup seed` to auto-remove, or `vak plugins remove <name>`",
+                }));
+            }
+        }
+    }
+    Json(serde_json::json!({ "retired": retired }))
+}
+
+async fn remove_retired_plugins(State(state): State<AppState>) -> axum::response::Response {
+    let mut removed = Vec::new();
+    let mut errors = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        let store = plugin_store(&state, scope);
+        if let Ok(flagged) = store.retired_plugins() {
+            for (name, _) in &flagged {
+                match store.remove(name) {
+                    Ok(_) => {
+                        removed.push(name.clone());
+                        let _ = vak_config::prune_plugins_network_allow(
+                            &state.core.cwd().join(".vak/config.toml"),
+                            name,
+                        );
+                    }
+                    Err(e) => errors.push(format!("{name}: {e}")),
+                }
+            }
+        }
+    }
+    if errors.is_empty() {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "removed": removed })),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::PARTIAL_CONTENT,
+            Json(serde_json::json!({ "removed": removed, "errors": errors })),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

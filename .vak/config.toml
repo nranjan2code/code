@@ -1,3 +1,3 @@
 model = "gemma4:e2b-mlx"
-permission_mode = "full-access"
+permission_mode = "workspace-write"
 provider = "ollama"

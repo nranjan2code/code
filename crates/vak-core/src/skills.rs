@@ -381,6 +381,25 @@ pub fn validate(path: &Path) -> Result<(Skill, Vec<String>), String> {
     if compatibility.as_deref().is_some_and(str::is_empty) {
         return Err("compatibility must not be empty when provided".into());
     }
+    // Reject skills whose descriptions reference retired tool names
+    // (e.g. `python_eval`, `react_preview`). A skill that instructs the
+    // model to call a tool that no longer exists produces
+    // `unknown_capability` errors and model hallucinations of tool output.
+    // This is a hard rejection — the skill must not enter the capability
+    // contract sent to the model (AGNS invariant 9: model catalogues are
+    // discovered, never hardcoded).
+    let lower = text.to_lowercase();
+    for tool in vak_tools::retired::RETIRED_TOOLS {
+        let pattern = format!("`{}`", tool.name.to_lowercase());
+        if lower.contains(&pattern) {
+            return Err(format!(
+                "skill '{}' references retired tool '{}' — run `vak setup seed` \
+                 to remove the containing plugin, or edit this SKILL.md to use \
+                 the replacement: {}",
+                name, tool.name, tool.replacement
+            ));
+        }
+    }
     Ok((
         Skill {
             name,
@@ -446,6 +465,7 @@ pub fn prompt_section_from_capabilities(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -621,5 +641,44 @@ mod tests {
         assert!(expanded.contains("Follow the workflow."));
         assert!(expanded.ends_with("fix parser"));
         Ok(())
+    }
+
+    #[test]
+    fn validate_rejects_skills_referencing_retired_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        // A skill description that mentions `python_eval` — the exact
+        // pattern from the stale python-sandbox plugin.
+        std::fs::write(
+            &path,
+            "---\nname: bad-skill\ndescription: Uses `python_eval` for code.\n---\nCall `python_eval`.\n",
+        )
+        .unwrap();
+        let result = validate(&path);
+        assert!(
+            result.is_err(),
+            "skill referencing retired tool must be rejected"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("python_eval"),
+            "error must name the retired tool: {err}"
+        );
+        assert!(
+            err.contains("bash"),
+            "error must mention the replacement: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_skills_without_retired_tool_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: good-skill\ndescription: Use bash for code execution.\n---\nUse `bash` to run commands.\n",
+        )
+        .unwrap();
+        assert!(validate(&path).is_ok());
     }
 }
