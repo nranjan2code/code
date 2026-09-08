@@ -5589,13 +5589,21 @@ function Settings() {
   const [busSecretEnv, setBusSecretEnv] = createSignal("");
   const [savingBus, setSavingBus] = createSignal(false);
 
-  let initializedScope = "";
+  // Re-initialize the form whenever the layer resource resolves to a NEW
+  // value, evaluated against the current scope. Comparing the layer *reference*
+  // — not the scope alone — closes a race: when configScope flips, `layer()`
+  // still holds the previous scope's value until the refetch resolves, so a
+  // scope-only guard initialized from that stale layer and then never
+  // recovered, leaving Provider/Model one scope behind. Tying init to a fresh
+  // layer reference means the form always lands on the selected scope's layer,
+  // and a saved refetch (same scope) reflects the persisted edit.
+  let initializedLayer: ConfigLayer | undefined;
   createEffect(() => {
     const c = config();
     const selectedLayer = layer();
     const scope = configScope();
-    if (c && selectedLayer && initializedScope !== scope) {
-      initializedScope = scope;
+    if (c && selectedLayer && selectedLayer !== initializedLayer) {
+      initializedLayer = selectedLayer;
       setSelectedProvider(selectedLayer.provider || (scope === "project" ? c.provider : "anthropic"));
       setSelectedModel(selectedLayer.model || (scope === "project" ? c.model : ""));
       setMaxTurnsInput(String(selectedLayer.max_turns ?? (scope === "project" ? c.max_turns : "")));
