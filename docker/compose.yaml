@@ -25,7 +25,7 @@ services:
         VAK_GIT_SHA: ${VAK_GIT_SHA:-unknown}
     image: vak:local
     ports:
-      - "127.0.0.1:8901:8901"
+      - "127.0.0.1:${VAK_HOST_PORT:-8901}:8901"
     environment:
       # The access token the web client signs in with. Generate one:
       #   openssl rand -hex 32
