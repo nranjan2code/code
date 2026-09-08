@@ -80,6 +80,18 @@ pub(crate) enum Command {
         #[arg(long)]
         trust: bool,
     },
+    /// Launch the rich modern terminal console (docs/design/55-rich-terminal-surface.md)
+    Term {
+        /// Target a running vak server (e.g. http://127.0.0.1:8901 or remote)
+        #[arg(long)]
+        server: Option<String>,
+        /// Server bearer authentication token
+        #[arg(long)]
+        token: Option<String>,
+        /// Connect to or resume an existing session id
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Show the effective composed configuration
     Config {
         #[command(subcommand)]

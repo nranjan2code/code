@@ -649,6 +649,8 @@ pub enum Surface {
     Unknown,
     /// `vak` in a terminal.
     Cli,
+    /// An interactive modern rich terminal client (`vak term`).
+    Terminal,
     /// The Tauri desktop app.
     Desktop,
     /// An HTTP/SSE API client driving the server directly.
@@ -676,6 +678,7 @@ impl Surface {
         match self {
             Surface::Unknown => "",
             Surface::Cli => "cli",
+            Surface::Terminal => "terminal",
             Surface::Desktop => "desktop",
             Surface::Server => "server",
             Surface::Web => "web",
@@ -697,6 +700,11 @@ correctly anywhere."
                 .to_string(),
             Surface::Cli => "terminal CLI. Your reply is printed in a terminal \
 the user is watching. Plain text and fenced code blocks render; images do not."
+                .to_string(),
+            Surface::Terminal => "modern terminal client (vak term). Your reply \
+is rendered in an interactive terminal TUI with rich typography, syntax-highlighted \
+diffs, collapsible tool execution cards, and live progress indicators. Plain text \
+and fenced code blocks render with full fidelity; images render via inline terminal graphics."
                 .to_string(),
             Surface::Desktop => "desktop app. Your reply is rendered as markdown \
 in a chat panel, beside a diff viewer, an editor, and a terminal the user can \

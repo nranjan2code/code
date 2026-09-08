@@ -34,7 +34,7 @@ use crate::Surface;
 /// one would let an unattended embedder raise gates nobody answers.
 pub fn intent_surface(surface: &Surface) -> IntentSurface {
     match surface {
-        Surface::Cli => IntentSurface::Cli,
+        Surface::Cli | Surface::Terminal => IntentSurface::Cli,
         // The web client IS the desktop client, in a tab: the same panes,
         // the same approval cards, the same person watching. Reading it as
         // `Server` would treat an attended session as an unattended

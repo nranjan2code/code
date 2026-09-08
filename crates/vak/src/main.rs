@@ -296,6 +296,21 @@ async fn main() {
             );
             0
         }
+        Some(Command::Term { server, token, session }) => {
+            let opts = vak_terminal::TerminalOptions {
+                session_id: session,
+                server_url: server,
+                token,
+                workspace_cwd: Some(cwd),
+            };
+            match vak_terminal::run_terminal(opts).await {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("terminal error: {e}");
+                    1
+                }
+            }
+        }
         Some(Command::Exec {
             prompt,
             accept_drift,

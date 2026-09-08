@@ -21,6 +21,7 @@ vak-flow = { workspace = true }
 vak-llm = { workspace = true }
 vak-server = { workspace = true }
 vak-session = { workspace = true }
+vak-terminal = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
