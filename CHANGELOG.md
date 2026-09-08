@@ -4,6 +4,20 @@
 unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
+
+## 3.0.24 — 2026-09-08
+
+### Sandboxed Broker Wrapping, Env Scrub Security & Auto-Approval Verification
+
+- **Brokered execution command wrapping for containerized sandboxes.**
+  Added transparent command wrapping for `SandboxTarget::ToolCommand` targets in `crates/vak-tools/src/broker.rs`. Host-level workers remain protocol adapters while bash commands inside tool arguments are securely encapsulated for Docker-style execution sandboxes.
+- **Defense-in-depth subprocess environment scrubbing.**
+  Hardened operational variable allowlist predicate in `crates/vak-tools/src/bash.rs`. Verified complete rejection of provider credentials, cloud API tokens, proxy credentials, and authentication keys, backed by comprehensive end-to-end unit tests.
+- **Fail-closed DenySandbox and Seatbelt read-only traits.**
+  Verified `DenySandbox` exit 126 error reporting with full command redaction, and enforced invariant that `read_only_variant()` on Seatbelt profiles strips all `file-write*` entitlements.
+- **Comprehensive auto-approval policy matrix verification.**
+  Implemented regression tests in `crates/vak-agent` proving that `AskSource::Rule` and `AskSource::CircuitBreaker` cannot be bypassed by `AutoApprove`, and that `ApproveSafe` requires active container or Seatbelt sandbox enforcement before authorizing bash execution.
+
 ## 3.0.23 — 2026-09-07
 
 ### Distributed Event & Message Fabric (`crates/vak-bus`, Doc 53)
