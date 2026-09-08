@@ -156,3 +156,77 @@ async fn seatbelt_blocks_home_reads_outside_workspace() {
     assert!(out.is_error);
     assert!(!out.content.contains("not-visible"));
 }
+
+// ── DenySandbox runtime behavior ───────────────────────────────────────
+
+/// When the sandbox backend is unavailable or the mode refuses to engage,
+/// DenySandbox must make BashTool surface an error (exit 126) rather than
+/// silently running the command unsandboxed.
+#[tokio::test]
+async fn deny_sandbox_returns_error_at_runtime() {
+    let dir = tempdir().unwrap();
+    let ctx = ToolContext {
+        cwd: dir.path().to_path_buf(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        limits: Default::default(),
+        sandbox: Some(std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(
+            "unavailable in this configuration",
+        ))),
+        sandbox_sink: None,
+    };
+
+    let out = BashTool
+        .execute(&serde_json::json!({"command": "echo leaked"}), &ctx)
+        .await;
+    assert!(out.is_error, "denied command must report an error");
+    assert!(
+        out.content.contains("126"),
+        "exit code 126 expected: {out:?}"
+    );
+    assert!(
+        !out.content.contains("leaked"),
+        "the denied command must never have executed"
+    );
+}
+
+/// With no sandbox at all (FullAccess), bash writes freely — this is the
+/// explicit-trust escape hatch and must keep working.
+#[tokio::test]
+async fn off_mode_allows_unrestricted_writes() {
+    let dir = tempdir().unwrap();
+    let ctx = ToolContext {
+        cwd: dir.path().to_path_buf(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        limits: Default::default(),
+        sandbox: None,
+        sandbox_sink: None,
+    };
+
+    let out = run(
+        &ctx,
+        "echo unrestricted > ./freedom.txt && cat ./freedom.txt",
+    )
+    .await;
+    assert!(!out.is_error, "off-mode must allow writes: {}", out.content);
+    assert!(dir.path().join("freedom.txt").exists());
+}
+
+/// `read_only_variant()` on a WorkspaceWrite Seatbelt must produce a profile
+/// that grants no file-write* entitlements — the trait-level contract that
+/// turns that want a tighter sandbox inherit this automatically.
+#[test]
+fn read_only_variant_strips_all_write_entitlements() {
+    let dir = tempdir().unwrap();
+    let sb = Seatbelt::new(SandboxMode::WorkspaceWrite, dir.path());
+    let ro = Sandbox::read_only_variant(&sb).expect("read-only variant");
+    let wrapped = ro.wrap("true");
+    let profile_start = wrapped.find("(version 1)").expect("profile present");
+    let profile_end = wrapped
+        .rfind("' -- sh -c")
+        .expect("command follows profile");
+    let profile = &wrapped[profile_start..profile_end];
+    assert!(
+        !profile.contains("file-write*"),
+        "read-only variant must not grant writes: {profile}"
+    );
+}

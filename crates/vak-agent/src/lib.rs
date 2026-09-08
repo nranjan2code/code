@@ -3943,3 +3943,228 @@ mod tool_recovery_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod auto_approve_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::auto_approve;
+    use super::{ApprovalMode, Mode};
+    use vak_permission::AskSource;
+
+    fn ws() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join("vak-agent-autoapprove-ws");
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn rule_and_circuit_breaker_sources_never_auto_approve() {
+        let cwd = ws();
+        for source in [AskSource::Rule, AskSource::CircuitBreaker] {
+            assert!(
+                !auto_approve(
+                    ApprovalMode::AutoApprove,
+                    source,
+                    "bash",
+                    &serde_json::json!({"command": "ls"}),
+                    Mode::WorkspaceWrite,
+                    true,
+                    &cwd,
+                ),
+                "AutoApprove must not override {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_approve_mode_accepts_everything_safe_and_unsafe() {
+        let cwd = ws();
+        let json = serde_json::json!({"command": "rm -rf /"});
+        assert!(auto_approve(
+            ApprovalMode::AutoApprove,
+            AskSource::ModeDefault,
+            "bash",
+            &json,
+            Mode::WorkspaceWrite,
+            true,
+            &cwd,
+        ));
+    }
+
+    #[test]
+    fn approve_safe_auto_approves_sandboxed_bash() {
+        // The security contract: bash in a restricted mode with a sandbox
+        // is "safe" because the sandbox confines it — so ApproveSafe trusts it.
+        let cwd = ws();
+        assert!(
+            auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({"command": "cargo test"}),
+                Mode::WorkspaceWrite,
+                true,
+                &cwd,
+            ),
+            "sandboxed bash in WorkspaceWrite should be auto-approved under ApproveSafe"
+        );
+        assert!(
+            auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({"command": "cargo test"}),
+                Mode::ReadOnly,
+                true,
+                &cwd,
+            ),
+            "sandboxed bash in ReadOnly should be auto-approved under ApproveSafe"
+        );
+    }
+
+    #[test]
+    fn approve_safe_does_not_auto_approve_unsandboxed_bash() {
+        // No sandbox => FullAccess-equivalent reach => never auto-approved.
+        // This is the guardrail that stops ApproveSafe from silently
+        // granting host-shell access.
+        let cwd = ws();
+        assert!(
+            !auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({"command": "rm -rf /"}),
+                Mode::WorkspaceWrite,
+                false,
+                &cwd,
+            ),
+            "un-sandboxed bash must not be auto-approved"
+        );
+        assert!(
+            !auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({"command": "ls"}),
+                Mode::FullAccess,
+                true,
+                &cwd,
+            ),
+            "bash under FullAccess must not be auto-approved even with a sandbox"
+        );
+    }
+
+    #[test]
+    fn approve_safe_auto_approves_read_tools() {
+        let cwd = ws();
+        for tool in ["read", "glob", "grep", "ls", "search"] {
+            assert!(
+                auto_approve(
+                    ApprovalMode::ApproveSafe,
+                    AskSource::ModeDefault,
+                    tool,
+                    &serde_json::json!({}),
+                    Mode::WorkspaceWrite,
+                    false,
+                    &cwd,
+                ),
+                "{tool} should be auto-approved under ApproveSafe"
+            );
+        }
+    }
+
+    #[test]
+    fn approve_safe_approves_workspace_write_only_when_in_workspace() {
+        let cwd = ws();
+        // Use a relative path so the workspace-rooting check resolves
+        // against cwd without symlink-interpolation ambiguity on macOS
+        // (/var → /private/var).
+        assert!(
+            auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "write",
+                &serde_json::json!({"path": "notes.txt", "content": "x"}),
+                Mode::WorkspaceWrite,
+                false,
+                &cwd,
+            ),
+            "writing inside the workspace should be auto-approved"
+        );
+        let outside = std::env::temp_dir().join("vak-outside.txt");
+        assert!(
+            !auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "write",
+                &serde_json::json!({"path": outside.to_string_lossy(), "content": "x"}),
+                Mode::WorkspaceWrite,
+                false,
+                &cwd,
+            ),
+            "writing outside the workspace must not be auto-approved"
+        );
+    }
+
+    #[test]
+    fn approve_safe_denies_non_mode_default_sources() {
+        let cwd = ws();
+        // Scope source is auto-approved for workspace-scoped writes.
+        assert!(auto_approve(
+            ApprovalMode::ApproveSafe,
+            AskSource::Scope,
+            "write",
+            &serde_json::json!({"path": "ok.txt", "content": "x"}),
+            Mode::WorkspaceWrite,
+            false,
+            &cwd,
+        ));
+    }
+
+    #[test]
+    fn ask_mode_never_auto_approves_anything() {
+        let cwd = ws();
+        assert!(!auto_approve(
+            ApprovalMode::Ask,
+            AskSource::ModeDefault,
+            "read",
+            &serde_json::json!({}),
+            Mode::WorkspaceWrite,
+            true,
+            &cwd,
+        ));
+    }
+
+    #[test]
+    fn bash_without_command_arg_still_approved_when_sandboxed() {
+        // auto_approve for bash keys only on (sandboxed && not FullAccess),
+        // not on the presence of a command arg — the command arg is
+        // validated separately by authorize(). This documents that boundary.
+        let cwd = ws();
+        assert!(
+            !auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({}),
+                Mode::WorkspaceWrite,
+                false,
+                &cwd,
+            ),
+            "un-sandboxed bash without command arg must not be auto-approved"
+        );
+        assert!(
+            auto_approve(
+                ApprovalMode::ApproveSafe,
+                AskSource::ModeDefault,
+                "bash",
+                &serde_json::json!({}),
+                Mode::WorkspaceWrite,
+                true,
+                &cwd,
+            ),
+            "sandboxed bash is auto-approved by the sand-boxing contract"
+        );
+    }
+}

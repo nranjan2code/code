@@ -76,20 +76,12 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
         WORKER_SUBCOMMAND
     );
     let mut request_args = args.clone();
-    let effective = match ctx.sandbox.as_ref() {
-        Some(sandbox) if sandbox.target() == SandboxTarget::WorkerProcess => {
-            sandbox.wrap(&worker_command)
-        }
-        Some(sandbox) => {
-            if tool == "bash"
-                && let Some(command) = request_args.get("command").and_then(Value::as_str)
-            {
-                request_args["command"] = Value::String(sandbox.wrap(command));
-            }
-            worker_command
-        }
-        None => worker_command,
-    };
+    let effective = resolve_worker_command(
+        ctx.sandbox.as_deref(),
+        tool,
+        &mut request_args,
+        &worker_command,
+    );
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c")
         .arg(effective)
@@ -230,4 +222,145 @@ fn shell_quote(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+/// Decides how a sandbox wrapper applies to a brokered tool invocation.
+///
+/// Two strategies:
+/// - **`WorkerProcess` target** (Seatbelt/Landlock): the entire worker
+///   process is wrapped, so the sandbox binary itself is sandboxed at exec.
+/// - **`ToolCommand` target** (Docker): the worker runs on the host and only
+///   the tool's own command is wrapped, so the model-controlled shell lands
+///   inside the container.
+///
+/// Returns the effective shell command string and mutates `request_args`
+/// in place when the command-level wrapping path is taken.
+fn resolve_worker_command(
+    sandbox: Option<&dyn crate::sandbox::Sandbox>,
+    tool: &str,
+    request_args: &mut serde_json::Value,
+    worker_command: &str,
+) -> String {
+    match sandbox {
+        Some(sb) if sb.target() == SandboxTarget::WorkerProcess => sb.wrap(worker_command),
+        Some(sb) => {
+            if tool == "bash"
+                && let Some(command) = request_args
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+            {
+                request_args["command"] = serde_json::Value::String(sb.wrap(command));
+            }
+            worker_command.to_string()
+        }
+        None => worker_command.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use crate::sandbox::{Sandbox, SandboxMode, Seatbelt};
+    use serde_json::json;
+
+    #[test]
+    fn no_sandbox_passes_worker_command_through() {
+        let worker_cmd = "/path/to/vak __tool_worker";
+        let mut args = json!({"command": "echo hi"});
+        let effective = resolve_worker_command(None, "bash", &mut args, worker_cmd);
+        assert_eq!(effective, worker_cmd);
+        // args untouched
+        assert_eq!(args["command"], json!("echo hi"));
+    }
+
+    #[test]
+    fn worker_process_target_wraps_the_worker_executable() {
+        let dir = std::env::temp_dir();
+        let sb: Arc<dyn Sandbox> = Arc::new(Seatbelt::new(SandboxMode::ReadOnly, &dir));
+        assert_eq!(sb.target(), SandboxTarget::WorkerProcess);
+        let worker_cmd = "/vak __tool_worker";
+        let mut args = json!({"command": "echo hi"});
+        let effective = resolve_worker_command(Some(&*sb), "bash", &mut args, worker_cmd);
+        // The worker executable itself — not the inner bash command — is
+        // wrapped, so the whole broker runs under sandbox-exec.
+        assert!(
+            effective.starts_with("sandbox-exec -p "),
+            "expected sandbox-exec wrapper, got: {effective}"
+        );
+        assert!(effective.contains("__tool_worker"));
+        // The inner bash command must NOT be wrapped — it travels through
+        // the worker protocol, not the shell wrapper.
+        assert!(!effective.contains("echo hi"));
+    }
+
+    #[test]
+    fn tool_command_target_wraps_bash_command_in_args() {
+        // A Docker-style sandbox (ToolCommand target) must wrap the bash
+        // command inside the worker request args — the host worker stays
+        // a protocol adapter and only the model-controlled shell is sandboxed.
+        let sb: Arc<dyn Sandbox> = Arc::new(DockerStub {
+            target: SandboxTarget::ToolCommand,
+            wrap_fn: |cmd| format!("docker-run-wrapped({})", cmd),
+        });
+        assert_eq!(sb.target(), SandboxTarget::ToolCommand);
+
+        let worker_cmd = "/vak __tool_worker";
+
+        // bash tool: command gets wrapped in the args
+        let mut args = json!({"command": "echo from-bash"});
+        let effective = resolve_worker_command(Some(&*sb), "bash", &mut args, worker_cmd);
+        assert_eq!(
+            effective, worker_cmd,
+            "worker command passes through unwrapped"
+        );
+        assert_eq!(
+            args["command"],
+            json!("docker-run-wrapped(echo from-bash)"),
+            "bash command must be wrapped in the request args"
+        );
+
+        // non-bash tool: args untouched, worker command passes through
+        let mut args2 = json!({"path": "src/main.rs"});
+        let effective2 = resolve_worker_command(Some(&*sb), "read", &mut args2, worker_cmd);
+        assert_eq!(effective2, worker_cmd);
+        assert_eq!(args2["path"], json!("src/main.rs"));
+    }
+
+    #[test]
+    fn tool_command_target_does_not_wrap_bash_without_command_arg() {
+        let sb: Arc<dyn Sandbox> = Arc::new(DockerStub {
+            target: SandboxTarget::ToolCommand,
+            wrap_fn: |cmd| format!("wrapped({})", cmd),
+        });
+        let worker_cmd = "/vak __tool_worker";
+        let mut args = json!({});
+        let effective = resolve_worker_command(Some(&*sb), "bash", &mut args, worker_cmd);
+        assert_eq!(effective, worker_cmd);
+        assert_eq!(
+            args["command"],
+            json!(Value::Null),
+            "no command key to wrap"
+        );
+    }
+
+    /// Minimal Sandbox stub that lets us test ToolCommand-target wrapping
+    /// without a Docker daemon.
+    struct DockerStub {
+        target: SandboxTarget,
+        wrap_fn: fn(&str) -> String,
+    }
+
+    impl Sandbox for DockerStub {
+        fn name(&self) -> &str {
+            "docker-stub"
+        }
+        fn wrap(&self, command: &str) -> String {
+            (self.wrap_fn)(command)
+        }
+        fn target(&self) -> SandboxTarget {
+            self.target
+        }
+    }
 }

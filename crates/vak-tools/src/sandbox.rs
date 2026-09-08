@@ -258,3 +258,124 @@ fn shell_quote(s: &str) -> String {
     out.push('\'');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn deny_sandbox_wrap_emits_exit_126_with_reason() {
+        let sb = DenySandbox::new("docker unavailable");
+        let wrapped = sb.wrap("echo hello");
+        assert!(
+            wrapped.contains("exit 126"),
+            "deny must refuse to run: {wrapped}"
+        );
+        assert!(
+            wrapped.contains("vak sandbox unavailable: docker unavailable"),
+            "{wrapped}"
+        );
+        // The original command must never appear unguarded.
+        assert!(
+            !wrapped.contains("echo hello") && !wrapped.contains("'echo hello'"),
+            "denied command must not be embedded: {wrapped}"
+        );
+    }
+
+    #[test]
+    fn deny_sandbox_read_only_variant_preserves_deny() {
+        let sb = DenySandbox::new("unsupported host");
+        let ro = Sandbox::read_only_variant(&sb).expect("deny must expose read-only variant");
+        let wrapped = ro.wrap("anything");
+        assert!(wrapped.contains("exit 126"), "{wrapped}");
+        assert_eq!(ro.name(), "unavailable-deny");
+    }
+
+    #[test]
+    fn seatbelt_read_only_variant_strips_write_paths() {
+        let tmp = std::path::Path::new("/tmp");
+        let sb = Seatbelt::new(SandboxMode::WorkspaceWrite, tmp);
+        let ro = Sandbox::read_only_variant(&sb).expect("read-only variant must exist");
+        // The profile is embedded inside wrap()'s sandbox-exec invocation;
+        // inspect it there rather than downcasting the trait object.
+        let wrapped = ro.wrap("true");
+        let profile_start = wrapped.find("(version 1)").expect("profile present");
+        let profile_end = wrapped
+            .rfind("' -- sh -c")
+            .expect("command follows profile");
+        let profile = &wrapped[profile_start..profile_end];
+        assert!(
+            !profile.contains("file-write*"),
+            "read-only variant must not grant any write allowance: {profile}"
+        );
+    }
+
+    #[test]
+    fn seatbelt_read_only_variant_name_and_mode() {
+        let sb = Seatbelt::new(SandboxMode::WorkspaceWrite, std::path::Path::new("/tmp"));
+        let ro = Sandbox::read_only_variant(&sb).expect("variant");
+        assert_eq!(ro.name(), "seatbelt");
+    }
+
+    // ── quoting safety ────────────────────────────────────────────────
+
+    #[test]
+    fn shell_quote_survives_single_quotes_and_semicolons() {
+        let cmd = "echo 'it's great'; rm -rf /";
+        let quoted = shell_quote(cmd);
+        // Must be a single balanced pair wrapping the whole string, with
+        // embedded single quotes POSIX-escaped as '\''.
+        assert_eq!(
+            quoted.matches('\'').count() % 2,
+            1,
+            "must have odd count (outer pair + escapes): {quoted}"
+        );
+
+        // Re-executing the quoted string through sh must reproduce the
+        // original verbatim (POSIX round-trip via single-quote escape).
+        let verified = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf %s {}", quoted))
+            .output();
+        if let Ok(out) = verified {
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert_eq!(text, cmd, "shell_quote round-trip failed: {quoted}");
+        } else {
+            panic!("sh not available for round-trip test");
+        }
+    }
+
+    #[test]
+    fn sbpl_quote_escapes_backslash_and_double_quote() {
+        // A path containing a double-quote can't break out of the SBPL literal.
+        let path = r#"path"with"quotes"#;
+        let q = sbpl_quote(path);
+        assert!(q.starts_with('"') && q.ends_with('"'));
+        assert!(
+            q.contains(r#"\""#),
+            "embedded double-quote must be escaped: {q}"
+        );
+        // A backslash before a quote must be preserved literally, not
+        // consumed as an escape by the shell-quote layer.
+        let bs = r#"a\"b"#;
+        let q2 = sbpl_quote(bs);
+        assert!(q2.contains(r#"\\""#), "backslash must be escaped: {q2}");
+    }
+
+    #[test]
+    fn off_mode_passes_command_through_unchanged() {
+        let sb = Seatbelt::new(SandboxMode::Off, std::path::Path::new("/tmp"));
+        assert_eq!(Sandbox::wrap(&sb, "echo hi"), "echo hi");
+    }
+
+    #[test]
+    fn workspace_write_wrap_embeds_sandbox_exec_and_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let sb = Seatbelt::new(SandboxMode::WorkspaceWrite, dir.path());
+        let wrapped = sb.wrap("ls -la");
+        assert!(wrapped.starts_with("sandbox-exec -p '"));
+        assert!(wrapped.contains("(version 1)"));
+        assert!(wrapped.ends_with("-- sh -c 'ls -la'"));
+    }
+}

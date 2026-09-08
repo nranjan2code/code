@@ -215,25 +215,34 @@ impl Tool for BashTool {
     }
 }
 
+/// The minimal operational environment forwarded to sandboxed subprocesses.
+/// Provider, gateway, and connector credentials never appear here — only the
+/// paths a working toolchain needs.
+const ALLOWED_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "SHELL",
+    "TMPDIR",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+];
+
+/// Predicate for the env-scrub allowlist. Extracted so the security boundary
+/// can be unit-tested without mutating process-global state.
+pub(crate) fn is_allowed_env_var(key: &str) -> bool {
+    ALLOWED_ENV_VARS.contains(&key) || key.starts_with("LC_") || key.starts_with("XDG_")
+}
+
 pub(crate) fn scrub_environment(cmd: &mut tokio::process::Command) {
-    let allowed = [
-        "PATH",
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "LANG",
-        "LC_ALL",
-        "TERM",
-        "SHELL",
-        "TMPDIR",
-        "CARGO_HOME",
-        "RUSTUP_HOME",
-    ];
     let inherited: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
         .filter_map(|(key, value)| {
             let key = key.into_string().ok()?;
-            if allowed.contains(&key.as_str()) || key.starts_with("LC_") || key.starts_with("XDG_")
-            {
+            if is_allowed_env_var(&key) {
                 Some((key, value))
             } else {
                 None
@@ -479,18 +488,186 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::scrub_environment;
+    use super::{is_allowed_env_var, scrub_environment};
+    use std::sync::Mutex;
+
+    /// Serialises std::env mutation across every env-scrubbing test in the
+    /// process. `set_var` is process-global and `cargo test` runs in parallel.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn restricted_environment_drops_unlisted_secrets() {
+    fn is_allowed_env_var_rejects_common_secret_names() {
+        // Provider / cloud / local-dev credentials that must NEVER reach a
+        // sandboxed subprocess. Each of these is a real environment variable
+        // naming convention an operator or CI system commonly sets.
+        let secrets = [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GITHUB_TOKEN",
+            "GITHUB_PAT",
+            "GITLAB_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "DATABASE_URL",
+            "DB_PASSWORD",
+            "VAULT_TOKEN",
+            "VAULT_ADDR",
+            "DOCKER_TOKEN",
+            "NPM_TOKEN",
+            "PYPI_TOKEN",
+            "CLOUDSDK_AUTH_ACCESS_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AZURE_CLIENT_SECRET",
+            "TAVILY_API_KEY",
+            "SLACK_BOT_TOKEN",
+            "TELEGRAM_BOT_TOKEN",
+            "DISCORD_TOKEN",
+            "SECRET_KEY",
+            "PRIVATE_KEY",
+            "SSH_AUTH_SOCK",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "REQUESTS_CA_BUNDLE",
+        ];
+        for secret in secrets {
+            assert!(
+                !is_allowed_env_var(secret),
+                "`{secret}` must not pass the env allowlist"
+            );
+        }
+    }
+
+    #[test]
+    fn is_allowed_env_var_accepts_operational_vars() {
+        for ok in [
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "LC_ALL",
+            "LC_MONETARY",
+            "LC_TIME",
+            "LC_COLLATE",
+            "TERM",
+            "SHELL",
+            "TMPDIR",
+            "CARGO_HOME",
+            "RUSTUP_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_RUNTIME_DIR",
+        ] {
+            assert!(is_allowed_env_var(ok), "`{ok}` must pass the env allowlist");
+        }
+    }
+
+    #[test]
+    fn is_allowed_env_var_prefix_matching_is_exact() {
+        // Substring prefixes must NOT match — only the exact listed names or
+        // LC_*/XDG_* prefixes pass. A var like "MY_PATH" must not masquerade
+        // as "PATH".
+        assert!(!is_allowed_env_var("MY_PATH"));
+        assert!(!is_allowed_env_var("PATH_EXTRA"));
+        assert!(!is_allowed_env_var("CARGO_HOME_DIR"));
+        assert!(!is_allowed_env_var("LD_PRELOAD"));
+        assert!(!is_allowed_env_var("LD_LIBRARY_PATH"));
+        assert!(!is_allowed_env_var("PYTHONPATH"));
+        assert!(!is_allowed_env_var("NODE_OPTIONS"));
+        // LC_ prefix is allowed; "LC" alone is not.
+        assert!(is_allowed_env_var("LC_FOO"));
+        assert!(!is_allowed_env_var("LC"));
+        // XDG_ prefix is allowed; "XD" is not.
+        assert!(is_allowed_env_var("XDG_DATA_DIRS"));
+        assert!(!is_allowed_env_var("XDG"));
+    }
+
+    #[test]
+    fn scrub_environment_only_carries_allowlist_into_child() {
+        // Observational test: after scrubbing, the command's env must be a
+        // strict subset of the process env filtered through the allowlist.
+        // This validates the real filtering pipeline without mutating any
+        // process-global state.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut cmd = tokio::process::Command::new("sh");
         cmd.env("VAK_TEST_SECRET", "must-not-survive");
+        cmd.env("PATH", "/bin:/usr/bin");
         scrub_environment(&mut cmd);
+        let scrubbed: std::collections::HashSet<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(_, v)| v.is_some())
+            .filter_map(|(k, _)| k.to_str().map(str::to_string))
+            .collect();
+        // No var that fails the predicate may be present.
+        for key in &scrubbed {
+            assert!(
+                is_allowed_env_var(key),
+                "`{key}` survived scrubbing but is not on the allowlist"
+            );
+        }
+        // A var we set on the command object before scrubbing must be gone.
         assert!(
-            cmd.as_std()
-                .get_envs()
-                .all(|(key, _)| key != "VAK_TEST_SECRET")
+            !scrubbed.contains("VAK_TEST_SECRET"),
+            "command-level env must be cleared by scrub"
         );
+    }
+
+    #[test]
+    fn scrub_environment_drops_process_secrets_at_runtime() {
+        // End-to-end security boundary: a secret in THIS process's environment
+        // must not reach the sandboxed child. We set a representative set of
+        // credential variable names, scrub, and verify each is absent from the
+        // command's env as seen from the child.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for secret in [
+            "VAK_SCRUB_TEST_SECRET",
+            "VAK_SCRUB_TEST_API_KEY",
+            "VAK_SCRUB_TEST_TOKEN",
+        ] {
+            // SAFETY: test-only mutation of process-global env, serialised by
+            // ENV_LOCK and cleaned up in the same scope. No production code
+            // is affected. This is the narrow, annotated unsafe exception
+            // pattern already used in this module for process-group kill.
+            #[allow(unsafe_code)]
+            unsafe {
+                std::env::set_var(secret, "super-secret-value");
+            }
+        }
+        let cmd = {
+            let mut c = tokio::process::Command::new("sh");
+            scrub_environment(&mut c);
+            c
+        };
+        let keys: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(_, v)| v.is_some())
+            .filter_map(|(k, _)| k.to_str().map(str::to_string))
+            .collect();
+        for secret in [
+            "VAK_SCRUB_TEST_SECRET",
+            "VAK_SCRUB_TEST_API_KEY",
+            "VAK_SCRUB_TEST_TOKEN",
+        ] {
+            assert!(
+                !keys.contains(&secret.to_string()),
+                "`{secret}` leaked into child env"
+            );
+        }
+        // Cleanup
+        for secret in [
+            "VAK_SCRUB_TEST_SECRET",
+            "VAK_SCRUB_TEST_API_KEY",
+            "VAK_SCRUB_TEST_TOKEN",
+        ] {
+            #[allow(unsafe_code)]
+            unsafe {
+                std::env::remove_var(secret);
+            }
+        }
     }
 
     #[test]
