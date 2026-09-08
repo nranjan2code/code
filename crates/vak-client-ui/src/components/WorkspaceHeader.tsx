@@ -17,8 +17,6 @@ import {
   setReceiptsOpen,
   setWorkOpen,
   setSearchOpen,
-  setSettingsOpen,
-  setSettingsScope,
   setSideOpen,
   setSidebarOpen,
   sideOpen,
@@ -210,11 +208,13 @@ export default function WorkspaceHeader() {
         <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip"
-          data-tooltip="Project settings"
-          aria-label="Open workspace settings"
-          onClick={() => { setSettingsScope("workspace"); setSettingsOpen(true); }}
+          data-tooltip={dockTab() ? "Close right panel" : "Open right panel"}
+          aria-label={dockTab() ? "Close right panel" : "Open right panel"}
+          aria-pressed={!!dockTab()}
+          classList={{ on: !!dockTab() }}
+          onClick={() => setDockTab((current) => current ? null : "workbench")}
         >
-          <Icon name="gear" />
+          <Icon name="sidebar" />
         </button>
       </div>
     </header>
