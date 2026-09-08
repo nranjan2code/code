@@ -1246,7 +1246,12 @@ impl Agent {
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
-            if response.stop_reason != StopReason::ToolUse {
+            let calls = extract_tool_calls(&response)
+                .into_iter()
+                .map(normalize_tool_call)
+                .collect::<Vec<_>>();
+
+            if calls.is_empty() {
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
                         .session
@@ -1295,45 +1300,6 @@ impl Agent {
                         continue;
                     }
                 }
-                if let Some(reason) = self
-                    .stop_gate(
-                        &prompt_owned,
-                        &response,
-                        bash_calls_this_run,
-                        verification_stale,
-                        &mut stop_blocks_left,
-                        user_completion_released,
-                    )
-                    .await
-                {
-                    if self.guard_continue(reason, &events, turn).await {
-                        turn += 1;
-                        continue;
-                    }
-                    return TurnOutcome::MaxTurnsReached;
-                }
-                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await {
-                    if self.guard_continue(rejection, &events, turn).await {
-                        turn += 1;
-                        continue;
-                    }
-                    return TurnOutcome::MaxTurnsReached;
-                }
-                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await {
-                    if self.guard_continue(rejection, &events, turn).await {
-                        turn += 1;
-                        continue;
-                    }
-                    return TurnOutcome::MaxTurnsReached;
-                }
-                return TurnOutcome::Completed { response };
-            }
-
-            let calls = extract_tool_calls(&response)
-                .into_iter()
-                .map(normalize_tool_call)
-                .collect::<Vec<_>>();
-            if calls.is_empty() {
                 if let Some(reason) = self
                     .stop_gate(
                         &prompt_owned,
@@ -1425,26 +1391,18 @@ impl Agent {
                     _ => None,
                 })
                 .collect();
-            let successful_bash = results.iter().any(|(id, out)| {
-                matches!(out, ToolRunOutput::Ok(_))
-                    && bash_pairs.iter().any(|(bash_id, _)| bash_id == id)
-            });
-            let successful_mutation = results.iter().any(|(id, out)| {
-                matches!(out, ToolRunOutput::Ok(_))
-                    && mutation_ids.iter().any(|mutation_id| mutation_id == id)
-            });
-            if successful_bash {
-                verification_stale = false;
-            }
-            if successful_mutation {
-                verification_stale = true;
-            }
             for (id, out) in &results {
-                if matches!(out, ToolRunOutput::Ok(_))
-                    && let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
-                    && !self.obligations.iter().any(|o| o == cmd)
-                {
-                    self.obligations.push(cmd.clone());
+                if matches!(out, ToolRunOutput::Ok(_)) {
+                    if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
+                        verification_stale = false;
+                    } else if mutation_ids.iter().any(|mutation_id| mutation_id == id) {
+                        verification_stale = true;
+                    }
+                    if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
+                        && !self.obligations.iter().any(|o| o == cmd)
+                    {
+                        self.obligations.push(cmd.clone());
+                    }
                 }
             }
             let blocks = results
@@ -3307,6 +3265,14 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     {
         obj.insert("path".into(), file_path);
     }
+    if call.name == "bash"
+        && call.input.is_object()
+        && let Some(obj) = call.input.as_object_mut()
+        && !obj.contains_key("command")
+        && let Some(cmd) = obj.get("cmd").or_else(|| obj.get("script")).cloned()
+    {
+        obj.insert("command".into(), cmd);
+    }
     call
 }
 
@@ -3322,6 +3288,21 @@ fn normalize_mcp_alias(
             "tool": alias.tool,
             "arguments": call.input,
         });
+    } else if call.name == "mcp" {
+        // Dynamic broker auto-resolution: if the model called `mcp` with `action: "call"`
+        // and specified `tool`, but omitted or left `server` empty, resolve `server`
+        // dynamically if the tool name uniquely maps to an admitted server in `aliases`.
+        if let Some(obj) = call.input.as_object_mut() {
+            let is_call = obj.get("action").and_then(|a| a.as_str()) == Some("call");
+            let server_missing = obj.get("server").is_none_or(|s| s.is_null() || s.as_str() == Some(""));
+            if is_call && server_missing {
+                if let Some(tool_name) = obj.get("tool").and_then(|t| t.as_str()) {
+                    if let Some(alias) = aliases.get(tool_name) {
+                        obj.insert("server".into(), serde_json::Value::String(alias.server.clone()));
+                    }
+                }
+            }
+        }
     }
     call
 }
@@ -3793,28 +3774,29 @@ async fn authorize(
             call.name
         ));
     }
-    let Some(engine) = &config.permission else {
-        return Ok(());
-    };
-    let mut decision = engine.evaluate(&call.name, &call.input, config.mode, cwd);
-    if matches!(decision, Decision::Allow) {
-        let key = format!(
-            "{}\u{0}{}",
-            call.name,
-            serde_json::to_string(&call.input).unwrap_or_default()
-        );
+    let key = format!(
+        "{}\u{0}{}",
+        call.name,
+        serde_json::to_string(&call.input).unwrap_or_default()
+    );
+    let n = {
         let mut counts = run_call_counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let n = counts.entry(key).or_insert(0);
-        *n += 1;
-        if n.is_multiple_of(DOOM_LOOP_THRESHOLD) {
-            decision = Decision::Ask {
-                reason: format!("identical {} call repeated ×{n} this run", call.name),
-                source: AskSource::CircuitBreaker,
-            };
+        let entry = counts.entry(key).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+    let decision = if n >= DOOM_LOOP_THRESHOLD {
+        Decision::Ask {
+            reason: format!("identical {} call repeated ×{n} this run", call.name),
+            source: AskSource::CircuitBreaker,
         }
-    }
+    } else if let Some(engine) = &config.permission {
+        engine.evaluate(&call.name, &call.input, config.mode, cwd)
+    } else {
+        Decision::Allow
+    };
     match decision {
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
@@ -3880,7 +3862,7 @@ enum ToolRunOutput {
 }
 
 fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
-    response
+    let calls: Vec<PendingToolCall> = response
         .content
         .iter()
         .filter_map(|b| match b {
@@ -3891,7 +3873,323 @@ fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
             }),
             _ => None,
         })
-        .collect()
+        .collect();
+
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    let text = response.text_content();
+    if text.trim().is_empty() {
+        return calls;
+    }
+
+    parse_text_tool_calls(&text)
+}
+
+fn parse_text_tool_calls(text: &str) -> Vec<PendingToolCall> {
+    let mut calls = Vec::new();
+
+    // 1. Structured JSON blocks: ```tool_call ... ``` or <tool_call> ... </tool_call>
+    for block in extract_tool_call_blocks(text) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block) {
+            if let Some(call) = json_to_tool_call(&val) {
+                calls.push(call);
+            }
+        }
+    }
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // 2. Functional write calls: write(path="...", content="...")
+    let mut cursor = 0;
+    while cursor < text.len() {
+        let sub = &text[cursor..];
+        let found = sub.find("write(").map(|i| (i, "write(".len()))
+            .or_else(|| sub.find("write ").map(|i| (i, "write ".len())));
+        let Some((rel_idx, offset)) = found else { break; };
+        let call_start = cursor + rel_idx;
+        let call_sub = &text[call_start + offset..];
+
+        let next_delim = [
+            call_sub.find("\nwrite("),
+            call_sub.find("\nwrite "),
+            call_sub.find("\nbash("),
+            call_sub.find("\nbash "),
+            call_sub.find("\n```"),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(call_sub.len());
+        let this_call_text = &call_sub[..next_delim];
+
+        if let Some(path) = extract_named_param(this_call_text, "path=").or_else(|| extract_named_param(this_call_text, "file="))
+            && let Some(content) = extract_content_param(this_call_text)
+        {
+            calls.push(PendingToolCall {
+                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                name: "write".into(),
+                input: serde_json::json!({"path": path, "content": content}),
+            });
+            cursor = call_start + offset + next_delim;
+        } else if let Some(call) = parse_write_call_from_text(&text[call_start..call_start + offset + next_delim]) {
+            calls.push(call);
+            cursor = call_start + offset + next_delim;
+        } else {
+            cursor = call_start + offset;
+        }
+    }
+
+    // 3. Command execution: bash -c "..." or bash("...")
+    let mut cursor = 0;
+    while cursor < text.len() {
+        let sub = &text[cursor..];
+        if let Some(call) = parse_bash_call_from_text(sub) {
+            let cmd_str = call.input.get("command").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            calls.push(call);
+            if !cmd_str.is_empty() && let Some(idx) = sub.find(&cmd_str) {
+                cursor += idx + cmd_str.len();
+            } else {
+                cursor += 10;
+            }
+        } else {
+            break;
+        }
+    }
+
+    calls
+}
+
+fn extract_tool_call_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    for tag in ["<tool_call>", "```tool_call", "```tool_use", "```json"] {
+        let mut cursor = 0;
+        while let Some(start_idx) = text[cursor..].find(tag) {
+            let abs_start = cursor + start_idx + tag.len();
+            let close_tag = if tag.starts_with('<') { "</tool_call>" } else { "```" };
+            if let Some(end_idx) = text[abs_start..].find(close_tag) {
+                let block = text[abs_start..abs_start + end_idx].trim().to_string();
+                if block.contains("\"name\"") || block.contains("\"tool\"") {
+                    blocks.push(block);
+                }
+                cursor = abs_start + end_idx + close_tag.len();
+            } else {
+                break;
+            }
+        }
+    }
+    blocks
+}
+
+fn json_to_tool_call(val: &serde_json::Value) -> Option<PendingToolCall> {
+    let name = val.get("name").or_else(|| val.get("tool")).and_then(|v| v.as_str())?;
+    let input = val.get("arguments").or_else(|| val.get("input")).or_else(|| val.get("parameters")).cloned().unwrap_or(serde_json::json!({}));
+    Some(PendingToolCall {
+        id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+        name: name.to_string(),
+        input,
+    })
+}
+
+fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
+    let (write_idx, offset) = if let Some(idx) = text.find("write(") {
+        (idx, "write(".len())
+    } else if let Some(idx) = text.find("write ") {
+        (idx, "write ".len())
+    } else {
+        return None;
+    };
+    let sub = text[write_idx + offset..].trim_start();
+
+    // 1. Try explicit named parameters
+    let path = extract_named_param(sub, "path=")
+        .or_else(|| extract_named_param(sub, "file="));
+    let content = extract_content_param(sub);
+
+    if let (Some(p), Some(c)) = (path, content) {
+        return Some(PendingToolCall {
+            id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+            name: "write".into(),
+            input: serde_json::json!({"path": p, "content": c}),
+        });
+    }
+
+    // 2. Try positional or command-style: write [path] [content]
+    for quote_str in ["\"\"\"", "'''", "\"", "'"] {
+        let (p, content_sub) = if sub.starts_with('"') || sub.starts_with('\'') {
+            let Some(q) = sub.chars().next() else { continue; };
+            let rest = &sub[q.len_utf8()..];
+            let Some(end_p) = rest.find(q) else { continue; };
+            let p = rest[..end_p].to_string();
+            let after = rest[end_p + q.len_utf8()..].trim_start();
+            let after = if after.starts_with(',') { after[1..].trim_start() } else { after };
+            (p, after)
+        } else {
+            let Some(q_idx) = sub.find(quote_str) else { continue; };
+            let prefix = sub[..q_idx].trim();
+            let Some(p) = prefix
+                .split(|c: char| c.is_whitespace() || c == '=' || c == ',' || c == '\\' || c == '(')
+                .find(|token| !token.is_empty() && (token.contains('/') || token.contains('.'))) else { continue; };
+            let p = p.trim_matches('"').trim_matches('\'').to_string();
+            (p, &sub[q_idx..])
+        };
+
+        if let Some(c) = extract_content_param(content_sub).or_else(|| extract_raw_content(content_sub)) {
+            if !p.is_empty() && !c.is_empty() {
+                return Some(PendingToolCall {
+                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": p, "content": c}),
+                });
+            }
+        }
+    }
+    None
+}
+
+fn extract_raw_content(sub: &str) -> Option<String> {
+    let sub = sub.trim_start();
+    for triple in ["\"\"\"", "'''"] {
+        if sub.starts_with(triple) {
+            let rest = &sub[triple.len()..];
+            let end = rest.find(triple)?;
+            return Some(rest[..end].trim().to_string());
+        }
+    }
+    if sub.starts_with('"') || sub.starts_with('\'') {
+        let quote = sub.chars().next()?;
+        let rest = &sub[quote.len_utf8()..];
+        let mut end_idx = None;
+        let mut escaped = false;
+        for (i, ch) in rest.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                let rem = rest[i + 1..].trim_start();
+                if rem.starts_with(')') || rem.starts_with("```") || rem.is_empty() {
+                    end_idx = Some(i);
+                    break;
+                }
+            }
+        }
+        if let Some(end) = end_idx {
+            return Some(unescape_string(&rest[..end]));
+        }
+    }
+    None
+}
+
+fn extract_named_param(sub: &str, prefix: &str) -> Option<String> {
+    let idx = sub.find(prefix)?;
+    let after = &sub[idx + prefix.len()..];
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let val_start = &after[quote.len_utf8()..];
+    let end_idx = val_start.find(quote)?;
+    Some(val_start[..end_idx].to_string())
+}
+
+fn extract_content_param(sub: &str) -> Option<String> {
+    let idx = sub.find("content=")?;
+    let after = sub[idx + "content=".len()..].trim_start();
+    for triple in ["\"\"\"", "'''"] {
+        if after.starts_with(triple) {
+            let rest = &after[triple.len()..];
+            let end = rest.find(triple)?;
+            return Some(rest[..end].to_string());
+        }
+    }
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &after[quote.len_utf8()..];
+    let mut end_idx = None;
+    let mut escaped = false;
+    for (i, ch) in rest.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            let rem = rest[i + 1..].trim_start();
+            if rem.starts_with(')')
+                || rem.starts_with("-->")
+                || rem.starts_with("```")
+                || rem.starts_with("\nbash")
+                || rem.starts_with("\nwrite")
+                || rem.is_empty()
+            {
+                end_idx = Some(i);
+                break;
+            }
+        }
+    }
+    if let Some(end) = end_idx {
+        let raw = &rest[..end];
+        return Some(unescape_string(raw));
+    }
+    None
+}
+
+fn unescape_string(raw: &str) -> String {
+    if !raw.contains('\\') {
+        return raw.to_string();
+    }
+    if let Ok(val) = serde_json::from_str::<String>(&format!("\"{raw}\"")) {
+        return val;
+    }
+    raw.replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\"", "\"")
+        .replace("\\'", "'")
+        .replace("\\\\", "\\")
+}
+
+fn parse_bash_call_from_text(text: &str) -> Option<PendingToolCall> {
+    for needle in ["bash -c \"", "bash -c '"] {
+        if let Some(idx) = text.find(needle) {
+            let quote = needle.chars().last().unwrap();
+            let rest = &text[idx + needle.len()..];
+            if let Some(end) = rest.find(quote) {
+                let cmd = &rest[..end];
+                if !cmd.trim().is_empty() {
+                    return Some(PendingToolCall {
+                        id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                        name: "bash".into(),
+                        input: serde_json::json!({"command": cmd.trim()}),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(idx) = text.find("bash(") {
+        let sub = &text[idx + 5..];
+        if let Some(cmd) = extract_named_param(sub, "command=").or_else(|| extract_named_param(sub, "cmd=")) {
+            if !cmd.trim().is_empty() {
+                return Some(PendingToolCall {
+                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": cmd.trim()}),
+                });
+            }
+        }
+    }
+    None
 }
 
 fn backoff_delay(attempt: u32, retry_after_secs: Option<u64>, base_ms: u64) -> std::time::Duration {
@@ -4171,5 +4469,90 @@ mod auto_approve_tests {
             ),
             "sandboxed bash is auto-approved by the sand-boxing contract"
         );
+    }
+}
+
+#[cfg(test)]
+mod parse_text_tool_calls_tests {
+    use super::parse_text_tool_calls;
+
+    #[test]
+    fn parses_write_functional_syntax() {
+        let text = r#"Surface: terminal CLI.
+```bash
+write(path=".vak/scratch/test.html", content="<!DOCTYPE html>\n<html><body>Hi</body></html>")
+```
+"#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write");
+        assert_eq!(calls[0].input["path"], ".vak/scratch/test.html");
+        assert_eq!(calls[0].input["content"], "<!DOCTYPE html>\n<html><body>Hi</body></html>");
+    }
+
+    #[test]
+    fn parses_bash_c_syntax() {
+        let text = r#"bash -c "ls -l .vak/scratch/test.html && head -n 10 .vak/scratch/test.html""#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+        assert_eq!(calls[0].input["command"], "ls -l .vak/scratch/test.html && head -n 10 .vak/scratch/test.html");
+    }
+
+    #[test]
+    fn parses_json_fenced_tool_call() {
+        let text = r##"Here is the call:
+```tool_call
+{"name": "write", "arguments": {"path": "notes.md", "content": "# Notes"}}
+```
+"##;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write");
+        assert_eq!(calls[0].input["path"], "notes.md");
+    }
+
+    #[test]
+    fn parses_positional_triple_quoted_write() {
+        let text = r#"Surface: terminal CLI.
+```bash
+write(".vak/scratch/bloomberg.html", """
+<!DOCTYPE html>
+<html><body>Bloomberg</body></html>
+""")
+```
+"#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write");
+        assert_eq!(calls[0].input["path"], ".vak/scratch/bloomberg.html");
+        assert!(calls[0].input["content"].as_str().unwrap().contains("Bloomberg"));
+    }
+
+    #[test]
+    fn parses_named_write_with_nested_quoted_commas() {
+        let text = r#"```bash
+write(path="app.js", content="const data = [{ q: \"What?\", a: \"Answer\" }];")
+```"#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write");
+        assert_eq!(calls[0].input["path"], "app.js");
+        assert!(calls[0].input["content"].as_str().unwrap().contains("What?"));
+        assert!(calls[0].input["content"].as_str().unwrap().contains("Answer"));
+    }
+
+    #[test]
+    fn parses_cli_style_write_with_backslash() {
+        let text = r#"Surface: terminal CLI.
+```bash
+write content=.vak/scratch/react_app.html \
+"<!DOCTYPE html><html><body>React App</body></html>"
+```"#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write");
+        assert_eq!(calls[0].input["path"], ".vak/scratch/react_app.html");
+        assert!(calls[0].input["content"].as_str().unwrap().contains("React App"));
     }
 }

@@ -60,16 +60,29 @@ impl Tool for BashTool {
             None => command.to_string(),
         };
 
-        // Every execution gets its own quarantined directory. Relative writes
-        // therefore remain candidate material under `.vak/scratch` until the
-        // user explicitly promotes them.
-        let scratch_root = ctx.cwd.join(".vak").join("scratch");
-        let execution_dir = ctx
+        let quarantine = ctx
             .sandbox_sink
             .as_ref()
-            .map(|sink| scratch_root.join(sink.execution_id()))
-            .unwrap_or_else(|| scratch_root.clone());
-        let _ = std::fs::create_dir_all(&execution_dir);
+            .is_some_and(|s| s.is_quarantined())
+            || args
+                .get("quarantine")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+        let scratch_root = ctx.cwd.join(".vak").join("scratch");
+        let (execution_dir, scratch_dir) = if quarantine {
+            let exec_dir = ctx
+                .sandbox_sink
+                .as_ref()
+                .map(|sink| scratch_root.join(sink.execution_id()))
+                .unwrap_or_else(|| scratch_root.clone());
+            let _ = std::fs::create_dir_all(&exec_dir);
+            (exec_dir.clone(), exec_dir)
+        } else {
+            let _ = std::fs::create_dir_all(&scratch_root);
+            (ctx.cwd.clone(), scratch_root)
+        };
+
         let mut cmd = shell_command(&effective);
         cmd.current_dir(&execution_dir)
             .stdin(Stdio::null())
@@ -82,8 +95,7 @@ impl Tool for BashTool {
         // captured pipes open until the original command exits.
         isolate_process_group(&mut cmd);
 
-        let scratch_dir = execution_dir;
-        let before_scratch = collect_scratch_files(&scratch_dir);
+        let before_scratch = collect_candidate_files(&scratch_dir, &ctx.cwd);
 
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
@@ -195,7 +207,7 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
 
-                let new_artifacts = scan_new_scratch_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                let new_artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
                 let mut artifact_paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
                     for (rel_path, mime, size) in &new_artifacts {
@@ -377,37 +389,61 @@ fn probe_process_memory(pid: Option<u32>) -> u64 {
     0
 }
 
-fn collect_scratch_files(
-    dir: &std::path::Path,
+fn should_skip_scan_dir(name: &str) -> bool {
+    name == ".git" || name == "target" || name == "node_modules" || name == ".vak-home"
+}
+
+fn collect_candidate_files(
+    scratch_dir: &std::path::Path,
+    cwd: &std::path::Path,
 ) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
     let mut map = std::collections::HashMap::new();
-    for entry in walkdir::WalkDir::new(dir)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path().to_path_buf();
-        if path.is_file()
-            && let Ok(meta) = path.metadata()
-        {
-            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            map.insert(path, mtime);
+    fn scan(
+        dir: &std::path::Path,
+        is_cwd: bool,
+        map: &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+    ) {
+        if !dir.exists() {
+            return;
         }
+        for entry in walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_entry(|e| {
+                if is_cwd && e.file_type().is_dir() {
+                    let name = e.file_name().to_string_lossy();
+                    !should_skip_scan_dir(&name)
+                } else {
+                    true
+                }
+            })
+            .filter_map(Result::ok)
+        {
+            let path = entry.path().to_path_buf();
+            if path.is_file()
+                && let Ok(meta) = path.metadata()
+            {
+                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                map.insert(path, mtime);
+            }
+        }
+    }
+    scan(scratch_dir, false, &mut map);
+    if cwd != scratch_dir {
+        scan(cwd, true, &mut map);
     }
     map
 }
 
-fn scan_new_scratch_artifacts(
+fn scan_new_candidate_artifacts(
     scratch_dir: &std::path::Path,
     before: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
     cwd: &std::path::Path,
 ) -> Vec<(String, String, u64)> {
     let mut artifacts = Vec::new();
-    for entry in walkdir::WalkDir::new(scratch_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path().to_path_buf();
+    let mut seen = std::collections::HashSet::new();
+    let mut check_entry = |path: std::path::PathBuf| {
         if path.is_file()
+            && seen.insert(path.clone())
             && let Ok(meta) = path.metadata()
         {
             let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -424,6 +460,31 @@ fn scan_new_scratch_artifacts(
                 let mime = guess_mime_type(&path);
                 artifacts.push((rel, mime, meta.len()));
             }
+        }
+    };
+
+    if scratch_dir.exists() {
+        for entry in walkdir::WalkDir::new(scratch_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            check_entry(entry.path().to_path_buf());
+        }
+    }
+    if cwd != scratch_dir && cwd.exists() {
+        for entry in walkdir::WalkDir::new(cwd)
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    let name = e.file_name().to_string_lossy();
+                    !should_skip_scan_dir(&name)
+                } else {
+                    true
+                }
+            })
+            .filter_map(Result::ok)
+        {
+            check_entry(entry.path().to_path_buf());
         }
     }
     artifacts

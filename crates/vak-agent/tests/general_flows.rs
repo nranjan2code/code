@@ -321,9 +321,7 @@ async fn stop_gate_blocks_premature_report_until_verified() {
         .count();
     assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
 
-    // Bash runs through the universal sandbox, so relative outputs remain
-    // quarantined as candidate material until explicitly promoted.
-    let report = std::fs::read_to_string(dir.path().join(".vak/scratch/t1/report.md")).unwrap();
+    let report = std::fs::read_to_string(dir.path().join("report.md")).unwrap();
     assert!(report.contains("4200"));
 }
 
@@ -526,6 +524,105 @@ async fn mcp_notes_lookup_informs_planning_answer() {
         answer.contains("echo: flights booked"),
         "artifact must carry the MCP result"
     );
+}
+
+#[tokio::test]
+async fn mcp_call_omitting_server_auto_resolves_and_completes() {
+    let Ok(probe) = std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+    else {
+        eprintln!("skipping: python3 unavailable");
+        return;
+    };
+    assert!(probe.status.success(), "python3 must be runnable");
+
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/fake_mcp_server.py");
+    let mut servers = HashMap::new();
+    servers.insert(
+        "notes".to_string(),
+        ServerConfig {
+            command: "python3".into(),
+            args: vec![script.display().to_string()],
+            env: Vec::new(),
+            network: false,
+        },
+    );
+    let manager = Arc::new(McpManager::new(servers, dir_safe_cwd()));
+    let aliases = Arc::new(Mutex::new(HashMap::new()));
+    let aliases_map = aliases.clone();
+    let mcp_tool: Arc<dyn vak_tools::Tool> = Arc::new(McpTool::new(manager).with_catalog_observer(
+        Arc::new(move |catalog| {
+            let mut registered = aliases_map.lock().unwrap();
+            for (server, tools) in catalog {
+                for tool in tools {
+                    registered.insert(
+                        tool.name.clone(),
+                        McpToolAlias {
+                            server: server.clone(),
+                            tool: tool.name.clone(),
+                            description: tool.description.clone(),
+                            schema: tool.input_schema.clone(),
+                        },
+                    );
+                }
+            }
+        }),
+    ));
+
+    // Pre-populate alias as would be done from admitted capability inventory
+    aliases.lock().unwrap().insert(
+        "echo".into(),
+        McpToolAlias {
+            server: "notes".into(),
+            tool: "echo".into(),
+            description: "echo text back".into(),
+            schema: serde_json::json!({"properties": {"text": {"type": "string"}}, "required": ["text"]}),
+        },
+    );
+
+    let (mut agent, _provider, dir) = setup(
+        vec![
+            // Model calls `mcp` with action=call and tool=echo, but completely OMITS `server`!
+            tool_call(
+                "m1",
+                "mcp",
+                serde_json::json!({
+                    "action": "call",
+                    "tool": "echo",
+                    "arguments": {"text": "flights booked"}
+                }),
+            ),
+            tool_call(
+                "w1",
+                "write",
+                serde_json::json!({
+                    "path": "auto_resolved.md",
+                    "content": "# Result\n\nAuto-resolved echo succeeded\n"
+                }),
+            ),
+            text_msg("auto-resolved and done"),
+        ],
+        vec![mcp_tool, Arc::new(WriteTool)],
+        |config| {
+            config.mcp_aliases = aliases.clone();
+        },
+    );
+
+    let outcome = agent
+        .run(
+            "Echo flights booked without specifying server",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(256).0,
+        )
+        .await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
+    assert!(dir.path().join("auto_resolved.md").is_file());
 }
 
 fn dir_safe_cwd() -> std::path::PathBuf {

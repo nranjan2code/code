@@ -51,6 +51,23 @@ fn builtin_domains(name: &str) -> Serves {
     Serves::declared(domains.iter().cloned())
 }
 
+/// Standard starter skills classify themselves here if not declared in frontmatter.
+fn starter_skill_domains(name: &str) -> Serves {
+    use Domain::*;
+    let domains: &[Domain] = match name {
+        "software-development" => &[CodeExec, Documents, Vcs, Filesystem],
+        "debugging" => &[CodeExec, Observability],
+        "code-review" => &[Vcs, Documents],
+        "data-and-spreadsheets" => &[Documents, CodeExec],
+        "research-and-sources" => &[Web, LiveData],
+        "writing-and-editing" => &[Documents],
+        "planning-and-organizing" => &[Orchestration],
+        "getting-started" => &[Documents],
+        _ => return Serves::Undeclared,
+    };
+    Serves::declared(domains.iter().cloned())
+}
+
 impl Core {
     /// The registry, created and started on first use.
     ///
@@ -167,7 +184,7 @@ impl CapabilityProvider for Core {
                 .serves
                 .as_ref()
                 .map(|values| Serves::Declared(Domain::parse_list(values)))
-                .unwrap_or(Serves::Undeclared);
+                .unwrap_or_else(|| starter_skill_domains(&skill.name));
             out.push(Declaration {
                 id: CapabilityId::new(CapabilityKind::Skill, &skill.name),
                 origin: origin_from_provenance(skill.provenance.as_deref()),

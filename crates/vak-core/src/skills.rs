@@ -44,17 +44,18 @@ impl Skill {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenSkill {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
     pub digest: String,
     pub provenance: Option<String>,
+    pub is_active: bool,
 }
 
 impl FrozenSkill {
-    fn load(&self) -> Result<String, String> {
+    pub fn load(&self) -> Result<String, String> {
         let bytes = std::fs::read(&self.path).map_err(|error| {
             format!(
                 r#"{{"type":"capability_unavailable","kind":"skill","name":{},"message":{}}}"#,
@@ -97,12 +98,18 @@ pub fn frozen_from_capabilities(
         .iter()
         .filter(|capability| capability.kind == vak_session::types::CapabilityKind::Skill)
         .filter_map(|capability| {
+            let is_active = capability
+                .configuration
+                .get("active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Some(FrozenSkill {
                 name: capability.name.clone(),
                 description: capability.description.clone(),
                 path: capability.source.clone()?,
                 digest: capability.digest.clone()?,
                 provenance: capability.provenance.clone(),
+                is_active,
             })
         })
         .collect()
@@ -429,7 +436,7 @@ pub fn prompt_section(skills: &[Skill]) -> String {
         return String::new();
     }
     let mut s = String::from(
-        "\nSkills available. Load instructions with the `skill` tool using the exact name; then use ordinary tools to perform the work:\n",
+        "\nSkills available. Load instructions with the `skill` tool using the exact name (e.g. `skill({\"name\": \"...\"})`); skills are reference documents, not callable tool names:\n",
     );
     for sk in skills {
         s.push_str(&format!(
@@ -455,12 +462,56 @@ pub fn prompt_section_from_capabilities(
     if skills.is_empty() {
         return String::new();
     }
-    let mut out = String::from(
-        "\nSkills available. Load instructions with the `skill` tool using the exact name; then use ordinary tools to perform the work:\n",
-    );
-    for skill in skills {
-        out.push_str(&format!("- `{}`: {}\n", skill.name, skill.description));
+
+    let mut active = Vec::new();
+    let mut catalog = Vec::new();
+
+    for skill in &skills {
+        let is_active = skill
+            .configuration
+            .get("active")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_active {
+            active.push(*skill);
+        } else {
+            catalog.push(*skill);
+        }
     }
+
+    let mut out = String::new();
+
+    if !active.is_empty() {
+        out.push_str("\n## Active Skill Guidelines\nThe following guidelines apply to this task. Follow them throughout your execution:\n\n");
+        for skill in &active {
+            out.push_str(&format!("### Skill: `{}`\n", skill.name));
+            let content = skill.source.as_ref().and_then(|path| {
+                std::fs::read_to_string(path).ok().map(|text| strip_frontmatter(&text).trim().to_string())
+            });
+            if let Some(body) = content {
+                if !body.is_empty() {
+                    out.push_str(&body);
+                    out.push_str("\n\n");
+                } else {
+                    out.push_str(&format!("{}\n\n", skill.description));
+                }
+            } else {
+                out.push_str(&format!("{}\n\n", skill.description));
+            }
+        }
+    }
+
+    if !catalog.is_empty() {
+        if active.is_empty() {
+            out.push_str("\nSkills available. Load instructions with the `skill` tool using the exact name (e.g. `skill({\"name\": \"...\"})`); skills are reference documents, not callable tool names:\n");
+        } else {
+            out.push_str("Additional reference skills available via the `skill` tool:\n");
+        }
+        for skill in catalog {
+            out.push_str(&format!("- `{}`: {}\n", skill.name, skill.description));
+        }
+    }
+
     out
 }
 
@@ -563,6 +614,7 @@ mod tests {
             path: path.clone(),
             digest,
             provenance: None,
+            is_active: false,
         }]);
         let ctx = vak_tools::ToolContext {
             cwd: dir.path().to_path_buf(),
@@ -634,6 +686,7 @@ mod tests {
             path,
             digest,
             provenance: None,
+            is_active: false,
         };
         let expanded = expand_invocation("/skill:code-task fix parser", &[frozen])?
             .ok_or("command should expand")?;
@@ -680,5 +733,45 @@ mod tests {
         )
         .unwrap();
         assert!(validate(&path).is_ok());
+    }
+
+    #[test]
+    fn active_skills_are_inlined_and_catalog_is_indexed() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let skill_path = dir.path().join("SKILL.md");
+        std::fs::write(
+            &skill_path,
+            "---\nname: software-development\ndescription: build software cleanly\n---\nAlways verify with tests.\n",
+        )?;
+
+        let active_cap = vak_session::types::CapabilityDescriptor {
+            name: "software-development".into(),
+            kind: vak_session::types::CapabilityKind::Skill,
+            invocation: vak_session::types::CapabilityInvocation::SkillLoader,
+            description: "build software cleanly".into(),
+            source: Some(skill_path),
+            digest: Some("abc123".into()),
+            provenance: None,
+            configuration: serde_json::json!({"active": true}),
+        };
+
+        let catalog_cap = vak_session::types::CapabilityDescriptor {
+            name: "debugging".into(),
+            kind: vak_session::types::CapabilityKind::Skill,
+            invocation: vak_session::types::CapabilityInvocation::SkillLoader,
+            description: "diagnose failures".into(),
+            source: None,
+            digest: None,
+            provenance: None,
+            configuration: serde_json::Value::Null,
+        };
+
+        let prompt = prompt_section_from_capabilities(&[active_cap, catalog_cap]);
+        assert!(prompt.contains("## Active Skill Guidelines"));
+        assert!(prompt.contains("### Skill: `software-development`"));
+        assert!(prompt.contains("Always verify with tests."));
+        assert!(prompt.contains("Additional reference skills available via the `skill` tool:"));
+        assert!(prompt.contains("- `debugging`: diagnose failures"));
+        Ok(())
     }
 }

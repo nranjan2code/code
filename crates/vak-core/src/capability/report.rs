@@ -148,7 +148,13 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
         ));
     }
 
-    let unusable: Vec<_> = set.unusable().collect();
+    let unusable: Vec<_> = set
+        .unusable()
+        .filter(|c| {
+            c.id.kind != vak_session::types::CapabilityKind::Hook
+                && c.id.kind != vak_session::types::CapabilityKind::Command
+        })
+        .collect();
     if !unusable.is_empty() {
         out.push_str(
             "\nConfigured but NOT usable on this turn. These are not in your tool schemas \

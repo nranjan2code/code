@@ -2766,7 +2766,7 @@ impl Core {
         let extra_diags: Vec<_> = self
             .capability_diagnostics()
             .into_iter()
-            .filter(|d| d.source.is_some() || d.kind == "hook")
+            .filter(|d| d.source.is_some())
             .collect();
         if !extra_diags.is_empty() {
             if standing.is_empty() {
@@ -4955,7 +4955,17 @@ impl Core {
                 None,
             );
         }
-        cfg.tool_definitions = Some(vak_tools::definitions(&tools));
+        let mut defs = vak_tools::definitions(&tools);
+        for (tool_name, alias) in &turn_capabilities.mcp_aliases {
+            if !defs.iter().any(|d| d.name == *tool_name) {
+                defs.push(vak_llm::ToolDefinition::new(
+                    tool_name.clone(),
+                    alias.description.clone(),
+                    alias.schema.clone(),
+                ));
+            }
+        }
+        cfg.tool_definitions = Some(defs);
         cfg.tools = tools;
         if cfg.work_mode == WorkMode::Managed && turn_capabilities.flow_admitted {
             cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher {
@@ -6846,7 +6856,7 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut section = format!(
-        "\nConfigured MCP servers: {names}. Use the `mcp` tool with action \"list\" first; it returns exact tool names and input schemas. Then use action \"call\" with the exact name and schema-valid arguments.\n"
+        "\nConfigured MCP servers: {names}. Use the `mcp` tool with action \"list\" to view tools and input schemas, or action \"call\" with parameters `server`, `tool`, and `arguments` to invoke a tool.\n"
     );
     let mut catalog = String::new();
     for capability in servers {

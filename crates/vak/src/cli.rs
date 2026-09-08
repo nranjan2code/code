@@ -12,6 +12,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 // are running.
 #[command(name = "Vak", version = env!("VAK_VERSION"), about = "An agent harness")]
 pub(crate) struct Cli {
+    /// Target a specific workspace directory instead of the current working directory.
+    #[arg(long, short = 'C', global = true)]
+    pub(crate) workspace: Option<PathBuf>,
+
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
 }

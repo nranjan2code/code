@@ -247,7 +247,12 @@ impl Accumulator {
                         name: name.clone(),
                         input: Value::Object(Default::default()),
                     });
-                    self.tool_pos.insert(call_id.clone(), pos);
+                    if let Some(item_id) = item.get("id").and_then(|i| i.as_str()) {
+                        self.tool_pos.insert(item_id.to_string(), pos);
+                    }
+                    if !call_id.is_empty() {
+                        self.tool_pos.insert(call_id.clone(), pos);
+                    }
                     return Ok(Some(StreamEvent::ToolUseStart {
                         index: pos,
                         id: call_id,

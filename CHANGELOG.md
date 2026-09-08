@@ -5,6 +5,25 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.30 — 2026-09-08
+
+### Intent-Driven Active Skill Inlining & Progressive Disclosure
+
+- **Zero-Round-Trip Active Skill Inlining.** Transformed skill handling from voluntary
+  tool-calling ceremony to intent-driven active context inlining. Surviving skills with
+  the highest domain affinity to the turn (e.g. `software-development` for code authoring/modification)
+  are automatically promoted to active status and inlined into the system prompt under
+  `## Active Skill Guidelines` on Turn 1.
+- **Progressive Skill Disclosure.** Remaining catalog skills are concisely indexed for on-demand
+  loading via `skill({"name": "..."})`, preventing context window bloat while ensuring
+  specialized procedures remain accessible.
+- **Starter Skill Domain Classification.** Added domain classifications for built-in starter skills
+  (`software-development`, `debugging`, `code-review`, `data-and-spreadsheets`, etc.) in
+  `crates/vak-core/src/capability/provider.rs`.
+- **Full React Benchmark Verified Across Models.** Validated full production Vite + React builds
+  with `npm install` and `npm run build` across both frontier (`gpt-5.6-luna`) and local small
+  models (`gemma4:e2b-mlx` 2B) in both single-agent and multi-agent subagent configurations.
+
 ## 3.0.29 — 2026-09-08
 
 ### Intent Pre-Flight HUD & Multi-Turn Context

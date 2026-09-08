@@ -270,7 +270,12 @@ async fn main() {
         std::process::exit(vak_delivery::worker::run_stdio());
     }
     let cli = Cli::parse();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = cli
+        .workspace
+        .as_ref()
+        .map(|w| if w.is_absolute() { w.clone() } else { current_dir.join(w) })
+        .unwrap_or(current_dir);
 
     // User-level secrets always load. The PROJECT .env is only loaded for
     // trusted workspaces: a cloned repository must not be able to inject

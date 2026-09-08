@@ -110,7 +110,7 @@ async fn seatbelt_workspace_write_allows_inside_cwd() {
         out.content
     );
     assert!(out.content.contains("inside"));
-    assert!(dir.path().join(".vak/scratch/inside.txt").exists());
+    assert!(dir.path().join("inside.txt").exists());
 }
 
 #[cfg(target_os = "macos")]
@@ -208,7 +208,7 @@ async fn off_mode_allows_unrestricted_writes() {
     )
     .await;
     assert!(!out.is_error, "off-mode must allow writes: {}", out.content);
-    assert!(dir.path().join(".vak/scratch/freedom.txt").exists());
+    assert!(dir.path().join("freedom.txt").exists());
 }
 
 /// `read_only_variant()` on a WorkspaceWrite Seatbelt must produce a profile

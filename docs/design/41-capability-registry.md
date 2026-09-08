@@ -272,3 +272,17 @@ The 19 unit tests in `turn.rs` cover each kind individually (survive +
 blocked), both domain-slice paths, channel-deny blocking, contract
 filtering, and two combined cases that exercise all four kinds through
 a single `TurnCapabilities::build()` call.
+
+### Intent-driven active skill inlining
+
+Stage 4 (domain slice) also evaluates affinity of surviving skills against the
+turn's `required_domains`. When a surviving skill has the highest declared domain
+affinity to the turn (e.g. `software-development` for `[CodeExec, Documents, Vcs, Filesystem]`),
+it is promoted to `is_active: true` and recorded with `configuration: {"active": true}` in
+its `CapabilityDescriptor`.
+
+The system prompt resolver inlines active skills directly under `## Active Skill Guidelines`,
+providing immediate operational guidance on Turn 1 across both local and frontier models
+with zero voluntary-tool-call round-trips. Remaining catalog skills remain accessible on-demand
+via the `skill` tool.
+

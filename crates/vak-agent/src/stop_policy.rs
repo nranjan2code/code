@@ -33,11 +33,11 @@ impl BlockReason {
             ),
             BlockReason::VerificationMissing => String::from(
                 "the task asked you to run/verify something, but no commands were \
-                 executed this run. Run the verification before finishing.",
+                 executed this run. Call the `bash` tool to run the verification now; do not print the command as text.",
             ),
             BlockReason::VerificationStale => String::from(
                 "the task changed files after its last verification command. \
-                 Inspect the final files and run the verification again before finishing.",
+                 Call the `bash` tool to run the verification again before finishing; do not describe it in text.",
             ),
             BlockReason::UserCompletionRequired => String::from(
                 "the user asked you to keep working until they say done. Continue making \

@@ -372,17 +372,41 @@ impl TurnCapabilities {
         // the turn does not need is hidden, but an undeclared skill is
         // always visible (fail open). Each surviving skill is projected
         // into a FrozenSkill from the Capability's source/digest.
+        //
+        // Score surviving skills against required_domains to select top active skill.
+        let mut best_skill_name: Option<String> = None;
+        if !probe.required_domains.is_empty() {
+            let mut highest_score = 0;
+            for c in surviving
+                .iter()
+                .filter(|c| c.id.kind == CapabilityKind::Skill && passes_domain_slice(c, probe))
+            {
+                let score = match &c.serves {
+                    super::domain::Serves::Declared(domains) => {
+                        domains.intersection(probe.required_domains).count()
+                    }
+                    super::domain::Serves::Undeclared => 0,
+                };
+                if score > highest_score {
+                    highest_score = score;
+                    best_skill_name = Some(c.id.name.clone());
+                }
+            }
+        }
+
         let frozen_skills: Vec<crate::skills::FrozenSkill> = surviving
             .iter()
             .filter(|c| c.id.kind == CapabilityKind::Skill)
             .filter(|c| passes_domain_slice(c, probe))
             .filter_map(|c| {
+                let is_active = best_skill_name.as_ref() == Some(&c.id.name);
                 Some(crate::skills::FrozenSkill {
                     name: c.id.name.clone(),
                     description: c.summary.clone(),
                     path: c.source.clone()?,
                     digest: c.digest.clone()?,
                     provenance: Some(c.origin.label()),
+                    is_active,
                 })
             })
             .collect();
@@ -406,7 +430,17 @@ impl TurnCapabilities {
         let descriptors = surviving
             .iter()
             .filter(|c| passes_domain_slice(c, probe))
-            .map(|c| c.to_descriptor())
+            .map(|c| {
+                let mut desc = c.to_descriptor();
+                if c.id.kind == CapabilityKind::Skill && best_skill_name.as_ref() == Some(&c.id.name) {
+                    if desc.configuration.is_null() {
+                        desc.configuration = serde_json::json!({"active": true});
+                    } else if let Some(obj) = desc.configuration.as_object_mut() {
+                        obj.insert("active".into(), serde_json::json!(true));
+                    }
+                }
+                desc
+            })
             .collect();
 
         TurnCapabilities {
@@ -1056,5 +1090,38 @@ mod tests {
         assert!(tc.mcp_aliases.contains_key("deep_tool"));
         // Hook survives — hooks are never domain-sliced.
         assert_eq!(tc.hooks.len(), 1);
+    }
+
+    #[test]
+    fn highest_affinity_skill_is_marked_active() {
+        let set = CapabilitySet::new(
+            1,
+            vec![
+                make_skill_cap(
+                    "software-development",
+                    Serves::declared([Domain::CodeExec, Domain::Documents, Domain::Vcs]),
+                ),
+                make_skill_cap(
+                    "writing-and-editing",
+                    Serves::declared([Domain::Documents]),
+                ),
+            ],
+        );
+        let required = BTreeSet::from([Domain::CodeExec, Domain::Documents, Domain::Vcs]);
+        let policy = empty_policy();
+        let probe = make_probe(&set, None, &policy, &[], &required, None);
+        let tc = TurnCapabilities::build(&probe);
+
+        let sw = tc.frozen_skills.iter().find(|s| s.name == "software-development").unwrap();
+        assert!(sw.is_active);
+
+        let wr = tc.frozen_skills.iter().find(|s| s.name == "writing-and-editing").unwrap();
+        assert!(!wr.is_active);
+
+        let sw_desc = tc.descriptors.iter().find(|d| d.name == "software-development").unwrap();
+        assert_eq!(sw_desc.configuration.get("active").and_then(|v| v.as_bool()), Some(true));
+
+        let wr_desc = tc.descriptors.iter().find(|d| d.name == "writing-and-editing").unwrap();
+        assert_ne!(wr_desc.configuration.get("active").and_then(|v| v.as_bool()), Some(true));
     }
 }

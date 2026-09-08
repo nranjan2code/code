@@ -11,7 +11,8 @@ async fn run(
     command: &str,
 ) -> (vak_tools::ToolOutput, Vec<vak_tools::SandboxEvent>) {
     let (sink, mut rx) = SandboxEventSink::new_with_id(id.into());
-    let ctx = ToolContext::new(workspace.to_path_buf()).with_sandbox_sink(sink);
+    let ctx =
+        ToolContext::new(workspace.to_path_buf()).with_sandbox_sink(sink.with_quarantine(true));
     let output = BashTool
         .execute(&serde_json::json!({"command": command}), &ctx)
         .await;
