@@ -110,7 +110,7 @@ impl Landlock {
                 }
             }
         }
-        for path in super::sandbox::Seatbelt::temp_write_paths() {
+        for path in super::backend::Seatbelt::temp_write_paths() {
             let path = PathBuf::from(path);
             if path.exists() && !read_paths.contains(&path) {
                 read_paths.push(path);
@@ -124,7 +124,7 @@ impl Landlock {
         // using tempfile/std::env::temp_dir dies under the sandbox (found
         // by dogfooding `cargo test` through the agent).
         if mode == SandboxMode::WorkspaceWrite {
-            for p in super::sandbox::Seatbelt::temp_write_paths() {
+            for p in super::backend::Seatbelt::temp_write_paths() {
                 let pb = PathBuf::from(p);
                 if !write_paths.contains(&pb) {
                     write_paths.push(pb);
