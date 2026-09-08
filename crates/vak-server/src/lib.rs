@@ -5626,6 +5626,8 @@ async fn digest_report(
 struct IntentExplainQuery {
     prompt: String,
     #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
     surface: Option<String>,
     #[serde(default)]
     act: Option<String>,
@@ -5703,12 +5705,39 @@ async fn intent_explain(
         },
     };
 
+    let history = if let Some(sid) = q.session_id.as_deref() {
+        match state.core.open_session(sid).await {
+            Ok(session) => {
+                let chain = session.chain_to_root();
+                let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
+                    _ => None,
+                });
+                let turn_index = chain
+                    .iter()
+                    .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
+                    .count();
+                vak_intent::HistoryFacts {
+                    previous_act,
+                    turn_index,
+                    commitment_open: session
+                        .header()
+                        .and_then(|header| header.contract_id.as_ref())
+                        .is_some(),
+                }
+            }
+            Err(_) => vak_intent::HistoryFacts::default(),
+        }
+    } else {
+        vak_intent::HistoryFacts::default()
+    };
+
     let resolution = vak_core::intent::resolve_turn(
         &q.prompt,
         &surface,
         &[],
         vak_core::intent::workspace_facts(state.core.cwd()),
-        vak_intent::HistoryFacts::default(),
+        history.clone(),
         &declared,
         &state.core.turn_authority_for(&surface),
         &vak_core::intent::resolver_config(state.core.config()),
@@ -5728,6 +5757,11 @@ async fn intent_explain(
             .diff_from(&vak_intent::Limits::unrestricted()),
         "escalation_recommended": escalation,
         "model_visible": intent.model_visible(),
+        "history": {
+            "turn_index": history.turn_index,
+            "previous_act": history.previous_act.map(|a| a.as_str()),
+            "commitment_open": history.commitment_open,
+        },
     }))
     .into_response()
 }

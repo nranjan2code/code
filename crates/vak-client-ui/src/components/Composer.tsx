@@ -510,7 +510,7 @@ export default function Composer(props: { cwd: string }) {
       {/* Above the box, not inside it: this is a read-out about what you are
           about to send, and putting it inside the field would make it look
           like part of the message. */}
-      <IntentStrip prompt={text()} disabled={isRunning(activeId())} />
+      <IntentStrip prompt={text()} sessionId={activeId()} disabled={isRunning(activeId())} />
       <div
         class="composer-box"
         classList={{ running: isRunning(activeId()), "drag-over": dragOver() }}

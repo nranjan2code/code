@@ -3052,38 +3052,52 @@ body.is-resizing .split-divider {
 
 /* ---- intent strip (docs/design/47-commitment-kernel.md) ----
    Quiet in proportion to consequence. At rest this is chrome: micro-label
-   type, --faint, no border, no accent. It escalates only for readings that
-   genuinely deserve a person's attention, which is what keeps the escalation
-   worth noticing. A strip that shouted on every keystroke would be ignored
-   within a day, and an ignored safety signal is worse than none. */
-.intent-strip {
-  margin: 0 0 6px;
+/* ---- intent hud (lossless pre-flight telemetry) ---------------------
+   docs/design/47-commitment-kernel.md.
+   Strictly uses Vak theme variables for seamless light/dark/contrast switching.
+   Preserves 100% of telemetry (axes, limits, float weights, session context). */
+.intent-hud {
+  max-width: 820px;
+  margin: 0 auto 6px;
   border-radius: var(--radius-sm, 7px);
-  border: 1px solid transparent;
-  transition: border-color 160ms ease, background-color 160ms ease;
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  transition: border-color 140ms ease, background-color 140ms ease;
+  overflow: hidden;
+  box-sizing: border-box;
 }
-.intent-line {
+
+.intent-hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 28px;
+  background: var(--surface);
+}
+
+.intent-hud-toggle {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
-  padding: 4px 7px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
   background: none;
   border: none;
   cursor: pointer;
   text-align: left;
   color: var(--faint);
+  font-family: var(--sans);
   font-size: 11px;
   font-weight: 540;
-  border-radius: inherit;
 }
-.intent-line:hover { color: var(--text-soft); background: var(--surface-hover); }
-.intent-line:focus-visible { outline: 2px solid var(--border-focus, var(--accent)); outline-offset: 1px; }
-.intent-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.intent-hud-toggle:hover { color: var(--text-soft); background: var(--surface-hover); }
+.intent-hud-toggle:focus-visible { outline: 2px solid var(--border-focus, var(--accent)); outline-offset: -1px; }
 
-/* The mark is the second channel: a hollow ring at rest, a filled dot when
-   the reading is consequential. Tone never rides on hue alone. */
-.intent-mark {
+.intent-hud-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.intent-hud-mark {
   flex: none;
   width: 6px;
   height: 6px;
@@ -3091,63 +3105,214 @@ body.is-resizing .split-divider {
   border: 1.5px solid currentColor;
   box-sizing: border-box;
 }
-.intent-notice .intent-line { color: var(--muted); }
-.intent-notice .intent-mark { background: currentColor; }
-.intent-warn { border-color: var(--accent); background: var(--accent-wash, rgba(223, 121, 95, 0.09)); }
-.intent-warn .intent-line { color: var(--accent-bright); }
-.intent-warn .intent-mark { background: currentColor; }
 
-.intent-inferred {
+.intent-hud-notice .intent-hud-toggle { color: var(--muted); }
+.intent-hud-notice .intent-hud-mark { background: currentColor; }
+
+.intent-hud-warn { border-color: var(--accent); background: var(--accent-wash); }
+.intent-hud-warn .intent-hud-toggle { color: var(--accent-bright); }
+.intent-hud-warn .intent-hud-mark { background: currentColor; }
+
+.intent-hud-inferred {
   flex: none;
+  font-family: var(--mono);
   font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--yellow);
 }
-.intent-chev { display: inline-flex; flex: none; transition: transform 160ms ease; }
-.intent-chev-open { transform: rotate(180deg); }
 
-/* Shown without expanding: the whole point of the warn tone is that it must
-   not need a click to be read. */
-.intent-note {
+.intent-hud-chev { display: inline-flex; flex: none; transition: transform 160ms ease; color: var(--faint); }
+.intent-hud-chev-open { transform: rotate(180deg); }
+
+.intent-hud-controls {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+.intent-hud-btn {
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.intent-hud-btn:hover { color: var(--text-soft); background: var(--surface-hover); }
+
+.intent-hud-note {
   margin: 0;
-  padding: 0 8px 7px 21px;
-  font-size: 11.5px;
+  padding: 0 10px 6px 22px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--text-soft);
-  max-width: 70ch;
 }
 
-.intent-detail {
-  padding: 8px 9px 9px;
+/* Expanded HUD Body */
+.intent-hud-body {
   border-top: 1px solid var(--border-soft);
+  background: var(--surface-raised);
 }
-.intent-axes { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 9px; }
-.intent-axes > div { display: flex; flex-direction: column; gap: 1px; }
-.intent-axes dt { font-size: 9.5px; font-weight: 600; color: var(--faint); }
-.intent-axes dd { margin: 0; font-size: 11.5px; font-weight: 540; color: var(--text-soft); }
 
-.intent-narrows { margin: 0; padding: 0 0 0 15px; display: grid; gap: 3px; }
-.intent-narrows li { font-size: 11.5px; color: var(--muted); }
-.intent-empty { margin: 0; font-size: 11.5px; color: var(--faint); }
+/* Context Ribbon */
+.intent-hud-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 10.5px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+.intent-hud-context-lead {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.intent-hud-context-val {
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
 
-.intent-signals { margin-top: 9px; }
-.intent-signals summary {
-  cursor: pointer;
+/* 6-Axis Grid */
+.intent-hud-axes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-soft);
+}
+.intent-hud-axis-cell {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  border-right: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.intent-hud-axis-cell:last-child { border-right: none; }
+.intent-hud-axis-key {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.intent-hud-axis-val {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.intent-hud-axis-val.axis-answer,
+.intent-hud-axis-val.axis-analyze { color: var(--blue); }
+.intent-hud-axis-val.axis-modify,
+.intent-hud-axis-val.axis-operate { color: var(--accent); }
+.intent-hud-axis-val.axis-inert,
+.intent-hud-axis-val.axis-clear { color: var(--green); }
+.intent-hud-axis-val.axis-reversible { color: var(--yellow); }
+.intent-hud-axis-val.axis-irreversible { color: var(--red); }
+.intent-hud-axis-val.axis-interactive,
+.intent-hud-axis-val.axis-supervised { color: var(--accent-bright); }
+
+/* Narrowed Limits */
+.intent-hud-limits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+.intent-hud-limits-lead {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.intent-hud-limits-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.intent-hud-limit-tag {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 4px);
+  white-space: nowrap;
+}
+.intent-hud-limits-empty {
   font-size: 10.5px;
   color: var(--faint);
-  list-style-position: outside;
 }
-.intent-signals summary:hover { color: var(--muted); }
-.intent-signals ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
-.intent-signals li { display: flex; gap: 8px; align-items: baseline; font-size: 10.5px; color: var(--muted); }
-.sig-kind { flex: none; width: 68px; color: var(--faint); }
-.sig-weight { flex: none; width: 30px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-soft); }
-.sig-detail { min-width: 0; }
+
+/* Signals Spectrum Tray */
+.intent-hud-signals {
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.intent-hud-signals-lead {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.intent-hud-signals-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+}
+.intent-hud-signal-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.intent-hud-signal-item .sig-kind {
+  flex: none;
+  width: 72px;
+  color: var(--faint);
+}
+.intent-hud-signal-item .sig-weight {
+  flex: none;
+  width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--yellow);
+}
+.intent-hud-signal-item .sig-detail {
+  min-width: 0;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .intent-strip, .intent-chev { transition: none; }
+  .intent-hud, .intent-hud-chev { transition: none; }
 }
 
 /* ---- commitments panel (dock tab) -----------------------------------

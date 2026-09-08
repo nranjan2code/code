@@ -1,48 +1,20 @@
 /// What vak read your request as, shown before you send it
 /// (docs/design/47-commitment-kernel.md).
 ///
-/// # The design problem
-///
-/// This element sits between the user and every message they send, so the
-/// failure mode is not "unclear" — it is "in the way". A strip that announces
-/// itself on every keystroke gets ignored within a day, and an ignored safety
-/// signal is worse than none, because the one time it says something important
-/// nobody is looking.
-///
-/// So it is built to be *quiet in proportion to consequence*:
-///
-/// - **Ordinary work** — one dim line in micro-label type. Reads as chrome.
-/// - **Consequential** (irreversible, deferred, audited, or a question worth
-///   asking) — the accent appears and the reason is stated in words. The
-///   accent is otherwise unused here, so its arrival means something.
-/// - **Never** while the field is empty or the prompt is too short to read.
-///
-/// Expanding it gives the full inspector: every signal with the weight it
-/// carried, and exactly what the run narrows. That is the same evidence
-/// `vak intent explain` prints, because a reading nobody can inspect is a
-/// reading nobody can argue with.
-///
-/// Resolution is free — deterministic tiers only, no dispatch — so this costs
-/// nothing but a local round trip, and it never blocks sending.
+/// Implemented as a high-density, theme-aware Pre-Flight HUD adhering strictly
+/// to Vak design tokens and typography. Preserves 100% of telemetry (axes,
+/// operational narrowing limits, float signal weights, and session history)
+/// with granular expand/collapse and dismissal controls.
 
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-
 import { explainIntent, type IntentExplain } from "../api";
 import Icon from "./Icon";
 
-/// Long enough that a half-typed word does not thrash the endpoint, short
-/// enough that the strip has settled before a fast typist reaches for Enter.
 const DEBOUNCE_MS = 260;
-/// Below this there is nothing to read, and guessing at two characters would
-/// produce exactly the flickering nonsense that trains people to ignore it.
 const MIN_CHARS = 12;
 
 type Tone = "quiet" | "notice" | "warn";
 
-/// How loudly this reading deserves to be presented.
-///
-/// Only three states, and the top one is genuinely rare. If everything is
-/// important, nothing is.
 function toneOf(intent: IntentExplain): Tone {
   const { reading, engagement } = intent;
   if (
@@ -63,8 +35,6 @@ function toneOf(intent: IntentExplain): Tone {
   return "quiet";
 }
 
-/// The one line. Written as a claim about what will happen, not a label:
-/// "8 tools" is inert, "approval will be asked" is actionable.
 function summary(intent: IntentExplain): string {
   const { reading, engagement } = intent;
   const parts: string[] = [reading.act];
@@ -74,28 +44,43 @@ function summary(intent: IntentExplain): string {
   if (caps.kind === "only") {
     parts.push(caps.names.length === 0 ? "no tools" : `${caps.names.length} tools`);
   }
-  if (engagement.limits.approval_ceiling === "ask") parts.push("will ask before acting");
-  if (engagement.posture.hil === "defer") parts.push("will queue questions");
+  if (engagement.limits.approval_ceiling === "ask") parts.push("approval required");
+  if (engagement.posture.hil === "defer") parts.push("questions queued");
   if (reading.evidence !== "none") parts.push(`${reading.evidence} evidence`);
   return parts.join(" · ");
 }
 
-export function IntentStrip(props: { prompt: string; disabled?: boolean }) {
+export function IntentStrip(props: {
+  prompt: string;
+  sessionId?: string | null;
+  disabled?: boolean;
+}) {
   const [intent, setIntent] = createSignal<IntentExplain | null>(null);
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpen] = createSignal(
+    localStorage.getItem("vak.intent.hud_expanded") === "true",
+  );
+  const [dismissed, setDismissed] = createSignal(false);
+
+  function toggleOpen() {
+    const next = !open();
+    setOpen(next);
+    try {
+      localStorage.setItem("vak.intent.hud_expanded", String(next));
+    } catch {
+      // Storage unavailable or disabled
+    }
+  }
 
   createEffect(() => {
     const prompt = props.prompt.trim();
-    if (props.disabled || prompt.length < MIN_CHARS) {
+    if (props.disabled || prompt.length < MIN_CHARS || dismissed()) {
       setIntent(null);
       return;
     }
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      void explainIntent(prompt, controller.signal)
+      void explainIntent(prompt, props.sessionId, controller.signal)
         .then(setIntent)
-        // Silent: this is an optional read-out, and an error toast for a
-        // background explain would be exactly the nagging it must avoid.
         .catch(() => {});
     }, DEBOUNCE_MS);
     onCleanup(() => {
@@ -104,38 +89,84 @@ export function IntentStrip(props: { prompt: string; disabled?: boolean }) {
     });
   });
 
+  // Re-enable if prompt resets or changes substantially
+  createEffect(() => {
+    if (props.prompt.trim().length === 0 && dismissed()) {
+      setDismissed(false);
+    }
+  });
+
   return (
     <Show when={intent()}>
       {(current) => (
-        <div class={`intent-strip intent-${toneOf(current())}`}>
-          <button
-            class="intent-line"
-            aria-expanded={open()}
-            onClick={() => setOpen(!open())}
-            title="How vak read this request, and what it will narrow"
-          >
-            <span class="intent-mark" aria-hidden="true" />
-            <span class="intent-summary">{summary(current())}</span>
-            <Show when={!current().provenance.reproducible}>
-              <span class="intent-inferred" title="A model classified this; it is not reproducible from the ledger alone">
-                inferred
+        <div
+          class={`intent-hud intent-hud-${toneOf(current())}`}
+          classList={{ "intent-hud-open": open() }}
+        >
+          {/* Header Strip & Compact Ticker */}
+          <div class="intent-hud-header">
+            <button
+              class="intent-hud-toggle"
+              aria-expanded={open()}
+              onClick={toggleOpen}
+              title={open() ? "Collapse intent HUD" : "Expand full intent telemetry"}
+            >
+              <span class="intent-hud-mark" aria-hidden="true" />
+              <span class="intent-hud-summary">{summary(current())}</span>
+              <Show when={!current().provenance.reproducible}>
+                <span
+                  class="intent-hud-inferred"
+                  title="Classified via model tier; not fully reproducible from ledger"
+                >
+                  inferred
+                </span>
+              </Show>
+              <span
+                class="intent-hud-chev"
+                classList={{ "intent-hud-chev-open": open() }}
+              >
+                <Icon name="chevron" size={12} />
               </span>
-            </Show>
-            <span class="intent-chev" classList={{ "intent-chev-open": open() }}>
-              <Icon name="chevron" size={12} />
-            </span>
-          </button>
+            </button>
 
-          {/* The consequential sentence is shown WITHOUT expanding, because
-              the whole point of the warn tone is that it must not require a
-              click to be seen. */}
+            <div class="intent-hud-controls">
+              <button
+                class="intent-hud-btn"
+                onClick={() => setDismissed(true)}
+                title="Hide intent card for this prompt"
+                aria-label="Dismiss intent card"
+              >
+                <span class="intent-hud-btn-label">hide</span>
+              </button>
+            </div>
+          </div>
+
+          {/* High-stakes warning banner (visible even if collapsed) */}
           <Show when={toneOf(current()) === "warn" && current().engagement.posture.note}>
-            {(note) => <p class="intent-note">{note().split("\n")[0]}</p>}
+            {(note) => <div class="intent-hud-note">{note().split("\n")[0]}</div>}
           </Show>
 
+          {/* Full Expanded Lossless Telemetry Display */}
           <Show when={open()}>
-            <div class="intent-detail">
-              <dl class="intent-axes">
+            <div class="intent-hud-body">
+              {/* Context Ribbon */}
+              <Show when={current().history}>
+                {(hist) => (
+                  <div class="intent-hud-context">
+                    <span class="intent-hud-context-lead">Context</span>
+                    <span class="intent-hud-context-val">
+                      turn {hist().turn_index + 1}
+                      <Show when={hist().previous_act}>
+                        {(prev) => ` · continues ${prev()}`}
+                      </Show>
+                      <Show when={hist().commitment_open}> · commitment active</Show>
+                    </span>
+                  </div>
+                )}
+              </Show>
+
+              {/* 6-Axis Telemetry Grid */}
+              <div class="intent-hud-axes">
                 <For
                   each={[
                     ["act", current().reading.act],
@@ -147,45 +178,51 @@ export function IntentStrip(props: { prompt: string; disabled?: boolean }) {
                   ] as [string, string][]}
                 >
                   {([k, v]) => (
-                    <div>
-                      <dt>{k}</dt>
-                      <dd>{v}</dd>
+                    <div class="intent-hud-axis-cell">
+                      <span class="intent-hud-axis-key">{k}</span>
+                      <span class={`intent-hud-axis-val axis-${v}`}>{v}</span>
                     </div>
                   )}
                 </For>
-              </dl>
+              </div>
 
-              <Show
-                when={current().narrows.length > 0}
-                fallback={
-                  <p class="intent-empty">
-                    Nothing narrowed — this runs with everything available.
-                  </p>
-                }
-              >
-                <ul class="intent-narrows">
-                  <For each={current().narrows}>{(line) => <li>{line}</li>}</For>
-                </ul>
-              </Show>
+              {/* Operational Narrowing Limits */}
+              <div class="intent-hud-limits">
+                <span class="intent-hud-limits-lead">Narrowed Limits</span>
+                <Show
+                  when={current().narrows.length > 0}
+                  fallback={
+                    <span class="intent-hud-limits-empty">
+                      Unrestricted · baseline rules apply
+                    </span>
+                  }
+                >
+                  <div class="intent-hud-limits-list">
+                    <For each={current().narrows}>
+                      {(line) => <span class="intent-hud-limit-tag">{line}</span>}
+                    </For>
+                  </div>
+                </Show>
+              </div>
 
-              <details class="intent-signals">
-                <summary>
-                  {current().provenance.signals.length} signal
-                  {current().provenance.signals.length === 1 ? "" : "s"} · resolved by{" "}
+              {/* Signals Spectrum Tray */}
+              <div class="intent-hud-signals">
+                <span class="intent-hud-signals-lead">
+                  Signals ({current().provenance.signals.length}) · resolved by{" "}
                   {current().provenance.tier}
-                </summary>
-                <ul>
+                </span>
+                <div class="intent-hud-signals-list">
                   <For each={current().provenance.signals}>
-                    {(signal) => (
-                      <li>
-                        <span class="sig-kind">{signal.kind}</span>
-                        <span class="sig-weight">{signal.weight.toFixed(2)}</span>
-                        <span class="sig-detail">{signal.detail}</span>
-                      </li>
+                    {(sig) => (
+                      <div class="intent-hud-signal-item">
+                        <span class="sig-kind">{sig.kind}</span>
+                        <span class="sig-weight">{sig.weight.toFixed(2)}</span>
+                        <span class="sig-detail">{sig.detail}</span>
+                      </div>
                     )}
                   </For>
-                </ul>
-              </details>
+                </div>
+              </div>
             </div>
           </Show>
         </div>

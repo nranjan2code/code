@@ -1268,15 +1268,22 @@ export interface IntentExplain {
   };
   narrows: string[];
   model_visible?: string | null;
+  history?: {
+    turn_index: number;
+    previous_act?: string | null;
+    commitment_open: boolean;
+  };
 }
 
 /** Resolve a prompt without running it. Free tiers only: this costs nothing
  * and dispatches nothing, which is what makes it safe to call while typing. */
 export function explainIntent(
   prompt: string,
+  sessionId?: string | null,
   signal?: AbortSignal,
 ): Promise<IntentExplain> {
   const params = new URLSearchParams({ prompt, surface: "desktop" });
+  if (sessionId) params.set("session_id", sessionId);
   return req<IntentExplain>(`/intent/explain?${params}`, { signal });
 }
 
