@@ -535,6 +535,15 @@ impl TaskTool {
                                 .await;
                         }
                     }
+                    crate::AgentEvent::Sandbox(event) => {
+                        // Sandbox output belongs to the parent surface too:
+                        // subagent tool calls execute through the same
+                        // broker and must remain visible and rehydratable in
+                        // Workbench with their own execution identity.
+                        if let Some(parent) = &parent {
+                            let _ = parent.send(crate::AgentEvent::Sandbox(event)).await;
+                        }
+                    }
                     _ => {}
                 }
             }

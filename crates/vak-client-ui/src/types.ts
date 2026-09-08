@@ -196,17 +196,19 @@ type StreamEvent =
 export type SandboxEvent =
   | {
       kind: "ExecutionStarted";
+      execution_id: string;
+      owner_session_id?: string | null;
       tool: string;
       code_preview: string;
       language: string;
       scratch_dir: string;
     }
-  | { kind: "Stdout"; chunk: string }
-  | { kind: "Stderr"; chunk: string }
-  | { kind: "PackageInstalled"; packages: string[] }
-  | { kind: "ArtifactGenerated"; path: string; mime_type: string; size_bytes: number }
-  | { kind: "ProcessTelemetry"; elapsed_ms: number; cpu_percent: number; memory_bytes: number }
-  | { kind: "ExecutionFinished"; exit_code: number; duration_ms: number; artifacts: string[] };
+  | { kind: "Stdout"; execution_id: string; chunk: string }
+  | { kind: "Stderr"; execution_id: string; chunk: string }
+  | { kind: "PackageInstalled"; execution_id: string; packages: string[] }
+  | { kind: "ArtifactGenerated"; execution_id: string; path: string; mime_type: string; size_bytes: number }
+  | { kind: "ProcessTelemetry"; execution_id: string; elapsed_ms: number; cpu_percent: number; memory_bytes: number }
+  | { kind: "ExecutionFinished"; execution_id: string; exit_code: number; duration_ms: number; artifacts: string[] };
 
 export type AgentEvent =
   | { TurnStart: { turn: number } }

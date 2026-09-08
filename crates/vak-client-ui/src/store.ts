@@ -107,10 +107,25 @@ export function setDensity(value: Density) {
   setDensitySignal(value);
   localStorage.setItem("vak.density", value);
 }
-export const [dockTab, setDockTab] = createSignal<"workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments" | null>(null);
+export type DockTab = "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments";
+const storedDockTab = localStorage.getItem("vak.dockTab") as DockTab | null;
+const validDockTab = storedDockTab && ["workbench", "preview", "diff", "terminal", "editor", "pr", "agents", "feeds", "commitments"].includes(storedDockTab)
+  ? storedDockTab
+  : null;
+const [dockTab, setDockTabSignal] = createSignal<DockTab | null>(validDockTab);
+export { dockTab };
+/** Keep the selected surface across reloads so a useful artifact view returns
+ * with the task instead of dropping the operator back on an empty canvas. */
+export function setDockTab(value: DockTab | null | ((current: DockTab | null) => DockTab | null)) {
+  const next = typeof value === "function" ? value(dockTab()) : value;
+  setDockTabSignal(next);
+  if (next) localStorage.setItem("vak.dockTab", next);
+  else localStorage.removeItem("vak.dockTab");
+}
 
 export interface WorkbenchExecution {
   id: string;
+  ownerSessionId?: string;
   tool: string;
   command: string;
   language: string;
@@ -128,13 +143,41 @@ export interface WorkbenchExecution {
 }
 
 export const [workbenchExecutions, setWorkbenchExecutions] = createSignal<WorkbenchExecution[]>([]);
-export const [activeExecutionId, setActiveExecutionId] = createSignal<string | null>(null);
+const [activeExecutionId, setActiveExecutionSignal] = createSignal<string | null>(localStorage.getItem("vak.activeExecutionId"));
+export { activeExecutionId };
+export function setActiveExecutionId(value: string | null) {
+  setActiveExecutionSignal(value);
+  if (value) localStorage.setItem("vak.activeExecutionId", value);
+  else localStorage.removeItem("vak.activeExecutionId");
+}
 
 export function openWorkbenchExecution(execId?: string) {
   if (execId) {
     setActiveExecutionId(execId);
   }
   setDockTab("workbench");
+}
+
+export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>>) {
+  const rebuilt = new Map<string, WorkbenchExecution>();
+  for (const raw of events) {
+    const kind = raw.kind as string | undefined;
+    const id = raw.execution_id as string | undefined;
+    if (!id) continue;
+    const current = rebuilt.get(id);
+    if (kind === "ExecutionStarted") {
+      rebuilt.set(id, { id, ownerSessionId: typeof raw.owner_session_id === "string" ? raw.owner_session_id : undefined, tool: String(raw.tool ?? "bash"), command: String(raw.code_preview ?? ""), language: String(raw.language ?? "text"), scratchDir: String(raw.scratch_dir ?? ""), stdout: "", stderr: "", status: "running", packages: [], artifacts: [], timestamp: new Date().toLocaleTimeString() });
+      continue;
+    }
+    if (!current) continue;
+    if (kind === "Stdout") current.stdout += String(raw.chunk ?? "");
+    else if (kind === "Stderr") current.stderr += String(raw.chunk ?? "");
+    else if (kind === "PackageInstalled") current.packages.push(...(Array.isArray(raw.packages) ? raw.packages.map(String) : []));
+    else if (kind === "ArtifactGenerated") current.artifacts.push({ path: String(raw.path ?? ""), mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) });
+    else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
+    else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
+  }
+  if (rebuilt.size) setWorkbenchExecutions((prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) merged.set(id, item); return [...merged.values()]; });
 }
 
 export interface ActiveComponentPreview {
@@ -850,9 +893,10 @@ export function applyEvent(
   } else if ("Sandbox" in ev) {
     const sb = ev.Sandbox;
     if (sb.kind === "ExecutionStarted") {
-      const execId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const execId = sb.execution_id;
       const newExec: WorkbenchExecution = {
         id: execId,
+        ownerSessionId: sb.owner_session_id ?? undefined,
         tool: sb.tool,
         command: sb.code_preview,
         language: sb.language,
@@ -867,32 +911,32 @@ export function applyEvent(
       setWorkbenchExecutions((prev) => [...prev, newExec]);
       setActiveExecutionId(execId);
     } else if (sb.kind === "Stdout") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
-          prev.map((e) => (e.id === active ? { ...e, stdout: e.stdout + sb.chunk } : e))
+          prev.map((e) => (e.id === execId ? { ...e, stdout: e.stdout + sb.chunk } : e))
         );
       }
     } else if (sb.kind === "Stderr") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
-          prev.map((e) => (e.id === active ? { ...e, stderr: e.stderr + sb.chunk } : e))
+          prev.map((e) => (e.id === execId ? { ...e, stderr: e.stderr + sb.chunk } : e))
         );
       }
     } else if (sb.kind === "PackageInstalled") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
-          prev.map((e) => (e.id === active ? { ...e, packages: [...e.packages, ...sb.packages] } : e))
+          prev.map((e) => (e.id === execId ? { ...e, packages: [...e.packages, ...sb.packages] } : e))
         );
       }
     } else if (sb.kind === "ArtifactGenerated") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
           prev.map((e) =>
-            e.id === active
+            e.id === execId
               ? {
                   ...e,
                   artifacts: [
@@ -905,11 +949,11 @@ export function applyEvent(
         );
       }
     } else if (sb.kind === "ProcessTelemetry") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
           prev.map((e) =>
-            e.id === active
+            e.id === execId
               ? {
                   ...e,
                   durationMs: sb.elapsed_ms,
@@ -921,11 +965,11 @@ export function applyEvent(
         );
       }
     } else if (sb.kind === "ExecutionFinished") {
-      const active = activeExecutionId();
-      if (active) {
+      const execId = sb.execution_id;
+      if (execId) {
         setWorkbenchExecutions((prev) =>
           prev.map((e) =>
-            e.id === active
+            e.id === execId
               ? {
                   ...e,
                   status: sb.exit_code === 0 ? "completed" : "failed",

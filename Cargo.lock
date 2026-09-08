@@ -6270,6 +6270,7 @@ dependencies = [
  "vak-mcp",
  "vak-permission",
  "vak-plugin",
+ "vak-sandbox",
  "vak-session",
  "vak-tools",
  "walkdir",
@@ -6454,6 +6455,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-sandbox"
+version = "3.0.25"
+dependencies = [
+ "landlock",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "walkdir",
+]
+
+[[package]]
 name = "vak-server"
 version = "3.0.25"
 dependencies = [
@@ -6493,6 +6507,7 @@ dependencies = [
  "vak-ops",
  "vak-permission",
  "vak-plugin",
+ "vak-sandbox",
  "vak-session",
  "vak-store",
  "vak-tools",
@@ -6537,7 +6552,6 @@ version = "3.0.25"
 dependencies = [
  "async-trait",
  "globset",
- "landlock",
  "libc",
  "regex",
  "reqwest 0.12.28",
@@ -6549,6 +6563,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-llm",
+ "vak-sandbox",
  "walkdir",
 ]
 

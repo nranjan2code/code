@@ -35,6 +35,10 @@ services:
       # Provider credentials. Supply whichever you actually use.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Ollama runs on the Docker Desktop host. On Linux, the container shares
+      # the host network when `network_mode: host` is set or Ollama is on a
+      # bridge the container can route to.
+      OLLAMA_HOST: ${OLLAMA_HOST:-host.docker.internal:11434}
     volumes:
       # The project the agent works on. Point this at real code.
       - ${VAK_WORKSPACE:-./workspace}:/workspace
@@ -42,6 +46,10 @@ services:
       # the ledger survives `docker compose down` — it is append-only
       # history, not a cache, and losing it loses the receipts.
       - vak-data:/home/vak/.local/share
+    # --trust applies the project .vak/config.toml privileged keys (permission_mode,
+    # sandbox, etc.) without an interactive confirmation. In a container the
+    # operator pre-baked the config, so trust is appropriate here.
+    command: ["serve", "--host", "0.0.0.0", "--port", "8901", "--trust"]
     restart: unless-stopped
 
 volumes:

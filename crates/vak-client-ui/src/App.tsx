@@ -23,6 +23,7 @@ import {
   setUsageFor,
   hydrateFromTranscript,
   hydrateFromPresentation,
+  hydrateWorkbenchExecutions,
   clearPresentation,
   dockTab,
   diffTarget,
@@ -116,11 +117,23 @@ const sideStreams = new Map<string, EventSource>();
 
 export async function refreshSessions() {
   const source = api.backendUrl();
-  if (!source) return;
+  // Web clients authenticate with the same-origin session cookie, so their
+  // backend URL is intentionally empty. Only skip when the backend is not
+  // ready at all (the desktop host has no live server yet).
+  if (!api.isBackendReady()) return;
   try {
     const res = await api.listSessions();
     if (source === api.backendUrl()) {
       setSessions(res.sessions);
+      // Reattach the most recent persisted task after a browser/server
+      // restart. Without this, Workbench opened on a blank New task even
+      // though the session ledger and sandbox execution ledger were intact.
+      // Only do this when there is no active task, so an intentional New
+      // task remains empty and the operator's current context is untouched.
+      if (!activeId() && !inboxOpen() && res.sessions.length > 0) {
+        const latest = res.sessions.find((session) => !session.archived) ?? res.sessions[0];
+        if (latest) void activate(latest.session_id);
+      }
       // The other pane's session was deleted elsewhere — collapse the split
       // rather than showing a ghost.
       const other = splitId();
@@ -166,15 +179,17 @@ export async function refreshSessions() {
 async function hydrate(id: string) {
   setHydratingId(id);
   try {
-    const [t, presentation] = await Promise.all([
+    const [t, presentation, sandbox] = await Promise.all([
       api.transcript(id),
       api.presentation(id).catch(() => null),
+      api.sandboxExecutions(id).catch(() => ({ events: [], session_id: id })),
     ]);
     if (!isRunning(id)) {
       hydrateFromTranscript(id, t.messages);
       if (presentation) hydrateFromPresentation(id, presentation);
       else clearPresentation(id);
       setUsageFor(id, t.usage);
+      hydrateWorkbenchExecutions(sandbox.events);
     }
   } catch (error) {
     if (!isRunning(id)) {
@@ -1101,14 +1116,8 @@ export default function App() {
                 <div class="dock-tabs">
                   <For each={[
                     ["workbench", "Workbench", "terminal"],
-                    ["preview", "Preview", "preview"],
                     ["diff", "Changes", "diff"],
                     ["terminal", "Terminal", "code"],
-                    ["editor", "Editor", "file"],
-                    ["pr", "Pull request", "git"],
-                    ["agents", "Subagents", "grid"],
-                    ["feeds", "Feeds", "bell"],
-                    ["commitments", "Commitments", "shield"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -1121,6 +1130,18 @@ export default function App() {
                       </button>
                     )}
                   </For>
+                  <details class="dock-more">
+                    <summary class="dock-tab"><Icon name="tune" /><span>More</span></summary>
+                    <div class="dock-more-menu">
+                      <For each={[
+                        ["preview", "Preview", "preview"], ["editor", "Editor", "file"],
+                        ["pr", "Pull request", "git"], ["agents", "Subagents", "grid"],
+                        ["feeds", "Feeds", "bell"], ["commitments", "Commitments", "shield"],
+                      ] as const}>
+                        {([id, label, icon]) => <button class="dock-tab" onClick={() => setDockTab(id)}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                      </For>
+                    </div>
+                  </details>
                   <button
                     class="dock-close"
                     title="Close pane"

@@ -828,6 +828,32 @@ docs/design/         architecture decisions — update with behavior changes;
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 ```
 
+## Acceptance-workspace contract
+
+Real acceptance runs must use a disposable workspace outside the vak source
+checkout (for example, a fresh directory under `/tmp`). The checkout is the
+implementation workspace and must not become the destination for generated
+dashboards, documents, package caches, local servers, or scratch artifacts.
+
+For generated rich output, an acceptance run is incomplete until it has all of
+the following evidence:
+
+1. An explicit output scope (for example `--write-path dashboard.html`) was
+   admitted before the tool call.
+2. The runtime successfully wrote the output and read the exact path back.
+3. Any local server or renderer actually started; a command that prints a
+   success message while its child exits is a failed verification.
+4. Browser-facing output was inspected in the real browser when the result is
+   interactive or visual. A syntax check or model assertion cannot substitute
+   for this.
+5. The candidate remains quarantined until a user reviews and promotes it.
+
+Tool errors and failed verification are authoritative. Model prose must never
+turn a rejected write, missing file, failed server, or failed browser check
+into a successful outcome. See
+`docs/audits/acceptance-dashboard-2026-09-08.md` for the reproducible dashboard
+scenario and residual limitations.
+
 ## Verification before every commit
 
 ```

@@ -68,6 +68,10 @@ pub mod trust;
 pub mod workspaces;
 pub mod worktree;
 
+/// Universal task-environment contract. Backend lifecycle and candidate
+/// promotion live in `vak-sandbox`; Core only admits and selects it.
+pub use vak_sandbox;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::sandbox::SandboxTarget;
+use crate::sandbox_events::SandboxEvent;
 use crate::{Tool, ToolContext, ToolOutput};
 
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
@@ -20,6 +21,7 @@ struct WorkerRequest {
     version: u8,
     tool: String,
     args: Value,
+    execution_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -27,6 +29,7 @@ struct WorkerResponse {
     version: u8,
     content: String,
     is_error: bool,
+    events: Vec<SandboxEvent>,
 }
 
 pub struct BrokeredTool {
@@ -101,6 +104,11 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
         version: PROTOCOL_VERSION,
         tool: tool.to_string(),
         args: request_args,
+        execution_id: ctx
+            .sandbox_sink
+            .as_ref()
+            .map(|sink| sink.execution_id().to_string())
+            .unwrap_or_else(|| "unidentified".into()),
     };
     let payload = match serde_json::to_vec(&request) {
         Ok(payload) => payload,
@@ -117,40 +125,73 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
     }
     drop(stdin);
 
+    let Some(mut stdout) = child.stdout.take() else {
+        return ToolOutput::error("tool broker has no stdout");
+    };
+    let Some(mut stderr) = child.stderr.take() else {
+        return ToolOutput::error("tool broker has no stderr");
+    };
+    let sink = ctx.sandbox_sink.clone();
+    let stderr_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let mut line = Vec::new();
+        while let Ok(n) = stderr.read_buf(&mut line).await {
+            if n == 0 {
+                break;
+            }
+            while let Some(pos) = line.iter().position(|b| *b == b'\n') {
+                let frame: Vec<u8> = line.drain(..=pos).collect();
+                if let Some(payload) = frame.strip_prefix(b"VAK_EVENT:")
+                    && let Ok(event) = serde_json::from_slice::<SandboxEvent>(payload)
+                {
+                    if let Some(ref sink) = sink {
+                        sink.emit(event);
+                    }
+                } else {
+                    bytes.extend(frame);
+                }
+            }
+        }
+        bytes.extend(line);
+        bytes
+    });
+    let stdout_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes).await;
+        bytes
+    });
     let pid = child.id();
-    let wait = child.wait_with_output();
-    tokio::pin!(wait);
-    let (result, cancelled) = tokio::select! {
+    let (status, cancelled) = tokio::select! {
         _ = ctx.cancel.cancelled() => {
             crate::bash::kill_process_group(&pid);
-            (wait.await, true)
+            (child.wait().await, true)
         }
-        output = &mut wait => (output, false),
+        output = child.wait() => (output, false),
     };
-    let output = match result {
-        Ok(output) => output,
+    let status = match status {
+        Ok(status) => status,
         Err(error) => return ToolOutput::error(format!("tool broker wait failed: {error}")),
     };
+    let stdout = stdout_reader.await.unwrap_or_default();
+    let stderr = stderr_reader.await.unwrap_or_default();
     if cancelled {
         return ToolOutput::error("tool broker cancelled");
     }
-    if output.stdout.len() as u64 > MAX_PROTOCOL_BYTES
-        || output.stderr.len() as u64 > MAX_PROTOCOL_BYTES
-    {
+    if stdout.len() as u64 > MAX_PROTOCOL_BYTES || stderr.len() as u64 > MAX_PROTOCOL_BYTES {
         return ToolOutput::error("tool broker output exceeded protocol limit");
     }
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr);
         return ToolOutput::error(format!(
             "tool broker exited with {}: {}",
-            output.status.code().unwrap_or(-1),
+            status.code().unwrap_or(-1),
             detail.trim()
         ));
     }
-    let response: WorkerResponse = match serde_json::from_slice(&output.stdout) {
+    let response: WorkerResponse = match serde_json::from_slice(&stdout) {
         Ok(response) => response,
         Err(error) => {
-            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail = String::from_utf8_lossy(&stderr);
             return ToolOutput::error(format!(
                 "tool broker returned invalid protocol: {error}; stderr: {}",
                 detail.trim()
@@ -187,17 +228,42 @@ pub async fn worker_main() -> i32 {
     let tool = crate::default_tools()
         .into_iter()
         .find(|candidate| candidate.name() == request.tool);
-    let output = match tool {
+    let (output, events) = match tool {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            tool.execute(&request.args, &ToolContext::new(cwd)).await
+            let (sink, mut rx) =
+                crate::sandbox_events::SandboxEventSink::new_with_id(request.execution_id);
+            let ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            let event_forwarder = tokio::spawn(async move {
+                let mut stderr = tokio::io::stderr();
+                while let Some(event) = rx.recv().await {
+                    let Ok(mut frame) = serde_json::to_vec(&event) else {
+                        continue;
+                    };
+                    let mut prefixed = b"VAK_EVENT:".to_vec();
+                    prefixed.append(&mut frame);
+                    prefixed.push(b'\n');
+                    if stderr.write_all(&prefixed).await.is_err() {
+                        break;
+                    }
+                    let _ = stderr.flush().await;
+                }
+            });
+            let output = tool.execute(&request.args, &ctx).await;
+            drop(ctx.sandbox_sink);
+            let _ = event_forwarder.await;
+            (output, Vec::new())
         }
-        None => ToolOutput::error(format!("worker does not expose tool '{}'", request.tool)),
+        None => (
+            ToolOutput::error(format!("worker does not expose tool '{}'", request.tool)),
+            Vec::new(),
+        ),
     };
     let response = WorkerResponse {
         version: PROTOCOL_VERSION,
         content: output.content,
         is_error: output.is_error,
+        events,
     };
     let payload = match serde_json::to_vec(&response) {
         Ok(payload) if payload.len() as u64 <= MAX_PROTOCOL_BYTES => payload,

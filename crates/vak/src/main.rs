@@ -1312,7 +1312,7 @@ async fn run_exec(
                             eprintln!("  │  scratch: {scratch_dir}");
                         }
                     }
-                    SandboxEvent::Stdout { chunk } => {
+                    SandboxEvent::Stdout { chunk, .. } => {
                         let folded = fold_carriage_returns(&chunk);
                         for line in folded.lines() {
                             if !line.trim().is_empty() {
@@ -1320,7 +1320,7 @@ async fn run_exec(
                             }
                         }
                     }
-                    SandboxEvent::Stderr { chunk } => {
+                    SandboxEvent::Stderr { chunk, .. } => {
                         let folded = fold_carriage_returns(&chunk);
                         for line in folded.lines() {
                             if !line.trim().is_empty() {
@@ -1328,13 +1328,14 @@ async fn run_exec(
                             }
                         }
                     }
-                    SandboxEvent::PackageInstalled { packages } => {
+                    SandboxEvent::PackageInstalled { packages, .. } => {
                         eprintln!("  │  📦 packages: {}", packages.join(", "));
                     }
                     SandboxEvent::ArtifactGenerated {
                         path,
                         mime_type,
                         size_bytes,
+                        ..
                     } => {
                         eprintln!("  │  📄 artifact: {path} ({size_bytes} B, {mime_type})");
                     }
@@ -1352,6 +1353,7 @@ async fn run_exec(
                         exit_code,
                         duration_ms,
                         artifacts,
+                        ..
                     } => {
                         let status_sym = if exit_code == 0 { "✓" } else { "✗" };
                         let mut summary = format!(

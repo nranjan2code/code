@@ -10,11 +10,15 @@ use tokio::sync::mpsc;
 
 /// A single sandbox execution event. Serialized through `AgentEvent::Sandbox`
 /// and delivered to the client via SSE.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(tag = "kind")]
 pub enum SandboxEvent {
     /// A sandbox execution is starting.
     ExecutionStarted {
+        execution_id: String,
+        /// Session that owns this execution. This is the stable rehydration
+        /// key when a parent delegates work to a child session.
+        owner_session_id: Option<String>,
         tool: String,
         /// The code or command about to execute (first ~2000 chars).
         code_preview: String,
@@ -25,16 +29,20 @@ pub enum SandboxEvent {
     },
 
     /// A chunk of stdout arrived from the running process.
-    Stdout { chunk: String },
+    Stdout { execution_id: String, chunk: String },
 
     /// A chunk of stderr arrived from the running process.
-    Stderr { chunk: String },
+    Stderr { execution_id: String, chunk: String },
 
     /// A package was installed in the sandbox environment.
-    PackageInstalled { packages: Vec<String> },
+    PackageInstalled {
+        execution_id: String,
+        packages: Vec<String>,
+    },
 
     /// A file artifact was generated in the scratch directory.
     ArtifactGenerated {
+        execution_id: String,
         path: String,
         /// e.g. "image/png", "text/csv", "text/html"
         mime_type: String,
@@ -43,6 +51,7 @@ pub enum SandboxEvent {
 
     /// Periodic resource usage telemetry for long-running executions.
     ProcessTelemetry {
+        execution_id: String,
         elapsed_ms: u64,
         cpu_percent: f32,
         memory_bytes: u64,
@@ -50,6 +59,7 @@ pub enum SandboxEvent {
 
     /// The execution finished.
     ExecutionFinished {
+        execution_id: String,
         exit_code: i32,
         duration_ms: u64,
         /// Paths of all artifacts generated during this execution.
@@ -62,17 +72,57 @@ pub enum SandboxEvent {
 #[derive(Clone)]
 pub struct SandboxEventSink {
     tx: mpsc::UnboundedSender<SandboxEvent>,
+    execution_id: String,
+    owner_session_id: Option<String>,
 }
 
 impl SandboxEventSink {
     pub fn new() -> (Self, mpsc::UnboundedReceiver<SandboxEvent>) {
+        Self::new_with_id("unidentified".to_string())
+    }
+
+    pub fn new_with_id(execution_id: String) -> (Self, mpsc::UnboundedReceiver<SandboxEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (SandboxEventSink { tx }, rx)
+        (
+            SandboxEventSink {
+                tx,
+                execution_id,
+                owner_session_id: None,
+            },
+            rx,
+        )
+    }
+
+    pub fn with_owner_session(mut self, session_id: impl Into<String>) -> Self {
+        self.owner_session_id = Some(session_id.into());
+        self
     }
 
     /// Emit an event. Best-effort: dropped if the receiver is gone.
     pub fn emit(&self, event: SandboxEvent) {
+        let event = match event {
+            SandboxEvent::ExecutionStarted {
+                execution_id,
+                owner_session_id,
+                tool,
+                code_preview,
+                language,
+                scratch_dir,
+            } => SandboxEvent::ExecutionStarted {
+                execution_id,
+                owner_session_id: owner_session_id.or_else(|| self.owner_session_id.clone()),
+                tool,
+                code_preview,
+                language,
+                scratch_dir,
+            },
+            other => other,
+        };
         let _ = self.tx.send(event);
+    }
+
+    pub fn execution_id(&self) -> &str {
+        &self.execution_id
     }
 
     pub fn emit_execution_started(
@@ -82,12 +132,15 @@ impl SandboxEventSink {
         language: &str,
         scratch_dir: &str,
     ) {
-        let preview = if code.len() > 2000 {
-            format!("{}…", &code[..2000])
+        let preview = if code.chars().count() > 2000 {
+            let truncated: String = code.chars().take(2000).collect();
+            format!("{truncated}…")
         } else {
             code.to_string()
         };
         self.emit(SandboxEvent::ExecutionStarted {
+            execution_id: self.execution_id.clone(),
+            owner_session_id: self.owner_session_id.clone(),
             tool: tool.to_string(),
             code_preview: preview,
             language: language.to_string(),
@@ -98,6 +151,7 @@ impl SandboxEventSink {
     pub fn emit_stdout(&self, chunk: &str) {
         if !chunk.is_empty() {
             self.emit(SandboxEvent::Stdout {
+                execution_id: self.execution_id.clone(),
                 chunk: chunk.to_string(),
             });
         }
@@ -106,6 +160,7 @@ impl SandboxEventSink {
     pub fn emit_stderr(&self, chunk: &str) {
         if !chunk.is_empty() {
             self.emit(SandboxEvent::Stderr {
+                execution_id: self.execution_id.clone(),
                 chunk: chunk.to_string(),
             });
         }
@@ -114,6 +169,7 @@ impl SandboxEventSink {
     pub fn emit_packages_installed(&self, packages: &[String]) {
         if !packages.is_empty() {
             self.emit(SandboxEvent::PackageInstalled {
+                execution_id: self.execution_id.clone(),
                 packages: packages.to_vec(),
             });
         }
@@ -121,6 +177,7 @@ impl SandboxEventSink {
 
     pub fn emit_artifact(&self, path: &str, mime_type: &str, size_bytes: u64) {
         self.emit(SandboxEvent::ArtifactGenerated {
+            execution_id: self.execution_id.clone(),
             path: path.to_string(),
             mime_type: mime_type.to_string(),
             size_bytes,
@@ -129,6 +186,7 @@ impl SandboxEventSink {
 
     pub fn emit_telemetry(&self, elapsed_ms: u64, cpu_percent: f32, memory_bytes: u64) {
         self.emit(SandboxEvent::ProcessTelemetry {
+            execution_id: self.execution_id.clone(),
             elapsed_ms,
             cpu_percent,
             memory_bytes,
@@ -137,6 +195,7 @@ impl SandboxEventSink {
 
     pub fn emit_finished(&self, exit_code: i32, duration_ms: u64, artifacts: Vec<String>) {
         self.emit(SandboxEvent::ExecutionFinished {
+            execution_id: self.execution_id.clone(),
             exit_code,
             duration_ms,
             artifacts,
@@ -170,7 +229,7 @@ pub fn fold_carriage_returns(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]
@@ -202,6 +261,31 @@ mod tests {
         if let SandboxEvent::ExecutionStarted { code_preview, .. } = ev {
             assert!(code_preview.len() < 2100);
             assert!(code_preview.ends_with('…'));
+        }
+    }
+
+    #[test]
+    fn code_preview_truncation_is_utf8_safe() {
+        let (sink, mut rx) = SandboxEventSink::new();
+        let code = format!("{}€", "x".repeat(1999));
+        sink.emit_execution_started("bash", &code, "bash", ".");
+        let ev = rx.try_recv().unwrap();
+        assert!(matches!(ev, SandboxEvent::ExecutionStarted { .. }));
+    }
+
+    #[test]
+    fn execution_start_records_owner_session_for_tree_rehydration() {
+        let (sink, mut rx) = SandboxEventSink::new_with_id("exec-child".into());
+        let sink = sink.with_owner_session("session-child");
+        sink.emit_execution_started("bash", "echo hi", "bash", "/scratch");
+        let event = rx.try_recv().unwrap();
+        match event {
+            SandboxEvent::ExecutionStarted {
+                owner_session_id, ..
+            } => {
+                assert_eq!(owner_session_id.as_deref(), Some("session-child"));
+            }
+            _ => panic!("expected execution start"),
         }
     }
 

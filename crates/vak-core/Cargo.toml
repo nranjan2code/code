@@ -31,6 +31,7 @@ vak-permission = { workspace = true }
 vak-plugin = { workspace = true }
 vak-session = { workspace = true }
 vak-tools = { workspace = true }
+vak-sandbox = { workspace = true }
 walkdir = { workspace = true }
 
 [lints]

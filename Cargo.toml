@@ -22,6 +22,7 @@ members = [
     "crates/vak-tray",
     "crates/vak-desktop",
     "crates/vak-bus",
+    "crates/vak-sandbox",
     "crates/vak",
 ]
 
@@ -51,6 +52,7 @@ vak-eval = { path = "crates/vak-eval" }
 vak-hooks = { path = "crates/vak-hooks" }
 vak-intent = { path = "crates/vak-intent" }
 vak-commit = { path = "crates/vak-commit" }
+vak-sandbox = { path = "crates/vak-sandbox" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
 # HTTP+SSE server for the headless agent (tokio-native standard)

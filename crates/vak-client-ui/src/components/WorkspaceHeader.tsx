@@ -42,6 +42,8 @@ const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "p
   { id: "editor", label: "Editor", icon: "file" },
   { id: "pr", label: "Pull request", icon: "git" },
 ];
+const primaryTools = tools.filter((tool) => ["workbench", "diff", "terminal"].includes(tool.id));
+const secondaryTools = tools.filter((tool) => !["workbench", "diff", "terminal"].includes(tool.id));
 
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
@@ -118,7 +120,7 @@ export default function WorkspaceHeader() {
         </div>
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
-        <div class="workspace-action-group" role="group" aria-label="Task views">
+        <div class="workspace-action-group task-actions" role="group" aria-label="Task views">
         <button
           class="icon-button has-tooltip"
           data-tooltip="Side question ⌘;"
@@ -150,43 +152,16 @@ export default function WorkspaceHeader() {
         >
           <Icon name="grid" />
         </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Time travel ⌘H"
-          aria-label="Time travel"
-          disabled={!activeId()}
-          onClick={() => setHistoryOpen(true)}
-        >
-          <Icon name="history" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Dispatch forensics"
-          aria-label="Dispatch forensics"
-          disabled={!activeId()}
-          onClick={() => setReceiptsOpen(true)}
-        >
-          <Icon name="receipt" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Managed work"
-          aria-label="Managed work"
-          disabled={!activeId()}
-          onClick={() => setWorkOpen(true)}
-        >
-          <span aria-hidden="true">W</span>
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Download transcript (.md)"
-          aria-label="Download transcript as markdown"
-          disabled={!activeId() || exporting()}
-          onClick={() => void exportTranscript()}
-        >
-          <Icon name="download" />
-        </button>
         </div>
+        <details class="workspace-more">
+          <summary class="icon-button has-tooltip" data-tooltip="More task actions" aria-label="More task actions"><Icon name="tune" /></summary>
+          <div class="workspace-more-menu" role="menu">
+            <button role="menuitem" onClick={() => setHistoryOpen(true)} disabled={!activeId()}><Icon name="history" />History</button>
+            <button role="menuitem" onClick={() => setReceiptsOpen(true)} disabled={!activeId()}><Icon name="receipt" />Dispatch forensics</button>
+            <button role="menuitem" onClick={() => setWorkOpen(true)} disabled={!activeId()}><span class="menu-letter">W</span>Managed work</button>
+            <button role="menuitem" onClick={() => void exportTranscript()} disabled={!activeId() || exporting()}><Icon name="download" />Download transcript</button>
+          </div>
+        </details>
         <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip inbox-bell"
@@ -211,7 +186,7 @@ export default function WorkspaceHeader() {
         </button>
         <span class="action-separator" aria-hidden="true" />
         <div class="workspace-action-group" role="group" aria-label="Workspace surfaces">
-        {tools.map((tool) => (
+        {primaryTools.map((tool) => (
           <button
             class={`icon-button has-tooltip tool-${tool.id}`}
             data-tooltip={tool.label}
@@ -223,6 +198,14 @@ export default function WorkspaceHeader() {
             <Icon name={tool.icon} />
           </button>
         ))}
+        <details class="workspace-more surface-more">
+          <summary class="icon-button has-tooltip" data-tooltip="More workspace surfaces" aria-label="More workspace surfaces"><Icon name="tune" /></summary>
+          <div class="workspace-more-menu" role="menu">
+            {secondaryTools.map((tool) => (
+              <button role="menuitem" onClick={() => setDockTab(tool.id)}><Icon name={tool.icon} />{tool.label}</button>
+            ))}
+          </div>
+        </details>
         </div>
         <span class="action-separator" aria-hidden="true" />
         <button

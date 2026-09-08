@@ -39,8 +39,8 @@ COPY --from=builder /src/target/release/vak                  /usr/local/bin/vak
 COPY --from=builder /src/target/release/vak-delivery-worker  /usr/local/bin/vak-delivery-worker
 
 # The gateway's data home (sessions, config, provider keys). Persist it
-# across upgrades with a volume:  -v vak-home:/var/lib/vak/home
-ENV VAK_DATA_HOME=/var/lib/vak/home
+# across upgrades with a volume:  -v vak-home:/home/vak/.local/share
+ENV VAK_HOME=/home/vak/.local/share
 WORKDIR /var/lib/vak
 USER vak
 

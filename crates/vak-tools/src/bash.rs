@@ -44,6 +44,11 @@ impl Tool for BashTool {
         let Some(command) = args.get("command").and_then(|c| c.as_str()) else {
             return ToolOutput::error("missing required parameter: command");
         };
+        if ctx.sandbox_sink.is_some() && references_control_file(command) {
+            return ToolOutput::error(
+                "sandbox denied access to workspace control files (.env and .vak/config.toml)",
+            );
+        }
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
@@ -55,19 +60,29 @@ impl Tool for BashTool {
             None => command.to_string(),
         };
 
+        // Every execution gets its own quarantined directory. Relative writes
+        // therefore remain candidate material under `.vak/scratch` until the
+        // user explicitly promotes them.
+        let scratch_root = ctx.cwd.join(".vak").join("scratch");
+        let execution_dir = ctx
+            .sandbox_sink
+            .as_ref()
+            .map(|sink| scratch_root.join(sink.execution_id()))
+            .unwrap_or_else(|| scratch_root.clone());
+        let _ = std::fs::create_dir_all(&execution_dir);
         let mut cmd = shell_command(&effective);
-        cmd.current_dir(&ctx.cwd)
+        cmd.current_dir(&execution_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         scrub_environment(&mut cmd);
 
-        if std::env::var_os(crate::broker::WORKER_ENV).is_none() {
-            isolate_process_group(&mut cmd);
-        }
+        // Every execution gets its own process group, including broker workers.
+        // Otherwise a shell child can outlive the timed-out worker and keep the
+        // captured pipes open until the original command exits.
+        isolate_process_group(&mut cmd);
 
-        let scratch_dir = ctx.cwd.join(".vak").join("scratch");
-        let _ = std::fs::create_dir_all(&scratch_dir);
+        let scratch_dir = execution_dir;
         let before_scratch = collect_scratch_files(&scratch_dir);
 
         let start_instant = std::time::Instant::now();
@@ -139,22 +154,29 @@ impl Tool for BashTool {
                 let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                let out = out_fut.await.unwrap_or_default();
+                let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
                     sink.emit_finished(-1, duration_ms, Vec::new());
                 }
-                return ToolOutput::error(format!("command timed out after {timeout_ms}ms"));
+                return ToolOutput {
+                    content: interrupted_output(&out, &err, &format!("command timed out after {timeout_ms}ms")),
+                    is_error: true,
+                };
             }
             _ = cancelled => {
                 telemetry_cancel.cancel();
                 let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                let out = out_fut.await.unwrap_or_default();
+                let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
                     sink.emit_finished(-1, duration_ms, Vec::new());
                 }
-                return ToolOutput::error("command cancelled");
+                return ToolOutput { content: interrupted_output(&out, &err, "command cancelled"), is_error: true };
             }
             status = child.wait() => {
                 telemetry_cancel.cancel();
@@ -359,15 +381,16 @@ fn collect_scratch_files(
     dir: &std::path::Path,
 ) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
     let mut map = std::collections::HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && let Ok(meta) = path.metadata()
-            {
-                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                map.insert(path, mtime);
-            }
+    for entry in walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path().to_path_buf();
+        if path.is_file()
+            && let Ok(meta) = path.metadata()
+        {
+            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            map.insert(path, mtime);
         }
     }
     map
@@ -379,26 +402,27 @@ fn scan_new_scratch_artifacts(
     cwd: &std::path::Path,
 ) -> Vec<(String, String, u64)> {
     let mut artifacts = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(scratch_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && let Ok(meta) = path.metadata()
-            {
-                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                let is_new = match before.get(&path) {
-                    None => true,
-                    Some(&prev) => mtime > prev,
-                };
-                if is_new {
-                    let rel = path
-                        .strip_prefix(cwd)
-                        .unwrap_or(&path)
-                        .display()
-                        .to_string();
-                    let mime = guess_mime_type(&path);
-                    artifacts.push((rel, mime, meta.len()));
-                }
+    for entry in walkdir::WalkDir::new(scratch_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path().to_path_buf();
+        if path.is_file()
+            && let Ok(meta) = path.metadata()
+        {
+            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let is_new = match before.get(&path) {
+                None => true,
+                Some(&prev) => mtime > prev,
+            };
+            if is_new {
+                let rel = path
+                    .strip_prefix(cwd)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                let mime = guess_mime_type(&path);
+                artifacts.push((rel, mime, meta.len()));
             }
         }
     }
@@ -430,6 +454,30 @@ fn guess_mime_type(path: &std::path::Path) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+fn interrupted_output(stdout: &str, stderr: &str, reason: &str) -> String {
+    let mut text = String::new();
+    if !stdout.is_empty() {
+        text.push_str("[stdout]\n");
+        text.push_str(stdout);
+        text.push('\n');
+    }
+    if !stderr.is_empty() {
+        text.push_str("[stderr]\n");
+        text.push_str(stderr);
+        text.push('\n');
+    }
+    text.push_str("\n[");
+    text.push_str(reason);
+    text.push(']');
+    text
+}
+
+fn references_control_file(command: &str) -> bool {
+    [".env", ".vak/config.toml", ".vak/config"]
+        .iter()
+        .any(|needle| command.contains(needle))
 }
 
 fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
@@ -707,5 +755,12 @@ mod tests {
             guess_mime_type(Path::new("unknown.xyz")),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn control_files_are_not_available_to_sandbox_commands() {
+        assert!(super::references_control_file("cat .env"));
+        assert!(super::references_control_file("cp result .vak/config.toml"));
+        assert!(!super::references_control_file("echo ok > result.txt"));
     }
 }

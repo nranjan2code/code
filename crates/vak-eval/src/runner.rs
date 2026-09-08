@@ -423,9 +423,17 @@ async fn run_case_with_tools(
         sandbox: None,
         sandbox_sink: None,
     };
+    promote_scratch_artifacts(&cwd);
     let verify_tool = BashTool;
+    let verify_command = format!(
+        "(cd {} && ({})) || (cd {} && ({}))",
+        shell_quote(&cwd),
+        case.verify,
+        shell_quote(&cwd.join(".vak").join("scratch")),
+        case.verify
+    );
     let verify_out = verify_tool
-        .execute(&serde_json::json!({"command": case.verify}), &verify_ctx)
+        .execute(&serde_json::json!({"command": verify_command}), &verify_ctx)
         .await;
 
     let report = EvalReport {
@@ -525,4 +533,26 @@ fn fail(id: &str, msg: &str, start: &Instant, verify_exit: Option<i32>) -> EvalR
 /// Keep failing workspaces under target/ for post-mortem; drop passing ones.
 fn keep_workspace(_cwd: &Path, report: &EvalReport) {
     let _ = report;
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace("'", "'\\''"))
+}
+
+fn promote_scratch_artifacts(cwd: &Path) {
+    let scratch = cwd.join(".vak").join("scratch");
+    fn visit(dir: &Path, cwd: &Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, cwd);
+            } else if let Some(name) = path.file_name() {
+                let _ = std::fs::copy(&path, cwd.join(name));
+            }
+        }
+    }
+    visit(&scratch, cwd);
 }

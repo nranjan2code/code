@@ -82,7 +82,8 @@ USER vak
 # config, and the audit logs all live here. Mount it to keep them.
 ENV XDG_DATA_HOME=/home/vak/.local/share \
     XDG_CACHE_HOME=/home/vak/.cache \
-    XDG_STATE_HOME=/home/vak/.local/state
+    XDG_STATE_HOME=/home/vak/.local/state \
+    VAK_HOME=/home/vak/.local/share
 VOLUME ["/home/vak/.local/share", "/workspace"]
 
 # The workspace the agent acts on. Bind-mount your project here.

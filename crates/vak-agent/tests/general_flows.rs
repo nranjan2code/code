@@ -321,7 +321,9 @@ async fn stop_gate_blocks_premature_report_until_verified() {
         .count();
     assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
 
-    let report = std::fs::read_to_string(dir.path().join("report.md")).unwrap();
+    // Bash runs through the universal sandbox, so relative outputs remain
+    // quarantined as candidate material until explicitly promoted.
+    let report = std::fs::read_to_string(dir.path().join(".vak/scratch/t1/report.md")).unwrap();
     assert!(report.contains("4200"));
 }
 

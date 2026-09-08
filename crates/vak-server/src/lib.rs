@@ -636,6 +636,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/outcome-review", post(record_outcome_review))
         .route("/sessions/{id}/events", get(events_sse))
+        .route(
+            "/sessions/{id}/sandbox/executions",
+            get(session_sandbox_executions),
+        )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route(
             "/sessions/{id}/presentation/events",
@@ -650,6 +654,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/keep", post(keep_best_run))
         .route("/sessions/{id}/discard", post(discard_best_run))
         .route("/fs/file", get(read_file).put(write_file))
+        .route(
+            "/sandbox/records",
+            get(list_sandbox_records).post(append_sandbox_record),
+        )
+        .route("/sandbox/candidates", post(export_sandbox_candidate))
+        .route("/sandbox/promote", post(promote_sandbox_candidate))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/intent/evidence", post(patch_evidence_policy))
@@ -2831,6 +2841,7 @@ pub(crate) fn register_handle(
     cwd: PathBuf,
     core: Core,
 ) -> Arc<SessionHandle> {
+    let durable_home = core.sessions_home();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
             Some((**record).clone())
@@ -2865,11 +2876,13 @@ pub(crate) fn register_handle(
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
     });
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let durable_session_id = id.clone();
         runtime.spawn(async move {
             loop {
                 match presentation_rx.recv().await {
                     Ok(framed) => {
                         let event = framed.event.clone();
+                        append_session_sandbox_event(&durable_home, &durable_session_id, &event);
                         crate::projection::project_frame(
                             &mut presentation_state
                                 .lock()
@@ -3064,13 +3077,32 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
     // client has open rather than the one the process started in.
     let active = state.active_core();
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), active.cwd());
+    let active_cwd = active.cwd().to_string_lossy().into_owned();
     let archive_map = read_archive(&state.core);
     let deleted_map = read_deleted(&state.core);
     let mut sessions = Vec::new();
-    let Ok(read) = std::fs::read_dir(&dir) else {
-        return Json(serde_json::json!({ "sessions": sessions }));
-    };
-    for entry in read.flatten() {
+    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
+        .map(|read| read.flatten().collect())
+        .unwrap_or_default();
+    // A workspace can be renamed or canonicalized between runs (notably
+    // `/var` vs `/private/var` on macOS). Recover sessions by their durable
+    // header cwd when the hashed directory no longer matches, while still
+    // filtering strictly to the active workspace.
+    if let Ok(projects) = std::fs::read_dir(state.core.sessions_home().join("sessions")) {
+        for project in projects.flatten() {
+            if let Ok(files) = std::fs::read_dir(project.path()) {
+                for file in files.flatten() {
+                    let duplicate = entries
+                        .iter()
+                        .any(|existing| existing.path() == file.path());
+                    if !duplicate {
+                        entries.push(file);
+                    }
+                }
+            }
+        }
+    }
+    for entry in entries {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
@@ -3085,11 +3117,14 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             .ok()
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entries, cwd) = summarize_jsonl(&path);
+        let (created_at, title, entry_count, cwd) = summarize_jsonl(&path);
+        if cwd.as_deref() != Some(active_cwd.as_str()) {
+            continue;
+        }
         // Header-only sessions are abandoned drafts (for example, creating a
         // task and immediately switching away). Keep the ledger append-only,
         // but do not let empty drafts accumulate in the task switcher.
-        if entries <= 1 {
+        if entry_count <= 1 {
             continue;
         }
         let running = state.get(&session_id).is_some_and(|handle| {
@@ -3105,7 +3140,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
             "created_at": created_at,
             "updated_at": updated_at,
-            "entries": entries,
+            "entries": entry_count,
             "title": title,
             "running": running,
             "archived": archived,
@@ -6756,6 +6791,205 @@ async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) 
         Ok(()) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
+    state
+        .core
+        .cwd()
+        .join(".vak")
+        .join("sandbox")
+        .join("records.jsonl")
+}
+
+fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
+    state
+        .core
+        .sessions_home()
+        .join("sandbox")
+        .join("executions")
+        .join(format!("{session_id}.jsonl"))
+}
+
+async fn session_sandbox_executions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = session_sandbox_events_path(&state, &id);
+    let text = match tokio::fs::read_to_string(&path).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let events = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({ "session_id": id, "events": events })).into_response()
+}
+
+fn append_session_sandbox_event(home: &std::path::Path, session_id: &str, event: &AgentEvent) {
+    let AgentEvent::Sandbox(sandbox) = event else {
+        return;
+    };
+    let path = home
+        .join("sandbox")
+        .join("executions")
+        .join(format!("{session_id}.jsonl"));
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let Ok(line) = serde_json::to_string(sandbox) else {
+        return;
+    };
+    use std::io::Write;
+    let _ = writeln!(file, "{line}");
+}
+
+async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = sandbox_records_path(&state);
+    match vak_sandbox::load_records(&path) {
+        Ok(records) => Json(serde_json::json!({ "records": records })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn append_sandbox_record(
+    State(state): State<AppState>,
+    Json(record): Json<vak_sandbox::DurableRecord>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = sandbox_records_path(&state);
+    match vak_sandbox::append_record(&path, &record) {
+        Ok(()) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "accepted": true })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SandboxCandidateBody {
+    candidate_id: String,
+    source: String,
+    #[serde(default)]
+    destination: String,
+}
+
+async fn export_sandbox_candidate(
+    State(state): State<AppState>,
+    Json(body): Json<SandboxCandidateBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(source) = confined_path(state.core.cwd(), &body.source) else {
+        return (StatusCode::FORBIDDEN, "candidate source outside workspace").into_response();
+    };
+    let destination_text = if body.destination.trim().is_empty() {
+        ".".to_string()
+    } else {
+        body.destination
+    };
+    let Some(destination) = confined_path(state.core.cwd(), &destination_text) else {
+        return (
+            StatusCode::FORBIDDEN,
+            "candidate destination outside workspace",
+        )
+            .into_response();
+    };
+    match vak_sandbox::candidate_manifest(&body.candidate_id, &source, &destination) {
+        Ok(candidate) => Json(candidate).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SandboxPromotionBody {
+    candidate: vak_sandbox::CandidateManifest,
+    #[serde(default)]
+    record_id: Option<String>,
+}
+
+async fn promote_sandbox_candidate(
+    State(state): State<AppState>,
+    Json(body): Json<SandboxPromotionBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Compare canonical paths: macOS temporary directories can be addressed
+    // through `/var` or `/private/var`, which are the same workspace but do
+    // not satisfy lexical `starts_with` checks.
+    let workspace =
+        std::fs::canonicalize(state.core.cwd()).unwrap_or_else(|_| state.core.cwd().to_path_buf());
+    let source_root = std::fs::canonicalize(&body.candidate.source_root)
+        .unwrap_or_else(|_| body.candidate.source_root.clone());
+    let destination_root = std::fs::canonicalize(&body.candidate.destination_root)
+        .unwrap_or_else(|_| body.candidate.destination_root.clone());
+    let source_ok = source_root.starts_with(&workspace);
+    let destination_ok = destination_root == workspace;
+    if !source_ok || !destination_ok {
+        return (
+            StatusCode::FORBIDDEN,
+            "candidate roots must remain inside the current workspace",
+        )
+            .into_response();
+    }
+    let receipt = match vak_sandbox::promote(&body.candidate) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
+        record_id: body
+            .record_id
+            .unwrap_or_else(|| format!("promotion-{}", receipt.candidate_id)),
+        candidate_id: receipt.candidate_id.clone(),
+        receipt: receipt.clone(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    });
+    if let Err(error) = vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(receipt)).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -12475,5 +12709,95 @@ mod configuration_control_tests {
         )
         .await;
         assert_eq!(status.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod sandbox_promotion_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn candidate_export_and_promotion_records_observed_verification() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "candidate")
+            .await
+            .unwrap();
+
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Json(SandboxCandidateBody {
+                candidate_id: "c1".into(),
+                source: ".vak/scratch/e1".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let candidate: vak_sandbox::CandidateManifest = serde_json::from_slice(&bytes).unwrap();
+
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Json(SandboxPromotionBody {
+                candidate,
+                record_id: Some("p1".into()),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let receipt: vak_sandbox::PromotionReceipt = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt.verification.len(), 1);
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("result.txt"))
+                .await
+                .unwrap(),
+            "candidate"
+        );
+        assert_eq!(
+            vak_sandbox::load_records(&dir.path().join(".vak/sandbox/records.jsonl"))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn sandbox_execution_ledger_survives_live_bus_loss() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+            execution_id: "child-exec".into(),
+            owner_session_id: Some("child-session".into()),
+            tool: "bash".into(),
+            code_preview: "echo hi".into(),
+            language: "bash".into(),
+            scratch_dir: ".vak/scratch/child-exec".into(),
+        });
+        let finish = AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionFinished {
+            execution_id: "child-exec".into(),
+            exit_code: 0,
+            duration_ms: 42,
+            artifacts: vec!["result.txt".into()],
+        });
+        append_session_sandbox_event(dir.path(), "parent-session", &start);
+        append_session_sandbox_event(dir.path(), "parent-session", &finish);
+        let path = dir.path().join("sandbox/executions/parent-session.jsonl");
+        let lines = std::fs::read_to_string(path).unwrap();
+        assert_eq!(lines.lines().count(), 2);
+        assert!(lines.contains("child-session"));
+        assert!(lines.contains("ExecutionFinished"));
     }
 }

@@ -1,5 +1,9 @@
 # 25 — Docker execution backend
-Status: implemented in 2.0.0
+Status: implemented backend, now owned by the greenfield `vak-sandbox` crate.
+This document describes Docker's backend semantics only. Environment plans,
+candidate manifests, promotion, and Workbench projection are defined in
+`docs/design/54-task-environments-and-promotion.md`; this backend must not grow
+those responsibilities.
 
 G3 of the platform plan (`22-gateway.md`): remote/containerized execution so
 a hosted core can run agent commands off-host, and local runs get a harder

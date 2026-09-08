@@ -32,12 +32,12 @@ const ALLOWED: &[(&str, &str)] = &[
         "launchd/systemd unit paths are account-home-relative by definition",
     ),
     (
-        "crates/vak-tools/src/sandbox.rs",
-        "read-allowlists real toolchain dirs (~/.cargo, ~/.rustup)",
+        "crates/vak-sandbox/src/backend.rs",
+        "Seatbelt read-allowlists real toolchain dirs (~/.cargo, ~/.rustup)",
     ),
     (
-        "crates/vak-tools/src/landlock.rs",
-        "read-allowlists real toolchain dirs (~/.cargo, ~/.rustup)",
+        "crates/vak-sandbox/src/landlock.rs",
+        "Landlock read-allowlists real toolchain dirs (~/.cargo, ~/.rustup)",
     ),
 ];
 

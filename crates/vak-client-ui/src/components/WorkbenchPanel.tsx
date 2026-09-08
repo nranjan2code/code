@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   activeExecutionId,
@@ -119,6 +119,16 @@ export default function WorkbenchPanel() {
   const [copiedCmd, setCopiedCmd] = createSignal(false);
   const [copiedLog, setCopiedLog] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
+  const [candidate, setCandidate] = createSignal<Awaited<ReturnType<typeof api.exportSandboxCandidate>> | null>(null);
+  const [candidateBusy, setCandidateBusy] = createSignal(false);
+  const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
+  const [pulse, setPulse] = createSignal(0);
+
+  // A quiet interval is still meaningful feedback while the provider or a
+  // tool is between events. It also makes the status accessible to screen
+  // readers without duplicating the transcript.
+  const pulseTimer = window.setInterval(() => setPulse((value) => value + 1), 1000);
+  onCleanup(() => window.clearInterval(pulseTimer));
 
   let terminalRef: HTMLDivElement | undefined;
 
@@ -160,6 +170,7 @@ export default function WorkbenchPanel() {
   };
 
   const isAnyRunning = () => executions().some((e) => e.status === "running");
+  const runningExec = () => executions().find((e) => e.status === "running");
 
   const clearExecutions = () => {
     setWorkbenchExecutions([]);
@@ -204,6 +215,9 @@ export default function WorkbenchPanel() {
   };
 
   const inspectArtifact = async (path: string) => {
+    // Artifact links are an intent to inspect, so move to the artifact
+    // viewer immediately instead of leaving the operator on live logs.
+    setTab("artifacts");
     setSelectedArtifact(path);
     setLoadingArtifact(true);
     setArtifactError(null);
@@ -231,6 +245,37 @@ export default function WorkbenchPanel() {
   const isImageArtifact = (path: string, mime?: string) =>
     mime?.startsWith("image/") ||
     /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(path);
+
+  const isPdfArtifact = (path: string, mime?: string) =>
+    mime === "application/pdf" || path.toLowerCase().endsWith(".pdf");
+
+  const reviewCandidate = async () => {
+    const exec = currentExec();
+    if (!exec || exec.artifacts.length === 0) return;
+    setCandidateBusy(true);
+    setPromotionMessage(null);
+    try {
+      setCandidate(await api.exportSandboxCandidate(`candidate-${exec.id}`, exec.scratchDir, "."));
+    } catch (error) {
+      setPromotionMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCandidateBusy(false);
+    }
+  };
+
+  const promoteCandidate = async () => {
+    const value = candidate();
+    if (!value) return;
+    setCandidateBusy(true);
+    try {
+      const receipt = await api.promoteSandboxCandidate(value);
+      setPromotionMessage(`Applied and verified ${receipt.verification?.length ?? 0} file(s).`);
+    } catch (error) {
+      setPromotionMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCandidateBusy(false);
+    }
+  };
 
   return (
     <div class="workbench-panel">
@@ -278,6 +323,17 @@ export default function WorkbenchPanel() {
           </Show>
         </div>
       </div>
+      <Show when={isAnyRunning()}>
+        <div class="workbench-live-strip" aria-live="polite">
+          <span class="pulse-dot" />
+          <strong>Still working</strong>
+          <span class="workbench-live-detail">
+            {runningExec()?.stdout || runningExec()?.stderr ? "Receiving live output" : "Waiting for the next event"}
+          </span>
+          <span class="workbench-live-tick">{pulse() % 2 === 0 ? "·" : "…"}</span>
+          <button class="btn subtle" onClick={() => void stopExecution()} disabled={stopping()}>{stopping() ? "Stopping…" : "Stop"}</button>
+        </div>
+      </Show>
 
       {/* Main Content */}
       <Show when={executions().length === 0}>
@@ -381,6 +437,28 @@ export default function WorkbenchPanel() {
                             {(pkg) => <span class="package-chip">{pkg}</span>}
                           </For>
                         </div>
+                      </div>
+                    </Show>
+
+                    <Show when={exec().artifacts.length > 0}>
+                      <div class="exec-packages-card">
+                        <span class="packages-label">Workspace promotion</span>
+                        <button class="tool-open" onClick={() => void reviewCandidate()} disabled={candidateBusy()}>
+                          {candidateBusy() ? "Preparing review…" : "Review candidate"}
+                        </button>
+                        <Show when={candidate()}>
+                          {(review) => (
+                            <div style={{ "margin-top": "8px", width: "100%" }}>
+                              <div class="artifact-meta">{review().files.length} file(s), hashed against the workspace base</div>
+                              <button class="tool-open" onClick={() => void promoteCandidate()} disabled={candidateBusy()}>
+                                Apply reviewed candidate
+                              </button>
+                            </div>
+                          )}
+                        </Show>
+                        <Show when={promotionMessage()}>
+                          {(message) => <div class="artifact-meta">{message()}</div>}
+                        </Show>
                       </div>
                     </Show>
 
@@ -598,11 +676,20 @@ export default function WorkbenchPanel() {
                     </div>
                   </Show>
 
+                  <Show when={isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) && artifactDataUrl()}>
+                    <iframe
+                      src={artifactDataUrl()!}
+                      title="PDF artifact preview"
+                      style={{ width: "100%", height: "100%", "min-height": "520px", border: "none" }}
+                    />
+                  </Show>
+
                   {/* Code / Text Preview */}
                   <Show
                     when={
                       !isHtmlArtifact(selectedArtifact()!) &&
                       !isImageArtifact(selectedArtifact()!) &&
+                      !isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
                       artifactContent() !== null
                     }
                   >

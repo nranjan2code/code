@@ -396,6 +396,10 @@ export function transcript(id: string): Promise<{
   return req(`/sessions/${id}/transcript`);
 }
 
+export function sandboxExecutions(id: string): Promise<{ session_id: string; events: Array<Record<string, unknown>> }> {
+  return req(`/sessions/${encodeURIComponent(id)}/sandbox/executions`);
+}
+
 export function presentation(id: string): Promise<OutputTimeline> {
   return req(`/sessions/${encodeURIComponent(id)}/presentation`);
 }
@@ -788,6 +792,26 @@ export function readFile(path: string): Promise<FileResponse> {
 
 export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
+}
+
+export function listSandboxRecords(): Promise<{ records: unknown[] }> {
+  return req("/sandbox/records");
+}
+
+export function appendSandboxRecord(record: unknown): Promise<{ accepted: boolean }> {
+  return req("/sandbox/records", { method: "POST", body: JSON.stringify(record) });
+}
+
+export function exportSandboxCandidate(candidateId: string, source: string, destination = "."):
+  Promise<{ candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number }> }> {
+  return req("/sandbox/candidates", {
+    method: "POST",
+    body: JSON.stringify({ candidate_id: candidateId, source, destination }),
+  });
+}
+
+export function promoteSandboxCandidate(candidate: unknown): Promise<{ verification?: Array<{ path: string; status: string; evidence: string }> }> {
+  return req("/sandbox/promote", { method: "POST", body: JSON.stringify({ candidate }) });
 }
 
 /**

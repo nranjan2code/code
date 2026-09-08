@@ -53,6 +53,40 @@ async fn builtins_execute_in_worker_process() {
 }
 
 #[tokio::test]
+async fn brokered_bash_streams_live_sandbox_events_with_identity() {
+    let workspace = tempdir().expect("workspace");
+    let (sink, mut events) =
+        vak_tools::sandbox_events::SandboxEventSink::new_with_id("broker-stress".into());
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
+    let output = tool("bash")
+        .execute(
+            &json!({"command": "mkdir -p nested && echo brokered > nested/result.txt"}),
+            &ctx,
+        )
+        .await;
+    assert!(!output.is_error, "{}", output.content);
+    let mut started = false;
+    let mut artifact = false;
+    while let Ok(event) = events.try_recv() {
+        match event {
+            vak_tools::SandboxEvent::ExecutionStarted { execution_id, .. } => {
+                assert_eq!(execution_id, "broker-stress");
+                started = true;
+            }
+            vak_tools::SandboxEvent::ArtifactGenerated {
+                execution_id, path, ..
+            } => {
+                assert_eq!(execution_id, "broker-stress");
+                artifact |= path.contains("nested/result.txt");
+            }
+            _ => {}
+        }
+    }
+    assert!(started, "broker did not stream a start event");
+    assert!(artifact, "broker did not stream the nested artifact event");
+}
+
+#[tokio::test]
 async fn missing_worker_fails_closed() {
     let workspace = tempdir().expect("workspace");
     let mut tools = vak_tools::brokered_default_tools(workspace.path().join("missing-worker"));

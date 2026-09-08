@@ -3483,7 +3483,9 @@ async fn execute_one(
             }
         }
         Some(tool) => {
-            let (sandbox_sink, mut sandbox_rx) = vak_tools::SandboxEventSink::new();
+            let (sandbox_sink, mut sandbox_rx) =
+                vak_tools::SandboxEventSink::new_with_id(call.id.clone());
+            let sandbox_sink = sandbox_sink.with_owner_session(session_id.to_string());
             let events_tx = events.clone();
             let forwarder = tokio::spawn(async move {
                 while let Some(sb_ev) = sandbox_rx.recv().await {
@@ -3501,14 +3503,20 @@ async fn execute_one(
             let result_ctx = ctx.clone();
             let tool = tool.clone();
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
-            forwarder.abort();
-            match res {
+            // Close the event sender before joining the forwarder. Keeping a
+            // cloned ToolContext alive while awaiting the receiver makes the
+            // channel wait on itself forever, which hides cancellation and
+            // leaves partial-output runs stuck.
+            let output = match res {
                 Ok(out) if out.is_error => {
                     ToolRunOutput::Err(result_ctx.truncate_output(out.content))
                 }
                 Ok(out) => ToolRunOutput::Ok(result_ctx.truncate_output(out.content)),
                 Err(join_err) => ToolRunOutput::Err(format!("tool task failed: {join_err}")),
-            }
+            };
+            drop(result_ctx);
+            let _ = forwarder.await;
+            output
         }
     };
 
