@@ -5,6 +5,19 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.28 — 2026-09-08
+
+### Admin Console Bus + Sandbox Coverage
+
+- Add Operations Center Bus status panel (backend, connection, encryption,
+  metrics grid with byte formatting).
+- Add `#/operations/sandbox` section with Environments, Candidates (with
+  Promote-to-workspace action), and Promotion ledger sub-views.
+- Add Event bus panel to Settings with NATS URL, JWT, NKey seed, and
+  workspace secret env var fields; credential-never-returned semantics.
+- Show per-session sandbox execution events in RunDetail.
+- Add sandbox topology node to the system map inspector.
+
 ## 3.0.27 — 2026-09-08
 
 ### Fresh Startup & Workspace Panel Controls
