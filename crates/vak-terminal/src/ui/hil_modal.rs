@@ -50,15 +50,30 @@ impl<'a> Widget for HilModalView<'a> {
         // 1. Metadata
         let meta_lines = vec![
             Line::from(vec![
-                Span::styled("TOOL:      ", self.theme.style_card().add_modifier(Modifier::BOLD)),
-                Span::styled(&self.state.tool_name, self.theme.style_accent().add_modifier(Modifier::BOLD)),
-                Span::styled("   RISK: ", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "TOOL:      ",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    &self.state.tool_name,
+                    self.theme.style_accent().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "   RISK: ",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&self.state.risk_reason, self.theme.style_warn()),
             ]),
             Line::from(vec![
-                Span::styled("DIR:       ", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "DIR:       ",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&self.state.workspace_path, self.theme.style_card()),
-                Span::styled(format!("   COST: +${:.3} est.", self.state.cost_estimate_usd), self.theme.style_card().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    format!("   COST: +${:.3} est.", self.state.cost_estimate_usd),
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
             ]),
         ];
         Paragraph::new(meta_lines).render(chunks[0], buf);
@@ -90,28 +105,43 @@ impl<'a> Widget for HilModalView<'a> {
 
         let cmd_line = if self.state.is_editing {
             Line::from(vec![
-                Span::styled(cmd_text, self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    cmd_text,
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("█", self.theme.style_accent()),
             ])
         } else {
-            Line::from(vec![
-                Span::styled(cmd_text, self.theme.style_card()),
-            ])
+            Line::from(vec![Span::styled(cmd_text, self.theme.style_card())])
         };
 
-        Paragraph::new(cmd_line).block(cmd_block).render(chunks[1], buf);
+        Paragraph::new(cmd_line)
+            .block(cmd_block)
+            .render(chunks[1], buf);
 
         // 3. Action Pills
         let action_spans = vec![
-            Span::styled(" [y] Approve Once ", self.theme.style_ok().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [y] Approve Once ",
+                self.theme.style_ok().add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
             Span::styled(" [a] Always for Session ", self.theme.style_accent()),
             Span::raw("   "),
-            Span::styled(" [d] Deny ", self.theme.style_danger().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [d] Deny ",
+                self.theme.style_danger().add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
-            Span::styled(" [e] Edit In-Place ", self.theme.style_info().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [e] Edit In-Place ",
+                self.theme.style_info().add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
-            Span::styled(" [Esc] Cancel ", self.theme.style_card().add_modifier(Modifier::DIM)),
+            Span::styled(
+                " [Esc] Cancel ",
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            ),
         ];
 
         Paragraph::new(Line::from(action_spans))

@@ -82,6 +82,8 @@ impl HilApprovalState {
         } else {
             None
         };
-        HilOutcome::ApproveOnce { modified_command: modified }
+        HilOutcome::ApproveOnce {
+            modified_command: modified,
+        }
     }
 }

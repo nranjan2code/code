@@ -59,7 +59,10 @@ impl<'a> Widget for ComposerView<'a> {
                 key,
                 self.theme.style_card().add_modifier(Modifier::BOLD),
             ));
-            hint_spans.push(Span::styled(format!(" {action}  "), self.theme.style_card()));
+            hint_spans.push(Span::styled(
+                format!(" {action}  "),
+                self.theme.style_card(),
+            ));
         }
 
         let hint_para = Paragraph::new(Line::from(hint_spans));

@@ -12,16 +12,14 @@ pub mod ui;
 use std::io::stdout;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event, EventStream,
-};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::StreamExt;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use app::TerminalApp;
 

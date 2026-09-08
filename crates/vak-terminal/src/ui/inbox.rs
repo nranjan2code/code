@@ -40,32 +40,71 @@ impl<'a> Widget for InboxView<'a> {
         // -------------------------------------------------------------
         let alert_line = if self.alert_acknowledged {
             Line::from(vec![
-                Span::styled("[17:42:01] ", self.theme.style_card().add_modifier(Modifier::DIM)),
-                Span::styled("✓ [ACKNOWLEDGED] Budget Alert: ", self.theme.style_ok().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[17:42:01] ",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "✓ [ACKNOWLEDGED] Budget Alert: ",
+                    self.theme.style_ok().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Threshold reviewed by operator. ", self.theme.style_card()),
-                Span::styled("[ ACKNOWLEDGED ]", self.theme.style_card().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    "[ ACKNOWLEDGED ]",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
             ])
         } else {
             Line::from(vec![
-                Span::styled("[17:42:01] ", self.theme.style_card().add_modifier(Modifier::DIM)),
-                Span::styled("! [URGENT] Budget Alert: ", self.theme.style_danger().add_modifier(Modifier::BOLD)),
-                Span::styled("Cost-limit threshold exceeded ($5.00 limit). ", self.theme.style_card()),
+                Span::styled(
+                    "[17:42:01] ",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "! [URGENT] Budget Alert: ",
+                    self.theme.style_danger().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Cost-limit threshold exceeded ($5.00 limit). ",
+                    self.theme.style_card(),
+                ),
                 Span::styled("[ [a] Ack ]", self.theme.style_tab_active()),
             ])
         };
 
         let watchdog_line = if self.watchdog_restarted {
             Line::from(vec![
-                Span::styled("[17:39:12] ", self.theme.style_card().add_modifier(Modifier::DIM)),
-                Span::styled("✓ [RECOVERED] Watchdog Service: ", self.theme.style_ok().add_modifier(Modifier::BOLD)),
-                Span::styled("Process stream_monitor online (PID 5104). ", self.theme.style_card()),
-                Span::styled("[ ONLINE ]", self.theme.style_ok().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[17:39:12] ",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "✓ [RECOVERED] Watchdog Service: ",
+                    self.theme.style_ok().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Process stream_monitor online (PID 5104). ",
+                    self.theme.style_card(),
+                ),
+                Span::styled(
+                    "[ ONLINE ]",
+                    self.theme.style_ok().add_modifier(Modifier::BOLD),
+                ),
             ])
         } else {
             Line::from(vec![
-                Span::styled("[17:39:12] ", self.theme.style_card().add_modifier(Modifier::DIM)),
-                Span::styled("! [ERROR] Watchdog Failure: ", self.theme.style_danger().add_modifier(Modifier::BOLD)),
-                Span::styled("Process monitor stream_monitor failed. ", self.theme.style_card()),
+                Span::styled(
+                    "[17:39:12] ",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "! [ERROR] Watchdog Failure: ",
+                    self.theme.style_danger().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Process monitor stream_monitor failed. ",
+                    self.theme.style_card(),
+                ),
                 Span::styled("[ [r] Restart ] [ [x] Analyze ]", self.theme.style_info()),
             ])
         };
@@ -82,10 +121,22 @@ impl<'a> Widget for InboxView<'a> {
             alert_line,
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::styled("[17:41:30] ", self.theme.style_card().add_modifier(Modifier::DIM)),
-                Span::styled("! [PENDING] Approval Request: ", self.theme.style_warn().add_modifier(Modifier::BOLD)),
-                Span::styled("deploy_script.sh waiting execution grant. ", self.theme.style_card()),
-                Span::styled("[ [y] Approve ] [ [d] Deny ]", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[17:41:30] ",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    "! [PENDING] Approval Request: ",
+                    self.theme.style_warn().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "deploy_script.sh waiting execution grant. ",
+                    self.theme.style_card(),
+                ),
+                Span::styled(
+                    "[ [y] Approve ] [ [d] Deny ]",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![Span::raw("")]),
             watchdog_line,
@@ -94,10 +145,16 @@ impl<'a> Widget for InboxView<'a> {
         let inbox_block = Block::default()
             .borders(Borders::ALL)
             .border_style(left_border)
-            .title(format!(" {} Attention Inbox ({} Unread) [Tab] ", Symbols::STATUS_ACTIVE, unread_count))
+            .title(format!(
+                " {} Attention Inbox ({} Unread) [Tab] ",
+                Symbols::STATUS_ACTIVE,
+                unread_count
+            ))
             .title_style(self.theme.style_accent().add_modifier(Modifier::BOLD));
 
-        Paragraph::new(inbox_lines).block(inbox_block).render(deck_chunks[0], buf);
+        Paragraph::new(inbox_lines)
+            .block(inbox_block)
+            .render(deck_chunks[0], buf);
 
         // -------------------------------------------------------------
         // RIGHT DECK: Durable Memory, Skill Proposals, Scheduled Tasks
@@ -113,16 +170,29 @@ impl<'a> Widget for InboxView<'a> {
 
         // Memory Store
         let mem_lines = vec![
+            Line::from(vec![Span::styled(
+                "USER.md Profile Notes:",
+                self.theme.style_card().add_modifier(Modifier::BOLD),
+            )]),
             Line::from(vec![
-                Span::styled("USER.md Profile Notes:", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("  {} Coding style: ", Symbols::BULLET),
+                    self.theme.style_accent(),
+                ),
+                Span::styled(
+                    "TypeScript ES6+, 2-space indentation.",
+                    self.theme.style_card(),
+                ),
             ]),
             Line::from(vec![
-                Span::styled(format!("  {} Coding style: ", Symbols::BULLET), self.theme.style_accent()),
-                Span::styled("TypeScript ES6+, 2-space indentation.", self.theme.style_card()),
-            ]),
-            Line::from(vec![
-                Span::styled(format!("  {} Verification: ", Symbols::BULLET), self.theme.style_accent()),
-                Span::styled("Prioritize local hermetic vitest runs.", self.theme.style_card()),
+                Span::styled(
+                    format!("  {} Verification: ", Symbols::BULLET),
+                    self.theme.style_accent(),
+                ),
+                Span::styled(
+                    "Prioritize local hermetic vitest runs.",
+                    self.theme.style_card(),
+                ),
             ]),
         ];
 
@@ -132,13 +202,16 @@ impl<'a> Widget for InboxView<'a> {
             .title(format!(" {} Durable Memory Store ", Symbols::BULLET))
             .title_style(self.theme.style_card());
 
-        Paragraph::new(mem_lines).block(mem_block).render(right_chunks[0], buf);
+        Paragraph::new(mem_lines)
+            .block(mem_block)
+            .render(right_chunks[0], buf);
 
         // Skill Proposals Queue
         let prop_action = if self.skill_promoted {
-            Line::from(vec![
-                Span::styled("  [ ✓ PROMOTED TO PIPELINE ]", self.theme.style_ok().add_modifier(Modifier::BOLD)),
-            ])
+            Line::from(vec![Span::styled(
+                "  [ ✓ PROMOTED TO PIPELINE ]",
+                self.theme.style_ok().add_modifier(Modifier::BOLD),
+            )])
         } else {
             Line::from(vec![
                 Span::styled("  [ [p] Promote ] ", self.theme.style_ok()),
@@ -147,9 +220,10 @@ impl<'a> Widget for InboxView<'a> {
         };
 
         let prop_lines = vec![
-            Line::from(vec![
-                Span::styled("Prop 1: git_diff_viewer plugin v0.9", self.theme.style_card().add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "Prop 1: git_diff_viewer plugin v0.9",
+                self.theme.style_card().add_modifier(Modifier::BOLD),
+            )]),
             prop_action,
         ];
 
@@ -159,17 +233,31 @@ impl<'a> Widget for InboxView<'a> {
             .title(" Skill Proposals Queue ")
             .title_style(self.theme.style_card());
 
-        Paragraph::new(prop_lines).block(prop_block).render(right_chunks[1], buf);
+        Paragraph::new(prop_lines)
+            .block(prop_block)
+            .render(right_chunks[1], buf);
 
         // Scheduled Tasks & Automation
         let task_lines = vec![
             Line::from(vec![
-                Span::styled(format!("{} Task: agent_metrics_backup ", Symbols::STATUS_ACTIVE), self.theme.style_ok()),
-                Span::styled("(Next: 2h 14m)", self.theme.style_card().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    format!("{} Task: agent_metrics_backup ", Symbols::STATUS_ACTIVE),
+                    self.theme.style_ok(),
+                ),
+                Span::styled(
+                    "(Next: 2h 14m)",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
             ]),
             Line::from(vec![
-                Span::styled(format!("{} Watchdog: check_api_endpoints ", Symbols::STATUS_ACTIVE), self.theme.style_ok()),
-                Span::styled("(Next: 4m 12s)", self.theme.style_card().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    format!("{} Watchdog: check_api_endpoints ", Symbols::STATUS_ACTIVE),
+                    self.theme.style_ok(),
+                ),
+                Span::styled(
+                    "(Next: 4m 12s)",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
             ]),
         ];
 
@@ -179,6 +267,8 @@ impl<'a> Widget for InboxView<'a> {
             .title(" Scheduled Tasks & Automation ")
             .title_style(self.theme.style_card());
 
-        Paragraph::new(task_lines).block(task_block).render(right_chunks[2], buf);
+        Paragraph::new(task_lines)
+            .block(task_block)
+            .render(right_chunks[2], buf);
     }
 }

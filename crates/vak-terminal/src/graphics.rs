@@ -22,7 +22,9 @@ impl GraphicsProtocol {
                 return GraphicsProtocol::Kitty;
             }
         }
-        if std::env::var("KITTY_WINDOW_ID").is_ok() || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok() {
+        if std::env::var("KITTY_WINDOW_ID").is_ok()
+            || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+        {
             return GraphicsProtocol::Kitty;
         }
         // iTerm2 or VSCode integrated terminal

@@ -142,7 +142,10 @@ impl TerminalApp {
         }
 
         // 2. Global Hotkeys
-        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+        if key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
             match key.code {
                 KeyCode::Char('d') => {
                     self.should_detach = true;
@@ -213,7 +216,9 @@ impl TerminalApp {
                     return;
                 }
                 KeyCode::Char('o') if self.active_tab == ActiveTab::Studio => {
-                    let _ = std::process::Command::new("open").arg("http://localhost:5173").spawn();
+                    let _ = std::process::Command::new("open")
+                        .arg("http://localhost:5173")
+                        .spawn();
                     return;
                 }
                 KeyCode::Char('m') if self.active_tab == ActiveTab::Admin => {
@@ -326,7 +331,9 @@ impl TerminalApp {
             self.active_tab = ActiveTab::Studio;
             self.deck_focus = DeckFocus::Right;
         } else if cmd == "/preview" {
-            let _ = std::process::Command::new("open").arg("http://localhost:5173").spawn();
+            let _ = std::process::Command::new("open")
+                .arg("http://localhost:5173")
+                .spawn();
         } else if cmd == "/model" {
             self.model_name = if self.model_name == "claude-3-7-sonnet" {
                 "claude-3-5-sonnet".into()
@@ -456,7 +463,9 @@ impl TerminalApp {
                     ActiveTab::Studio => {
                         // Clicking [PREVIEW in browser] button
                         if (8..=11).contains(&y) && (2..=32).contains(&x) {
-                            let _ = std::process::Command::new("open").arg("http://localhost:5173").spawn();
+                            let _ = std::process::Command::new("open")
+                                .arg("http://localhost:5173")
+                                .spawn();
                         }
                         // Clicking on Markdown Card
                         if (11..=15).contains(&y) && x < 60 {

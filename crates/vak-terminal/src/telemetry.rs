@@ -27,7 +27,7 @@ impl Default for TelemetryState {
             cpu_percent: 18.4,
             rss_mb: 142.5,
             token_rate_history: vec![
-                42, 65, 88, 110, 142, 130, 95, 112, 125, 145, 160, 135, 120, 142
+                42, 65, 88, 110, 142, 130, 95, 112, 125, 145, 160, 135, 120, 142,
             ],
             max_rate: 200,
             active_subagents: 3,

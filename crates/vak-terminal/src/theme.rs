@@ -18,9 +18,8 @@ impl Symbols {
     pub const DELTA: &'static str = "Δ";
     pub const BULLET: &'static str = "•";
     pub const WAVE: &'static str = "∿";
-    pub const SPINNER_FRAMES: &'static [&'static str] = &[
-        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
-    ];
+    pub const SPINNER_FRAMES: &'static [&'static str] =
+        &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -239,10 +238,14 @@ impl Theme {
     }
 
     pub fn style_diff_add(&self) -> Style {
-        Style::default().bg(Color::Rgb(0x1a, 0x2e, 0x22)).fg(self.status_ok)
+        Style::default()
+            .bg(Color::Rgb(0x1a, 0x2e, 0x22))
+            .fg(self.status_ok)
     }
 
     pub fn style_diff_del(&self) -> Style {
-        Style::default().bg(Color::Rgb(0x35, 0x19, 0x1b)).fg(self.status_danger)
+        Style::default()
+            .bg(Color::Rgb(0x35, 0x19, 0x1b))
+            .fg(self.status_danger)
     }
 }

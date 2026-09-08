@@ -45,9 +45,9 @@ impl<'a> Widget for StudioView<'a> {
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(9),           // Web preview card
-                Constraint::Length(doc_height),  // Markdown doc card (collapsible)
-                Constraint::Min(6),              // Tool execution card
+                Constraint::Length(9),          // Web preview card
+                Constraint::Length(doc_height), // Markdown doc card (collapsible)
+                Constraint::Min(6),             // Tool execution card
             ])
             .split(main_decks[0]);
 
@@ -55,7 +55,11 @@ impl<'a> Widget for StudioView<'a> {
         let prev_block = Block::default()
             .borders(Borders::ALL)
             .border_style(left_border)
-            .title(format!(" {} [PREVIEW] http://localhost:5173 {} ", Symbols::BULLET, Symbols::EXTERNAL_LINK))
+            .title(format!(
+                " {} [PREVIEW] http://localhost:5173 {} ",
+                Symbols::BULLET,
+                Symbols::EXTERNAL_LINK
+            ))
             .title_style(self.theme.style_accent().add_modifier(Modifier::BOLD));
 
         let prev_inner = prev_block.inner(left_chunks[0]);
@@ -68,7 +72,8 @@ impl<'a> Widget for StudioView<'a> {
                 width: prev_inner.width.saturating_sub(2),
                 height: prev_inner.height.saturating_sub(2),
             };
-            let wireframe = HalfBlockImage::sample_dashboard_wireframe(img_area.width, img_area.height);
+            let wireframe =
+                HalfBlockImage::sample_dashboard_wireframe(img_area.width, img_area.height);
             wireframe.render(img_area, buf);
 
             // Action button pill
@@ -98,18 +103,27 @@ impl<'a> Widget for StudioView<'a> {
             Line::from(vec![Span::styled("```", self.theme.style_card())]),
             Line::from(vec![
                 Span::styled(format!(" {} ", Symbols::BULLET), self.theme.style_accent()),
-                Span::styled("Compiled with 100% test coverage; 0 audit vulnerabilities.", self.theme.style_card()),
+                Span::styled(
+                    "Compiled with 100% test coverage; 0 audit vulnerabilities.",
+                    self.theme.style_card(),
+                ),
             ]),
         ];
 
         if self.card_expanded {
             doc_lines.push(Line::from(vec![
                 Span::styled(format!(" {} ", Symbols::CHECK), self.theme.style_ok()),
-                Span::styled("Hermetic sandbox execution verified (isolation: strict).", self.theme.style_ok()),
+                Span::styled(
+                    "Hermetic sandbox execution verified (isolation: strict).",
+                    self.theme.style_ok(),
+                ),
             ]));
             doc_lines.push(Line::from(vec![
                 Span::styled(format!(" {} ", Symbols::BULLET), self.theme.style_accent()),
-                Span::styled("Bundle footprint: 142 kB gzip (chunks dynamically split).", self.theme.style_card().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    "Bundle footprint: 142 kB gzip (chunks dynamically split).",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                ),
             ]));
         }
 
@@ -133,27 +147,47 @@ impl<'a> Widget for StudioView<'a> {
         let tool_lines = vec![
             Line::from(vec![
                 Span::styled(format!(" {} ", Symbols::CHECK), self.theme.style_ok()),
-                Span::styled("Installing dependencies (vite, react, @types/react)...", self.theme.style_card()),
+                Span::styled(
+                    "Installing dependencies (vite, react, @types/react)...",
+                    self.theme.style_card(),
+                ),
             ]),
             Line::from(vec![
                 Span::styled(format!(" {} ", Symbols::CHECK), self.theme.style_ok()),
-                Span::styled("Running production build and bundle verification...", self.theme.style_card()),
+                Span::styled(
+                    "Running production build and bundle verification...",
+                    self.theme.style_card(),
+                ),
             ]),
             Line::from(vec![
-                Span::styled(format!(" {} ", Symbols::STATUS_ACTIVE), self.theme.style_ok()),
-                Span::styled("Serving dist/ on http://localhost:5173", self.theme.style_card()),
+                Span::styled(
+                    format!(" {} ", Symbols::STATUS_ACTIVE),
+                    self.theme.style_ok(),
+                ),
+                Span::styled(
+                    "Serving dist/ on http://localhost:5173",
+                    self.theme.style_card(),
+                ),
             ]),
         ];
 
-        let spinner = Symbols::SPINNER_FRAMES[self.telemetry.tick_count % Symbols::SPINNER_FRAMES.len()];
+        let spinner =
+            Symbols::SPINNER_FRAMES[self.telemetry.tick_count % Symbols::SPINNER_FRAMES.len()];
         let (title, title_style) = if self.is_running {
             (
-                format!(" {} bash: npm run test ── [{} RUNNING 1.4s] ", Symbols::CARET_EXPANDED, spinner),
+                format!(
+                    " {} bash: npm run test ── [{} RUNNING 1.4s] ",
+                    Symbols::CARET_EXPANDED,
+                    spinner
+                ),
                 self.theme.style_accent(),
             )
         } else {
             (
-                format!(" {} Tool Execution: deploy_script.sh [OK 2.1s • RSS 42MB] ", Symbols::CARET_EXPANDED),
+                format!(
+                    " {} Tool Execution: deploy_script.sh [OK 2.1s • RSS 42MB] ",
+                    Symbols::CARET_EXPANDED
+                ),
                 self.theme.style_ok(),
             )
         };
@@ -190,12 +224,18 @@ impl<'a> Widget for StudioView<'a> {
         let gauge_lines = vec![
             Line::from(vec![
                 Span::styled("CPU UTIL:  ", self.theme.style_card()),
-                Span::styled(format!("{:.1}% ", self.telemetry.cpu_percent), self.theme.style_accent().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:.1}% ", self.telemetry.cpu_percent),
+                    self.theme.style_accent().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("[■■■■□□□□]", self.theme.style_accent()),
             ]),
             Line::from(vec![
                 Span::styled("MEMORY RSS:", self.theme.style_card()),
-                Span::styled(format!("{:.1}MB ", self.telemetry.rss_mb), self.theme.style_ok().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:.1}MB ", self.telemetry.rss_mb),
+                    self.theme.style_ok().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("[■■■■■■□□]", self.theme.style_ok()),
             ]),
             Line::from(vec![
@@ -217,16 +257,31 @@ impl<'a> Widget for StudioView<'a> {
         // Swarm Radar
         let radar_lines = vec![
             Line::from(vec![
-                Span::styled(format!(" {} ACTIVE:  ", Symbols::STATUS_ACTIVE), self.theme.style_accent()),
-                Span::styled(format!("{} agents", self.telemetry.active_subagents), self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!(" {} ACTIVE:  ", Symbols::STATUS_ACTIVE),
+                    self.theme.style_accent(),
+                ),
+                Span::styled(
+                    format!("{} agents", self.telemetry.active_subagents),
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
-                Span::styled(format!(" {} PENDING: ", Symbols::STATUS_IDLE), self.theme.style_card()),
-                Span::styled(format!("{} tasks", self.telemetry.pending_tasks), self.theme.style_card()),
+                Span::styled(
+                    format!(" {} PENDING: ", Symbols::STATUS_IDLE),
+                    self.theme.style_card(),
+                ),
+                Span::styled(
+                    format!("{} tasks", self.telemetry.pending_tasks),
+                    self.theme.style_card(),
+                ),
             ]),
             Line::from(vec![
                 Span::styled(" RADAR:    ", self.theme.style_card()),
-                Span::styled(format!("SWEEP {:.0}°", self.telemetry.radar_angle_deg), self.theme.style_ok()),
+                Span::styled(
+                    format!("SWEEP {:.0}°", self.telemetry.radar_angle_deg),
+                    self.theme.style_ok(),
+                ),
             ]),
         ];
 
@@ -253,13 +308,14 @@ impl<'a> Widget for StudioView<'a> {
             wave_str.push_str(symbol);
         }
 
-        let wave_lines = vec![
-            Line::from(vec![
-                Span::styled("RATE: ", self.theme.style_card()),
-                Span::styled("142 tok/s  ", self.theme.style_accent().add_modifier(Modifier::BOLD)),
-                Span::styled(wave_str, self.theme.style_accent()),
-            ]),
-        ];
+        let wave_lines = vec![Line::from(vec![
+            Span::styled("RATE: ", self.theme.style_card()),
+            Span::styled(
+                "142 tok/s  ",
+                self.theme.style_accent().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(wave_str, self.theme.style_accent()),
+        ])];
 
         let wave_block = Block::default()
             .borders(Borders::ALL)
@@ -274,31 +330,40 @@ impl<'a> Widget for StudioView<'a> {
         // 3. Multi-File Git Diff Inspector
         let diff_lines = vec![
             Line::from(vec![
-                Span::styled("src/index.js ", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "src/index.js ",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("(+4 / -1)", self.theme.style_ok()),
             ]),
+            Line::from(vec![Span::styled(
+                "  import React from 'react';",
+                self.theme.style_card(),
+            )]),
+            Line::from(vec![Span::styled(
+                "+ export const status = 'production';",
+                self.theme.style_diff_add(),
+            )]),
+            Line::from(vec![Span::styled(
+                "- const status = 'draft';",
+                self.theme.style_diff_del(),
+            )]),
             Line::from(vec![
-                Span::styled("  import React from 'react';", self.theme.style_card()),
-            ]),
-            Line::from(vec![
-                Span::styled("+ export const status = 'production';", self.theme.style_diff_add()),
-            ]),
-            Line::from(vec![
-                Span::styled("- const status = 'draft';", self.theme.style_diff_del()),
-            ]),
-            Line::from(vec![
-                Span::styled("src/components/Button.js ", self.theme.style_card().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "src/components/Button.js ",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("(+12 / -3)", self.theme.style_ok()),
             ]),
-            Line::from(vec![
-                Span::styled("+ export function Button({ label }) {", self.theme.style_diff_add()),
-            ]),
-            Line::from(vec![
-                Span::styled("+   return <button className='btn'>{label}</button>;", self.theme.style_diff_add()),
-            ]),
-            Line::from(vec![
-                Span::styled("+ }", self.theme.style_diff_add()),
-            ]),
+            Line::from(vec![Span::styled(
+                "+ export function Button({ label }) {",
+                self.theme.style_diff_add(),
+            )]),
+            Line::from(vec![Span::styled(
+                "+   return <button className='btn'>{label}</button>;",
+                self.theme.style_diff_add(),
+            )]),
+            Line::from(vec![Span::styled("+ }", self.theme.style_diff_add())]),
         ];
 
         let diff_block = Block::default()

@@ -9,8 +9,8 @@ use vak_tools::{Tool, ToolContext, bash::BashTool, sandbox_events::SandboxEventS
 async fn nested_data_artifacts_stay_in_execution_scratch() {
     let workspace = tempfile::tempdir().unwrap();
     let (sink, mut events) = SandboxEventSink::new_with_id("stress-data".into());
-    let ctx =
-        ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink.with_quarantine(true));
+    let ctx = ToolContext::new(workspace.path().to_path_buf())
+        .with_sandbox_sink(sink.with_quarantine(true));
     let output = BashTool
         .execute(
             &serde_json::json!({"command": "mkdir -p nested/deeper && printf 'a,b\\n1,2\\n' > nested/deeper/data.csv && pwd"}),

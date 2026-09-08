@@ -8,7 +8,7 @@ use vak_terminal::graphics::{GraphicsProtocol, HalfBlockImage};
 use vak_terminal::hil::{HilApprovalState, HilOutcome};
 use vak_terminal::repl::ReplComposer;
 use vak_terminal::telemetry::TelemetryState;
-use vak_terminal::theme::{ThemeKind, Symbols};
+use vak_terminal::theme::{Symbols, ThemeKind};
 use vak_terminal::ui::header::ActiveTab;
 
 #[test]
@@ -165,12 +165,20 @@ fn test_hil_approval_flow_and_editing() {
     );
 
     assert_eq!(hil.tool_name, "bash");
-    assert_eq!(hil.original_command, "npm run build && vite preview --port 5173");
+    assert_eq!(
+        hil.original_command,
+        "npm run build && vite preview --port 5173"
+    );
     assert!(!hil.is_editing);
 
     // Unmodified approval
     let outcome = hil.finish_approval();
-    assert_eq!(outcome, HilOutcome::ApproveOnce { modified_command: None });
+    assert_eq!(
+        outcome,
+        HilOutcome::ApproveOnce {
+            modified_command: None
+        }
+    );
 
     // Start in-place edit
     hil.start_editing();

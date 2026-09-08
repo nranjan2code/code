@@ -274,7 +274,13 @@ async fn main() {
     let cwd = cli
         .workspace
         .as_ref()
-        .map(|w| if w.is_absolute() { w.clone() } else { current_dir.join(w) })
+        .map(|w| {
+            if w.is_absolute() {
+                w.clone()
+            } else {
+                current_dir.join(w)
+            }
+        })
         .unwrap_or(current_dir);
 
     // User-level secrets always load. The PROJECT .env is only loaded for
@@ -296,7 +302,11 @@ async fn main() {
             );
             0
         }
-        Some(Command::Term { server, token, session }) => {
+        Some(Command::Term {
+            server,
+            token,
+            session,
+        }) => {
             let opts = vak_terminal::TerminalOptions {
                 session_id: session,
                 server_url: server,

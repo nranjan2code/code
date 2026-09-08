@@ -16,18 +16,54 @@ pub struct SlashCommand {
 }
 
 pub const AVAILABLE_SLASH_COMMANDS: &[SlashCommand] = &[
-    SlashCommand { name: "/theme", description: "Switch visual theme (Vak Warm, Slate, Paper, Tokyo Night)" },
-    SlashCommand { name: "/diff", description: "Toggle multi-file git diff inspector" },
-    SlashCommand { name: "/preview", description: "Open live webpage/dev server preview" },
-    SlashCommand { name: "/clear", description: "Clear stream scrollback buffer" },
-    SlashCommand { name: "/model", description: "Inspect or switch active model route" },
-    SlashCommand { name: "/ops", description: "Jump to Observability & Operations Deck" },
-    SlashCommand { name: "/admin", description: "Jump to Remote Administration Cockpit" },
-    SlashCommand { name: "/inbox", description: "Jump to Attention Inbox & Memory" },
-    SlashCommand { name: "/hil", description: "Trigger Human-In-The-Loop approval modal" },
-    SlashCommand { name: "/detach", description: "Detach from session (leave running on server)" },
-    SlashCommand { name: "/help", description: "Show keyboard shortcuts & hotkeys" },
-    SlashCommand { name: "/quit", description: "Exit terminal" },
+    SlashCommand {
+        name: "/theme",
+        description: "Switch visual theme (Vak Warm, Slate, Paper, Tokyo Night)",
+    },
+    SlashCommand {
+        name: "/diff",
+        description: "Toggle multi-file git diff inspector",
+    },
+    SlashCommand {
+        name: "/preview",
+        description: "Open live webpage/dev server preview",
+    },
+    SlashCommand {
+        name: "/clear",
+        description: "Clear stream scrollback buffer",
+    },
+    SlashCommand {
+        name: "/model",
+        description: "Inspect or switch active model route",
+    },
+    SlashCommand {
+        name: "/ops",
+        description: "Jump to Observability & Operations Deck",
+    },
+    SlashCommand {
+        name: "/admin",
+        description: "Jump to Remote Administration Cockpit",
+    },
+    SlashCommand {
+        name: "/inbox",
+        description: "Jump to Attention Inbox & Memory",
+    },
+    SlashCommand {
+        name: "/hil",
+        description: "Trigger Human-In-The-Loop approval modal",
+    },
+    SlashCommand {
+        name: "/detach",
+        description: "Detach from session (leave running on server)",
+    },
+    SlashCommand {
+        name: "/help",
+        description: "Show keyboard shortcuts & hotkeys",
+    },
+    SlashCommand {
+        name: "/quit",
+        description: "Exit terminal",
+    },
 ];
 
 impl Default for ReplComposer {

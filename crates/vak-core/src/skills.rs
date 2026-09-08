@@ -486,7 +486,9 @@ pub fn prompt_section_from_capabilities(
         for skill in &active {
             out.push_str(&format!("### Skill: `{}`\n", skill.name));
             let content = skill.source.as_ref().and_then(|path| {
-                std::fs::read_to_string(path).ok().map(|text| strip_frontmatter(&text).trim().to_string())
+                std::fs::read_to_string(path)
+                    .ok()
+                    .map(|text| strip_frontmatter(&text).trim().to_string())
             });
             if let Some(body) = content {
                 if !body.is_empty() {
@@ -736,7 +738,8 @@ mod tests {
     }
 
     #[test]
-    fn active_skills_are_inlined_and_catalog_is_indexed() -> Result<(), Box<dyn std::error::Error>> {
+    fn active_skills_are_inlined_and_catalog_is_indexed() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = tempfile::tempdir()?;
         let skill_path = dir.path().join("SKILL.md");
         std::fs::write(

@@ -432,7 +432,9 @@ impl TurnCapabilities {
             .filter(|c| passes_domain_slice(c, probe))
             .map(|c| {
                 let mut desc = c.to_descriptor();
-                if c.id.kind == CapabilityKind::Skill && best_skill_name.as_ref() == Some(&c.id.name) {
+                if c.id.kind == CapabilityKind::Skill
+                    && best_skill_name.as_ref() == Some(&c.id.name)
+                {
                     if desc.configuration.is_null() {
                         desc.configuration = serde_json::json!({"active": true});
                     } else if let Some(obj) = desc.configuration.as_object_mut() {
@@ -1101,10 +1103,7 @@ mod tests {
                     "software-development",
                     Serves::declared([Domain::CodeExec, Domain::Documents, Domain::Vcs]),
                 ),
-                make_skill_cap(
-                    "writing-and-editing",
-                    Serves::declared([Domain::Documents]),
-                ),
+                make_skill_cap("writing-and-editing", Serves::declared([Domain::Documents])),
             ],
         );
         let required = BTreeSet::from([Domain::CodeExec, Domain::Documents, Domain::Vcs]);
@@ -1112,16 +1111,44 @@ mod tests {
         let probe = make_probe(&set, None, &policy, &[], &required, None);
         let tc = TurnCapabilities::build(&probe);
 
-        let sw = tc.frozen_skills.iter().find(|s| s.name == "software-development").unwrap();
+        let sw = tc
+            .frozen_skills
+            .iter()
+            .find(|s| s.name == "software-development")
+            .unwrap();
         assert!(sw.is_active);
 
-        let wr = tc.frozen_skills.iter().find(|s| s.name == "writing-and-editing").unwrap();
+        let wr = tc
+            .frozen_skills
+            .iter()
+            .find(|s| s.name == "writing-and-editing")
+            .unwrap();
         assert!(!wr.is_active);
 
-        let sw_desc = tc.descriptors.iter().find(|d| d.name == "software-development").unwrap();
-        assert_eq!(sw_desc.configuration.get("active").and_then(|v| v.as_bool()), Some(true));
+        let sw_desc = tc
+            .descriptors
+            .iter()
+            .find(|d| d.name == "software-development")
+            .unwrap();
+        assert_eq!(
+            sw_desc
+                .configuration
+                .get("active")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
 
-        let wr_desc = tc.descriptors.iter().find(|d| d.name == "writing-and-editing").unwrap();
-        assert_ne!(wr_desc.configuration.get("active").and_then(|v| v.as_bool()), Some(true));
+        let wr_desc = tc
+            .descriptors
+            .iter()
+            .find(|d| d.name == "writing-and-editing")
+            .unwrap();
+        assert_ne!(
+            wr_desc
+                .configuration
+                .get("active")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }
