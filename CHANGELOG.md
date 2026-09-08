@@ -5,6 +5,18 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.31 — 2026-09-08
+
+### Rich Modern Terminal Surface (`vak term`)
+
+- **Ultra-Dense Cinematic Command Cockpit.** Greenfield interactive console surface in `crates/vak-terminal`, invoked via `vak term` or `Surface::Terminal`. Preserves the headless Unix-composable CLI (`vak exec`, `vak plan`, etc.) intact.
+- **Screen 1: Dual-Deck Studio (60/40).** Left deck with 24-bit TrueColor halfblock wireframe (`▀▄█`), external browser launcher (`[o]`), collapsible markdown card (`Space`), and live bash worker card with animated Braille spinner (`⠋⠙⠹`). Right HUD with CPU/RSS gauges, 360° rotating radar sweep (`6°/tick`), token burn-rate waveform, and git diff inspector.
+- **Screen 2: Remote Observability & Operations.** Top KPI bar (FinOps spend with budget cap meter, 100% Healthy circuit breaker, 3/3 online services, DLQ). Left deck with real-time incident feed, audit receipts with SHA-256 fingerprints, and Merkle causal DAG. Right HUD with network traffic waveform and provider latency meters.
+- **Screen 3: Settings & Remote Admin.** CorePool multi-tenant directory tree displaying Shared Base Layer and active workspace, interactive security engine (`WorkspaceWrite`, `ReadOnly`, `FullAccess`, `Ask`, `AutoApprove`), MCP server inventory (`tavily`, `docker`, `github`), bot gateways, and pending authorization queue with live `[Approve]` and `[Deny]` action states.
+- **Screen 4: Attention Inbox & Memory.** Prioritized attention inbox with dynamic unread badge, budget alert ack (`[a]`), watchdog service recovery (`[r]`), self-evolved skill candidate queue with promotion (`[p]`), and cron automation countdown timers.
+- **Human-in-the-Loop (HIL) Dialog.** Floating modal with in-place interactive shell command editor (`[e]`), risk assessment, execution directory, cost impact, and fast decision keys (`[y]`, `[a]`, `[d]`, `[Esc]`).
+- **5 TrueColor Themes & Minimalist Unicode.** Vak Warm, Vak Slate, Vak Paper, Vak Contrast, and Tokyo Night cyclable via `F2` or `/theme`. Strict geometric Unicode glyphs with zero emojis workspace-wide.
+
 ## 3.0.30 — 2026-09-08
 
 ### Intent-Driven Active Skill Inlining & Progressive Disclosure
