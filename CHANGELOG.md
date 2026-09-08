@@ -5,6 +5,22 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.29 — 2026-09-08
+
+### Intent Pre-Flight HUD & Multi-Turn Context
+
+- **Lossless Realtime Intent Pre-Flight HUD.** Upgraded Composer Intent Pre-Flight
+  HUD to expose complete 6-axis commitment projections (`Risk`, `Pacing`,
+  `Scope`, `Autonomy`, `Budget`, `Verification`), capability bounds, and raw
+  signal weight telemetry.
+- **Session-Grounded History Facts.** Connected real-time intent explanation to
+  active session state via `session_id`, supplying multi-turn conversation
+  depth, previous conversational acts, and active commitment status to the
+  deterministic intent classification kernel.
+- **Strict Theme Adaptation.** Full compliance with Vak core theme tokens
+  across Light, Dark, Warm, and High Contrast palettes with zero hardcoded
+  colors and native collapse/expand HUD controls.
+
 ## 3.0.28 — 2026-09-08
 
 ### Admin Console Bus + Sandbox Coverage
