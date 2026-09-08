@@ -5,6 +5,20 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.26 — 2026-09-08
+
+### Sandbox Acceptance & Documentation
+
+- **Sandbox crate unifies execution backends.** Added `crates/vak-sandbox`
+  as a workspace member, consolidating the Seatbelt (macOS) and Landlock
+  (Linux) sandbox implementations behind a single trait surface used by
+  the broker, the execution engine, and the runtime permission model.
+- **Full-stack release artifact matrix.** Release and install runbooks
+  (`docs/release-and-install.md`, `docs/design/32-release-engineering.md`)
+  verified across the macOS native bundle (`.app` + DMG), the headless
+  Linux Docker image, and the web surface, with end-to-end checks on both
+  platforms.
+
 ## 3.0.25 — 2026-09-08
 
 ### Retired Tool Lifecycle & Plugin Cleanup
