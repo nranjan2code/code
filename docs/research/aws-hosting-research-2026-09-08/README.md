@@ -31,6 +31,27 @@ confirms every other option (shared Core, Lambda) breaks at least one vak
 invariant (10, 14, 25, 35 — workspace‑rooted FS access, brokered tool workers in
 a disposable process group, fail‑closed sandboxing, scrubbed execution).
 
+### 1.1 Architecture Blueprint: Hosting vak on AWS
+
+![Hosting vak on AWS: Per-Tenant Cloud Architecture](aws-per-tenant-architecture.jpg)
+
+The target architecture decouples the Always-Free static and control tier from dedicated, isolated tenant compute:
+- **Global Edge & Always-Free Tier ($0.00 Forever):** Amazon CloudFront + Amazon S3 static bucket serving the embedded SolidJS UI bundles (`site/dist`, `client_ui/dist-web`, `admin_ui/dist`). User authentication and tenant scoping are anchored by Amazon Cognito (10,000 MAU perpetual Always-Free allowance).
+- **Serverless Tenant Provisioner:** Amazon API Gateway + AWS Lambda + Amazon DynamoDB manage tenant metadata, auth verification, and container lifecycle.
+- **Dedicated Per-Tenant Compute Fleet:** Each customer runs an isolated `vak serve --trust` process on a dedicated `t4g.micro` EC2 instance or dedicated ECS Fargate task with private EBS volume storage (`.local/share/vak` for SQLite index and JSONL ledgers) and `__tool_worker` process-group isolation.
+- **Outbound Egress & FinOps:** Secure outbound API egress to frontier LLM providers (Anthropic, OpenAI) governed by vak's token metering and budget admission gates.
+
+### 1.2 Architecture Decision Matrix at a Glance
+
+![vak AI Agent AWS Architecture Decision Matrix](aws-decision-matrix.jpg)
+
+As evaluated in [`decision-matrix.md`](decision-matrix.md):
+- **Option A (Per-Tenant VM):** 100% Invariant Match. Dedicated process, dedicated filesystem, zero cross-tenant risk. Cost: ~$13.75/mo floor.
+- **Option B (Shared Containers on ECS):** Conditional. Denser packaging, but shared Linux kernel means container escapes could compromise isolation.
+- **Option C (Shared Multi-Tenant Core):** **Breaks Invariants.** Violates invariants 10, 14, 25, 35 by multiplexing un-sandboxed tenants into a single broker.
+- **Option D (Serverless Lambda per Turn):** **Breaks Invariants.** Fails on 15-minute turns, breaks persistent SSE/WebSocket PTY channels, and loses warm SQLite ledger state.
+- **Option E (Static Frontend Only):** Genuinely Always-Free ($0.00), perfect for web client and login, but engine requires paid compute.
+
 ---
 
 ## 2. Is "vak as the per‑tenant engine" the right choice for an *individual* customer?
@@ -55,6 +76,10 @@ little data). That floor never vanishes:
 - vak's sessions are warm for weeks and turns can run for minutes with a
   subprocess worker, so you can't time‑slice many individual tenants onto one
   shared box without breaking vak's warm session / warm worker model.
+
+### 2.2.1 AWS Cost Model & Free Tier Economics
+
+![AWS Cost Model & Free Tier Economics](aws-cost-model-breakdown.jpg)
 
 **Implication for individuals:** to offer vak to consumers *you must charge
 ≥ ~$14/mo just for bare infra* before your own margin, support, model‑API

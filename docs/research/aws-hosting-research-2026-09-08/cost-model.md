@@ -97,6 +97,8 @@ served to that customer only (the isolation vak offers is filesystem +
 process, per `docs/design/48-web-client.md` Phase E non‑goals / `docs/design/34`
 "run another gateway process").
 
+![AWS Cost Model & Free Tier Economics](aws-cost-model-breakdown.jpg)
+
 Base line (us-east-1, 2026-09), 24x7:
 
 | Line item | Qty | Rate | /mo | Notes |

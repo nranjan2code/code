@@ -23,6 +23,14 @@ and AGENTS.md invariants 10/14/16/25/35. See `cost-model.md` for prices.
 - **E. Static frontend only (Always‑Free).** S3 + CloudFront + Cognito for
   the public site / login / control plane; no engine hosting.
 
+---
+
+## Visual Comparison Matrix
+
+![vak AI Agent AWS Architecture Decision Matrix](aws-decision-matrix.jpg)
+
+---
+
 ## Evaluation
 
 Legend: ✅ yes / ✅\* conditional / ⚠ partial / ❌ no / 🔥 breaks an invariant.
