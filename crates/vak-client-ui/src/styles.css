@@ -548,13 +548,88 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .semantic-limited > span { color: var(--yellow); font-weight: 600; }
 .semantic-limited pre { margin: 7px 0; overflow: auto; white-space: pre-wrap; }
 .semantic-diagnostic { margin-top: 7px; color: var(--yellow); font-size: 11px; }
-.semantic-render-audit { margin-top: 12px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; }
-.semantic-render-audit summary { padding: 7px 0; cursor: pointer; color: var(--faint); }
-.semantic-render-audit summary:hover { color: var(--text-soft); }
-.semantic-render-audit dl { margin: 0 0 7px; }
-.semantic-render-audit dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
-.semantic-render-audit dt { color: var(--faint); }
-.semantic-render-audit dd { margin: 0; overflow-wrap: anywhere; color: var(--text-soft); }
+.semantic-render-audit {
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  font-size: 11px;
+}
+.semantic-render-audit summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  list-style: none;
+}
+.semantic-render-audit summary::-webkit-details-marker { display: none; }
+.semantic-render-audit summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid var(--muted);
+  border-bottom: 1px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+.semantic-render-audit[open] summary::before { transform: rotate(45deg); }
+.semantic-render-audit summary::after {
+  content: "Intent & evidence";
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+.semantic-render-audit summary:hover { color: var(--text); background: var(--surface-hover); }
+.semantic-render-audit dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 1px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--border-soft);
+}
+.semantic-render-audit dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--surface);
+}
+.semantic-render-audit dl > div:first-child { grid-column: 1 / -1; }
+.semantic-render-audit dt {
+  color: var(--faint);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.semantic-render-audit dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+.semantic-render-audit .semantic-check { padding-top: 3px; color: var(--text-soft); }
+.semantic-render-audit .semantic-check strong { color: var(--green); font-weight: 600; }
+.semantic-render-audit .semantic-check.failed strong,
+.semantic-render-audit .semantic-check.rejected strong { color: var(--red); }
+.semantic-render-audit .semantic-check + .semantic-check { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border-soft); }
+
+@media (max-width: 620px) {
+  .semantic-render-audit dl { grid-template-columns: 1fr; }
+  .semantic-render-audit dl > div:first-child { grid-column: auto; }
+}
 
 .artifact-shelf { margin: 18px 0 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .artifact-shelf-head { display: flex; gap: 7px; padding: 8px 11px; border-bottom: 1px solid var(--border-soft); color: var(--text); font-size: 12px; font-weight: 600; }
@@ -2126,6 +2201,114 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .approval { position: relative; padding-bottom: 14px; }
   .approval .ap-actions { position: sticky; bottom: 0; z-index: 2; margin-inline: -12px; padding: 10px 12px max(10px, env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); border-top: 1px solid var(--border-soft); }
   .ap-primary { white-space: pre-wrap; word-break: break-all; }
+}
+
+/* ---- chat surface refresh -----------------------------------------------
+   Keep the Auditor's Desk palette, but remove the old messenger treatment.
+   The transcript is a work surface: user intent, model work, and produced
+   output should read as a continuous document with hierarchy, not a stack of
+   floating speech bubbles. */
+.chat { padding-top: 32px; }
+.msg, .semantic-turn { max-width: 900px; }
+.msg { margin-bottom: 22px; }
+.msg.user { justify-content: flex-start; }
+.msg-bubble-wrap { align-items: flex-start; max-width: 100%; width: 100%; }
+.msg.user .md,
+.semantic-user .semantic-document {
+  max-width: 100%;
+  padding: 4px 0 4px 16px;
+  border: 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 540;
+}
+.msg.assistant .md,
+.semantic-outcome { color: var(--text-soft); }
+.msg.assistant .md { padding-left: 16px; }
+.msg-actions { margin-left: 16px; }
+.semantic-user { justify-content: flex-start; margin-bottom: 22px; }
+.semantic-user .semantic-document { font-weight: 540; }
+.semantic-outcome { padding-left: 16px; border-left: 1px solid var(--border-soft); }
+.semantic-turn { margin-bottom: 34px; }
+.semantic-outcome .outcome-review-actions { margin-left: -16px; padding-left: 16px; }
+
+/* Tool activity is subordinate evidence, not another message bubble. */
+.tool, .subagent {
+  margin-bottom: 10px;
+  border-color: var(--border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+}
+.tool-h, .subagent summary { min-height: 38px; padding: 7px 12px; }
+.tool-name { color: var(--text-soft); font-family: var(--sans); font-size: 11.5px; font-weight: 600; }
+.tool-result { background: color-mix(in srgb, var(--bg) 34%, transparent); }
+.thinking-row { padding: 12px 16px; }
+.thinking-dots span { width: 5px; height: 5px; }
+.cb { border-radius: 10px; background: var(--surface); }
+.cb-h { min-height: 34px; padding-inline: 12px; }
+
+/* Sidebar: stronger rhythm, less pill-shaped chrome, clearer active state. */
+.sidebar { background: color-mix(in srgb, var(--sidebar) 88%, var(--bg)); }
+.sb-head { height: 64px; padding-inline: 16px; }
+.brand { gap: 10px; font-size: 13.5px; }
+.brand-mark { width: 28px; height: 28px; border-radius: 9px; }
+.sb-nav { gap: 3px; padding-inline: 10px; }
+.sb-nav-item { min-height: 36px; padding-inline: 10px; border-radius: 8px; }
+.sb-nav-item.active { background: transparent; color: var(--text); }
+.sb-nav-item.active::before { content: ""; width: 2px; height: 18px; margin-left: -10px; margin-right: 2px; border-radius: 2px; background: var(--accent); }
+.sb-section-row { padding-inline: 16px 14px; margin-top: 5px; }
+.sb-section-title { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+.sb-list { padding-inline: 10px; }
+.workspace-group { margin-bottom: 14px; }
+.workspace-group-row { border-radius: 8px; }
+.workspace-group-row.active { background: color-mix(in srgb, var(--surface-active) 72%, transparent); }
+.workspace-group-head { min-height: 36px; padding-inline: 10px; }
+.sb-item { min-height: 38px; padding-inline: 10px; border-radius: 8px; }
+.sb-item.active { background: var(--surface-active); box-shadow: inset 2px 0 0 var(--accent); }
+.sb-item.active .session-icon { color: var(--accent-bright); }
+.sidebar-footer { padding: 10px; }
+.sidebar-settings { min-height: 36px; }
+
+/* ---- coordinated workspace shell ---------------------------------------
+   Keep the canvas calm when multiple surfaces are open. The old flex rules
+   let the chat, split panes, and dock all claim width at once, which made
+   controls jump and sometimes left two resize affordances fighting each
+   other. These are layout constraints, not a new visual mode. */
+.app {
+  --sidebar-width: clamp(228px, 18vw, 278px);
+  --dock-width: clamp(360px, 32vw, 520px);
+}
+.main { min-width: 0; overflow: hidden; }
+.workspace-head { min-width: 0; padding-inline: 18px; }
+.workspace-actions { flex-shrink: 0; }
+.chat { padding: 26px clamp(20px, 4vw, 48px) 20px; }
+.msg, .tool, .subagent, .thinking, .approval, .sysnote,
+.transcript-skeleton, .composer-box, .composer-note { max-width: 860px; }
+.composer-wrap { padding-inline: clamp(16px, 5vw, 56px); }
+.composer-box { border-radius: 16px; box-shadow: 0 10px 32px rgba(0,0,0,.16); }
+.dock { max-width: min(44vw, 560px); box-shadow: -18px 0 40px rgba(0,0,0,.12); }
+.dock-tabs { min-height: 48px; padding: 7px 10px; gap: 4px; }
+.dock-tab { min-height: 32px; padding-inline: 10px; border-radius: 9px; }
+.main-stack.split { display: grid; grid-template-columns: minmax(0, var(--split-left, 50%)) 1px minmax(0, 1fr); }
+.main-stack.split .pane:first-child,
+.main-stack.split .pane:last-child { width: auto; min-width: 0; }
+.split-divider { width: 1px; border-left: 0; background: var(--border-soft); }
+.split-divider:hover, .split-divider:focus-visible,
+body.is-resizing .split-divider { background: var(--accent); }
+.pane:not(.focused) { opacity: .86; transition: opacity 160ms ease; }
+.pane.focused { background: color-mix(in srgb, var(--surface) 22%, transparent); }
+.pane-badge { min-height: 34px; padding-inline: 12px; background: var(--surface); }
+
+@media (max-width: 1200px) {
+  .app { --sidebar-width: 236px; --dock-width: 390px; grid-template-columns: var(--sidebar-width) minmax(360px, 1fr) auto; }
+  .dock { max-width: 42vw; }
+}
+
+@media (max-width: 900px) {
+  .app { --dock-width: min(520px, calc(100vw - 16px)); }
+  .dock { max-width: calc(100vw - 16px); box-shadow: -18px 0 44px rgba(0,0,0,.28); }
 }
 
 @media (prefers-reduced-motion: reduce) {

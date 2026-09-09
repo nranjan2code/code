@@ -600,6 +600,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
+            {/* Keep the transcript mounted for the whole live turn. The
+                presentation projection is a settled view; switching to it
+                while the stream is still committing causes the visible
+                conversation to blink out and reappear in a different shape. */}
             <Show when={!isRunning(sid()) && hasSettledOutcome(sid())} fallback={
               <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
                 <For each={visibleItems(itemsOf(sid()))}>
