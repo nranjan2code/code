@@ -460,8 +460,9 @@ discovered partway through it.
 
 ### 8. Config
 
-No `[voice]` section exists today — `VoiceConfig` is only the per-bot/
-per-chat struct. Add `VoiceSettings`/`VoiceResolved` copying
+The `[voice]` section and `VoiceSettings`/`VoiceResolved` are shipped alongside
+the per-bot/per-chat `VoiceConfig`. The following contract is the implemented
+shape, retained here as a reference:
 `ServerSettings`/`WebSettings`/`ServerResolved`
 (`crates/vak-config/src/lib.rs:183`) field-for-field in style —
 `WebSettings::terminal` is the closest analogue to `[voice] enabled` in
@@ -481,14 +482,14 @@ stt_base_url = "http://127.0.0.1:8080/v1"   # whisper.cpp --server
 tts_base_url = "http://127.0.0.1:59125"     # piper / kokoro
 ```
 
-`[voice]` must be privileged: reset in `load_with_trust` next to the
+`[voice]` is privileged and is reset in `load_with_trust` next to the
 existing `fc.server = ServerSettings::default()` line
 (`crates/vak-config/src/lib.rs:2302`) and named in
 `PRIVILEGED_KEYS_NOTICE` (line 2234) — the same reasoning already
 written there for `web.terminal` applies verbatim: a cloned repository
 must not be able to open a microphone on the machine that cloned it.
-Register `voice` in `KNOWN_TOP_KEYS` so an unknown key warns rather than
-passing silently.
+`voice` and `intent` are registered in `KNOWN_TOP_KEYS`; valid settings no
+longer produce false unknown-key warnings.
 
 Keys are resolved through the configured credential boundary before a remote
 adapter is called. The handler only reads the canonical project/shared

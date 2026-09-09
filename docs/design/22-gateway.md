@@ -55,7 +55,8 @@ provider/model override. Sessions remain append-only JSONL trees keyed per-cwd.
 
 - No in-tree Telegram/Discord/Slack clients (they are thin adapters over
   `/gateway/inbound`; shipping them is config-level work, G1 below).
-- No media I/O (images/voice/TTS) yet.
+- Voice media I/O is shipped through the governed voice endpoints and channel
+  adapters; other future media types remain outside this gateway contract.
 - No multi-workspace routing: one gateway process serves the cwd it was
   started in (per-binding `workspace` override is the extension point).
 - No daemon self-daemonization: run under systemd/launchd/tmux like every
