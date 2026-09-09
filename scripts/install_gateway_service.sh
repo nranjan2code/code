@@ -8,17 +8,23 @@
 # Usage:
 #   scripts/install_gateway_service.sh [WORKSPACE_DIR] [--with-telegram]
 #
-# Reads secrets from ~/.vak/.env (TELEGRAM_BOT_TOKEN etc.) and pins the
+# Reads secrets from the canonical ~/vak-home/.env (TELEGRAM_BOT_TOKEN etc.) and pins the
 # gateway bearer token via VAK_GATEWAY_TOKEN so bridges survive
 # restarts. Re-run after changing .env or upgrading the binary.
 set -euo pipefail
 
-WORKSPACE="${1:-$PWD}"
+WORKSPACE="${1:-${VAK_WORKSPACE:-$HOME/vak-home}}"
 WITH_TELEGRAM=false
 [[ "${2:-}" == "--with-telegram" ]] && WITH_TELEGRAM=true
 
-ENV_FILE="${HOME}/.vak/.env"
-BIN_DIR="$PWD/target/release"
+ENV_FILE="${VAK_ENV_FILE:-${HOME}/vak-home/.env}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+BIN_DIR="${VAK_BIN_DIR:-$SCRIPT_DIR/../target/release}"
+
+case "$WORKSPACE" in
+  /*) ;;
+  *) echo "error: workspace must be an absolute path: $WORKSPACE" >&2; exit 2 ;;
+esac
 
 # --- build -------------------------------------------------------------------
 echo "→ building release binary"
