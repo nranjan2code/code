@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.40 — 2026-09-09
+
+- Improve Everyday navigation labels and preserve developer-oriented labels in Advanced mode.
+
 ## 3.0.39 — 2026-09-09
 
 - Repair MCP calls from providers that omit the action discriminator and complete strict release-gate cleanup.

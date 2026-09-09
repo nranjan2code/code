@@ -15,6 +15,7 @@ import {
   setSettingsScope,
   setTasksOpen,
   workspaceSwitching,
+  presentationMode,
 } from "../store";
 import { activate, newSession, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import { host } from "../host";
@@ -274,12 +275,22 @@ export default function Sidebar() {
       <nav class="sb-nav" aria-label="Primary">
         <button class="sb-nav-item sb-new" onClick={() => void newSession()}>
           <Icon name="add" />
-          <span>New task</span>
+          <span>{presentationMode() === "everyday" ? "New conversation" : "New task"}</span>
           <kbd>⌘N</kbd>
         </button>
+        <Show when={presentationMode() === "everyday"}>
+          <button class="sb-nav-item" onClick={() => void newSession()}>
+            <Icon name="spark" />
+            <span>Home</span>
+          </button>
+          <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
+            <Icon name="check" />
+            <span>My tasks</span>
+          </button>
+        </Show>
         <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
           <Icon name="timer" />
-          <span>Automations</span>
+          <span>{presentationMode() === "everyday" ? "Reminders" : "Automations"}</span>
         </button>
         <button
           class="sb-nav-item"
@@ -295,7 +306,7 @@ export default function Sidebar() {
         </button>
         <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
           <Icon name="archive" />
-          <span>Archived tasks</span>
+          <span>{presentationMode() === "everyday" ? "Saved" : "Archived tasks"}</span>
         </button>
       </nav>
 
