@@ -85,6 +85,56 @@ export default function Settings() {
   const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
   const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
   const [voiceProviders] = createResource(() => api.listVoiceProviders().catch(() => null));
+  const [presentationLibrary, { refetch: refetchPresentations }] = createResource(() => api.listPresentations().catch(() => null));
+  const presentationOwner = () => config()?.paths.cwd ?? backend().cwd ?? "workspace";
+  async function togglePresentation(definition: api.PresentationLibraryResponse["definitions"][number]) {
+    try {
+      const active = presentationLibrary()?.activations.some((entry) => entry.spec_id === definition.spec.id && entry.revision === definition.spec.revision && entry.owner === presentationOwner());
+      if (active) await api.deactivatePresentation(definition.spec.id, "workspace", presentationOwner());
+      else await api.activatePresentation(definition.spec.id, definition.spec.revision, "workspace", presentationOwner());
+      await refetchPresentations();
+      setNotice({ kind: "info", text: active ? "Presentation deactivated" : "Presentation activated" });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not change presentation: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  async function resetPresentation(definition: api.PresentationLibraryResponse["definitions"][number]) {
+    try {
+      await api.resetPresentation(definition.spec.id, "workspace", presentationOwner());
+      await refetchPresentations();
+      setNotice({ kind: "info", text: "Presentation reset to its original revision" });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not reset presentation: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  async function exportPresentationPack() {
+    try {
+      const pack = await api.exportPresentations();
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "vak-presentation-pack.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice({ kind: "info", text: "Presentation pack exported" });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not export pack: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  async function importPresentationPack(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    try {
+      await api.importPresentations(JSON.parse(await file.text()));
+      await refetchPresentations();
+      setNotice({ kind: "info", text: "Presentation pack imported as disabled previews" });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not import pack: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
   const discoveredVoices = () => voiceProviders()?.providers.flatMap((provider) => provider.voices) ?? [];
   async function updateVoice(patch: Record<string, unknown>) {
     try { await api.patchConfig(patch); setConfig((current) => current ? { ...current, voice: { ...(current.voice ?? { enabled: false, max_session_secs: 900, max_concurrent: 2, max_audio_bytes: 16 * 1024 * 1024 }), ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k.replace(/^voice_/, ""), v])) } } : current); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
@@ -869,6 +919,16 @@ export default function Settings() {
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
+                <Row title="Reusable presentations" description="Validated experience-pack cards available in this workspace."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${presentationLibrary()?.definitions.length ?? 0} definitions · ${presentationLibrary()?.activations.length ?? 0} active`}</span></Row>
+                <Row title="Presentation packs" description="Share validated definitions without sharing task results. Imported packs stay disabled until you activate them."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
+                <Show when={(presentationLibrary()?.definitions.length ?? 0) > 0}>
+                  <For each={presentationLibrary()?.definitions ?? []}>
+                    {(definition) => {
+                      const active = () => presentationLibrary()?.activations.some((entry) => entry.spec_id === definition.spec.id && entry.revision === definition.spec.revision && entry.owner === presentationOwner()) ?? false;
+                      return <Row title={`${definition.spec.id} · v${definition.spec.revision}`} description={`${definition.origin.plugin_id ?? "Built-in"} · ${definition.spec.accepts?.join(", ") ?? "generic"}`}><span class="settings-actions"><button class="settings-button" onClick={() => void togglePresentation(definition)}>{active() ? "Deactivate" : "Activate"}</button><button class="settings-button" onClick={() => void resetPresentation(definition)}>Reset</button></span></Row>;
+                    }}
+                  </For>
+                </Show>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
               <Group title="Voice">
@@ -906,7 +966,7 @@ export default function Settings() {
             <Show when={page() === "appearance"}>
               <header><h1>Appearance</h1><p>Make the workspace comfortable for long sessions.</p></header>
               <Group title="Theme">
-                <div class="theme-grid"><For each={[{ id: "system", label: "Match system" }, { id: "light", label: "Warm light" }, { id: "warm", label: "Warm dark" }, { id: "dark", label: "Midnight" }, { id: "contrast", label: "High contrast" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
+                <div class="theme-grid"><For each={[{ id: "system", label: "Match system" }, { id: "light", label: "Warm light" }, { id: "warm", label: "Warm dark" }, { id: "dark", label: "Midnight" }, { id: "contrast", label: "High contrast" }, { id: "sage", label: "Quiet sage" }, { id: "paper", label: "Soft paper" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
               </Group>
               <Group title="Layout and text">
                 <Row title="Text size" description="Conversation and interface text."><div class="range-control"><input type="range" min="90" max="120" step="5" value={uiPreferences.textScale} onInput={(event) => updateUiPreference("textScale", Number(event.currentTarget.value))} /><span>{uiPreferences.textScale}%</span></div></Row>

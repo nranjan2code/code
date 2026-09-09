@@ -409,7 +409,7 @@ fn act_domains(act: Act) -> &'static [&'static str] {
 ///
 /// An agent that cannot look at anything cannot correct a misread of its own
 /// task, so this floor is what makes slicing safe to attempt at all.
-const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
+pub const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
 
 // ----------------------------------------------------------- derivation ---
 
@@ -464,7 +464,7 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
     // The envelope question is answered per action at dispatch time; here we
     // take the conservative branch, because an engagement is computed before
     // anyone knows which paths a turn will touch.
-    limits.approval_ceiling = authority.approval_ceiling(reading.stakes, false);
+    limits.approval_ceiling = authority.approval_ceiling(reading.stakes, chrono::Utc::now(), false);
     limits.permission_ceiling = authority.permission_ceiling(chrono::Utc::now());
 
     // --- budget --------------------------------------------------------
@@ -520,14 +520,17 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
 }
 
 fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
+    // Irreversible stakes always interrupt — even when nobody is available
+    // to answer (Unattended + Durable), the work must stop and escalate.
+    // The Defer check below must not shadow this.
+    if reading.stakes == Stakes::Irreversible {
+        return HilMode::Interrupt;
+    }
     // Nobody to ask and somewhere to park the question: wait rather than fail.
     if authority.gate_fallback(reading.horizon) == GateFallback::Defer
         && reading.stakes.rank() >= Stakes::Costly.rank()
     {
         return HilMode::Defer;
-    }
-    if reading.stakes == Stakes::Irreversible {
-        return HilMode::Interrupt;
     }
     let envelope_live = authority
         .envelope

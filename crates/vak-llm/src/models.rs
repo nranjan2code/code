@@ -31,6 +31,9 @@ pub struct BedrockModelAvailability {
     pub invokable: bool,
 }
 
+type BedrockAvailabilityCache =
+    std::collections::HashMap<String, (std::time::Instant, Vec<BedrockModelAvailability>)>;
+
 /// Read Bedrock's native control-plane availability projection. This
 /// intentionally remains separate from Mantle `/models`:
 /// catalogue membership is not proof that a model can be invoked.
@@ -39,11 +42,7 @@ pub async fn bedrock_model_availability(
     model_ids: &[String],
 ) -> Result<Vec<BedrockModelAvailability>, LlmError> {
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<
-        Mutex<
-            std::collections::HashMap<String, (std::time::Instant, Vec<BedrockModelAvailability>)>,
-        >,
-    > = OnceLock::new();
+    static CACHE: OnceLock<Mutex<BedrockAvailabilityCache>> = OnceLock::new();
     let cache_key = format!(
         "{}:{:?}",
         auth.credential_id.as_deref().unwrap_or_default(),

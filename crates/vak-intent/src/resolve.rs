@@ -226,6 +226,10 @@ pub fn resolve(
         ));
         let general = Intent {
             reading: Reading {
+                // Attendance is a surface fact, not an inference — preserve
+                // it through the general fallback so Cron/Heartbeat surfaces
+                // keep their unattended cadence even on zero-signal input.
+                attendance: reading.attendance,
                 confidence: reading.confidence,
                 axis_confidence: reading.axis_confidence,
                 ..Reading::general()

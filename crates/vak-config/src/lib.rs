@@ -238,12 +238,12 @@ impl VoiceSettings {
             ("voice.synthesis_model", self.synthesis_model.as_deref()),
             ("voice.realtime_model", self.realtime_model.as_deref()),
         ] {
-            if let Some(value) = value {
-                if value.trim().is_empty() || value.chars().count() > 256 {
-                    return Err(format!(
-                        "{name} must be non-empty and at most 256 characters"
-                    ));
-                }
+            if let Some(value) = value
+                && (value.trim().is_empty() || value.chars().count() > 256)
+            {
+                return Err(format!(
+                    "{name} must be non-empty and at most 256 characters"
+                ));
             }
         }
         if self.max_session_secs == 0 || self.max_session_secs > 86_400 {
@@ -1013,12 +1013,30 @@ impl VoiceConfig {
     /// Overlay a narrower scope onto its parent. Missing fields inherit.
     pub fn overlay(parent: Option<&Self>, child: &Self) -> Self {
         Self {
-            provider: child.provider.clone().or_else(|| parent.and_then(|v| v.provider.clone())),
-            voice_name: child.voice_name.clone().or_else(|| parent.and_then(|v| v.voice_name.clone())),
-            transcription_model: child.transcription_model.clone().or_else(|| parent.and_then(|v| v.transcription_model.clone())),
-            synthesis_model: child.synthesis_model.clone().or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
-            realtime_model: child.realtime_model.clone().or_else(|| parent.and_then(|v| v.realtime_model.clone())),
-            persona: child.persona.clone().or_else(|| parent.and_then(|v| v.persona.clone())),
+            provider: child
+                .provider
+                .clone()
+                .or_else(|| parent.and_then(|v| v.provider.clone())),
+            voice_name: child
+                .voice_name
+                .clone()
+                .or_else(|| parent.and_then(|v| v.voice_name.clone())),
+            transcription_model: child
+                .transcription_model
+                .clone()
+                .or_else(|| parent.and_then(|v| v.transcription_model.clone())),
+            synthesis_model: child
+                .synthesis_model
+                .clone()
+                .or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
+            realtime_model: child
+                .realtime_model
+                .clone()
+                .or_else(|| parent.and_then(|v| v.realtime_model.clone())),
+            persona: child
+                .persona
+                .clone()
+                .or_else(|| parent.and_then(|v| v.persona.clone())),
         }
     }
 }
@@ -2683,6 +2701,9 @@ pub fn persist_voice_settings_at(
 }
 
 /// Persist voice settings including operation-specific model pins.
+// The explicit arguments preserve the existing atomic config API and keep the
+// three operation-specific model pins visibly separate at every call site.
+#[allow(clippy::too_many_arguments)]
 pub fn persist_voice_settings_at_with_models(
     path: PathBuf,
     enabled: Option<bool>,

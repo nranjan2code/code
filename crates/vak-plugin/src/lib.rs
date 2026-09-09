@@ -168,6 +168,65 @@ pub struct PackageInspection {
     pub warnings: Vec<String>,
 }
 
+impl PackageInspection {
+    /// Load only declared JSON presentation specs, through the same bounded
+    /// validator used by runtime selection. Plugin files remain inert data;
+    /// no plugin-authored code is executed during inspection.
+    pub fn presentation_specs(
+        &self,
+    ) -> Result<Vec<(String, vak_presentation::PresentationSpec)>, PluginError> {
+        let declared: BTreeSet<&str> = self
+            .manifest
+            .components
+            .presentation
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let mut specs = Vec::new();
+        for file in &self.files {
+            if !declared.contains(file.path.as_str()) || !file.path.ends_with(".json") {
+                continue;
+            }
+            let path = self.root.join(&file.path);
+            let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+            let spec = vak_presentation::parse_spec(&bytes).map_err(|error| {
+                PluginError::InvalidManifest(format!("presentation {}: {error}", file.path))
+            })?;
+            specs.push((file.path.clone(), spec));
+        }
+        Ok(specs)
+    }
+
+    /// Convert inspected presentation files into disabled library records.
+    /// Installation/activation remains a separate host decision.
+    pub fn presentation_records(
+        &self,
+        plugin_id: impl Into<String>,
+        owner: impl Into<String>,
+    ) -> Result<Vec<vak_presentation::StoredPresentation>, PluginError> {
+        let plugin_id = plugin_id.into();
+        let owner = owner.into();
+        let mut records = Vec::new();
+        for (path, spec) in self.presentation_specs()? {
+            let digest = vak_presentation::digest(&spec).map_err(|error| {
+                PluginError::InvalidManifest(format!("presentation {path}: {error}"))
+            })?;
+            records.push(vak_presentation::StoredPresentation {
+                spec,
+                digest,
+                origin: vak_presentation::PresentationOrigin {
+                    scope: vak_presentation::LibraryScope::Workspace,
+                    owner: owner.clone(),
+                    plugin_id: Some(plugin_id.clone()),
+                    generation: Some(format!("{}:{path}", self.manifest.version)),
+                },
+                enabled: false,
+            });
+        }
+        Ok(records)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MarketplaceFormat {

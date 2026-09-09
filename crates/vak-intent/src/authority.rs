@@ -469,7 +469,12 @@ impl Authority {
     ///
     /// The result is a *ceiling*: `vak-core` takes the stricter of this and
     /// the configured `ApprovalMode`. Nothing here can loosen configuration.
-    pub fn approval_ceiling(&self, stakes: Stakes, in_envelope: bool) -> ApprovalCeiling {
+    pub fn approval_ceiling(
+        &self,
+        stakes: Stakes,
+        now: chrono::DateTime<chrono::Utc>,
+        in_envelope: bool,
+    ) -> ApprovalCeiling {
         let by_stakes = match stakes {
             Stakes::Inert | Stakes::Reversible => ApprovalCeiling::AutoApprove,
             Stakes::Costly => ApprovalCeiling::ApproveSafe,
@@ -482,7 +487,14 @@ impl Authority {
             Autonomy::Manual => ApprovalCeiling::Ask,
             Autonomy::Assisted => ApprovalCeiling::ApproveSafe,
             Autonomy::Delegated => {
-                if in_envelope {
+                // in_envelope says the action falls within the grant's scope;
+                // the grant must also be live. A revoked or expired envelope
+                // buys nothing — delegation without a valid grant fails closed.
+                let envelope_live = self
+                    .envelope
+                    .as_ref()
+                    .is_some_and(|envelope| envelope.is_live(now));
+                if in_envelope && envelope_live {
                     ApprovalCeiling::AutoApprove
                 } else {
                     ApprovalCeiling::Ask
@@ -565,7 +577,7 @@ mod tests {
                 };
                 for in_envelope in [true, false] {
                     assert_eq!(
-                        authority.approval_ceiling(Stakes::Irreversible, in_envelope),
+                        authority.approval_ceiling(Stakes::Irreversible, chrono::Utc::now(), in_envelope),
                         ApprovalCeiling::Ask,
                         "autonomy={autonomy:?} in_envelope={in_envelope}"
                     );
@@ -582,11 +594,11 @@ mod tests {
             envelope: Some(envelope()),
         };
         assert_eq!(
-            authority.approval_ceiling(Stakes::Reversible, true),
+            authority.approval_ceiling(Stakes::Reversible, chrono::Utc::now(), true),
             ApprovalCeiling::AutoApprove
         );
         assert_eq!(
-            authority.approval_ceiling(Stakes::Reversible, false),
+            authority.approval_ceiling(Stakes::Reversible, chrono::Utc::now(), false),
             ApprovalCeiling::Ask
         );
     }

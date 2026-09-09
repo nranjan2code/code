@@ -77,7 +77,8 @@ impl Frame {
     }
 
     pub fn validate_audio(bytes: &[u8]) -> Result<(), VoiceError> {
-        if bytes.is_empty() || bytes.len() > MAX_AUDIO_FRAME_BYTES || bytes.len() % 2 != 0 {
+        if bytes.is_empty() || bytes.len() > MAX_AUDIO_FRAME_BYTES || !bytes.len().is_multiple_of(2)
+        {
             return Err(VoiceError::InvalidRequest("invalid PCM audio frame".into()));
         }
         Ok(())

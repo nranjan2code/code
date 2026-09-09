@@ -76,7 +76,7 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
         skills: vak_delivery::built_in_skill_registry(),
         recipes: vak_delivery::built_in_recipes(),
     };
-    snapshot_inner(session_id, session, &builtin)
+    snapshot_inner(session_id, session, &builtin, None)
 }
 
 /// Like [`snapshot`] but uses a plugin-merged `PresentationPlanner` so that
@@ -88,7 +88,19 @@ pub(crate) fn snapshot_with_planner(
     session: &SessionLog,
     planner: &PresentationPlanner,
 ) -> OutputTimeline {
-    snapshot_inner(session_id, session, planner)
+    snapshot_inner(session_id, session, planner, None)
+}
+
+/// Live projection variant with the persisted adaptive library. The legacy
+/// planner remains authoritative for validation; the library only contributes
+/// an optional, auditable selection reference to the same document.
+pub(crate) fn snapshot_with_planner_and_library(
+    session_id: &str,
+    session: &SessionLog,
+    planner: &PresentationPlanner,
+    library: &vak_presentation::PresentationLibrary,
+) -> OutputTimeline {
+    snapshot_inner(session_id, session, planner, Some(library))
 }
 
 /// Rehydrates sandbox-created artifacts into historical presentation views.
@@ -197,6 +209,7 @@ fn snapshot_inner(
     session_id: &str,
     session: &SessionLog,
     planner: &PresentationPlanner,
+    adaptive_library: Option<&vak_presentation::PresentationLibrary>,
 ) -> OutputTimeline {
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
@@ -206,6 +219,7 @@ fn snapshot_inner(
     let mut turn_evidence_state: HashMap<usize, String> = HashMap::new();
     let mut turn_human_review: HashMap<usize, String> = HashMap::new();
     let mut turn_review_verdict: HashMap<usize, String> = HashMap::new();
+    let mut selected_presentation: Option<(String, u64)> = None;
     let mut successful_runs = std::collections::HashSet::new();
     let mut scan_turn = 0usize;
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
@@ -313,6 +327,19 @@ fn snapshot_inner(
                 }
             }
             EntryPayload::Activity(activity)
+                if activity.kind == ActivityKind::PresentationSelection =>
+            {
+                if let (Some(spec_id), Some(revision)) = (
+                    activity.data.get("spec_id"),
+                    activity
+                        .data
+                        .get("revision")
+                        .and_then(|value| value.parse().ok()),
+                ) {
+                    selected_presentation = Some((spec_id.clone(), revision));
+                }
+            }
+            EntryPayload::Activity(activity)
                 if activity.kind == ActivityKind::Diagnostic
                     && activity.label == "Outcome review" =>
             {
@@ -410,6 +437,37 @@ fn snapshot_inner(
                                 content: OutputContent::Document {
                                     document: {
                                         let mut document = compile_markdown(text.clone());
+                                        if let Some(library) = adaptive_library {
+                                            let available = plan
+                                                .accepted
+                                                .iter()
+                                                .filter(|candidate| {
+                                                    library.definitions().any(|stored| {
+                                                        stored.spec.accepts.iter().any(|kind| {
+                                                            kind == &candidate.semantic_type
+                                                        })
+                                                    })
+                                                })
+                                                .count();
+                                            if available > 0 {
+                                                document.metadata.insert(
+                                                    "adaptive_definitions_available".into(),
+                                                    available.to_string(),
+                                                );
+                                            }
+                                            if let Some((spec_id, revision)) = selected_presentation
+                                                .as_ref()
+                                                && library.definitions().any(|stored| {
+                                                    stored.spec.id == *spec_id
+                                                        && stored.spec.revision == *revision
+                                                })
+                                            {
+                                                document.metadata.insert(
+                                                    "adaptive_selected_spec".into(),
+                                                    format!("{spec_id}@{revision}"),
+                                                );
+                                            }
+                                        }
                                         if let Some(decision) = plan.recipe.as_ref() {
                                             document.metadata.insert(
                                                 "recipe_id".into(),
@@ -557,6 +615,49 @@ fn snapshot_inner(
                                 actions: Vec::new(),
                                 fallback_text: text.clone(),
                             });
+                            if let (Some(library), Some((spec_id, revision))) =
+                                (adaptive_library, selected_presentation.as_ref())
+                                && let Some(stored) = library.definitions().find(|stored| {
+                                    stored.spec.id == *spec_id && stored.spec.revision == *revision
+                                })
+                                && let Some(candidate) = plan.accepted.iter().find(|candidate| {
+                                    stored
+                                        .spec
+                                        .accepts
+                                        .iter()
+                                        .any(|kind| kind == &candidate.semantic_type)
+                                })
+                                && let Some(content) = OutputContent::from_compiled_adaptive(
+                                    vak_presentation::compile(
+                                        &stored.spec,
+                                        &vak_presentation::CompileInput {
+                                            semantic_type: candidate.semantic_type.clone(),
+                                            payload: candidate.payload.clone(),
+                                            fallback_text: text.clone(),
+                                        },
+                                    ),
+                                    text.clone(),
+                                )
+                            {
+                                timeline.items.push(OutputItem {
+                                    id: format!("{}-adaptive", entry.id),
+                                    timestamp: entry.ts.to_rfc3339(),
+                                    turn_id: turn_id.clone(),
+                                    role: OutputRole::Assistant,
+                                    kind: OutputKind::Outcome,
+                                    status: output_status,
+                                    outcome: None,
+                                    content,
+                                    provenance: Some(OutputProvenance {
+                                        session_id: Some(session_id.into()),
+                                        entry_id: Some(entry.id.clone()),
+                                        tool_call_id: None,
+                                        source: Some("adaptive_library".into()),
+                                    }),
+                                    actions: Vec::new(),
+                                    fallback_text: text.clone(),
+                                });
+                            }
                             for (link_index, preview) in plan
                                 .accepted
                                 .into_iter()
@@ -909,7 +1010,10 @@ fn activity_item(
         ActivityKind::RouteFallback
         | ActivityKind::Diagnostic
         | ActivityKind::VoiceTranscript
-        | ActivityKind::VoicePlayback => (
+        | ActivityKind::VoicePlayback
+        | ActivityKind::PresentationSelection
+        | ActivityKind::PresentationProposal
+        | ActivityKind::PresentationFeedback => (
             OutputRole::System,
             OutputKind::Information,
             OutputContent::Information {

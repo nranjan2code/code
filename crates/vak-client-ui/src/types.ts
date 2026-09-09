@@ -114,7 +114,24 @@ export type OutputContent =
   | { type: "error"; message: string; source?: string | null; retryable: boolean }
   | { type: "outcome"; summary: string; document?: PresentationDocument | null }
   | { type: "artifact"; artifact: ArtifactRef }
-  | { type: "structured"; output: StructuredOutput };
+  | { type: "structured"; output: StructuredOutput }
+  | { type: "adaptive"; tree: AdaptiveRenderTree; fallback_text: string };
+
+export interface AdaptiveRenderTree {
+  schema_version: number;
+  spec_id: string;
+  revision: number;
+  digest: string;
+  root: AdaptiveRenderNode;
+  accessibility_summary?: string | null;
+  coverage: { rendered_paths: string[]; omitted_paths: string[] };
+}
+
+export interface AdaptiveRenderNode {
+  primitive: string;
+  props: Record<string, unknown>;
+  children: AdaptiveRenderNode[];
+}
 
 export interface OutputAction {
   id: string;

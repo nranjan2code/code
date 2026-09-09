@@ -453,6 +453,12 @@ pub enum ActivityKind {
     VoiceTranscript,
     /// Speech delivery and playback accounting for an assistant response.
     VoicePlayback,
+    /// Which immutable presentation revision was selected for a result.
+    PresentationSelection,
+    /// A validated immutable presentation revision preview was proposed.
+    PresentationProposal,
+    /// User choice or feedback about a presentation projection.
+    PresentationFeedback,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

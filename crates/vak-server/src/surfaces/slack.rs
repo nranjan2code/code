@@ -165,17 +165,16 @@ impl SlackBridge {
                 if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
                     eprintln!("[slack] send to {channel_id} failed: {e}");
                 }
-                if message.audio_url.is_some() {
-                    if let Err(e) = self
+                if message.audio_url.is_some()
+                    && let Err(e) = self
                         .send_voice(
                             channel_id,
                             &reply.chunks.join("\n"),
                             reply.session_id.as_deref(),
                         )
                         .await
-                    {
-                        eprintln!("[slack] voice reply unavailable: {e}");
-                    }
+                {
+                    eprintln!("[slack] voice reply unavailable: {e}");
                 }
             }
         }
@@ -231,21 +230,21 @@ impl SlackBridge {
     async fn process(&self, message: &SlackMessage) -> GatewayReply {
         let mut text = message.text.clone();
         let mut attachments = Vec::new();
-        if let Some(url) = &message.audio_url {
-            if let Ok(response) = http().get(url).bearer_auth(&self.bot_token).send().await
-                && response.status().is_success()
-                && let Ok(bytes) = response.bytes().await
-                && bytes.len() <= 16 * 1024 * 1024
-            {
-                use base64::Engine as _;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                attachments.push(serde_json::json!({
-                    "data": encoded.clone(),
-                    "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
-                    "kind": "audio",
-                    "filename": "voice",
-                }));
-                if let Ok(response) = http().post(format!("{}/voice/transcribe", self.gateway_url))
+        if let Some(url) = &message.audio_url
+            && let Ok(response) = http().get(url).bearer_auth(&self.bot_token).send().await
+            && response.status().is_success()
+            && let Ok(bytes) = response.bytes().await
+            && bytes.len() <= 16 * 1024 * 1024
+        {
+            use base64::Engine as _;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            attachments.push(serde_json::json!({
+                "data": encoded.clone(),
+                "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
+                "kind": "audio",
+                "filename": "voice",
+            }));
+            if let Ok(response) = http().post(format!("{}/voice/transcribe", self.gateway_url))
                     .bearer_auth(&self.gateway_token)
                     .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
                     .send().await
@@ -253,7 +252,6 @@ impl SlackBridge {
                     && let Ok(value) = response.json::<Value>().await
                     && let Some(transcript) = value["text"].as_str()
                 { text = format!("{}\n{}", text.trim(), transcript.trim()).trim().to_string(); }
-            }
         }
         // 0c-03: real per-user chat/sender, never a fixed placeholder.
         let req = match InboundRequest::new(

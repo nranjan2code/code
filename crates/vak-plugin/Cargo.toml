@@ -16,6 +16,7 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
 vak-tools = { workspace = true }
+vak-presentation = { workspace = true }
 
 [lints]
 workspace = true

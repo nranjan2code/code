@@ -1397,3 +1397,102 @@ export function closeCommitment(id: string, verdict: Verdict, note = ""): Promis
     body: JSON.stringify({ verdict, note }),
   });
 }
+
+export interface PresentationLibraryResponse {
+  definitions: Array<{ spec: { id: string; revision: number; accepts?: string[] }; origin: { owner: string; plugin_id?: string | null }; enabled: boolean }>;
+  activations: Array<{ spec_id: string; revision: number; scope: "user" | "workspace"; owner: string }>;
+}
+
+export function listPresentations(): Promise<PresentationLibraryResponse> {
+  return req("/presentations");
+}
+
+export function listPresentationPrimitives(): Promise<string[]> {
+  return req("/presentations/primitives");
+}
+
+export function getPresentationSpec(id: string, revision: number): Promise<unknown> {
+  return req(`/presentations/specs/${encodeURIComponent(id)}/${revision}`);
+}
+
+export function exportPresentations(): Promise<unknown> {
+  return req("/presentations/export");
+}
+
+export function importPresentations(pack: unknown): Promise<unknown> {
+  return req("/presentations/import", { method: "POST", body: JSON.stringify(pack) });
+}
+
+export function registerPresentations(records: unknown[]): Promise<{ registered: number }> {
+  return req("/presentations", {
+    method: "POST",
+    body: JSON.stringify({ records }),
+  });
+}
+
+export function revokePresentationPlugin(pluginId: string): Promise<{ removed: number }> {
+  return req(`/presentations/plugins/${encodeURIComponent(pluginId)}`, { method: "DELETE" });
+}
+
+export function activatePresentation(id: string, revision: number, scope: "user" | "workspace", owner: string): Promise<unknown> {
+  return req(`/presentations/${encodeURIComponent(id)}/${revision}/activate`, {
+    method: "POST",
+    body: JSON.stringify({ scope, owner }),
+  });
+}
+
+export function deactivatePresentation(id: string, scope: "user" | "workspace", owner: string): Promise<unknown> {
+  return req(`/presentations/${encodeURIComponent(id)}/deactivate`, {
+    method: "POST",
+    body: JSON.stringify({ scope, owner }),
+  });
+}
+
+export function resetPresentation(id: string, scope: "user" | "workspace", owner: string): Promise<unknown> {
+  return req(`/presentations/${encodeURIComponent(id)}/reset`, {
+    method: "POST",
+    body: JSON.stringify({ scope, owner }),
+  });
+}
+
+export function proposePresentationRevision(request: unknown, proposed: unknown, origin: unknown): Promise<unknown> {
+  return req("/presentations/revisions", {
+    method: "POST",
+    body: JSON.stringify({ request, proposed, origin }),
+  });
+}
+
+export function proposeSessionPresentationRevision(sessionId: string, request: unknown, proposed: unknown, origin: unknown): Promise<unknown> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/proposals`, {
+    method: "POST",
+    body: JSON.stringify({ request, proposed, origin }),
+  });
+}
+
+export function submitPresentationFeedback(sessionId: string, choice: string, feedback?: string): Promise<void> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ choice, feedback }),
+  });
+}
+
+export function selectPresentation(
+  sessionId: string,
+  specId: string,
+  revision: number,
+  lifetime: "use_once" | "remember",
+  scope?: "user" | "workspace",
+  owner?: string,
+): Promise<unknown> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/select`, {
+    method: "POST",
+    body: JSON.stringify({ spec_id: specId, revision, lifetime, scope, owner }),
+  });
+}
+
+export function selectPresentationForSemantic(sessionId: string, semanticType: string): Promise<unknown> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/select`, {
+    method: "POST",
+    body: JSON.stringify({ spec_id: "", revision: 0, semantic_type: semanticType, lifetime: "use_once" }),
+  });
+}

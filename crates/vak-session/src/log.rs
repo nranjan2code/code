@@ -268,6 +268,59 @@ impl SessionLog {
         })
     }
 
+    /// Append an auditable presentation selection without making it part of
+    /// model context. The original result and fallback remain authoritative.
+    pub fn append_presentation_selection(
+        &mut self,
+        activity_id: impl Into<String>,
+        semantic_type: impl Into<String>,
+        spec_id: impl Into<String>,
+        revision: u64,
+        mode: impl Into<String>,
+        fallback_used: bool,
+    ) -> Result<Entry, SessionError> {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("semantic_type".into(), semantic_type.into());
+        data.insert("spec_id".into(), spec_id.into());
+        data.insert("revision".into(), revision.to_string());
+        data.insert("mode".into(), mode.into());
+        data.insert("fallback_used".into(), fallback_used.to_string());
+        self.append_activity(crate::types::ActivityRecord {
+            activity_id: activity_id.into(),
+            turn: None,
+            kind: crate::types::ActivityKind::PresentationSelection,
+            status: crate::types::ActivityStatus::Succeeded,
+            label: "Presentation selected".into(),
+            detail: None,
+            data,
+        })
+    }
+
+    /// Append a projection choice or correction. If the text is sent to the
+    /// model, callers must also append a normal Message entry so derivation
+    /// remains complete.
+    pub fn append_presentation_feedback(
+        &mut self,
+        activity_id: impl Into<String>,
+        choice: impl Into<String>,
+        feedback: Option<String>,
+    ) -> Result<Entry, SessionError> {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("choice".into(), choice.into());
+        if let Some(feedback) = feedback {
+            data.insert("feedback".into(), feedback);
+        }
+        self.append_activity(crate::types::ActivityRecord {
+            activity_id: activity_id.into(),
+            turn: None,
+            kind: crate::types::ActivityKind::PresentationFeedback,
+            status: crate::types::ActivityStatus::Succeeded,
+            label: "Presentation feedback".into(),
+            detail: None,
+            data,
+        })
+    }
+
     /// Append what the playback client reports it emitted. This is distinct
     /// from provider output because buffering and interruption can prevent
     /// the user from hearing the complete synthesis.

@@ -42,6 +42,11 @@
 //! - `POST /agent-network/capabilities` → issue an explicitly scoped agent capability
 //! - `POST /agent-network/messages`      → broker a bounded workspace message
 //! - `GET  /agent-network/messages`      → receive queued workspace messages
+//! - `GET/POST /presentations`           → inspect/register validated experience-pack records
+//! - `POST /presentations/revisions`    → validate and store a disabled immutable revision preview
+//! - `POST /presentations/:id/:revision/activate` → explicitly activate one scoped revision
+//! - `POST /presentations/:id/deactivate` → remove one scoped activation
+//! - `DELETE /presentations/plugins/:plugin_id` → revoke a plugin's presentation records
 
 /// Pin `VAK_HOME` to one throwaway directory for this whole test binary.
 ///
@@ -599,6 +604,41 @@ fn router_with_state(state: AppState) -> Router {
         .route("/plugins/audit", get(plugin_audit))
         .route("/plugins/invocations", get(plugin_invocations))
         .route(
+            "/presentations",
+            get(list_presentations).post(register_presentations),
+        )
+        .route(
+            "/presentations/primitives",
+            get(list_presentation_primitives),
+        )
+        .route(
+            "/presentations/specs/{id}/{revision}",
+            get(get_presentation_spec),
+        )
+        .route(
+            "/presentations/revisions",
+            post(propose_presentation_revision),
+        )
+        .route(
+            "/sessions/{id}/presentation/proposals",
+            post(propose_session_presentation_revision),
+        )
+        .route("/presentations/export", get(export_presentations))
+        .route("/presentations/import", post(import_presentations))
+        .route(
+            "/presentations/{id}/{revision}/activate",
+            post(activate_presentation),
+        )
+        .route(
+            "/presentations/{id}/deactivate",
+            post(deactivate_presentation),
+        )
+        .route("/presentations/{id}/reset", post(reset_presentation))
+        .route(
+            "/presentations/plugins/{plugin_id}",
+            delete(revoke_presentations_plugin),
+        )
+        .route(
             "/plugins/retired",
             get(list_retired_plugins).delete(remove_retired_plugins),
         )
@@ -649,6 +689,14 @@ fn router_with_state(state: AppState) -> Router {
             get(session_sandbox_executions),
         )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
+        .route(
+            "/sessions/{id}/presentation/feedback",
+            post(presentation_feedback),
+        )
+        .route(
+            "/sessions/{id}/presentation/select",
+            post(select_presentation_for_session),
+        )
         .route(
             "/sessions/{id}/presentation/events",
             get(presentation_events_sse),
@@ -1507,14 +1555,13 @@ async fn voice_transcribe(
                 .session_id
                 .as_deref()
                 .filter(|id| !id.trim().is_empty())
+                && let Ok(mut session) = state.core.open_session(session_id).await
             {
-                if let Ok(mut session) = state.core.open_session(session_id).await {
-                    let _ = session.append_voice_transcript(
-                        uuid::Uuid::now_v7().to_string(),
-                        text.clone(),
-                        true,
-                    );
-                }
+                let _ = session.append_voice_transcript(
+                    uuid::Uuid::now_v7().to_string(),
+                    text.clone(),
+                    true,
+                );
             }
             (
                 StatusCode::OK,
@@ -1595,7 +1642,6 @@ async fn voice_speak(
             }
         });
 
-    let voice_settings = voice_settings;
     if !voice_settings.enabled {
         return (
             StatusCode::CONFLICT,
@@ -1664,10 +1710,9 @@ async fn voice_speak(
             .session_id
             .as_deref()
             .filter(|id| !id.trim().is_empty())
+            && let Ok(mut session) = state.core.open_session(session_id).await
         {
-            if let Ok(mut session) = state.core.open_session(session_id).await {
-                let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
-            }
+            let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
         }
         let mut receipt = vak_llm::WorkReceipt::new(
             vak_llm::WorkPurpose::VoiceSynthesis,
@@ -1757,14 +1802,10 @@ async fn voice_speak(
                     .session_id
                     .as_deref()
                     .filter(|id| !id.trim().is_empty())
+                    && let Ok(mut session) = state.core.open_session(session_id).await
                 {
-                    if let Ok(mut session) = state.core.open_session(session_id).await {
-                        let _ = session.append_voice_playback(
-                            uuid::Uuid::now_v7().to_string(),
-                            0,
-                            false,
-                        );
-                    }
+                    let _ =
+                        session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
                 }
                 ([(axum::http::header::CONTENT_TYPE, mime)], audio).into_response()
             }
@@ -1830,11 +1871,9 @@ async fn voice_speak(
                 .session_id
                 .as_deref()
                 .filter(|id| !id.trim().is_empty())
+                && let Ok(mut session) = state.core.open_session(session_id).await
             {
-                if let Ok(mut session) = state.core.open_session(session_id).await {
-                    let _ =
-                        session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
-                }
+                let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
             }
             receipt.record(
                 vak_llm::AttemptReason::Initial,
@@ -1850,10 +1889,10 @@ async fn voice_speak(
                 wav,
             )
                 .into_response();
-            if let Ok(encoded) = serde_json::to_string(&receipt) {
-                if let Ok(value) = axum::http::HeaderValue::try_from(encoded) {
-                    response.headers_mut().insert("x-vak-work-receipt", value);
-                }
+            if let Ok(encoded) = serde_json::to_string(&receipt)
+                && let Ok(value) = axum::http::HeaderValue::try_from(encoded)
+            {
+                response.headers_mut().insert("x-vak-work-receipt", value);
             }
             response
         }
@@ -3299,8 +3338,15 @@ pub(crate) fn register_handle(
     let events_tx = events::EventBus::new();
     let side_events_tx = events::EventBus::new();
     let planner = delivery::merged_presentation_planner(&core);
-    let mut presentation_snapshot =
-        crate::projection::snapshot_with_planner(&id, &session, &planner);
+    let adaptive_store = vak_store::presentation::PresentationStore::new(
+        core.sessions_home().join("presentations.json"),
+    );
+    let mut presentation_snapshot = match adaptive_store.load() {
+        Ok(library) => {
+            crate::projection::snapshot_with_planner_and_library(&id, &session, &planner, &library)
+        }
+        Err(_) => crate::projection::snapshot_with_planner(&id, &session, &planner),
+    };
     crate::projection::append_sandbox_artifacts(&mut presentation_snapshot, &durable_home, &id);
     let presentation = Arc::new(Mutex::new(presentation_snapshot));
     let mut presentation_rx = events_tx.subscribe();
@@ -5382,7 +5428,12 @@ async fn presentation_snapshot(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
             let planner = delivery::merged_presentation_planner(&handle.core);
-            let mut timeline = crate::projection::snapshot_with_planner(&id, session, &planner);
+            let mut timeline = match presentation_store(&state).load() {
+                Ok(library) => crate::projection::snapshot_with_planner_and_library(
+                    &id, session, &planner, &library,
+                ),
+                Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
+            };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
                 &handle.core.sessions_home(),
@@ -5414,6 +5465,183 @@ async fn presentation_snapshot(
         )
             .into_response(),
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresentationFeedbackBody {
+    choice: String,
+    #[serde(default)]
+    feedback: Option<String>,
+    #[serde(default)]
+    chain_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresentationSelectionBody {
+    #[serde(default)]
+    spec_id: String,
+    revision: u64,
+    #[serde(default)]
+    semantic_type: Option<String>,
+    #[serde(default = "default_presentation_selection")]
+    lifetime: String,
+    #[serde(default)]
+    scope: Option<vak_presentation::LibraryScope>,
+    #[serde(default)]
+    owner: Option<String>,
+}
+
+fn default_presentation_selection() -> String {
+    "use_once".into()
+}
+
+async fn select_presentation_for_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PresentationSelectionBody>,
+) -> axum::response::Response {
+    if body.spec_id.len() > 256
+        || body
+            .semantic_type
+            .as_deref()
+            .is_some_and(|value| value.len() > 256)
+        || !matches!(body.lifetime.as_str(), "use_once" | "remember")
+        || (body.lifetime == "remember"
+            && (body.scope.is_none()
+                || body.owner.as_deref().unwrap_or_default().trim().is_empty()))
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let store = presentation_store(&state);
+    let library = match store.load() {
+        Ok(library) => library,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let (spec_id, revision) = if body.spec_id.trim().is_empty() {
+        let Some(semantic_type) = body
+            .semantic_type
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let owner = state.core.cwd().to_string_lossy().into_owned();
+        let Some(definition) = library.select_preferred(semantic_type, "builtin", &owner) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        (definition.spec.id.clone(), definition.spec.revision)
+    } else {
+        (body.spec_id.clone(), body.revision)
+    };
+    let Some(definition) = library.get(&spec_id, revision) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if body.lifetime == "remember" {
+        let Some(scope) = body.scope else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let owner = body.owner.as_deref().unwrap_or_default();
+        if definition.origin.scope != scope || definition.origin.owner != owner {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        let result = store.load().and_then(|mut current| {
+            current
+                .activate(&spec_id, revision, scope, owner)
+                .map_err(|error| {
+                    vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                })?;
+            store.save(&current)
+        });
+        if result.is_err() {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    }
+    let mut data = std::collections::BTreeMap::new();
+    data.insert("spec_id".into(), spec_id);
+    data.insert("revision".into(), revision.to_string());
+    data.insert("lifetime".into(), body.lifetime);
+    let activity = vak_session::ActivityRecord {
+        activity_id: format!("presentation-select-{}", uuid::Uuid::now_v7()),
+        turn: None,
+        kind: vak_session::ActivityKind::PresentationSelection,
+        status: vak_session::ActivityStatus::Succeeded,
+        label: "Presentation selected".into(),
+        detail: None,
+        data,
+    };
+    handle
+        .activity_buffer
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(activity);
+    Json(serde_json::json!({ "selected": true })).into_response()
+}
+
+async fn presentation_feedback(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PresentationFeedbackBody>,
+) -> StatusCode {
+    if body.choice.trim().is_empty() || body.choice.len() > 128 {
+        return StatusCode::BAD_REQUEST;
+    }
+    if body
+        .feedback
+        .as_deref()
+        .is_some_and(|text| text.len() > 32 * 1024)
+    {
+        return StatusCode::BAD_REQUEST;
+    }
+    if body
+        .chain_id
+        .as_deref()
+        .is_some_and(|chain| chain.trim().is_empty() || chain.len() > 256)
+    {
+        return StatusCode::BAD_REQUEST;
+    }
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND;
+    };
+    let feedback_denied = matches!(
+        body.choice.trim().to_ascii_lowercase().as_str(),
+        "keep_original" | "reject" | "dismiss"
+    );
+    let mut data = std::collections::BTreeMap::new();
+    data.insert("choice".into(), body.choice);
+    if let Some(chain_id) = body.chain_id {
+        data.insert("chain_id".into(), chain_id);
+    }
+    if let Some(feedback) = body.feedback {
+        data.insert("feedback".into(), feedback);
+    }
+    let activity = vak_session::ActivityRecord {
+        activity_id: uuid::Uuid::now_v7().to_string(),
+        turn: None,
+        kind: vak_session::ActivityKind::PresentationFeedback,
+        status: if feedback_denied {
+            vak_session::ActivityStatus::Denied
+        } else {
+            vak_session::ActivityStatus::Succeeded
+        },
+        label: "Presentation feedback".into(),
+        detail: None,
+        data,
+    };
+    handle
+        .activity_buffer
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(activity);
+    StatusCode::ACCEPTED
 }
 
 async fn presentation_events_sse(
@@ -6881,6 +7109,390 @@ fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
     )
 }
 
+fn presentation_store(state: &AppState) -> vak_store::presentation::PresentationStore {
+    vak_store::presentation::PresentationStore::new(
+        state.core.sessions_home().join("presentations.json"),
+    )
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresentationPackBody {
+    records: Vec<vak_presentation::StoredPresentation>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PresentationExport {
+    schema_version: u16,
+    definitions: Vec<vak_presentation::StoredPresentation>,
+    activations: Vec<vak_presentation::PresentationActivation>,
+}
+
+async fn list_presentations(State(state): State<AppState>) -> axum::response::Response {
+    let store = presentation_store(&state);
+    match store.load().and_then(|mut library| {
+        let before = library.definitions().count();
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            library.register(seed).map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        }
+        if library.definitions().count() != before {
+            store.save(&library)?;
+        }
+        Ok(library)
+    }) {
+        Ok(library) => Json(serde_json::json!({
+            "definitions": library.definitions().collect::<Vec<_>>(),
+            "activations": library.activations(),
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn export_presentations(State(state): State<AppState>) -> axum::response::Response {
+    match presentation_store(&state).load() {
+        Ok(library) => Json(PresentationExport {
+            schema_version: 1,
+            definitions: library.definitions().cloned().collect(),
+            activations: library.activations().to_vec(),
+        })
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn import_presentations(
+    State(state): State<AppState>,
+    Json(pack): Json<PresentationExport>,
+) -> axum::response::Response {
+    if pack.schema_version != 1 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "unsupported presentation pack schema" })),
+        )
+            .into_response();
+    }
+    let store = presentation_store(&state);
+    let result = store.load().and_then(|mut library| {
+        for mut definition in pack.definitions {
+            // Pack import is always a preview operation. Never trust an
+            // enabled bit from an external serialized projection.
+            definition.enabled = false;
+            library.register(definition).map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        }
+        store.save(&library)
+    });
+    match result {
+        Ok(()) => Json(serde_json::json!({ "imported": true })).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_presentation_primitives() -> Json<Vec<vak_presentation::Primitive>> {
+    Json(vec![
+        vak_presentation::Primitive::Stack,
+        vak_presentation::Primitive::Row,
+        vak_presentation::Primitive::Section,
+        vak_presentation::Primitive::Text,
+        vak_presentation::Primitive::Title,
+        vak_presentation::Primitive::Badge,
+        vak_presentation::Primitive::List,
+        vak_presentation::Primitive::Table,
+        vak_presentation::Primitive::KeyValue,
+        vak_presentation::Primitive::Progress,
+        vak_presentation::Primitive::LinkPreview,
+        vak_presentation::Primitive::Image,
+        vak_presentation::Primitive::Divider,
+        vak_presentation::Primitive::Artifact,
+    ])
+}
+
+async fn get_presentation_spec(
+    State(state): State<AppState>,
+    Path((id, revision)): Path<(String, u64)>,
+) -> axum::response::Response {
+    match presentation_store(&state).load() {
+        Ok(library) => match library.get(&id, revision) {
+            Some(definition) => Json(definition).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn register_presentations(
+    State(state): State<AppState>,
+    Json(body): Json<PresentationPackBody>,
+) -> axum::response::Response {
+    match presentation_store(&state).register_pack(body.records) {
+        Ok(count) => Json(serde_json::json!({ "registered": count })).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresentationScopeBody {
+    scope: vak_presentation::LibraryScope,
+    owner: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresentationRevisionBody {
+    request: vak_presentation::PresentationRevisionRequest,
+    proposed: vak_presentation::PresentationSpec,
+    origin: vak_presentation::PresentationOrigin,
+    #[serde(default)]
+    chain_id: Option<String>,
+}
+
+async fn propose_presentation_revision(
+    State(state): State<AppState>,
+    Json(body): Json<PresentationRevisionBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    let result = store.load().and_then(|mut library| {
+        let revision = library
+            .register_revision(body.request, body.proposed, body.origin)
+            .map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        store.save(&library)?;
+        Ok(revision)
+    });
+    match result {
+        Ok(revision) => Json(revision).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn propose_session_presentation_revision(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PresentationRevisionBody>,
+) -> axum::response::Response {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let chain_id = body
+        .chain_id
+        .clone()
+        .unwrap_or_else(|| body.request.base_id.clone());
+    if chain_id.trim().is_empty() || chain_id.len() > 256 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let (attempts, rejected) = {
+        let activities = handle
+            .activity_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        activities
+            .iter()
+            .fold((0_u8, 0_u8), |(attempts, rejected), activity| {
+                if activity.data.get("chain_id") != Some(&chain_id) {
+                    return (attempts, rejected);
+                }
+                match activity.kind {
+                    vak_session::ActivityKind::PresentationProposal => (
+                        attempts.saturating_add(1),
+                        rejected.saturating_add(u8::from(
+                            activity.status == vak_session::ActivityStatus::Failed,
+                        )),
+                    ),
+                    vak_session::ActivityKind::PresentationFeedback
+                        if activity.status == vak_session::ActivityStatus::Denied =>
+                    {
+                        (attempts, rejected.saturating_add(1))
+                    }
+                    _ => (attempts, rejected),
+                }
+            })
+    };
+    if attempts >= 2 || rejected >= 2 || body.request.attempt == 0 || body.request.attempt > 2 {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": "presentation proposal chain exhausted" })),
+        )
+            .into_response();
+    }
+    let store = presentation_store(&state);
+    let result = store.load().and_then(|mut library| {
+        let revision = library
+            .register_revision(body.request, body.proposed, body.origin)
+            .map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        store.save(&library)?;
+        Ok(revision)
+    });
+    match result {
+        Ok(revision) => {
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("spec_id".into(), revision.proposed.id.clone());
+            data.insert("revision".into(), revision.proposed.revision.to_string());
+            data.insert("digest".into(), revision.digest.clone());
+            data.insert("chain_id".into(), chain_id.clone());
+            let activity = vak_session::ActivityRecord {
+                activity_id: format!("presentation-proposal-{}", uuid::Uuid::now_v7()),
+                turn: None,
+                kind: vak_session::ActivityKind::PresentationProposal,
+                status: vak_session::ActivityStatus::Succeeded,
+                label: "Presentation proposal previewed".into(),
+                detail: Some("immutable disabled revision".into()),
+                data,
+            };
+            handle
+                .activity_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(activity);
+            Json(revision).into_response()
+        }
+        Err(error) => {
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("chain_id".into(), chain_id);
+            data.insert("error".into(), error.to_string());
+            handle
+                .activity_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(vak_session::ActivityRecord {
+                    activity_id: format!("presentation-proposal-{}", uuid::Uuid::now_v7()),
+                    turn: None,
+                    kind: vak_session::ActivityKind::PresentationProposal,
+                    status: vak_session::ActivityStatus::Failed,
+                    label: "Presentation proposal rejected".into(),
+                    detail: Some("invalid immutable revision".into()),
+                    data,
+                });
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn activate_presentation(
+    State(state): State<AppState>,
+    Path((id, revision)): Path<(String, u64)>,
+    Json(body): Json<PresentationScopeBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    let result = store.load().and_then(|mut library| {
+        let activation = library
+            .activate(&id, revision, body.scope, &body.owner)
+            .map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        store.save(&library)?;
+        Ok(activation)
+    });
+    match result {
+        Ok(activation) => Json(activation).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn deactivate_presentation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PresentationScopeBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    match store.load() {
+        Ok(mut library) => {
+            library.deactivate(&id, body.scope, &body.owner);
+            match store.save(&library) {
+                Ok(()) => Json(serde_json::json!({ "deactivated": true })).into_response(),
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn reset_presentation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PresentationScopeBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    match store.load() {
+        Ok(mut library) => {
+            let restored = library.reset(&id, body.scope, &body.owner);
+            match store.save(&library) {
+                Ok(()) => {
+                    Json(serde_json::json!({ "reset": true, "restored": restored })).into_response()
+                }
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn revoke_presentations_plugin(
+    State(state): State<AppState>,
+    Path(plugin_id): Path<String>,
+) -> axum::response::Response {
+    match presentation_store(&state).revoke_plugin(&plugin_id) {
+        Ok(removed) => Json(serde_json::json!({ "removed": removed })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn list_plugins(
     State(state): State<AppState>,
     Query(query): Query<PluginScopeQuery>,
@@ -7158,9 +7770,18 @@ async fn plugin_disable(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name),
-    )
+    let result =
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name);
+    match result {
+        Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
+            Ok(_) => (StatusCode::OK, Json(value)).into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("plugin disabled but presentation revocation failed: {error}") })),
+            ).into_response(),
+        },
+        Err(error) => plugin_result(Err::<serde_json::Value, _>(error)),
+    }
 }
 
 async fn plugin_rollback(
@@ -7168,9 +7789,18 @@ async fn plugin_rollback(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name),
-    )
+    let result =
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name);
+    match result {
+        Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
+            Ok(_) => (StatusCode::OK, Json(value)).into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("plugin rolled back but presentation revocation failed: {error}") })),
+            ).into_response(),
+        },
+        Err(error) => plugin_result(Err::<serde_json::Value, _>(error)),
+    }
 }
 
 async fn plugin_remove(
@@ -7178,9 +7808,17 @@ async fn plugin_remove(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name),
-    )
+    let result = plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name);
+    match result {
+        Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
+            Ok(_) => (StatusCode::OK, Json(value)).into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("plugin removed but presentation revocation failed: {error}") })),
+            ).into_response(),
+        },
+        Err(error) => plugin_result(Err::<serde_json::Value, _>(error)),
+    }
 }
 
 #[derive(serde::Deserialize)]

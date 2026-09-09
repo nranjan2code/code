@@ -466,6 +466,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["ui.preview"],
             vec!["desktop", "terminal", "telegram"],
         ),
+        (
+            "plan.timeline",
+            vec!["plan", "timeline"],
+            vec!["plan.timeline"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
     ] {
         let requires_typed_output = matches!(recipe.0, "coding.test_report" | "ui.preview");
         let typed_output_types: Vec<String> = match recipe.0 {
@@ -536,6 +542,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "data.grid",
             "recipe.card",
             "ui.preview",
+            "plan.timeline",
         ]
         .into_iter()
         .map(String::from)
@@ -947,6 +954,19 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
                 .map(Value::to_string)
                 .unwrap_or_else(|| "not supplied".into())
         )),
+        "plan.timeline" => {
+            if let Some(items) = p["items"].as_array() {
+                for item in items.iter().take(100) {
+                    let label = item["label"].as_str().unwrap_or("Step");
+                    let detail = item["detail"].as_str().unwrap_or_default();
+                    if detail.is_empty() {
+                        lines.push(format!("- {label}"));
+                    } else {
+                        lines.push(format!("- {label}: {detail}"));
+                    }
+                }
+            }
+        }
         "ui.preview" => lines.push(format!(
             "Preview: {}\nFile: {}",
             title,
@@ -1396,6 +1416,16 @@ fn validate_payload(
                     })
                 })
         }
+        "plan.timeline" => {
+            strings(payload, &["title"])
+                && array(payload, "items").is_some_and(|items| {
+                    items.iter().all(|item| {
+                        strings(item, &["label"])
+                            && item.get("detail").is_none_or(Value::is_string)
+                            && item.get("status").is_none_or(Value::is_string)
+                    })
+                })
+        }
         _ => return Ok(()),
     };
     if valid {
@@ -1780,6 +1810,11 @@ mod tests {
         );
         assert_eq!(chart.len(), 1);
         assert_eq!(chart[0].semantic_type, "chart");
+        let timeline = structured_outputs_from_text(
+            r#"{"semantic_type":"plan.timeline","payload":{"title":"Weekend trip","items":[{"label":"Travel","detail":"Train to Jaipur"}]}}"#,
+        );
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].semantic_type, "plan.timeline");
 
         // A tool that just returns plain prose, or JSON with no declared
         // semantic_type, must not have a type guessed for it.

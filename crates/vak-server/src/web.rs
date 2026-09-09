@@ -980,20 +980,20 @@ async fn drive_voice(
                             } else {
                                 continue;
                             };
-                            if let Ok(text) = result {
-                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                            if let Ok(text) = result
+                                && let Ok(frame) = vak_voice::protocol::Frame::encode_control(
                                     &vak_voice::protocol::Control::Transcript {
                                         utterance_id: utterance_id.clone(),
                                         text,
                                         final_: true,
                                     },
-                                ) {
-                                    let _ = socket
-                                        .send(Message::Text(
-                                            String::from_utf8_lossy(&frame).into_owned().into(),
-                                        ))
-                                        .await;
-                                }
+                                )
+                            {
+                                let _ = socket
+                                    .send(Message::Text(
+                                        String::from_utf8_lossy(&frame).into_owned().into(),
+                                    ))
+                                    .await;
                             }
                         }
                         utterance_audio.clear();
@@ -1006,16 +1006,15 @@ async fn drive_voice(
                         if text.trim().is_empty() {
                             continue;
                         }
-                        if let Some(handle) = ledger.as_ref() {
-                            if let Ok(mut log) = handle.session.lock() {
-                                if let Some(log) = log.as_mut() {
-                                    let _ = log.append_voice_transcript(
-                                        format!("voice:{utterance_id}"),
-                                        text.clone(),
-                                        final_,
-                                    );
-                                }
-                            }
+                        if let Some(handle) = ledger.as_ref()
+                            && let Ok(mut log) = handle.session.lock()
+                            && let Some(log) = log.as_mut()
+                        {
+                            let _ = log.append_voice_transcript(
+                                format!("voice:{utterance_id}"),
+                                text.clone(),
+                                final_,
+                            );
                         }
                         if final_ {
                             let _ = lifecycle.commit_transcript(&utterance_id, &text);
@@ -1025,17 +1024,15 @@ async fn drive_voice(
                         // permissions, intent, budgets, receipts, and
                         // cancellation remain one contract. Interim text is
                         // presentation-only and must never dispatch work.
-                        if final_ {
-                            if let Some(handle) = ledger.as_ref() {
-                                let prompt = crate::gateway::compose_voice_prompt(&text);
-                                crate::gateway::start_turn_chain_with_gateway(
-                                    gateway.clone(),
-                                    &handle.core,
-                                    handle.clone(),
-                                    prompt,
-                                    None,
-                                );
-                            }
+                        if final_ && let Some(handle) = ledger.as_ref() {
+                            let prompt = crate::gateway::compose_voice_prompt(&text);
+                            crate::gateway::start_turn_chain_with_gateway(
+                                gateway.clone(),
+                                &handle.core,
+                                handle.clone(),
+                                prompt,
+                                None,
+                            );
                         }
                         if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
                             &vak_voice::protocol::Control::Transcript {
@@ -1066,52 +1063,51 @@ async fn drive_voice(
                                     tokio_util::sync::CancellationToken::new(),
                                 )
                                 .await
+                                && let Some(Ok(chunk)) = stream.next().await
                             {
-                                if let Some(Ok(chunk)) = stream.next().await {
-                                    let _ = socket.send(Message::Binary(chunk.data.into())).await;
-                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
-                                        &vak_voice::protocol::Control::Playback {
-                                            utterance_id: utterance_id.clone(),
-                                            emitted_ms: u64::from(chunk.duration_ms),
-                                            interrupted: false,
-                                        },
-                                    ) {
-                                        let _ = socket
-                                            .send(Message::Text(
-                                                String::from_utf8_lossy(&frame).into_owned().into(),
-                                            ))
-                                            .await;
-                                    }
-                                    let mut receipt = vak_llm::WorkReceipt::new(
-                                        vak_llm::WorkPurpose::VoiceSynthesis,
-                                        "local",
-                                        persisted
-                                            .synthesis_model
-                                            .as_deref()
-                                            .or(persisted.model.as_deref())
-                                            .unwrap_or("offline"),
-                                    );
-                                    receipt.record(
-                                        vak_llm::AttemptReason::Initial,
-                                        vak_llm::FailureDomain::Unknown,
-                                        vak_llm::Settlement::Ok,
-                                        0,
-                                        None,
-                                        None,
-                                    );
-                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
-                                        &vak_voice::protocol::Control::Receipt {
-                                            utterance_id: utterance_id.clone(),
-                                            receipt: serde_json::to_value(receipt)
-                                                .unwrap_or(serde_json::Value::Null),
-                                        },
-                                    ) {
-                                        let _ = socket
-                                            .send(Message::Text(
-                                                String::from_utf8_lossy(&frame).into_owned().into(),
-                                            ))
-                                            .await;
-                                    }
+                                let _ = socket.send(Message::Binary(chunk.data.into())).await;
+                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                    &vak_voice::protocol::Control::Playback {
+                                        utterance_id: utterance_id.clone(),
+                                        emitted_ms: u64::from(chunk.duration_ms),
+                                        interrupted: false,
+                                    },
+                                ) {
+                                    let _ = socket
+                                        .send(Message::Text(
+                                            String::from_utf8_lossy(&frame).into_owned().into(),
+                                        ))
+                                        .await;
+                                }
+                                let mut receipt = vak_llm::WorkReceipt::new(
+                                    vak_llm::WorkPurpose::VoiceSynthesis,
+                                    "local",
+                                    persisted
+                                        .synthesis_model
+                                        .as_deref()
+                                        .or(persisted.model.as_deref())
+                                        .unwrap_or("offline"),
+                                );
+                                receipt.record(
+                                    vak_llm::AttemptReason::Initial,
+                                    vak_llm::FailureDomain::Unknown,
+                                    vak_llm::Settlement::Ok,
+                                    0,
+                                    None,
+                                    None,
+                                );
+                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                    &vak_voice::protocol::Control::Receipt {
+                                        utterance_id: utterance_id.clone(),
+                                        receipt: serde_json::to_value(receipt)
+                                            .unwrap_or(serde_json::Value::Null),
+                                    },
+                                ) {
+                                    let _ = socket
+                                        .send(Message::Text(
+                                            String::from_utf8_lossy(&frame).into_owned().into(),
+                                        ))
+                                        .await;
                                 }
                             }
                         }
@@ -1121,16 +1117,15 @@ async fn drive_voice(
                         emitted_ms,
                         interrupted,
                     }) if interrupted => {
-                        if let Some(handle) = ledger.as_ref() {
-                            if let Ok(mut log) = handle.session.lock() {
-                                if let Some(log) = log.as_mut() {
-                                    let _ = log.append_voice_playback(
-                                        format!("voice:{utterance_id}"),
-                                        emitted_ms,
-                                        true,
-                                    );
-                                }
-                            }
+                        if let Some(handle) = ledger.as_ref()
+                            && let Ok(mut log) = handle.session.lock()
+                            && let Some(log) = log.as_mut()
+                        {
+                            let _ = log.append_voice_playback(
+                                format!("voice:{utterance_id}"),
+                                emitted_ms,
+                                true,
+                            );
                         }
                         if let Some(event) = lifecycle.interrupt_playback(emitted_ms) {
                             // Echo the authoritative interruption accounting so

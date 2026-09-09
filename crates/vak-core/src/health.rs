@@ -722,6 +722,7 @@ mod tests {
                 "config warnings",
                 "capability reach",
                 "voice configuration",
+                "local TTS backend",
                 "capability health",
                 "gateway channels",
                 "install layout",

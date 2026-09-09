@@ -1,6 +1,167 @@
 # 57 — Adaptive presentation runtime and reusable experience packs
 
-Status: **proposal; implementation not started**.
+Status: **implementation in progress; P1/P4 library, durable-store, session-audit, mode-toggle, bounded-revision, plugin-pack, pack-lifecycle, plugin-lifecycle-revocation, server-control, client-control, activation-control, revision-control, lifecycle-test, visible-management, delivery-integration, generic feedback-audit, visible-feedback, primitive-introspection, scoped-precedence, pack-portability, pack-management, result-scoped-proposal, original-fallback, declarative-seed-pack, everyday-theme-pack, semantic-selection, reset, cross-surface audit, generic constrained-surface lowering, live projection library-awareness, native adaptive output-contract, selected-tree emission, domain-neutral shape-inference, canonical renderer-envelope, cross-surface packet-validation, bounded proposal-chain, light-theme chrome polish, and fail-closed fallback regression slices landed**.
+
+Current implementation: `crates/vak-presentation` provides the bounded
+declarative spec, JSON-path binding validator, deterministic compiler,
+content digest, coverage accounting, semantic-type matching, and explicit
+fallback path. The crate is also re-exported by `vak-delivery`; selected
+session results now emit the native adaptive output alongside the preserved
+document fallback.
+
+The surface audit found no second card-selection contract in the messaging
+adapters. Desktop/browser/JSON use the semantic delivery packet; Telegram,
+Slack, Discord, plain text, and terminal lower that same packet through their
+existing markup/chunk converters. The legacy structured-fence projector and
+provider-shape adapters remain compatibility boundaries: they validate typed
+data, never mutate the session ledger, and always retain the exact Markdown
+fallback. New experience packs therefore do not add channel-specific branches;
+future surfaces plug in by declaring capabilities and a lowering adapter.
+
+The delivery crate now also exposes one generic primitive-to-Markdown lowering
+function for constrained surfaces. It handles the closed primitive vocabulary
+without semantic/domain branches and returns the compiler's exact fallback for
+degraded presentations; the two adaptive projection tests cover both paths.
+
+`vak-store::presentation::PresentationStore` now persists the reusable library
+outside append-only session ledgers with atomic replacement and safe empty-store
+initialization. The delivery adapter can select and compile an active scoped
+definition while retaining the original fallback text.
+
+`vak-session` now records typed append-only presentation selection and feedback
+activities. These records are projection-neutral and excluded from model
+context; callers append a normal message as well whenever feedback becomes
+model-visible.
+
+The client now has one persisted Everyday/Advanced presentation-mode toggle,
+defaulting to Everyday. It is a presentation preference only: switching it does
+not rotate sessions, alter permissions, or change voice behavior.
+
+The visual theme pack now includes two everyday palettes, Quiet Sage and Soft
+Paper, alongside the existing technical palettes. They are host-owned token
+sets: renderer behavior, permissions, voice, and presentation data remain
+unchanged when a theme changes.
+
+The host exposes a declarative built-in starter pack of 52 disabled definitions:
+41 everyday layouts and 10 coding-flow layouts. They use only the bounded
+primitive vocabulary and the same fallback/compiler path as installed packs;
+they are seed content, not renderer-specific branches.
+
+`vak-presentation::propose_revision` now validates user-guided candidates,
+preserves identity, assigns the next immutable revision, computes its digest,
+and caps retries at two attempts. Invalid candidates never replace the active
+definition.
+
+`PresentationLibrary::register_revision` adds the validated candidate as a
+disabled preview; activation is a separate explicit operation, so previewing a
+revision cannot silently change future selection.
+
+`vak-plugin::PackageInspection::presentation_specs` now inspects declared JSON
+presentation files through the bounded runtime validator. It returns inert,
+validated specs only; plugin-authored code is never executed during inspection.
+`presentation_records` converts those specs into disabled, workspace-scoped
+library records carrying plugin and generation provenance; activation remains an
+explicit host operation.
+
+`vak-store::PresentationStore::register_pack` atomically registers inspected
+records, while `revoke_plugin` removes that plugin's current definitions and
+activations. Historical session selection receipts remain untouched.
+
+The server now exposes `GET/POST /presentations` and
+`DELETE /presentations/plugins/{plugin_id}` over the same workspace state, so
+pack registration and revocation can be driven by the existing control plane.
+
+The client API now exposes matching authenticated helpers for listing,
+registering, and revoking presentation packs; they use the existing bearer or
+cookie transport rather than a second credential path.
+
+Settings also reports the current workspace's validated presentation-definition
+and activation counts, making pack state visible without exposing raw plugin
+implementation details.
+
+The control plane now supports explicit scope/owner-bound activation and
+deactivation endpoints. Registration remains preview-only until activation is
+requested.
+
+`POST /presentations/revisions` now validates and persists a disabled immutable
+revision preview through `register_revision`; activation remains a separate
+explicit request.
+
+The library test matrix now covers plugin revocation removing both definitions
+and activation pointers, while preserving the append-only history boundary.
+
+The workspace verification pass also fixed the stale health-report shape test
+for the already-shipped local TTS check; the focused health test and workspace
+check are green.
+
+The complete `cargo test --workspace --lib` suite now passes, including the
+voice, server, delivery, plugin, store, and presentation crates.
+
+The durable-store integration test also caught and fixed a serialization bug:
+the in-memory tuple-keyed revision map is now written as a stable
+`definitions`/`activations` JSON envelope, so non-empty pack registration
+round-trips correctly.
+
+That envelope is schema-versioned and refuses unsupported versions rather than
+partially reading unknown durable state.
+
+Atomic store writes now use a process-and-time-unique temporary path, avoiding
+same-process concurrent-save collisions before the final rename.
+
+Settings now lists each validated definition with its revision and provenance,
+and offers explicit workspace Activate/Deactivate controls backed by the
+scope-bound server endpoints.
+
+Structured result cards also expose generic `Use this` and `Suggest a change`
+controls. They submit arbitrary feedback through the authenticated session
+endpoint; no result domain or scenario is encoded in the client. Feedback is
+bounded, recorded as typed activity, and does not alter result truth.
+Every rich card also exposes `Show original`, which immediately restores the
+exact fallback projection without discarding the rich preview or changing the
+underlying result.
+
+The delivery adapter now has an integration test proving unactivated previews
+are not selected and activated specs compile into a bounded rich render tree.
+
+Selection now resolves explicit user intent before workspace intent through a
+deterministic fallback method. Scope layers remain separate; the selector never
+copies effective values into a narrower layer.
+
+Presentation packs can now be exported as a schema-versioned JSON projection and
+imported atomically into the local library. Imported definitions remain disabled
+previews; activation intent is never silently granted by import.
+The store also defensively clears enabled bits on every pack registration, so
+the preview-only invariant holds even if an external pack was tampered with.
+
+The implemented control-plane surface is now:
+
+- `GET/POST /presentations` for current definitions and preview registration;
+- `GET /presentations/primitives` and `GET /presentations/specs/:id/:revision` for the host vocabulary and reviewable immutable definition;
+- `GET /presentations/export` and `POST /presentations/import` for deterministic definition-pack portability; imports remain disabled previews until explicit activation;
+- `POST /presentations/revisions` for bounded immutable revision previews;
+- `POST /sessions/:id/presentation/proposals` for result-scoped, audited immutable previews;
+- `POST /sessions/:id/presentation/feedback` for arbitrary choice/feedback activity, without scenario- or domain-specific assumptions;
+- `POST /sessions/:id/presentation/select` for audited `use_once` selection or explicit user/workspace remembering;
+- `POST /presentations/:id/:revision/activate` and
+  `POST /presentations/:id/deactivate` for explicit scoped selection;
+- `POST /presentations/:id/reset` to restore revision 1 (or clear activation) without deleting history; and
+- `DELETE /presentations/plugins/:plugin_id` for plugin revocation.
+
+All of these operate on the replaceable presentation projection. They do not
+rewrite session ledgers, change permission or capability state, or alter the
+voice pipeline; selection and feedback remain append-only session activities.
+The selection endpoint also accepts a semantic type for legacy structured
+outputs and resolves the active immutable definition server-side, so a card can
+select the exact current revision without requiring a schema change in older
+result envelopes.
+
+P1/P4 verification is green (`cargo test -p vak-presentation`, `cargo test
+-p vak-store --lib`, workspace
+check, and strict library Clippy). The complete workspace library suite is also
+green, including the existing voice, server, delivery, plugin, store, and
+session tests. The first P3-style generic scenario is also now
+landed as the validated `plan.timeline` semantic type and desktop/browser
+timeline card; it retains the existing exact Markdown/channel fallback.
 
 This document is the implementation contract for replacing Vak's finite set of
 hard-coded rich-result cards with a safe, adaptive presentation runtime. The
@@ -441,6 +602,24 @@ archive and manifest with publisher metadata, source scope, component inventory,
 schema/API requirements, digest, license, and optional signature. Import stages
 and inspects it exactly like any other plugin generation.
 
+### Pack authoring and upgrade contract
+
+Pack authors should validate a definition before publishing it with the host
+validator, then test at least one redacted fixture through both the rich tree
+and the exact fallback compiler. A pack is not publishable when validation
+reports an unsupported primitive, binding, semantic mismatch, unsafe action, or
+limit violation. The authoring checklist is deliberately host-vocabulary
+based; it does not contain domain-specific card names or renderer code.
+
+Upgrades are additive within the supported major schema. Existing immutable
+revisions and session receipts remain readable, while unknown future fields are
+ignored by older readers. An upgraded pack is staged disabled, inspected, and
+only then explicitly enabled. If its rich renderer, primitive, or pack
+generation is unavailable, replay retains the recorded fallback and reports
+the refusal reason; it never silently reconstructs a different card. Pack
+removal revokes activation immediately but does not rewrite historical
+receipts.
+
 ---
 
 ## 12. Delivery and sharing
@@ -712,6 +891,13 @@ interaction becomes explicit text rather than disappearing.
 
 Exit: the final done-contract below passes from a clean checkout and from an
 upgrade fixture with existing sessions and plugins.
+
+Operations evidence must be derived from append-only presentation activities,
+delivery receipts, plugin inspection results, and compiler diagnostics. Until
+the dedicated counters are wired into the Operations Center, the absence of a
+counter is reported as unavailable rather than zero; the console must not
+invent adaptive success, latency, or fallback rates from unrelated process
+metrics.
 
 ---
 

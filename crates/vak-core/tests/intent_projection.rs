@@ -28,6 +28,7 @@ fn envelope(ceiling: PermissionCeiling) -> Envelope {
 /// irreversible action past without a human.
 #[test]
 fn no_grant_lets_irreversible_work_past_a_human() {
+    let now = chrono::Utc::now();
     for autonomy in Autonomy::ALL {
         for ceiling in PermissionCeiling::ALL {
             let authority = Authority {
@@ -37,7 +38,7 @@ fn no_grant_lets_irreversible_work_past_a_human() {
             };
             for in_envelope in [true, false] {
                 assert_eq!(
-                    authority.approval_ceiling(Stakes::Irreversible, in_envelope),
+                    authority.approval_ceiling(Stakes::Irreversible, now, in_envelope),
                     ApprovalCeiling::Ask,
                     "{autonomy:?}/{ceiling:?} in_envelope={in_envelope}"
                 );
@@ -140,7 +141,7 @@ fn a_revoked_grant_grants_nothing() {
     assert_eq!(authority.spend_limit_usd(now), None);
     // And delegation buys nothing once the grant is gone.
     assert_eq!(
-        authority.approval_ceiling(Stakes::Reversible, false),
+        authority.approval_ceiling(Stakes::Reversible, now, true),
         ApprovalCeiling::Ask
     );
 }

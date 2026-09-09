@@ -235,6 +235,15 @@ export function goalAppliesTo(id: string | null): ArmedGoal | null {
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [workspacePickerOpen, setWorkspacePickerOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+export type PresentationMode = "everyday" | "advanced";
+const storedPresentationMode = localStorage.getItem("vak.presentationMode");
+export const [presentationMode, setPresentationModeSignal] = createSignal<PresentationMode>(
+  storedPresentationMode === "advanced" ? "advanced" : "everyday",
+);
+export function setPresentationMode(mode: PresentationMode) {
+  setPresentationModeSignal(mode);
+  localStorage.setItem("vak.presentationMode", mode);
+}
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
 export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspace">("user");
@@ -310,7 +319,7 @@ export interface UiPreferences {
   /** "system" follows the OS/browser, which is the only sane default for
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
-  theme: "system" | "light" | "warm" | "dark" | "contrast";
+  theme: "system" | "light" | "warm" | "dark" | "contrast" | "sage" | "paper";
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;

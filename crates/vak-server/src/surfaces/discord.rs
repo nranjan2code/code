@@ -171,17 +171,16 @@ impl DiscordBridge {
                 if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
                     eprintln!("[discord] send to {channel_id} failed: {e}");
                 }
-                if message.audio_url.is_some() {
-                    if let Err(e) = self
+                if message.audio_url.is_some()
+                    && let Err(e) = self
                         .send_voice(
                             channel_id,
                             &reply.chunks.join("\n"),
                             reply.session_id.as_deref(),
                         )
                         .await
-                    {
-                        eprintln!("[discord] voice reply unavailable: {e}");
-                    }
+                {
+                    eprintln!("[discord] voice reply unavailable: {e}");
                 }
             }
         }
@@ -262,17 +261,18 @@ impl DiscordBridge {
                 .await
             {
                 Ok(response) if response.status().is_success() => {
-                    if let Ok(bytes) = response.bytes().await {
-                        if bytes.len() <= 16 * 1024 * 1024 {
-                            use base64::Engine as _;
-                            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                            attachments.push(serde_json::json!({
-                                "data": encoded.clone(),
-                                "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
-                                "kind": "audio",
-                                "filename": "voice",
-                            }));
-                            if let Ok(transcribed) = http().post(format!("{}/voice/transcribe", self.gateway_url))
+                    if let Ok(bytes) = response.bytes().await
+                        && bytes.len() <= 16 * 1024 * 1024
+                    {
+                        use base64::Engine as _;
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                        attachments.push(serde_json::json!({
+                            "data": encoded.clone(),
+                            "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
+                            "kind": "audio",
+                            "filename": "voice",
+                        }));
+                        if let Ok(transcribed) = http().post(format!("{}/voice/transcribe", self.gateway_url))
                                 .bearer_auth(&self.gateway_token)
                                 .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
                                 .send().await
@@ -280,7 +280,6 @@ impl DiscordBridge {
                                 && let Ok(value) = transcribed.json::<Value>().await
                                 && let Some(result) = value["text"].as_str()
                             { text = format!("{}\n{}", text.trim(), result.trim()).trim().to_string(); }
-                        }
                     }
                 }
                 _ => {}

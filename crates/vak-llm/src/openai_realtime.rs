@@ -114,7 +114,7 @@ pub async fn round_trip(
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         result = tokio_tungstenite::connect_async(request) => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
-    let send = |value: Value| Message::Text(value.to_string().into());
+    let send = |value: Value| Message::Text(value.to_string());
     for value in [
         build_session_update(config, instructions)?,
         build_audio_append(audio)?,

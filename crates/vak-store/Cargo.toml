@@ -17,6 +17,7 @@ walkdir = { workspace = true }
 
 vak-session = { workspace = true }
 vak-llm = { workspace = true }
+vak-presentation = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

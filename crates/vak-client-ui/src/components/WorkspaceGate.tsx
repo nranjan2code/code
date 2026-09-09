@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount, Show, For } from "solid-js";
-import { backend } from "../store";
+import { backend, presentationMode, setPresentationMode } from "../store";
 import { refreshBackend } from "../App";
 import { host } from "../host";
 import type { WorkspaceReview } from "../types";
@@ -146,7 +146,7 @@ export default function WorkspaceGate() {
   return (
     <div class="gate">
       <div class="gate-card" classList={{ wide: browsing() }}>
-        <div class="gate-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div>
+          <div class="gate-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div>
 
         <Show
           when={authed() !== false}
@@ -181,8 +181,25 @@ export default function WorkspaceGate() {
           <Show when={review()} fallback={
             <Show when={browsing()} fallback={
               <>
-                <h1>Vak</h1>
-                <p class="gate-lead">Your code, your machine, your agent.</p>
+                <h1>Meet your everyday agent</h1>
+                <p class="gate-lead">A calm place to ask, plan, create, and get things done.</p>
+                <div class="gate-mode-choice" role="radiogroup" aria-label="Choose how Vak presents work">
+                  <button type="button" role="radio" classList={{ active: presentationMode() === "everyday" }} onClick={() => setPresentationMode("everyday")} aria-checked={presentationMode() === "everyday"}>
+                    <span class="gate-mode-icon"><Icon name="spark" size={15} /></span>
+                    <span><strong>Everyday</strong><small>Clear, friendly results</small></span>
+                  </button>
+                  <button type="button" role="radio" classList={{ active: presentationMode() === "advanced" }} onClick={() => setPresentationMode("advanced")} aria-checked={presentationMode() === "advanced"}>
+                    <span class="gate-mode-icon"><Icon name="code" size={15} /></span>
+                    <span><strong>Advanced</strong><small>More technical detail</small></span>
+                  </button>
+                </div>
+                <div class="gate-sample" aria-label="Sample everyday result">
+                  <div class="gate-sample-head"><span>Weekend plan</span><span class="gate-sample-badge">Ready</span></div>
+                  <p>Three simple steps, with the important details kept together.</p>
+                  <div class="gate-sample-step"><span>1</span><strong>Pick a time</strong><small>Saturday morning</small></div>
+                  <div class="gate-sample-step"><span>2</span><strong>Bring what you need</strong><small>Notebook and water</small></div>
+                  <div class="gate-sample-step"><span>3</span><strong>Leave room to adjust</strong><small>Vak keeps the plan flexible</small></div>
+                </div>
                 <div class="gate-features">
                   <span><Icon name="check" size={15} /> Isolated tasks and worktrees</span>
                   <span><Icon name="check" size={15} /> Review every change before keeping it</span>
@@ -191,13 +208,10 @@ export default function WorkspaceGate() {
                 <Show when={error() || backend().boot_error}>
                   <div class="gate-err">{error() ?? backend().boot_error}</div>
                 </Show>
-                <button class="btn primary lg" disabled={busy()} onClick={() => void pick()}>
+                <button class="btn primary lg" type="button" disabled={busy()} onClick={() => void pick()}>
                   <Icon name="folder" /> {busy() ? "Opening workspace…" : "Open a workspace"}
                 </button>
-                <p class="gate-note">
-                  Shared defaults stay global and are inherited here; workspace settings
-                  override only that folder. Configuration and secrets stay on this device.
-                </p>
+                <p class="gate-note"><Icon name="shield" size={13} /> Your files and settings stay on this device. Vak asks before anything needs extra access.</p>
               </>
             }>
               <>

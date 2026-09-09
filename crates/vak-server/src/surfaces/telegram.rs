@@ -421,13 +421,11 @@ impl TelegramBridge {
                 .iter()
                 .any(|a| a.get("kind").and_then(Value::as_str) == Some("audio"))
                 && !reply.text.trim().is_empty()
-            {
-                if let Err(error) = self
+                && let Err(error) = self
                     .send_voice(u.chat_id, &reply.text, reply.session_id.as_deref())
                     .await
-                {
-                    eprintln!("[telegram] voice reply unavailable: {error}");
-                }
+            {
+                eprintln!("[telegram] voice reply unavailable: {error}");
             }
             next = next.max(u.update_id + 1);
         }
@@ -677,7 +675,15 @@ impl TelegramBridge {
     }
 
     async fn send_message(&self, chat_id: i64, reply: &GatewayReply) -> Result<(), String> {
-        let rendered = reply.delivery.as_ref().map(|packet| packet.chunks.clone());
+        // Validate the packet against the same schema/surface boundary used
+        // by Slack and Discord. Telegram still keeps the plain reply text as
+        // its lossless fallback when the packet is absent or incompatible.
+        let rendered = reply.delivery.as_ref().and_then(|packet| {
+            let body = serde_json::json!({"delivery": packet});
+            super::prepared_packet(body, "telegram")
+                .ok()
+                .map(|packet| packet.chunks)
+        });
         let (chunks, parse_html) = match rendered {
             Some(chunks) if !chunks.is_empty() => (chunks, true),
             _ => (vec![reply.text.clone()], false),

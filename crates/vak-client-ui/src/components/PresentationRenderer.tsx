@@ -7,7 +7,7 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { density, openInEditor, uiPreferences } from "../store";
+import { density, openInEditor, presentationMode, uiPreferences } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import { safeUrl } from "../safeUrl";
@@ -22,6 +22,7 @@ import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
+import TimelineCard from "./presentation/TimelineCard";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -329,17 +330,55 @@ function ActivityRow(props: { item: OutputItem }) {
   return <div class={`semantic-activity ${props.item.status}`} title={evidence || undefined}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status} · {new Date(props.item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div>;
 }
 
-function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string }) {
+function PresentationFeedback(props: { sessionId: string; semanticType: string }) {
+  const [status, setStatus] = createSignal("");
+  const [expanded, setExpanded] = createSignal(false);
+  let input!: HTMLTextAreaElement;
+  const send = async (choice: string) => {
+    setStatus("Saving…");
+    try {
+      if (choice === "Use this layout") await api.selectPresentationForSemantic(props.sessionId, props.semanticType);
+      await api.submitPresentationFeedback(props.sessionId, choice, input?.value.trim() || undefined);
+      setStatus("Saved");
+      setExpanded(false);
+    } catch {
+      setStatus("Could not save");
+    }
+  };
+  return <section class="presentation-feedback" aria-label="Presentation feedback">
+    <div class="presentation-feedback-actions">
+      <button type="button" onClick={() => void send("Use this layout")}>Use this</button>
+      <button type="button" onClick={() => void send("Keep original")}>Keep original</button>
+      <button type="button" onClick={() => setExpanded(!expanded())}>Suggest a change</button>
+      <Show when={status()}><small role="status">{status()}</small></Show>
+    </div>
+    <Show when={expanded()}>
+      <div class="presentation-feedback-editor">
+        <textarea ref={input} rows={2} placeholder="What should be clearer?" aria-label="Presentation feedback" />
+        <button type="button" onClick={() => void send("Revise")}>Send feedback</button>
+      </div>
+    </Show>
+  </section>;
+}
+
+function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string }) {
+  const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => <div class="semantic-source">{props.fallback || JSON.stringify(props.output.payload, null, 2)}</div>;
   return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
-      <StructuredRenderer output={props.output} />
+      <Show when={showOriginal()} fallback={<><StructuredRenderer output={props.output} /><Show when={props.sessionId}><PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} /></Show></>}>
+        <section class="presentation-original" aria-label="Original result"><p role="status">Original result</p>{fallback()}</section>
+      </Show>
+      <button type="button" class="presentation-original-toggle" onClick={() => setShowOriginal(!showOriginal())}>{showOriginal() ? "Show presentation" : "Show original"}</button>
     </Show>
   </ErrorBoundary>;
 }
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
+  if (presentationMode() === "everyday" && ["coding.diff", "test.report", "terminal.view"].includes(props.output.semantic_type)) {
+    return <div class="everyday-result"><strong>Result ready</strong><span>Switch to Advanced for technical detail.</span></div>;
+  }
   if (props.output.semantic_type === "research.synthesis") {
     return <ResearchCards data={payload} />;
   }
@@ -360,6 +399,9 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   }
   if (props.output.semantic_type === "ui.preview") {
     return <UIPreviewCard data={payload} />;
+  }
+  if (props.output.semantic_type === "plan.timeline") {
+    return <TimelineCard data={payload} />;
   }
   if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
     return <UniversalChart data={payload} />;
@@ -391,7 +433,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
     if (item.content.type === "document") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><PresentationDocumentView document={item.content.document} /></article>;
     if (item.content.type === "outcome") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
+    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
@@ -402,6 +445,24 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       <For each={ordered()}>{(item) => OrderedItem(item)}</For>
     </section>
   );
+}
+
+function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
+  const render = (node: import("../types").AdaptiveRenderNode): JSX.Element => {
+    const text = typeof node.props.text === "string" ? node.props.text : typeof node.props.value === "string" ? node.props.value : "";
+    const label = typeof node.props.label === "string" ? node.props.label : "";
+    const content = <>{label && <strong>{label}</strong>}{text && <span>{text}</span>}{node.children.map(render)}</>;
+    switch (node.primitive.toLowerCase()) {
+      case "title": return <h3 class="adaptive-node adaptive-title">{text}</h3>;
+      case "section": return <section class="adaptive-node adaptive-section">{content}</section>;
+      case "list": case "checklist": case "steps": case "timeline": return <ul class="adaptive-node adaptive-list">{node.children.length ? node.children.map((child) => <li>{render(child)}</li>) : <li>{content}</li>}</ul>;
+      case "keyvalue": case "metric": case "progress": return <div class="adaptive-node adaptive-keyvalue">{content}</div>;
+      case "callout": return <aside class="adaptive-node adaptive-callout">{content}</aside>;
+      case "divider": return <hr class="adaptive-node adaptive-divider" />;
+      default: return <div class={`adaptive-node adaptive-${node.primitive.toLowerCase()}`}>{content}</div>;
+    }
+  };
+  return <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>{render(props.tree.root)}<details><summary>Show original</summary><p>{props.fallback}</p></details></section>;
 }
 
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string }) {

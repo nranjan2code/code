@@ -49,7 +49,7 @@ pub fn resample_linear(input: &[i16], from_hz: u32, to_hz: u32) -> Result<Vec<i1
 }
 
 pub fn wrap_wav(pcm: &[u8], spec: PcmSpec) -> Result<Vec<u8>, VoiceError> {
-    if spec.channels == 0 || spec.sample_rate_hz == 0 || pcm.len() % 2 != 0 {
+    if spec.channels == 0 || spec.sample_rate_hz == 0 || !pcm.len().is_multiple_of(2) {
         return Err(VoiceError::InvalidRequest("invalid PCM stream".into()));
     }
     let data_len = u32::try_from(pcm.len())

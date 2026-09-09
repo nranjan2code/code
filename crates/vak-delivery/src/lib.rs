@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod adapters;
+pub mod adaptive;
 pub mod client;
 pub mod discord;
 pub mod outbox;
@@ -21,6 +22,9 @@ pub mod templates;
 pub use adapters::{
     AdapterRegistry, ResultAdapter, built_in_adapters, structured_outputs_from_tool_result,
 };
+pub use adaptive::markdown as adaptive_presentation_markdown;
+pub use adaptive::project as project_adaptive_presentation;
+pub use adaptive::project_preferred as project_preferred_adaptive_presentation;
 pub use presentation::{
     ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
     DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
@@ -38,6 +42,7 @@ pub use skills::{
     signals_from_context, signals_from_text, structured_markdown, structured_outputs_from_text,
     structured_outputs_from_text_with,
 };
+pub use vak_presentation as adaptive_presentation;
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
 
@@ -1453,6 +1458,47 @@ mod tests {
     }
 
     #[test]
+    fn specialized_structured_outputs_keep_one_lossless_fallback_across_surfaces() {
+        // These are deliberately generic semantic shapes: the delivery layer may
+        // lower them for a constrained channel, but it must never replace the
+        // source answer that replay/export/voice consumers depend on.
+        let source = concat!(
+            "# Weekly review\n\n",
+            "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"items\",\"value\":12}}\n```\n\n",
+            "```vak\n{\"semantic_type\":\"collection\",\"payload\":{\"title\":\"Next\",\"items\":[{\"label\":\"One\"}]}}\n```\n\n",
+            "```vak\n{\"semantic_type\":\"steps\",\"payload\":{\"title\":\"Plan\",\"steps\":[{\"title\":\"Review\"}]}}\n```\n",
+        );
+        for (surface, markup) in [
+            ("telegram", Markup::TelegramHtml),
+            ("slack", Markup::SlackMrkdwn),
+            ("discord", Markup::DiscordMarkdown),
+            ("voice", Markup::Plain),
+            ("webhook", Markup::Json),
+        ] {
+            let input = DeliveryJob {
+                job_id: format!("specialized-{surface}"),
+                target: format!("test:{surface}"),
+                kind: DeliveryKind::Assistant,
+                content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+                profile: DeliveryProfile {
+                    surface: surface.into(),
+                    markup,
+                    max_chars: Some(4096),
+                    supports_tables: false,
+                    supports_code_blocks: true,
+                    supports_links: true,
+                    supports_actions: false,
+                    template: None,
+                    posture: DeliveryPosture::default(),
+                },
+                skill_registry: None,
+            };
+            let packet = render(&input).expect("specialized output should render");
+            assert_eq!(packet.fallback_markdown, source, "surface={surface}");
+        }
+    }
+
+    #[test]
     fn packet_preserves_outcome_metadata_for_channel_consumers() {
         let mut input = job(Markup::Markdown, None);
         let DeliveryContent::Answer(answer) = &mut input.content else {
@@ -1498,6 +1544,26 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.contains("incomplete or unverified"))
         );
+    }
+
+    #[test]
+    fn packet_export_round_trip_preserves_ordered_chunks_and_exact_fallback() {
+        // This transport-neutral fixture is the contract consumed by webhook,
+        // share/export, and chat adapters: presentation is optional, while
+        // chunks and the source fallback remain lossless and ordered.
+        let input = job(Markup::Markdown, Some(18));
+        let packet = render(&input).expect("valid delivery job");
+        let encoded = serde_json::to_vec(&packet).expect("packet is exportable");
+        let decoded: DeliveryPacket =
+            serde_json::from_slice(&encoded).expect("export must be importable");
+        assert_eq!(decoded.fallback_markdown, packet.fallback_markdown);
+        assert_eq!(decoded.chunks, packet.chunks);
+        assert_eq!(
+            decoded.chunks.concat(),
+            packet.chunks.concat(),
+            "chunk order must survive sharing/export"
+        );
+        assert_eq!(decoded.presentation, packet.presentation);
     }
 
     #[test]

@@ -7295,6 +7295,7 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "vak-intent",
+ "vak-presentation",
 ]
 
 [[package]]
@@ -7463,8 +7464,20 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "vak-presentation",
  "vak-tools",
  "walkdir",
+]
+
+[[package]]
+name = "vak-presentation"
+version = "3.0.37"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -7520,6 +7533,7 @@ dependencies = [
  "vak-ops",
  "vak-permission",
  "vak-plugin",
+ "vak-presentation",
  "vak-sandbox",
  "vak-session",
  "vak-store",
@@ -7556,6 +7570,7 @@ dependencies = [
  "tokio",
  "uuid",
  "vak-llm",
+ "vak-presentation",
  "vak-session",
  "walkdir",
 ]

@@ -213,6 +213,99 @@ mod tests {
     }
 
     #[test]
+    fn live_pack_lifecycle_exports_imports_and_preserves_history_projection() {
+        let source_dir = tempdir().expect("tempdir");
+        let source = PresentationStore::new(source_dir.path().join("presentations.json"));
+        let spec = PresentationSpec {
+            schema_version: 1,
+            id: "live.pack.card".into(),
+            revision: 1,
+            accepts: vec!["live-pack-value".into()],
+            root: vak_presentation::SpecNode {
+                primitive: vak_presentation::Primitive::Title,
+                props: std::collections::BTreeMap::new(),
+                children: Vec::new(),
+                each: None,
+                item: None,
+            },
+            fallback: Default::default(),
+            accessibility: Default::default(),
+            metadata: Default::default(),
+        };
+        let record = StoredPresentation {
+            digest: digest(&spec).expect("digest"),
+            spec,
+            origin: PresentationOrigin {
+                scope: LibraryScope::Workspace,
+                owner: "workspace-live".into(),
+                plugin_id: Some("live-pack".into()),
+                generation: Some("1".into()),
+            },
+            enabled: true,
+        };
+
+        // Author/validate/import is preview-only; the enabled bit from an
+        // external pack cannot grant activation.
+        assert_eq!(source.register_pack([record.clone()]).expect("import"), 1);
+        let preview = source.load().expect("preview");
+        assert!(!preview.get("live.pack.card", 1).expect("record").enabled);
+        assert!(
+            preview
+                .select("live-pack-value", LibraryScope::Workspace, "workspace-live")
+                .is_none()
+        );
+
+        // Export is a durable projection round-trip, not a second selection
+        // contract. A fresh store can import it without a process restart.
+        let exported = serde_json::to_vec(&(
+            preview.definitions().cloned().collect::<Vec<_>>(),
+            preview.activations().to_vec(),
+        ))
+        .expect("export");
+        let (definitions, _activations): (
+            Vec<StoredPresentation>,
+            Vec<vak_presentation::PresentationActivation>,
+        ) = serde_json::from_slice(&exported).expect("import export");
+        let restored_dir = tempdir().expect("tempdir");
+        let restored = PresentationStore::new(restored_dir.path().join("presentations.json"));
+        assert_eq!(
+            restored.register_pack(definitions).expect("restore pack"),
+            1
+        );
+
+        // Explicit enable is visible on the next selection immediately.
+        let mut library = restored.load().expect("load restored");
+        library
+            .activate(
+                "live.pack.card",
+                1,
+                LibraryScope::Workspace,
+                "workspace-live",
+            )
+            .expect("enable");
+        restored.save(&library).expect("persist enable");
+        assert_eq!(
+            restored
+                .load()
+                .expect("next turn")
+                .select("live-pack-value", LibraryScope::Workspace, "workspace-live")
+                .map(|selected| selected.spec.id.as_str()),
+            Some("live.pack.card")
+        );
+
+        // Revoke removes only the live projection; an already-recorded
+        // selection receipt would remain in the append-only session ledger.
+        assert_eq!(restored.revoke_plugin("live-pack").expect("revoke"), 1);
+        assert!(
+            restored
+                .load()
+                .expect("post revoke")
+                .get("live.pack.card", 1)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn unsupported_store_schema_fails_closed() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("presentations.json");

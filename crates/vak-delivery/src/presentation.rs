@@ -134,6 +134,30 @@ pub enum OutputContent {
     Structured {
         output: crate::skills::StructuredOutput,
     },
+    /// A host-compiled adaptive tree. The original fallback remains attached
+    /// so constrained clients and voice narration can lower it safely.
+    Adaptive {
+        tree: vak_presentation::RenderTree,
+        fallback_text: String,
+    },
+}
+
+impl OutputContent {
+    /// Build the canonical adaptive content envelope for a specialized
+    /// renderer.  Degraded compilations deliberately remain on the caller's
+    /// existing document path so the original renderer stays authoritative.
+    pub fn from_compiled_adaptive(
+        compiled: vak_presentation::CompiledPresentation,
+        fallback_text: impl Into<String>,
+    ) -> Option<Self> {
+        match compiled {
+            vak_presentation::CompiledPresentation::Rich(tree) => Some(Self::Adaptive {
+                fallback_text: fallback_text.into(),
+                tree,
+            }),
+            vak_presentation::CompiledPresentation::Fallback { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -907,7 +931,11 @@ fn safe_media(url: &str) -> bool {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::{DocumentBlock, InlineNode, compile_markdown, safe_link};
+    use super::{
+        DocumentBlock, InlineNode, OutputContent, OutputTimeline, PRESENTATION_SCHEMA_VERSION,
+        compile_markdown, safe_link,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn tight_lists_keep_inline_runs_together() {
@@ -926,6 +954,117 @@ mod tests {
             "Stocks include Axis Bank, Adani Ports, and HDFC Bank."
         );
         assert_eq!(document.source_markdown, source);
+    }
+
+    #[test]
+    fn adaptive_output_roundtrips_with_fallback_for_replay_and_voice() {
+        let mut props = BTreeMap::new();
+        props.insert("text".into(), serde_json::json!("Weekend plan"));
+        let content = OutputContent::Adaptive {
+            tree: vak_presentation::RenderTree {
+                schema_version: vak_presentation::RENDER_TREE_SCHEMA_VERSION,
+                spec_id: "plan.timeline".into(),
+                revision: 1,
+                digest: "digest".into(),
+                root: vak_presentation::RenderNode {
+                    primitive: vak_presentation::Primitive::Title,
+                    props,
+                    children: Vec::new(),
+                },
+                accessibility_summary: Some("Weekend plan".into()),
+                coverage: vak_presentation::Coverage::default(),
+            },
+            fallback_text: "Weekend plan\n\nSaturday: travel".into(),
+        };
+        let encoded = serde_json::to_string(&content).expect("serialize adaptive output");
+        let decoded: OutputContent =
+            serde_json::from_str(&encoded).expect("replay adaptive output");
+        assert_eq!(decoded, content);
+        let OutputContent::Adaptive { fallback_text, .. } = decoded else {
+            panic!("expected adaptive output");
+        };
+        assert!(fallback_text.contains("Saturday"));
+    }
+
+    #[test]
+    fn compiled_adaptive_renderer_keeps_exact_fallback() {
+        let mut props = BTreeMap::new();
+        props.insert("text".into(), serde_json::json!("Weekend plan"));
+        let compiled = vak_presentation::CompiledPresentation::Rich(vak_presentation::RenderTree {
+            schema_version: vak_presentation::RENDER_TREE_SCHEMA_VERSION,
+            spec_id: "plan.timeline".into(),
+            revision: 1,
+            digest: "digest".into(),
+            root: vak_presentation::RenderNode {
+                primitive: vak_presentation::Primitive::Title,
+                props,
+                children: Vec::new(),
+            },
+            accessibility_summary: Some("Weekend plan".into()),
+            coverage: vak_presentation::Coverage::default(),
+        });
+        let content =
+            OutputContent::from_compiled_adaptive(compiled, "Weekend plan\n\nSaturday: travel")
+                .expect("rich compilation should produce adaptive content");
+        let OutputContent::Adaptive { fallback_text, .. } = content else {
+            panic!("expected adaptive content");
+        };
+        assert_eq!(fallback_text, "Weekend plan\n\nSaturday: travel");
+    }
+
+    #[test]
+    fn schema_v2_replay_ignores_future_fields_and_keeps_fallback() {
+        // This fixture represents a persisted v2 timeline.  Unknown fields
+        // are intentionally tolerated so additive presentation metadata does
+        // not make an older desktop/bridge unable to replay a session.
+        let fixture = r#"{
+          "schema_version": 2,
+          "session_id": "session-legacy",
+          "items": [{
+            "id": "item-1", "timestamp": "2026-01-01T00:00:00Z",
+            "turn_id": "turn-1", "role": "assistant", "kind": "message",
+            "status": "succeeded",
+            "content": {"type":"adaptive", "tree": {
+              "schema_version": 1, "spec_id":"plan.timeline", "revision":1,
+              "digest":"old-digest", "root":{"primitive":"title","props":{"text":"Plan"},"children":[]},
+              "accessibility_summary":"Plan", "coverage":{"rendered_paths":[],"omitted_paths":[]}
+            }, "fallback_text":"Plan\n\nSaturday: travel"},
+            "fallback_text":"Plan\n\nSaturday: travel", "future_metadata":{"renderer":"new"}
+          }], "diagnostics": [], "future_timeline_field": true
+        }"#;
+        let timeline: OutputTimeline = serde_json::from_str(fixture).expect("v2 replay fixture");
+        assert_eq!(timeline.schema_version, PRESENTATION_SCHEMA_VERSION);
+        assert_eq!(timeline.items[0].fallback_text, "Plan\n\nSaturday: travel");
+        let OutputContent::Adaptive { fallback_text, .. } = &timeline.items[0].content else {
+            panic!("expected adaptive replay item");
+        };
+        assert_eq!(fallback_text, &timeline.items[0].fallback_text);
+    }
+
+    #[test]
+    fn schema_v2_delivery_packet_keeps_fallback_when_new_fields_arrive() {
+        // Delivery packets are also durable upgrade inputs.  The packet's
+        // exact Markdown fallback remains authoritative when a newer writer
+        // adds fields an older bridge does not know about.
+        let fixture = r#"{
+          "schema_version": 2,
+          "job_id": "job-legacy",
+          "target": "webhook:demo",
+          "surface": "webhook",
+          "kind": "assistant",
+          "payload": {"type":"text","value":"Plan"},
+          "fallback_markdown": "Plan\n\nSaturday: travel",
+          "chunks": ["Plan", "Saturday: travel"],
+          "actions": [],
+          "coverage": [],
+          "diagnostics": [],
+          "future_delivery_metadata": {"chunk_format":"rich"}
+        }"#;
+        let packet: crate::DeliveryPacket =
+            serde_json::from_str(fixture).expect("schema-v2 delivery packet");
+        assert_eq!(packet.schema_version, 2);
+        assert_eq!(packet.fallback_markdown, "Plan\n\nSaturday: travel");
+        assert_eq!(packet.chunks.len(), 2);
     }
 
     #[test]
@@ -975,6 +1114,74 @@ mod tests {
     fn fenced_diff_receives_a_native_block() {
         let document = compile_markdown("```diff\n-old\n+new\n```");
         assert!(matches!(document.blocks[0], DocumentBlock::Diff { .. }));
+    }
+
+    #[test]
+    fn specialized_renderer_golden_fixture_preserves_source_and_boundaries() {
+        // This compact fixture intentionally exercises the presentation
+        // primitives that have historically had specialized desktop views.
+        // The source remains the canonical fallback: adding a native view
+        // must not alter what a voice or constrained channel receives.
+        let source = "# Release review\n\n- [x] Diff reviewed\n- [ ] Tests expanded\n\n| Check | Result |\n| --- | --- |\n| Tests | 12 passed |\n\n```diff\n-old\n+new\n```\n\n```bash\n$ cargo test\n```\n\n> **Approval:** publish the artifact\n\n[Report](https://example.com/report)\n\n![Chart](https://example.com/chart.png)";
+        let document = compile_markdown(source);
+        assert_eq!(document.source_markdown, source);
+        assert!(
+            document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, DocumentBlock::Diff { .. }))
+        );
+        assert!(
+            document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, DocumentBlock::Table { rows, .. } if rows.len() == 1))
+        );
+        assert!(document.blocks.iter().any(|block| matches!(block, DocumentBlock::Code { language, .. } if language.as_deref() == Some("bash"))));
+        assert!(document.blocks.iter().any(|block| matches!(block, DocumentBlock::Paragraph { content, .. } if content.iter().any(|node| matches!(node, InlineNode::Link { safe: true, .. })))));
+
+        let encoded = serde_json::to_string(&document).expect("serialize specialized fixture");
+        let replayed: super::PresentationDocument =
+            serde_json::from_str(&encoded).expect("replay specialized fixture");
+        assert_eq!(replayed, document);
+        assert!(replayed.coverage.iter().all(|entry| {
+            matches!(
+                entry.disposition,
+                super::DocumentCoverageDisposition::Native
+            )
+        }));
+    }
+
+    #[test]
+    fn specialized_output_envelopes_roundtrip_without_losing_fallback() {
+        let fallback = "Publish the report after approval.";
+        let outputs = [
+            OutputContent::Approval {
+                request_id: "approval-1".into(),
+                tool: "publish".into(),
+                args_json: "{}".into(),
+                reason: "User confirmation required".into(),
+                expires_at: None,
+            },
+            OutputContent::Artifact {
+                artifact: super::ArtifactRef {
+                    name: "report.pdf".into(),
+                    path: Some(".vak/scratch/report.pdf".into()),
+                    media_type: Some("application/pdf".into()),
+                    description: Some("Generated report".into()),
+                },
+            },
+            OutputContent::Document {
+                document: compile_markdown(fallback),
+            },
+        ];
+        for output in outputs {
+            let encoded = serde_json::to_string(&output).expect("serialize output envelope");
+            let replayed: OutputContent =
+                serde_json::from_str(&encoded).expect("replay output envelope");
+            assert_eq!(replayed, output);
+        }
+        assert_eq!(fallback, "Publish the report after approval.");
     }
 
     #[test]

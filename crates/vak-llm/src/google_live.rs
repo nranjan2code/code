@@ -335,10 +335,9 @@ async fn speak_inner(
                 if pcm.is_empty() {
                     next.await
                 } else {
-                    match tokio::time::timeout(AUDIO_IDLE_TIMEOUT, next).await {
-                        Ok(message) => message,
-                        Err(_) => None,
-                    }
+                    tokio::time::timeout(AUDIO_IDLE_TIMEOUT, next)
+                        .await
+                        .unwrap_or_default()
                 }
             } => m,
         };

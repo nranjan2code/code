@@ -8,7 +8,7 @@ function getMermaidTheme(): "dark" | "neutral" | "base" | "default" {
   const theme = uiPreferences.theme === "system"
     ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
     : uiPreferences.theme;
-  if (theme === "light") return "neutral";
+  if (theme === "light" || theme === "sage" || theme === "paper") return "neutral";
   if (theme === "contrast") return "base";
   return "dark";
 }

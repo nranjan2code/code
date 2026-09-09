@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 pub mod index;
+pub mod presentation;
 pub mod query;
 
 /// The database file name within the sessions home directory.

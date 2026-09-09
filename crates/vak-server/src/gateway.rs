@@ -110,7 +110,7 @@ impl InboundRequest {
         const MAX_AUDIO_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
         self.attachments = attachments
             .into_iter()
-            .filter_map(|mut attachment| {
+            .map(|mut attachment| {
                 if attachment.get("kind").and_then(|v| v.as_str()) == Some("audio") {
                     let encoded = attachment
                         .get("data")
@@ -122,7 +122,7 @@ impl InboundRequest {
                             serde_json::Value::String("audio attachment exceeds 16 MiB".into());
                     }
                 }
-                Some(attachment)
+                attachment
             })
             .collect();
         self
@@ -1399,12 +1399,16 @@ impl GatewayState {
             .allowlist_get(key)
             .filter(|e| e.status == AllowlistStatus::Allowed);
         let parent = entry
-                .as_ref()
-                .filter(|e| e.inherit_bot_policy)
-                .and_then(|e| e.bot_id.as_deref())
-                .and_then(|id| self.bot_get(id))
-                .and_then(|b| b.voice);
-        entry.as_ref().and_then(|e| e.voice.as_ref()).map(|v| vak_config::VoiceConfig::overlay(parent.as_ref(), v)).or(parent)
+            .as_ref()
+            .filter(|e| e.inherit_bot_policy)
+            .and_then(|e| e.bot_id.as_deref())
+            .and_then(|id| self.bot_get(id))
+            .and_then(|b| b.voice);
+        entry
+            .as_ref()
+            .and_then(|e| e.voice.as_ref())
+            .map(|v| vak_config::VoiceConfig::overlay(parent.as_ref(), v))
+            .or(parent)
     }
 
     /// Drop the cached route revision for `key` without dropping the
@@ -2217,16 +2221,14 @@ async fn gateway_inbound(
         .attachments
         .iter()
         .any(|a| a.kind == "audio" && !a.data.trim().is_empty())
+        && let Ok(mut session) = handle.session.lock()
+        && let Some(session) = session.as_mut()
     {
-        if let Ok(mut session) = handle.session.lock()
-            && let Some(session) = session.as_mut()
-        {
-            let _ = session.append_voice_transcript(
-                uuid::Uuid::now_v7().to_string(),
-                attributed.clone(),
-                true,
-            );
-        }
+        let _ = session.append_voice_transcript(
+            uuid::Uuid::now_v7().to_string(),
+            attributed.clone(),
+            true,
+        );
     }
     // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)
     // to the chat it's actually running in, in the plain `<surface>:<chat>`
@@ -3310,6 +3312,7 @@ mod tests {
                 voice: Some(vak_config::VoiceConfig {
                     voice_name: Some("Kore".into()),
                     persona: Some("legacy persona".into()),
+                    ..Default::default()
                 }),
                 prompt: Default::default(),
             },

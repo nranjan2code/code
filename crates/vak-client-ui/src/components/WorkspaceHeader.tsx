@@ -23,6 +23,8 @@ import {
   sidebarOpen,
   splitId,
   itemsOf,
+  presentationMode,
+  setPresentationMode,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -166,6 +168,17 @@ export default function WorkspaceHeader() {
           </div>
         </details>
         </Show>
+        <span class="action-separator" aria-hidden="true" />
+        <button
+          class="presentation-mode-toggle"
+          classList={{ advanced: presentationMode() === "advanced" }}
+          aria-label={`Presentation mode: ${presentationMode() === "everyday" ? "Everyday" : "Advanced"}`}
+          aria-pressed={presentationMode() === "advanced"}
+          title="Switch between simple and developer detail"
+          onClick={() => setPresentationMode(presentationMode() === "everyday" ? "advanced" : "everyday")}
+        >
+          {presentationMode() === "everyday" ? "Everyday" : "Advanced"}
+        </button>
         <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip inbox-bell"
