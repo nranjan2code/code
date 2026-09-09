@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.33 — 2026-09-09
+
+### Cross-Surface Sandbox and Artifact Release
+
+- Harden sandbox streaming, cancellation, reconnect, and artifact lifecycle handling.
+- Add safe compound web-app previews with workspace confinement and CSP isolation.
+- Improve Workbench artifact rendering, responsive layout, accessibility, and delivery projections.
+- Ship regenerated desktop, web, and admin bundles.
+
 ## 3.0.32 — 2026-09-09
 
 ### UI Modernization Release
