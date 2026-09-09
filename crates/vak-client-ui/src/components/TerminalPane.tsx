@@ -52,7 +52,7 @@ export default function TerminalPane(props: { sessionId: string | null }) {
 
       transport = await host.terminal(backend().cwd ?? ".");
       if (!transport) {
-        el.textContent = "The terminal is disabled on this host.";
+        el.innerHTML = `<div class="terminal-disabled" role="status"><strong>Terminal is disabled by this server</strong><span>Ask an operator to enable the loopback terminal in server settings, then reload this task.</span></div>`;
         return;
       }
 

@@ -432,6 +432,7 @@ struct Running {
 
 #[derive(Serialize, Clone, Default)]
 struct BackendInfo {
+    version: String,
     ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_url: Option<String>,
@@ -578,6 +579,7 @@ async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
     });
 
     let info = BackendInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
         ready: true,
         base_url: Some(format!("http://{addr}")),
         token: Some(token),

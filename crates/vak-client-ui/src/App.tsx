@@ -299,6 +299,8 @@ function openStream(id: string) {
 
 const NOTIFY_DEDUPE_MS = 5 * 60 * 1000;
 const lastNotifyAt = new Map<string, number>();
+const pendingApprovals = new Set<string>();
+export const isApprovalPending = (requestId: string) => pendingApprovals.has(requestId);
 
 /** Native notification with per-source 5-minute dedupe (desktop round 2). */
 export async function notifyOnce(source: string, title: string, body: string, route?: string) {
@@ -306,7 +308,7 @@ export async function notifyOnce(source: string, title: string, body: string, ro
   if (now - (lastNotifyAt.get(source) ?? 0) < NOTIFY_DEDUPE_MS) return;
   lastNotifyAt.set(source, now);
   if (route) pendingRoute = route;
-  await notify(title, body);
+  await notify(title, body, source.startsWith("approval:"));
 }
 
 /** Where a notification click should land. Consumed by `applyRoute`. */
@@ -336,8 +338,11 @@ export async function applyRoute(hash: string) {
   });
 }
 
-async function notify(title: string, body: string) {
+async function notify(title: string, body: string, critical = false) {
   if (!uiPreferences.notifications) return;
+  const hour = new Date().getHours();
+  const quiet = uiPreferences.quietHours === "22-07" && (hour >= 22 || hour < 7);
+  if (quiet && !critical) return;
   const route = pendingRoute;
   pendingRoute = null;
   // OS notification centre on the desktop, the Web Notifications API in a
@@ -358,7 +363,7 @@ function onApprovalRequested(id: string, requestId: string, tool: string) {
   if (document.hasFocus() && id === activeId()) return;
   const session = sessions().find((s) => s.session_id === id);
   void notifyOnce(
-    `approval:${id}`,
+    `approval:${requestId}`,
     "Vak needs your approval",
     `${session?.title ?? "A task"} wants to run ${tool}.`,
     `#/s/${id}?approval=${encodeURIComponent(requestId)}`,
@@ -555,6 +560,8 @@ export async function approve(
 ) {
   const id = sessionId ?? activeId();
   if (!id) return;
+  if (pendingApprovals.has(requestId)) return;
+  pendingApprovals.add(requestId);
   try {
     const result = await api.answerApproval(id, requestId, ok, remember);
     resolveApproval(id, requestId, ok ? "allowed" : "denied");
@@ -565,6 +572,8 @@ export async function approve(
     }
   } catch (e) {
     appendSystem(id, `approval failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    pendingApprovals.delete(requestId);
   }
 }
 

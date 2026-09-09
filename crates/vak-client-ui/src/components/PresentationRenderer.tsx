@@ -196,11 +196,17 @@ export function PresentationDocumentView(props: { document: PresentationDocument
   const recipeId = () => props.document.metadata.recipe_id;
   const outcomeStatus = () => props.document.metadata.outcome_status;
   const completion = () => props.document.metadata.outcome_completion;
+  const outcomeLabel = () => {
+    const execution = outcomeStatus();
+    const done = completion();
+    if (done && execution && done !== execution) return `Outcome: ${done} · execution ${execution}`;
+    if (done) return `Outcome: ${done}`;
+    if (execution) return `Outcome: ${execution}`;
+    return "";
+  };
   return (
     <div class="semantic-document">
-      <Show when={completion()} fallback={<Show when={outcomeStatus()}><div class={`semantic-outcome-status ${outcomeStatus()}`} role="status">Result: {outcomeStatus()}</div></Show>}>
-        <div class={`semantic-outcome-status ${completion()}`} role="status">Completion: {completion()}</div>
-      </Show>
+      <Show when={outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
@@ -413,7 +419,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
   });
   return <div class="semantic-timeline">
     <Show when={props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
-      <summary><span class="goal-state-label">Current goal</span><span class={`goal-state-control ${goal().control}`}>{goal().control}</span><span class="goal-state-revision">rev {goal().revision}</span></summary>
+      <summary><span class="goal-state-label">{goal().control === "active" ? "Follow-up goal" : "Goal record"}</span><span class={`goal-state-control ${goal().control}`}>{goal().control === "active" ? "available" : goal().control}</span><span class="goal-state-revision">rev {goal().revision}</span></summary>
       <p class="goal-state-objective">{goal().objective}</p>
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>

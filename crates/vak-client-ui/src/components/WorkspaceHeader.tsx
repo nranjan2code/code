@@ -22,6 +22,7 @@ import {
   sideOpen,
   sidebarOpen,
   splitId,
+  itemsOf,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -46,6 +47,13 @@ const secondaryTools = tools.filter((tool) => !["workbench", "diff", "terminal"]
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => session()?.title || (activeId() ? "Untitled task" : "New task"));
+  const taskStatus = createMemo(() => {
+    const id = activeId();
+    if (!id) return "New task";
+    if (itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "Needs your decision";
+    if (isRunning(id)) return retryOf(id) ? "Retrying" : "Working";
+    return "Ready";
+  });
   const [exporting, setExporting] = createSignal(false);
 
   // Unread badge shares the BudgetBanner's polling cadence; the inbox page
@@ -104,11 +112,7 @@ export default function WorkspaceHeader() {
             <span class="run-state" classList={{ active: isRunning(activeId()) }}>
               <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
                 aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
-              {retryOf(activeId())
-                ? `Retrying · attempt ${retryOf(activeId())!.attempt}`
-                : isRunning(activeId())
-                  ? "Working"
-                  : "Ready"}
+              {taskStatus()}
             </span>
           </Show>
         </div>
@@ -118,6 +122,7 @@ export default function WorkspaceHeader() {
         </div>
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
+        <Show when={activeId()}>
         <div class="workspace-action-group task-actions" role="group" aria-label="Task views">
         <button
           class="icon-button has-tooltip"
@@ -160,6 +165,7 @@ export default function WorkspaceHeader() {
             <button role="menuitem" onClick={() => void exportTranscript()} disabled={!activeId() || exporting()}><Icon name="download" />Download transcript</button>
           </div>
         </details>
+        </Show>
         <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip inbox-bell"

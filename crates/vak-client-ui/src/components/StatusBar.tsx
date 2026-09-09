@@ -35,13 +35,16 @@ export default function StatusBar() {
           class="st-item st-conn"
           data-conn={connection()}
           title={conn().title}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >
           <span class="dot" classList={{ run: connection() === "live" }} aria-hidden="true" />
           <span class="visually-hidden">Connection: </span>
           {conn().label}
         </span>
-        <span class="st-item st-model" classList={{ offline: !h() }} title={`provider: ${h()?.provider ?? "connecting"}`}>
-          {h()?.model ?? "Connecting…"}
+        <span class="st-item st-model" classList={{ offline: !h() }} title={`provider: ${h()?.provider ?? "unavailable"}`}>
+          {h()?.model ?? "Model unavailable"}
         </span>
         <span class="st-item st-sandbox" title="sandbox backend">{h()?.sandbox}</span>
         <Show when={(h()?.warnings?.length ?? 0) > 0}>

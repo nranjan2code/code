@@ -308,6 +308,7 @@ export interface UiPreferences {
   compactSidebar: boolean;
   suggestions: boolean;
   notifications: boolean;
+  quietHours: "off" | "22-07";
   reduceMotion: boolean;
   richPreviews: boolean;
   experimentalSkills: boolean;
@@ -330,6 +331,7 @@ const defaultUiPreferences: UiPreferences = {
   compactSidebar: false,
   suggestions: true,
   notifications: true,
+  quietHours: "off",
   reduceMotion: false,
   richPreviews: true,
   experimentalSkills: false,

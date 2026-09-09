@@ -548,7 +548,8 @@ export default function Composer(props: { cwd: string }) {
         <textarea
           ref={ta}
           rows={1}
-          placeholder={activeId() && isRunning(activeId()) ? "Add direction while Vak is working…" : "Ask Vak to build, fix, or explain…"}
+          aria-label={activeId() && isRunning(activeId()) ? "Add direction while Vak is working" : "Task prompt"}
+          placeholder={activeId() && isRunning(activeId()) ? "Add direction while Vak is working…" : "Ask Vak to build, fix, explain, research, write, or analyze…"}
           value={text()}
           onInput={(event) => {
             setText(event.currentTarget.value);

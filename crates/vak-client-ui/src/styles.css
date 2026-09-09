@@ -1305,7 +1305,15 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .ap-head { margin-bottom: 4px; color: var(--yellow); font-weight: 620; }
 .ap-reason { color: var(--muted); font-size: 12px; }
 .ap-args { max-height: 180px; margin: 9px 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--bg); font-size: 10.5px; }
-.ap-actions { display: flex; gap: 7px; }
+.ap-actions { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.ap-rule-hint { flex-basis: 100%; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.ap-rule-modal { max-width: 520px; }
+.ap-rule-preview { margin: 16px 0; display: grid; gap: 10px; }
+.ap-rule-preview div { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.ap-rule-preview dt { color: var(--muted); }
+.ap-rule-preview dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.terminal-disabled { display: grid; gap: 6px; place-items: center; min-height: 180px; padding: 24px; color: var(--muted); text-align: center; }
+.terminal-disabled strong { color: var(--text); }
 .ap-done { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
 .sysnote { margin-bottom: 10px; color: var(--faint); text-align: center; font-size: 11px; }
 
@@ -2115,6 +2123,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .approval { padding: 12px; }
   .ap-actions { flex-direction: column; align-items: stretch; }
   .ap-actions .btn { width: 100%; }
+  .approval { position: relative; padding-bottom: 14px; }
+  .approval .ap-actions { position: sticky; bottom: 0; z-index: 2; margin-inline: -12px; padding: 10px 12px max(10px, env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); border-top: 1px solid var(--border-soft); }
   .ap-primary { white-space: pre-wrap; word-break: break-all; }
 }
 

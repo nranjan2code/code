@@ -9,6 +9,7 @@ import * as api from "../api";
 import type { InboxEntry } from "../api";
 import { relAgo } from "../time";
 import Icon from "./Icon";
+import { activate } from "../App";
 
 const POLL_MS = 20_000;
 // Server clamps to the same ceiling (DEFAULT_INBOX_LIMIT / MAX_SCAN).
@@ -162,7 +163,7 @@ export default function InboxPage() {
             title="Mark every loaded notification as read"
             onClick={() => void ackAllVisible()}
           >
-            Ack all
+            Mark visible as read
           </button>
         </div>
       </div>
@@ -218,6 +219,15 @@ export default function InboxPage() {
                         <p class="inbox-body">{entry.body}</p>
                         <div class="inbox-links">
                           <Show when={entry.session_id}>
+                            <Show when={entry.kind === "approval_pending"}>
+                              <button
+                                class="btn sm primary"
+                                title="Open the live task and review this decision"
+                                onClick={() => void activate(entry.session_id!)}
+                              >
+                                Review task
+                              </button>
+                            </Show>
                             <button
                               class="chip sm"
                               title="Open the read-only transcript"
@@ -237,7 +247,7 @@ export default function InboxPage() {
                             title={unreadIds().has(entry.id) ? "Mark as read" : "Already read"}
                             onClick={() => void ack(entry.id)}
                           >
-                            {unreadIds().has(entry.id) ? "Acknowledge" : "Read"}
+                            {unreadIds().has(entry.id) ? "Mark as read" : "Read"}
                           </button>
                         </div>
                       </div>

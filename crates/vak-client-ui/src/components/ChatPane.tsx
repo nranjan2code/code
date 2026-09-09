@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationOf, speak, toggleItemExpanded, type Item } from "../store";
-import { approve, openFileSmart } from "../App";
+import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
@@ -39,7 +39,7 @@ function EmptyChat(props: { hasSession: boolean }) {
       <p class="chat-empty-hint">
         {props.hasSession
           ? "This task has no visible activity at the current transcript detail. Switch to \"balanced\" or \"audit\" in the composer to see more."
-          : "Ask Vak to build, fix, or explain something — it starts a task with this workspace's files and history."}
+          : "Ask Vak to build, fix, explain, research, write, or analyze something — it starts a task with this workspace's files and history."}
       </p>
     </div>
   );
@@ -345,6 +345,7 @@ function MessageActions(props: { text: string; role: "user" | "assistant" }) {
 const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
 
 const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => {
+  const [showRulePreview, setShowRulePreview] = createSignal(false);
   // Webfetch-style tools name their target under different keys; whatever
   // the tool calls its subject (url/path/command…) is what the user needs
   // to see before deciding, so it gets the prominent slot.
@@ -383,13 +384,13 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     void speak(`Agent wants to run: ${props.item.tool}${target ? ", " + target : ""}. Approve or deny?`);
   });
   return (
-  <div class="approval" data-approval={props.item.id}>
+    <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
     <div class="ap-head">Approval requested — {props.item.tool}</div>
     <Show when={primary()}>
       {(p) => (
         <code class="ap-primary" title={p().value}>
           <span class="ap-primary-key">{p().key}</span>
-          {p().value.length > 160 ? `${p().value.slice(0, 160)}…` : p().value}
+          {p().value}
         </code>
       )}
     </Show>
@@ -399,30 +400,48 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     <div class="ap-summary">{summary()}</div>
     <details class="ap-details">
       <summary>View request details</summary>
-      <pre class="ap-args">{props.item.argsJson.slice(0, 2000)}</pre>
+      <pre class="ap-args">{props.item.argsJson}</pre>
     </details>
     <Show
       when={!props.item.resolved}
       fallback={<div class="ap-done">{props.item.resolved}</div>}
     >
-      <div class="ap-actions">
-        <button class="btn primary" onClick={() => void approve(props.item.id, true, props.sessionId)}>
-          Allow once
+      <div class="ap-actions" aria-busy={isApprovalPending(props.item.id)}>
+        <button class="btn primary" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, true, props.sessionId)}>
+          {isApprovalPending(props.item.id) ? "Allowing…" : "Allow once"}
         </button>
-        {/* "Allow once" was the only affirmative answer, so the same
-            approval came back every turn. This writes the narrowest rule
-            covering this call into the project's own rule file; the
-            transcript reports exactly which. */}
+        <div class="ap-rule-hint" role="note">
+          Creates a persistent rule for this workspace. You can revoke it later in Settings → Permissions.
+        </div>
         <button
           class="btn"
-          title="Allow, and stop asking for calls like this one"
-          onClick={() => void approve(props.item.id, true, props.sessionId, true)}
+          title="Create a persistent permission rule for this workspace"
+          disabled={isApprovalPending(props.item.id)}
+          onClick={() => setShowRulePreview(true)}
         >
-          Always allow this
+          Create rule…
         </button>
-        <button class="btn danger" onClick={() => void approve(props.item.id, false, props.sessionId)}>
-          Deny
+        <button class="btn danger" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, false, props.sessionId)}>
+          {isApprovalPending(props.item.id) ? "Resolving…" : "Deny"}
         </button>
+      </div>
+    </Show>
+    <Show when={showRulePreview()}>
+      <div class="modal-back" onClick={() => setShowRulePreview(false)}>
+        <div class="modal confirm-modal ap-rule-modal" role="dialog" aria-modal="true" aria-labelledby={`rule-title-${props.item.id}`} onClick={(e) => e.stopPropagation()}>
+          <h3 id={`rule-title-${props.item.id}`}>Create persistent rule?</h3>
+          <p>This rule will apply automatically to matching requests in this workspace.</p>
+          <dl class="ap-rule-preview">
+            <div><dt>Matcher</dt><dd><code>{props.item.tool}</code></dd></div>
+            <div><dt>Workspace</dt><dd>{props.sessionId || "Current workspace"}</dd></div>
+            <div><dt>Effect</dt><dd>Allow this request pattern</dd></div>
+            <div><dt>Revoke</dt><dd>Settings → Permissions → Rules</dd></div>
+          </dl>
+          <div class="confirm-modal-actions">
+            <button class="btn-subtle" onClick={() => setShowRulePreview(false)}>Cancel</button>
+            <button class="btn-action" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Create rule</button>
+          </div>
+        </div>
       </div>
     </Show>
   </div>

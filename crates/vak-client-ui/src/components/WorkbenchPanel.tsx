@@ -296,9 +296,11 @@ export default function WorkbenchPanel() {
           </Show>
         </div>
         <div class="workbench-header-right">
-          <div class="workbench-nav-tabs">
+          <div class="workbench-nav-tabs" role="tablist" aria-label="Workbench views">
             <button
               class="workbench-nav-btn"
+              role="tab"
+              aria-selected={tab() === "execution"}
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
             >
@@ -306,6 +308,8 @@ export default function WorkbenchPanel() {
             </button>
             <button
               class="workbench-nav-btn"
+              role="tab"
+              aria-selected={tab() === "artifacts"}
               classList={{ active: tab() === "artifacts" }}
               onClick={() => setTab("artifacts")}
             >
@@ -359,6 +363,8 @@ export default function WorkbenchPanel() {
                   return (
                     <button
                       class="workbench-run-item"
+                      aria-pressed={isSelected()}
+                      aria-label={`Execution ${item.timestamp}, ${item.status}${item.exitCode !== undefined ? `, exit code ${item.exitCode}` : ""}`}
                       classList={{
                         selected: isSelected(),
                         failed: item.status === "failed",
@@ -608,6 +614,8 @@ export default function WorkbenchPanel() {
                     return (
                       <button
                         class="artifact-sidebar-item"
+                        aria-pressed={isSelected()}
+                        aria-label={`Preview artifact ${art.path}`}
                         classList={{ selected: isSelected() }}
                         onClick={() => inspectArtifact(art.path)}
                       >

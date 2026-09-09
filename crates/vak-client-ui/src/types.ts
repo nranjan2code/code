@@ -301,6 +301,7 @@ export interface BackendInfo {
   recent_workspaces: string[];
   /** Web host only: whether a real PTY is reachable ([server.web] terminal). */
   terminal?: boolean;
+  version?: string;
 }
 
 /** What a folder would ask for, read as text and never through the config

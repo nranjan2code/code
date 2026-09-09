@@ -3093,6 +3093,7 @@ function Inbox() {
   const [unreadOnly, setUnreadOnly] = createSignal(false);
   const [inbox, { refetch }] = createResource(unreadOnly, (u) => api.inbox(u));
   const [acking, setAcking] = createSignal("");
+  const needsAction = (kind: string) => kind === "approval_pending" || kind === "budget_alert" || kind === "proposal_opened";
 
   const ack = async (id: string) => {
     setAcking(id);
@@ -3108,7 +3109,7 @@ function Inbox() {
 
   return (
     <div class="view">
-      <PageHeader title="Inbox" description="Approvals to give, results from scheduled work, budget warnings, and anything else vak wants you to see." />
+      <PageHeader title="Inbox" description="Needs action first, followed by results, budget warnings, and other updates from Vak." />
       <div class="toolbar">
         <label class="toggle">
           <input
@@ -3126,8 +3127,10 @@ function Inbox() {
           when={(inbox()?.entries.length ?? 0) > 0}
           fallback={<div class="empty">Nothing here. Inbox zero.</div>}
         >
-          <ul class="hit-list">
-            <For each={inbox()!.entries}>
+          <Show when={inbox()!.entries.some((e) => needsAction(e.kind))}>
+            <h2 class="section-title">Needs action</h2>
+            <ul class="hit-list">
+            <For each={inbox()!.entries.filter((e) => needsAction(e.kind))}>
               {(e) => (
                 <li class="inbox-item">
                   <div class="hit-meta">
@@ -3146,13 +3149,28 @@ function Inbox() {
                     </Show>
                     <span class="spacer" />
                     <button class="ghost small" disabled={acking() === e.id} onClick={() => ack(e.id)}>
-                      Acknowledge
+                      Mark as read
                     </button>
                   </div>
                 </li>
               )}
             </For>
-          </ul>
+            </ul>
+          </Show>
+          <Show when={inbox()!.entries.some((e) => !needsAction(e.kind))}>
+            <h2 class="section-title">Updates</h2>
+            <ul class="hit-list">
+            <For each={inbox()!.entries.filter((e) => !needsAction(e.kind))}>
+              {(e) => (
+                <li class="inbox-item">
+                  <div class="hit-meta"><span class={`chip ${INBOX_KIND_TONE[e.kind] ? `chip-tone-${INBOX_KIND_TONE[e.kind]}` : ""}`}>{INBOX_KIND_LABELS[e.kind] ?? e.kind.replaceAll("_", " ")}</span><strong>{e.title}</strong><span class="when">{timeAgo(e.ts)}</span></div>
+                  <div class="hit-snippet">{e.body}</div>
+                  <div class="row-gap" style="margin-top:8px"><Show when={e.session_id}><button class="ghost small" onClick={() => navigate(`#/sessions/${e.session_id}`)}>View session</button></Show><span class="spacer" /><button class="ghost small" disabled={acking() === e.id} onClick={() => ack(e.id)}>Mark as read</button></div>
+                </li>
+              )}
+            </For>
+            </ul>
+          </Show>
         </Show>
       </Show>
     </div>
@@ -6253,7 +6271,7 @@ const NAV: NavItem[] = [
   { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
-  { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
+  { group: "Work", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
   {
     group: "Operations",
     hash: "#/operations",

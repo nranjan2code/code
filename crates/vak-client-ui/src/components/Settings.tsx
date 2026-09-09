@@ -16,6 +16,7 @@ import {
   uiPreferences,
   updateUiPreference,
   sessions,
+  backend,
   type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
@@ -32,18 +33,18 @@ const CUSTOM_MODEL = "\u0000custom";
 
 type Page = "general" | "appearance" | "agent" | "prompts" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
 
-const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
-  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
-  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion" },
-  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents" },
-  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona" },
-  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
-  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
-  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
-  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background" },
-  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote" },
-  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
-  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
+const pages: { id: Page; label: string; icon: IconName; hint: string; group: string }[] = [
+  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions", group: "Experience" },
+  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion", group: "Experience" },
+  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents", group: "Agent & access" },
+  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "Agent & access" },
+  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals", group: "Agent & access" },
+  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Agent & access" },
+  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills", group: "Connections & automation" },
+  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background", group: "Connections & automation" },
+  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote", group: "Connections & automation" },
+  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration", group: "Advanced" },
+  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history", group: "Advanced" },
 ];
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
@@ -598,6 +599,11 @@ export default function Settings() {
     const needle = query().trim().toLowerCase();
     return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
   });
+  const pageGroups = createMemo(() => {
+    const groups = new Map<string, typeof pages>();
+    for (const item of visiblePages()) groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
+    return [...groups.entries()];
+  });
   const showArchivedPage = createMemo(() => {
     const needle = query().trim().toLowerCase();
     return !needle || "archived tasks restore delete history".includes(needle);
@@ -828,27 +834,33 @@ export default function Settings() {
           <button aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>This workspace</button>
         </div>
         <p class="settings-scope-copy">Shared is your default. This workspace only changes what belongs to this folder.</p>
-        <nav>
-          <For each={visiblePages()} fallback={<div class="settings-no-results">No matching settings</div>}>
-            {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
-          </For>
-        </nav>
+        <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
+          {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
+        </For>
         <Show when={showArchivedPage()}>
           <div class="settings-nav-label archived-nav-label">Archived</div>
           <nav>
             <button classList={{ active: page() === "archived" }} onClick={() => { setPage("archived"); setQuery(""); }}><Icon name="archive" /><span>Archived tasks</span></button>
           </nav>
         </Show>
-        <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vak</strong><span>Version 0.2.0</span></div></div>
+        <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vak</strong><span>{backend().version ? `Version ${backend().version}` : "Version unavailable"}</span></div></div>
       </aside>
 
       <main class="settings-main">
         <div class="settings-content">
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
+            <div class="settings-callout scope-callout" role="status">
+              <Icon name={scope() === "user" ? "layers" : "folder"} />
+              <div>
+                <strong>{scope() === "user" ? "Editing Shared defaults" : "Editing this workspace"}</strong>
+                <span>{scope() === "user" ? "Inherited by every workspace unless it overrides the value." : (config()?.paths.cwd ?? backend().cwd ?? "Current workspace")}</span>
+              </div>
+            </div>
             <Show when={page() === "general"}>
               <header><h1>{scope() === "user" ? "User settings" : "Workspace settings"}</h1><p>{scope() === "user" ? "Shared defaults and capabilities inherited by your workspaces." : "Overrides for this folder. Unchanged settings inherit your user defaults."}</p></header>
               <Group title="Experience">
                 <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
+                <Row title="Quiet hours" description="Suppress background completion and update notifications overnight. Approval requests remain interruptive because work is paused until you decide."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
@@ -1241,7 +1253,7 @@ export default function Settings() {
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
                         <div class="mcp-row-head"><div><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
-                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><button class="settings-button" onClick={() => setNotice({ kind: "info", text: "MCP health checks run when the server is first used in a task." })}>Check on next use</button></div>
+                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><span class="settings-hint">Health check runs automatically when this server is first used in a task.</span></div>
                       </div>}</For>
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
@@ -1291,7 +1303,7 @@ export default function Settings() {
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => { void navigator.clipboard?.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); }}>Copy to composer</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>

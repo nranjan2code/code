@@ -207,6 +207,7 @@ fn host_payload(state: &AppState) -> serde_json::Value {
     let terminal = cfg.server.web_terminal;
     serde_json::json!({
         "ready": true,
+        "version": env!("CARGO_PKG_VERSION"),
         "cwd": core.cwd().to_string_lossy(),
         "recent_workspaces": recent_workspaces(state),
         "terminal": terminal,
