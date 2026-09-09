@@ -1047,6 +1047,25 @@ mod tests {
         assert!(!rendered.contains("/bot"));
     }
 
+    #[tokio::test]
+    async fn opus_conversion_rejects_invalid_wav_without_claiming_delivery() {
+        let result = wav_to_telegram_opus(b"not-a-wav".to_vec()).await;
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("ffmpeg") || error.contains("conversion"));
+    }
+
+    #[test]
+    fn gateway_reply_keeps_session_for_voice_receipt() {
+        let value = serde_json::json!({
+            "text": "reply",
+            "session_id": "session-42",
+            "delivery": {"status": "delivered"}
+        });
+        assert_eq!(value["session_id"].as_str(), Some("session-42"));
+        assert_eq!(value["text"].as_str(), Some("reply"));
+    }
+
     #[test]
     fn standby_backoff_doubles_and_caps_at_thirty() {
         assert_eq!(standby_backoff_secs(0), 1);

@@ -76,6 +76,7 @@ pub fn parse_history(channel_id: &str, body: &Value) -> Vec<SlackMessage> {
                             f["mimetype"]
                                 .as_str()
                                 .is_some_and(|mime| mime.starts_with("audio/"))
+                                && f["url_private_download"].as_str().is_some()
                         })
                     });
                     if text.trim().is_empty() && audio.is_none() {
@@ -469,6 +470,31 @@ mod tests {
             parsed[0].audio_url.as_deref(),
             Some("https://files.example/voice")
         );
+    }
+
+    #[test]
+    fn audio_file_without_download_url_is_not_routable_as_voice() {
+        let body = serde_json::json!({"messages":[{"ts":"1.2","text":"","user":"U9","files":[{"mimetype":"audio/ogg"}]}]});
+        let parsed = parse_history("C1", &body);
+        assert!(
+            parsed.is_empty(),
+            "unfetchable media must not enter the governed path"
+        );
+    }
+
+    #[test]
+    fn gateway_reply_session_id_is_preserved_for_playback() {
+        let value = serde_json::json!({"chunks":["ok"],"session_id":"slack-session"});
+        let reply = GatewayReply {
+            chunks: value["chunks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            session_id: value["session_id"].as_str().map(String::from),
+        };
+        assert_eq!(reply.session_id.as_deref(), Some("slack-session"));
     }
 
     #[test]

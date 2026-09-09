@@ -488,6 +488,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiple_supported_audio_mimes_for_transcription() {
+        let body = serde_json::json!([
+            {"id":"51","content":"","author":{"id":"7"},"attachments":[{"content_type":"audio/webm","url":"https://cdn.example/a"}]},
+            {"id":"52","content":"","author":{"id":"7"},"attachments":[{"content_type":"audio/mpeg","url":"https://cdn.example/b"}]}
+        ]);
+        let parsed = parse_messages("555", &body);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].audio_mime.as_deref(), Some("audio/webm"));
+        assert_eq!(parsed[1].audio_mime.as_deref(), Some("audio/mpeg"));
+    }
+
+    #[test]
+    fn gateway_reply_session_id_is_preserved_for_playback() {
+        let value = serde_json::json!({"chunks":["ok"],"session_id":"discord-session"});
+        let reply = GatewayReply {
+            chunks: value["chunks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            session_id: value["session_id"].as_str().map(String::from),
+        };
+        assert_eq!(reply.session_id.as_deref(), Some("discord-session"));
+    }
+
+    #[test]
     fn longer_snowflakes_sort_after_shorter_ones() {
         let body = serde_json::json!([
             { "id": "1000000000000000000", "content": "new", "author": { "id": "7" } },
