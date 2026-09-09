@@ -6,7 +6,10 @@
 //! and channel surfaces without duplicating protocol details.
 
 use crate::error::LlmError;
+use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RealtimeConfig {
@@ -71,6 +74,100 @@ pub fn build_audio_append(audio: &[u8]) -> Result<Value, LlmError> {
 
 pub fn build_response_create() -> Value {
     json!({"type":"response.create", "response": {"modalities":["audio","text"]}})
+}
+
+/// Execute one OpenAI Realtime turn over a websocket. The endpoint is
+/// supplied by configuration so compatible providers can use the same
+/// transport. Audio is returned as the concatenated `response.audio.delta`
+/// payload; all other provider events are ignored by this low-level adapter.
+pub async fn round_trip(
+    api_key: &str,
+    endpoint: &str,
+    config: &RealtimeConfig,
+    audio: &[u8],
+    instructions: Option<&str>,
+    cancel: &CancellationToken,
+) -> Result<Vec<u8>, LlmError> {
+    config.validate()?;
+    if api_key.trim().is_empty() || endpoint.trim().is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "realtime credentials and endpoint are required".into(),
+        ));
+    }
+    if audio.is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "realtime audio cannot be empty".into(),
+        ));
+    }
+    let separator = if endpoint.contains('?') { '&' } else { '?' };
+    let url = format!(
+        "{endpoint}{separator}model={}",
+        percent_encoding::utf8_percent_encode(&config.model, percent_encoding::NON_ALPHANUMERIC)
+    );
+    let request = tokio_tungstenite::tungstenite::http::Request::builder()
+        .uri(url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("OpenAI-Beta", "realtime=v1")
+        .body(())
+        .map_err(|e| LlmError::InvalidRequest(e.to_string()))?;
+    let (mut socket, _) = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = tokio_tungstenite::connect_async(request) => result.map_err(|e| LlmError::Network(e.to_string()))?,
+    };
+    let send = |value: Value| Message::Text(value.to_string().into());
+    for value in [
+        build_session_update(config, instructions)?,
+        build_audio_append(audio)?,
+        build_response_create(),
+    ] {
+        tokio::select! {
+            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+            result = socket.send(send(value)) => result.map_err(|e| LlmError::Network(e.to_string()))?,
+        }
+    }
+    const MAX_AUDIO_BYTES: usize = 16 * 1024 * 1024;
+    let mut output = Vec::new();
+    while let Some(message) = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted {
+            // Realtime audio is returned as bytes, while the shared LLM
+            // abort contract stores textual assistant messages. The caller
+            // still owns the already-emitted audio buffer and can preserve it.
+            partial: None,
+        }),
+        message = socket.next() => message,
+    } {
+        let message = message.map_err(|e| LlmError::Network(e.to_string()))?;
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let event: Value =
+            serde_json::from_str(&text).map_err(|e| LlmError::Parse(e.to_string()))?;
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.audio.delta") => {
+                let Some(delta) = event.get("delta").and_then(Value::as_str) else {
+                    continue;
+                };
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(delta)
+                    .map_err(|e| LlmError::Parse(e.to_string()))?;
+                if output.len().saturating_add(bytes.len()) > MAX_AUDIO_BYTES {
+                    return Err(LlmError::InvalidRequest(
+                        "provider audio exceeds 16 MiB".into(),
+                    ));
+                }
+                output.extend(bytes);
+            }
+            Some("error") => return Err(LlmError::InvalidRequest(event.to_string())),
+            Some("response.done") => break,
+            _ => {}
+        }
+    }
+    if output.is_empty() {
+        return Err(LlmError::Parse(
+            "provider returned empty realtime audio".into(),
+        ));
+    }
+    Ok(output)
 }
 
 use base64::Engine;

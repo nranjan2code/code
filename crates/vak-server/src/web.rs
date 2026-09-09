@@ -839,6 +839,7 @@ async fn drive_voice(
     let mut utterance_audio: Vec<u8> = Vec::new();
     let Ok(ready) =
         vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::Ready {
+            protocol_version: Some(vak_voice::protocol::VOICE_PROTOCOL_VERSION),
             sample_rate_hz: 16_000,
             channels: 1,
         })
@@ -905,8 +906,6 @@ async fn drive_voice(
                         // The browser receives it through the normal control
                         // channel and dispatches it through the governed API.
                         if !utterance_audio.is_empty() {
-                            let key = vak_config::get_var("GEMINI_API_KEY")
-                                .or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
                             let cancel = tokio_util::sync::CancellationToken::new();
                             let provider = persisted
                                 .provider
@@ -928,7 +927,7 @@ async fn drive_voice(
                                         &cancel,
                                     )
                                     .await
-                                    .map_err(|e| vak_llm::LlmError::Provider(e.to_string()))
+                                    .map_err(|e| vak_llm::LlmError::InvalidRequest(e.to_string()))
                             } else if matches!(provider.as_str(), "openai" | "openai-compatible") {
                                 let Some(key) = vak_config::get_var("OPENAI_API_KEY")
                                     .filter(|k| !k.trim().is_empty())

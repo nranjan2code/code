@@ -118,16 +118,23 @@ export class VoiceSessionSocket {
       const socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
       this.socket = socket;
-      socket.onopen = () => resolve();
+      let opened = false;
+      socket.onopen = () => { opened = true; resolve(); };
       socket.onerror = () => {
         if (this.socket === socket && socket.readyState !== WebSocket.OPEN) {
           reject(new Error("voice session transport failed"));
+        } else if (this.socket === socket) {
+          this.callbacks.onError("voice session transport error");
         }
       };
       socket.onclose = (event) => {
         if (this.socket !== socket || this.closing) return;
         this.socket = null;
         this.sentBytes = 0;
+        if (!opened) {
+          reject(new Error(`voice session disconnected (${event.reason || event.code})`));
+          return;
+        }
         if (event.code !== 1000) this.callbacks.onError(`voice session disconnected (${event.reason || event.code})`);
       };
       socket.onmessage = (event) => {
@@ -138,7 +145,15 @@ export class VoiceSessionSocket {
         try {
           const control = JSON.parse(String(event.data)) as Record<string, unknown>;
           if (control.type === "error") { this.callbacks.onError(String(control.message ?? "voice session error")); return; }
-          if (control.t === "ready") { this.callbacks.onReady(Number(control.sample_rate_hz), Number(control.channels)); return; }
+          if (control.t === "ready") {
+            const version = control.protocol_version;
+            if (version !== undefined && version !== 1) {
+              this.callbacks.onError(`unsupported voice protocol version: ${String(version)}`);
+              this.close();
+              return;
+            }
+            this.callbacks.onReady(Number(control.sample_rate_hz), Number(control.channels)); return;
+          }
           if (control.t === "transcript") {
             this.callbacks.onTranscript({ utteranceId: String(control.utterance_id), text: String(control.text), final: Boolean(control.final) });
             return;
