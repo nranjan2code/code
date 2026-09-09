@@ -69,6 +69,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   google: "Google (Gemini)",
   openrouter: "OpenRouter",
   "opencode-zen": "OpenCode Zen",
+  bedrock: "Amazon Bedrock",
   ollama: "Ollama (local)",
 };
 export const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;

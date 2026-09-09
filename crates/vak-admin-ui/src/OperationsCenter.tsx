@@ -332,6 +332,8 @@ function RunDetail(props: { data: OperationsSnapshot; sessionId: string }) {
   const [receipts, receiptsState] = createResource(() => props.sessionId, (id) => api.receipts(id));
   const [work, { refetch: refetchWork }] = createResource(() => props.sessionId, (id) => api.work(id));
   const [sandboxExecs, sandboxState] = createResource(() => props.sessionId, (id) => api.sessionSandboxExecutions(id));
+  // Derived strictly from append-only ledger entries; absent events remain absent.
+  const voiceEntries = createMemo(() => (transcript()?.entries ?? []).filter((entry) => /voicetranscript|voiceplayback/i.test(entry.kind)));
   const run = () => props.data.runs.find((item) => item.session_id === props.sessionId);
   const command = async (value: Record<string, unknown>) => {
     try { await api.workCommand(props.sessionId, value); await refetchWork(); pushToast("info", "Work ledger updated"); }
