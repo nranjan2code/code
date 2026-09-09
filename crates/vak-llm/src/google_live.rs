@@ -21,7 +21,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
 
-pub const GOOGLE_LIVE_DEFAULT_MODEL: &str = "gemini-3.1-flash-live-preview";
 const LIVE_WS_HOST: &str = "generativelanguage.googleapis.com";
 const LIVE_WS_PATH: &str =
     "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -43,6 +42,67 @@ const LIVE_SESSION_TIMEOUT: Duration = Duration::from_secs(25);
 /// replies, one-line narration cues — sit nowhere near this.
 pub const MAX_SPEAK_TEXT_CHARS: usize = 2_000;
 
+/// Batch speech-to-text through Gemini's multimodal generateContent API.
+/// The audio bytes are caller-bounded; the provider returns plain transcript
+/// text so the voice session can feed it into the governed turn path.
+pub async fn transcribe(
+    config: &GoogleLiveConfig,
+    audio: &[u8],
+    mime: &str,
+    cancel: &CancellationToken,
+) -> Result<String, LlmError> {
+    if audio.is_empty() || mime.trim().is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "audio and mime are required".into(),
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err(LlmError::Aborted { partial: None });
+    }
+    let body = build_transcribe_request(audio, mime);
+    if config.model.trim().is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "a discovered Gemini model is required".into(),
+        ));
+    }
+    let url = format!(
+        "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
+        config.model
+    );
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = reqwest::Client::new().post(url).query(&[("key", &config.api_key)]).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+    };
+    let status = response.status().as_u16();
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|e| LlmError::Parse(e.to_string()))?;
+    if status >= 400 {
+        return Err(map_status_error(status, &value.to_string()));
+    }
+    let text = value
+        .pointer("/candidates/0/content/parts/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "provider returned an empty transcript".into(),
+        ));
+    }
+    Ok(text)
+}
+
+fn build_transcribe_request(audio: &[u8], mime: &str) -> Value {
+    use base64::Engine as _;
+    json!({"contents":[{"parts":[
+        {"inline_data":{"mime_type":mime,"data":base64::engine::general_purpose::STANDARD.encode(audio)}},
+        {"text":"Transcribe this audio exactly. Return only the spoken words, without commentary."}
+    ]}]})
+}
+
 /// Live API output is always 24kHz, 16-bit, mono PCM (scratchpad-validated
 /// against the real API — see test_gemini_live.py's `SAMPLE_RATE_OUT`).
 const OUTPUT_SAMPLE_RATE_HZ: u32 = 24_000;
@@ -54,10 +114,10 @@ pub struct GoogleLiveConfig {
 }
 
 impl GoogleLiveConfig {
-    pub fn new(api_key: impl Into<String>) -> Self {
+    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         GoogleLiveConfig {
             api_key: api_key.into(),
-            model: GOOGLE_LIVE_DEFAULT_MODEL.to_string(),
+            model: model.into(),
         }
     }
 }
@@ -85,23 +145,15 @@ fn map_status_error(status: u16, body: &str) -> LlmError {
 /// Build the `setup` message's `generationConfig`/`speechConfig` payload.
 /// Pure and unit-testable, mirroring `google::build_body`. `persona`
 /// becomes the session's `systemInstruction`; `voice_name` selects the
-/// prebuilt Live voice (falls back to "Kore" when absent — the same
-/// default the `/voice/speak` endpoint uses when no voice is configured
-/// anywhere in the bot/chat inheritance chain).
+/// provider-discovered prebuilt Live voice. When absent, the provider chooses
+/// its configured default; the harness never invents a voice identifier.
 pub fn build_live_config(persona: Option<&str>, voice_name: Option<&str>) -> Value {
-    let voice = voice_name
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or("Kore");
-    let generation_config = json!({
-        "responseModalities": ["AUDIO"],
-        "speechConfig": {
-            "voiceConfig": {
-                "prebuiltVoiceConfig": {
-                    "voiceName": voice,
-                }
-            }
-        }
-    });
+    let mut generation_config = json!({"responseModalities": ["AUDIO"]});
+    if let Some(voice) = voice_name.filter(|v| !v.trim().is_empty()) {
+        generation_config["speechConfig"] = json!({"voiceConfig": {"prebuiltVoiceConfig": {
+            "voiceName": voice,
+        }}});
+    }
     let mut setup = json!({ "generationConfig": generation_config });
     if let Some(persona) = persona.filter(|p| !p.trim().is_empty()) {
         setup["systemInstruction"] = json!({
@@ -335,13 +387,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_live_config_defaults_voice_to_kore_without_persona() {
+    fn build_live_config_omits_unspecified_voice_without_persona() {
         let cfg = build_live_config(None, None);
-        assert_eq!(
-            cfg.pointer("/generationConfig/speechConfig/voiceConfig/prebuiltVoiceConfig/voiceName")
-                .and_then(|v| v.as_str()),
-            Some("Kore")
-        );
+        assert!(cfg.pointer("/generationConfig/speechConfig").is_none());
         assert_eq!(
             cfg.pointer("/generationConfig/responseModalities/0")
                 .and_then(|v| v.as_str()),
@@ -369,22 +417,78 @@ mod tests {
     fn build_live_config_ignores_blank_persona_and_voice() {
         let cfg = build_live_config(Some("   "), Some(""));
         assert!(cfg.get("systemInstruction").is_none());
-        assert_eq!(
-            cfg.pointer("/generationConfig/speechConfig/voiceConfig/prebuiltVoiceConfig/voiceName")
-                .and_then(|v| v.as_str()),
-            Some("Kore")
-        );
+        assert!(cfg.pointer("/generationConfig/speechConfig").is_none());
     }
 
     #[tokio::test]
     async fn speak_rejects_text_over_the_length_cap() {
-        let config = GoogleLiveConfig::new("test-key-not-used");
+        let config = GoogleLiveConfig::new("test-key-not-used", "discovered-model");
         let text: String = "a".repeat(MAX_SPEAK_TEXT_CHARS + 1);
         let cancel = CancellationToken::new();
         let err = speak(&config, &text, None, None, &cancel)
             .await
             .unwrap_err();
         assert!(matches!(err, LlmError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn transcription_request_contains_audio_and_strict_instruction() {
+        let request = build_transcribe_request(&[0, 1, 2], "audio/pcm");
+        assert_eq!(
+            request
+                .pointer("/contents/0/parts/0/inline_data/mime_type")
+                .and_then(Value::as_str),
+            Some("audio/pcm")
+        );
+        assert!(
+            request
+                .pointer("/contents/0/parts/0/inline_data/data")
+                .and_then(Value::as_str)
+                .is_some()
+        );
+        assert!(
+            request
+                .pointer("/contents/0/parts/1/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("only the spoken words")
+        );
+    }
+
+    /// Opt-in live smoke test. The credential is read only from the process
+    /// environment and is never printed or persisted.
+    #[tokio::test]
+    #[ignore = "requires GEMINI_API_KEY and network access"]
+    async fn live_smoke_synthesizes_audio() {
+        let Ok(key) = std::env::var("GEMINI_API_KEY") else {
+            return;
+        };
+        let config = GoogleLiveConfig::new(key, "discovered-model");
+        let bytes = speak(
+            &config,
+            "Say hello briefly.",
+            None,
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("configured live provider should synthesize");
+        assert!(bytes.starts_with(b"RIFF"));
+        assert!(bytes.len() > 44);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires GEMINI_API_KEY and network access"]
+    async fn live_smoke_transcribes_audio() {
+        let Ok(key) = std::env::var("GEMINI_API_KEY") else {
+            return;
+        };
+        let config = GoogleLiveConfig::new(key, "discovered-model");
+        let audio = vec![0u8; 3200];
+        let text = transcribe(&config, &audio, "audio/pcm", &CancellationToken::new())
+            .await
+            .expect("configured live provider should transcribe");
+        assert!(!text.trim().is_empty());
     }
 
     #[test]

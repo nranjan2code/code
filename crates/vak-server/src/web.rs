@@ -14,10 +14,12 @@
 use std::path::{Path, PathBuf};
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
+use futures::SinkExt;
 use serde::Deserialize;
 
 use crate::AppState;
@@ -573,6 +575,15 @@ pub(crate) async fn list_dirs(
 mod tests {
     use super::*;
 
+    #[test]
+    fn voice_admission_is_atomic_and_releases_cleanly() {
+        let active = std::sync::atomic::AtomicUsize::new(0);
+        assert!(try_admit_voice(&active, 1));
+        assert!(!try_admit_voice(&active, 1));
+        active.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        assert!(try_admit_voice(&active, 1));
+    }
+
     /// The picker must not be walkable out of its roots one "up" at a time.
     #[test]
     fn paths_outside_the_roots_are_refused() {
@@ -675,8 +686,6 @@ mod tests {
 //      whatever hostname the server answers to.
 //   3. The session cookie, checked at upgrade like any other route.
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct PtyQuery {
     #[serde(default)]
@@ -733,6 +742,393 @@ pub(crate) async fn pty_socket(
         None => state.active_core().cwd().clone(),
     };
     upgrade.on_upgrade(move |socket| drive_pty(socket, cwd))
+}
+
+pub(crate) async fn voice_socket(
+    State(state): State<AppState>,
+    Query(query): Query<VoiceQuery>,
+    headers: header::HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    let trusted = state.core.config().server.trusted_hosts.clone();
+    if !crate::origin_is_trusted(origin, &trusted) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "voice session origin is not trusted" })),
+        )
+            .into_response();
+    }
+    let voice_config = state.core.effective_voice();
+    let active = state.voice_active.clone();
+    let sessions = state.sessions.clone();
+    let gateway = state.gateway.clone();
+    upgrade.on_upgrade(move |socket| {
+        drive_voice(
+            socket,
+            voice_config,
+            active,
+            sessions,
+            query.session_id,
+            gateway,
+        )
+    })
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct VoiceQuery {
+    session_id: Option<String>,
+}
+
+async fn drive_voice(
+    mut socket: WebSocket,
+    persisted: vak_config::VoiceSettings,
+    active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    sessions: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::SessionHandle>>>,
+    >,
+    session_id: Option<String>,
+    gateway: std::sync::Arc<crate::gateway::GatewayState>,
+) {
+    let voice_config = vak_voice::session::VoiceRuntimeConfig {
+        enabled: persisted.enabled,
+        max_session_secs: persisted.max_session_secs,
+        max_concurrent: persisted.max_concurrent,
+        max_audio_bytes: persisted.max_audio_bytes as usize,
+    };
+    if voice_config.validate().is_err() {
+        let _ = socket
+            .send(Message::Text(
+                "{\"type\":\"error\",\"message\":\"Invalid voice configuration\",\"remedy\":\"Review Voice settings\"}"
+                    .into(),
+            ))
+            .await;
+        return;
+    }
+    if !voice_config.enabled {
+        let payload = String::from(
+            "{\"type\":\"error\",\"message\":\"Voice is disabled in workspace settings\",\"remedy\":\"Enable voice in Settings\"}",
+        );
+        let _ = socket.send(Message::Text(payload.into())).await;
+        return;
+    }
+    let admitted = try_admit_voice(&active, voice_config.max_concurrent);
+    if !admitted {
+        let _ = socket
+            .send(Message::Text(
+                "{\"type\":\"error\",\"message\":\"voice session concurrency limit reached\",\"remedy\":\"Wait for an active voice session to finish or increase the configured limit\"}".into(),
+            ))
+            .await;
+        let _ = socket.close().await;
+        return;
+    }
+    struct VoiceLease(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for VoiceLease {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+    let _lease = VoiceLease(active);
+    let ledger =
+        session_id.and_then(|id| sessions.lock().ok().and_then(|map| map.get(&id).cloned()));
+    let mut lifecycle = vak_voice::session::VoiceSession::new(std::time::Duration::from_secs(
+        voice_config.max_session_secs,
+    ));
+    let mut received_bytes: usize = 0;
+    let mut utterance_audio: Vec<u8> = Vec::new();
+    let Ok(ready) =
+        vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::Ready {
+            sample_rate_hz: 16_000,
+            channels: 1,
+        })
+    else {
+        return;
+    };
+    if socket
+        .send(Message::Text(
+            String::from_utf8_lossy(&ready).into_owned().into(),
+        ))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    while let Some(Ok(message)) = futures::StreamExt::next(&mut socket).await {
+        if lifecycle.expired() {
+            let _ = socket.close().await;
+            break;
+        }
+        match message {
+            Message::Binary(bytes) => {
+                received_bytes = received_bytes.saturating_add(bytes.len());
+                if received_bytes > voice_config.max_audio_bytes {
+                    let _ = socket
+                        .send(Message::Text(
+                            format!(
+                                "{{\"type\":\"error\",\"message\":\"voice audio budget exceeded ({} bytes)\",\"remedy\":\"Start a new session or increase the configured budget\"}}",
+                                voice_config.max_audio_bytes
+                            )
+                            .into(),
+                        ))
+                        .await;
+                    let _ = socket.close().await;
+                    break;
+                }
+                if vak_voice::protocol::Frame::validate_audio(&bytes).is_err() {
+                    let Ok(error) = vak_voice::protocol::Frame::encode_control(
+                        &vak_voice::protocol::Control::Error {
+                            message: "invalid PCM audio frame".into(),
+                            remedy: Some("send mono 16-bit PCM frames".into()),
+                        },
+                    ) else {
+                        return;
+                    };
+                    let _ = socket
+                        .send(Message::Text(
+                            String::from_utf8_lossy(&error).into_owned().into(),
+                        ))
+                        .await;
+                    break;
+                }
+                utterance_audio.extend_from_slice(&bytes);
+            }
+            Message::Text(text) => {
+                match vak_voice::protocol::Frame::decode_control(text.as_bytes()) {
+                    Ok(vak_voice::protocol::Control::SpeechStarted { utterance_id }) => {
+                        utterance_audio.clear();
+                        let _ = lifecycle.start_speech(utterance_id);
+                    }
+                    Ok(vak_voice::protocol::Control::SpeechStopped { utterance_id }) => {
+                        // Close the capture boundary and ask the selected
+                        // provider for one authoritative final transcript.
+                        // The browser receives it through the normal control
+                        // channel and dispatches it through the governed API.
+                        if !utterance_audio.is_empty()
+                            && persisted.provider.as_deref() != Some("local")
+                        {
+                            let key = vak_config::get_var("GEMINI_API_KEY")
+                                .or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
+                            if let Some(key) = key.filter(|k| !k.trim().is_empty()) {
+                                let mut cfg = vak_llm::google_live::GoogleLiveConfig::new(key, "");
+                                if let Some(model) =
+                                    persisted.model.clone().filter(|m| !m.trim().is_empty())
+                                {
+                                    cfg.model = model;
+                                }
+                                let cancel = tokio_util::sync::CancellationToken::new();
+                                if let Ok(text) = vak_llm::google_live::transcribe(
+                                    &cfg,
+                                    &utterance_audio,
+                                    "audio/pcm",
+                                    &cancel,
+                                )
+                                .await
+                                {
+                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                        &vak_voice::protocol::Control::Transcript {
+                                            utterance_id: utterance_id.clone(),
+                                            text,
+                                            final_: true,
+                                        },
+                                    ) {
+                                        let _ = socket
+                                            .send(Message::Text(
+                                                String::from_utf8_lossy(&frame).into_owned().into(),
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                        utterance_audio.clear();
+                    }
+                    Ok(vak_voice::protocol::Control::Transcript {
+                        utterance_id,
+                        text,
+                        final_,
+                    }) => {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        if let Some(handle) = ledger.as_ref() {
+                            if let Ok(mut log) = handle.session.lock() {
+                                if let Some(log) = log.as_mut() {
+                                    let _ = log.append_voice_transcript(
+                                        format!("voice:{utterance_id}"),
+                                        text.clone(),
+                                        final_,
+                                    );
+                                }
+                            }
+                        }
+                        if final_ {
+                            let _ = lifecycle.commit_transcript(&utterance_id, &text);
+                        }
+                        // A final transcript is a real user turn. Route it
+                        // through the same governed runner as typed input so
+                        // permissions, intent, budgets, receipts, and
+                        // cancellation remain one contract. Interim text is
+                        // presentation-only and must never dispatch work.
+                        if final_ {
+                            if let Some(handle) = ledger.as_ref() {
+                                let prompt = crate::gateway::compose_voice_prompt(&text);
+                                crate::gateway::start_turn_chain_with_gateway(
+                                    gateway.clone(),
+                                    &handle.core,
+                                    handle.clone(),
+                                    prompt,
+                                    None,
+                                );
+                            }
+                        }
+                        if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                            &vak_voice::protocol::Control::Transcript {
+                                utterance_id: utterance_id.clone(),
+                                text: text.clone(),
+                                final_,
+                            },
+                        ) {
+                            let _ = socket
+                                .send(Message::Text(
+                                    String::from_utf8_lossy(&frame).into_owned().into(),
+                                ))
+                                .await;
+                        }
+                        if final_ && persisted.provider.as_deref() == Some("local") {
+                            use vak_voice::{LocalSpeaker, SpeakFormat, SpeakSpec, Speaker};
+                            if let Ok(mut stream) = LocalSpeaker
+                                .speak(
+                                    SpeakSpec {
+                                        text: text.clone(),
+                                        model: persisted.model.clone(),
+                                        voice: None,
+                                        format: SpeakFormat::Pcm16,
+                                    },
+                                    tokio_util::sync::CancellationToken::new(),
+                                )
+                                .await
+                            {
+                                if let Some(Ok(chunk)) = stream.next().await {
+                                    let _ = socket.send(Message::Binary(chunk.data.into())).await;
+                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                        &vak_voice::protocol::Control::Playback {
+                                            utterance_id: utterance_id.clone(),
+                                            emitted_ms: u64::from(chunk.duration_ms),
+                                            interrupted: false,
+                                        },
+                                    ) {
+                                        let _ = socket
+                                            .send(Message::Text(
+                                                String::from_utf8_lossy(&frame).into_owned().into(),
+                                            ))
+                                            .await;
+                                    }
+                                    let mut receipt = vak_llm::WorkReceipt::new(
+                                        vak_llm::WorkPurpose::VoiceSynthesis,
+                                        "local",
+                                        persisted.model.as_deref().unwrap_or("offline"),
+                                    );
+                                    receipt.record(
+                                        vak_llm::AttemptReason::Initial,
+                                        vak_llm::FailureDomain::Unknown,
+                                        vak_llm::Settlement::Ok,
+                                        0,
+                                        None,
+                                        None,
+                                    );
+                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                        &vak_voice::protocol::Control::Receipt {
+                                            utterance_id: utterance_id.clone(),
+                                            receipt: serde_json::to_value(receipt)
+                                                .unwrap_or(serde_json::Value::Null),
+                                        },
+                                    ) {
+                                        let _ = socket
+                                            .send(Message::Text(
+                                                String::from_utf8_lossy(&frame).into_owned().into(),
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(vak_voice::protocol::Control::Playback {
+                        utterance_id,
+                        emitted_ms,
+                        interrupted,
+                    }) if interrupted => {
+                        if let Some(handle) = ledger.as_ref() {
+                            if let Ok(mut log) = handle.session.lock() {
+                                if let Some(log) = log.as_mut() {
+                                    let _ = log.append_voice_playback(
+                                        format!("voice:{utterance_id}"),
+                                        emitted_ms,
+                                        true,
+                                    );
+                                }
+                            }
+                        }
+                        if let Some(event) = lifecycle.interrupt_playback(emitted_ms) {
+                            // Echo the authoritative interruption accounting so
+                            // clients and channel adapters cannot disagree about
+                            // how much synthesized audio was actually emitted.
+                            if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                &vak_voice::protocol::Control::Playback {
+                                    utterance_id: match event {
+                                        vak_voice::session::SessionEvent::PlaybackInterrupted {
+                                            utterance_id,
+                                            ..
+                                        } => utterance_id,
+                                        _ => utterance_id,
+                                    },
+                                    emitted_ms,
+                                    interrupted: true,
+                                },
+                            ) {
+                                let _ = socket
+                                    .send(Message::Text(
+                                        String::from_utf8_lossy(&frame).into_owned().into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                    }
+                    Ok(vak_voice::protocol::Control::Error { .. }) => {
+                        lifecycle.cancel_run();
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        let Ok(error) = vak_voice::protocol::Frame::encode_control(
+                            &vak_voice::protocol::Control::Error {
+                                message: "invalid voice control frame".into(),
+                                remedy: None,
+                            },
+                        ) else {
+                            return;
+                        };
+                        let _ = socket
+                            .send(Message::Text(
+                                String::from_utf8_lossy(&error).into_owned().into(),
+                            ))
+                            .await;
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+}
+
+fn try_admit_voice(active: &std::sync::atomic::AtomicUsize, limit: usize) -> bool {
+    active
+        .fetch_update(
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+            |current| (current < limit).then_some(current + 1),
+        )
+        .is_ok()
 }
 
 /// Control frames the client sends as text; keystrokes are binary. Nothing

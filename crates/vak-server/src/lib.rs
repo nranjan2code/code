@@ -36,6 +36,7 @@
 //! - `POST /inbox/:id/ack`            → idempotent read-state tombstone
 //! - `GET  /inbox/unread_count`       → live unread total
 //! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
+//! - `POST /voice/transcribe`         → bounded provider-routed batch transcription
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 //! - `POST /agent-network/capabilities` → issue an explicitly scoped agent capability
@@ -227,6 +228,9 @@ pub struct AppState {
     /// will live, which is exactly what an operator switching projects
     /// means by it.
     pub(crate) active_core: Arc<Mutex<Option<Core>>>,
+    /// Number of live voice websocket sessions. Admission is checked against
+    /// the effective configuration at connection time and released on exit.
+    pub(crate) voice_active: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -272,6 +276,7 @@ impl AppState {
             store,
             auth_token,
             active_core: Arc::new(Mutex::new(None)),
+            voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -743,6 +748,10 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
+        .route(
+            "/providers/{name}/models/availability",
+            get(model_availability),
+        )
         .route("/providers/{name}/status", get(provider_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
@@ -761,6 +770,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/services/activate", post(activate_services))
         .route("/finops", get(finops_status).patch(patch_finops))
         .route("/voice/speak", post(voice_speak))
+        .route("/voice/transcribe", post(voice_transcribe))
+        .route("/voice/providers", get(list_voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))
         .route(
@@ -802,6 +813,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/workspaces/forget", post(web::forget_workspace))
         .route("/fs/dirs", get(web::list_dirs))
         .route("/pty", get(web::pty_socket))
+        .route("/voice/session", get(web::voice_socket))
         .route("/version", get(web::version))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
@@ -1355,7 +1367,6 @@ const FINOPS_TREND_DAYS: u32 = 14;
 /// Default voice used when nothing in the bot/chat inheritance chain (nor
 /// the request's own `voice_override`) names one — keeps `/voice/speak`
 /// usable out of the box without any admin configuration.
-const DEFAULT_VOICE_NAME: &str = "Kore";
 
 #[derive(serde::Deserialize)]
 struct VoiceSpeakBody {
@@ -1366,6 +1377,82 @@ struct VoiceSpeakBody {
     chat_key: Option<String>,
     #[serde(default)]
     voice_override: Option<vak_config::VoiceConfig>,
+}
+
+#[derive(serde::Deserialize)]
+struct VoiceTranscribeBody {
+    audio_base64: String,
+    #[serde(default = "default_voice_mime")]
+    mime: String,
+}
+fn default_voice_mime() -> String {
+    "audio/ogg".into()
+}
+
+/// `POST /voice/transcribe`: bounded batch transcription endpoint used by
+/// channel bridges. Credentials and provider routing remain server-owned.
+async fn voice_transcribe(
+    State(state): State<AppState>,
+    Json(body): Json<VoiceTranscribeBody>,
+) -> axum::response::Response {
+    use base64::Engine as _;
+    let audio = match base64::engine::general_purpose::STANDARD.decode(body.audio_base64.trim()) {
+        Ok(bytes) if !bytes.is_empty() && bytes.len() <= 16 * 1024 * 1024 => bytes,
+        Ok(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"audio must be 1 byte to 16 MiB"})),
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"audio_base64 is invalid"})),
+            )
+                .into_response();
+        }
+    };
+    let settings = state.core.effective_voice();
+    if !settings.enabled {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"voice is disabled"})),
+        )
+            .into_response();
+    }
+    let key =
+        vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
+    let Some(api_key) = key else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"no Gemini credential configured"})),
+        )
+            .into_response();
+    };
+    let mut config = vak_llm::google_live::GoogleLiveConfig::new(api_key, "");
+    if let Some(model) = settings.model.filter(|m| !m.trim().is_empty()) {
+        config.model = model;
+    }
+    match vak_llm::google_live::transcribe(
+        &config,
+        &audio,
+        &body.mime,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    {
+        Ok(text) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"text": text, "provider":"gemini", "model": config.model})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 /// `POST /voice/speak`: synthesize `text` through the Gemini Live API using
@@ -1386,7 +1473,7 @@ async fn voice_speak(
     }
 
     // Resolution order: explicit override > resolved chat/bot voice > a
-    // built-in default. The chat lookup mirrors `core_for_entry`'s own
+    // provider-defined default. The chat lookup mirrors `core_for_entry`'s own
     // bot/chat fold (`GatewayState::resolve_voice`), and a bare `bot_id`
     // with no `chat_key` falls back to that bot's own tier directly.
     let resolved = body.voice_override.clone().or_else(|| {
@@ -1401,8 +1488,7 @@ async fn voice_speak(
     let voice_name = resolved
         .as_ref()
         .and_then(|v| v.voice_name.clone())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_VOICE_NAME.to_string());
+        .filter(|v| !v.trim().is_empty());
     // The persona now comes from the bot/chat `identity` prompt block; the
     // legacy `VoiceConfig.persona` is the fallback inside `resolve_persona`
     // (docs/design/45-prompt-layers.md). An explicit `voice_override` from
@@ -1423,6 +1509,95 @@ async fn voice_speak(
             }
         });
 
+    let voice_settings = state.core.effective_voice();
+    let provider = voice_settings.provider.as_deref().unwrap_or("google");
+    if provider == "local" {
+        use vak_voice::{LocalSpeaker, SpeakFormat, SpeakSpec, Speaker};
+        let speaker = LocalSpeaker;
+        let mut stream = match speaker
+            .speak(
+                SpeakSpec {
+                    text: body.text.clone(),
+                    model: voice_settings.model.clone(),
+                    voice: voice_name.clone(),
+                    format: SpeakFormat::Pcm16,
+                },
+                CancellationToken::new(),
+            )
+            .await
+        {
+            Ok(stream) => stream,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response();
+            }
+        };
+        let mut pcm = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => pcm.extend_from_slice(&chunk.data),
+                Err(error) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": error.to_string() })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        let mut wav = Vec::with_capacity(44 + pcm.len());
+        let data_len = pcm.len() as u32;
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&16_000u32.to_le_bytes());
+        wav.extend_from_slice(&32_000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.extend_from_slice(&pcm);
+        let mut receipt = vak_llm::WorkReceipt::new(
+            vak_llm::WorkPurpose::VoiceSynthesis,
+            "local",
+            voice_settings.model.as_deref().unwrap_or("offline"),
+        );
+        receipt.record(
+            vak_llm::AttemptReason::Initial,
+            vak_llm::FailureDomain::Unknown,
+            vak_llm::Settlement::Ok,
+            0,
+            None,
+            None,
+        );
+        let receipt_json = serde_json::to_string(&receipt).unwrap_or_else(|_| "{}".into());
+        return (
+            [
+                (axum::http::header::CONTENT_TYPE, "audio/wav"),
+                (
+                    axum::http::header::HeaderName::from_static("x-vak-work-receipt"),
+                    receipt_json.as_str(),
+                ),
+            ],
+            wav,
+        )
+            .into_response();
+    }
+    if !matches!(
+        provider,
+        "google" | "gemini" | "google-live" | "gemini-live"
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("voice provider '{provider}' has no synthesis adapter installed") })),
+        ).into_response();
+    }
     let api_key = match vak_config::get_var("GEMINI_API_KEY")
         .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
         .filter(|k| !k.trim().is_empty())
@@ -1439,8 +1614,10 @@ async fn voice_speak(
                 .into_response();
         }
     };
-
-    let config = vak_llm::google_live::GoogleLiveConfig::new(api_key);
+    let mut config = vak_llm::google_live::GoogleLiveConfig::new(api_key, "");
+    if let Some(model) = voice_settings.model.filter(|m| !m.trim().is_empty()) {
+        config.model = model;
+    }
     let cancel = CancellationToken::new();
     let mut receipt = vak_llm::WorkReceipt::new(
         vak_llm::WorkPurpose::VoiceSynthesis,
@@ -1452,7 +1629,7 @@ async fn voice_speak(
         &config,
         &body.text,
         persona.as_deref(),
-        Some(voice_name.as_str()),
+        voice_name.as_deref(),
         &cancel,
     )
     .await;
@@ -1467,12 +1644,18 @@ async fn voice_speak(
                 None,
                 None,
             );
-            (
+            let mut response = (
                 StatusCode::OK,
                 [(axum::http::header::CONTENT_TYPE, "audio/wav")],
                 wav,
             )
-                .into_response()
+                .into_response();
+            if let Ok(encoded) = serde_json::to_string(&receipt) {
+                if let Ok(value) = axum::http::HeaderValue::try_from(encoded) {
+                    response.headers_mut().insert("x-vak-work-receipt", value);
+                }
+            }
+            response
         }
         Err(e) => {
             let (domain, settlement) = vak_llm::work::classify_error(&e);
@@ -1497,6 +1680,38 @@ async fn voice_speak(
             (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
         }
     }
+}
+
+/// Capability catalogue for voice settings and administration. Credentials
+/// and discovered model names are intentionally absent until a provider
+/// client performs authenticated discovery.
+async fn list_voice_providers() -> Json<serde_json::Value> {
+    let registry = vak_voice::default_registry();
+    let providers: Vec<_> = registry
+        .list()
+        .map(|descriptor| {
+            let configured = descriptor
+                .env_var
+                .as_deref()
+                .is_some_and(|name| std::env::var(name).is_ok());
+            // Keep credentials out of the response while making setup state
+            // actionable in Settings and administration.
+            serde_json::json!({
+                "name": descriptor.name,
+                "env_var": descriptor.env_var,
+                "default_base_url": descriptor.default_base_url,
+                "endpointing": descriptor.endpointing,
+                "formats": descriptor.formats,
+                "voices": descriptor.voices,
+                "models": descriptor.models,
+                "configured": configured,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "providers": providers,
+        "discovery": "models and voices are populated only from provider responses",
+    }))
 }
 
 /// FinOps projection from the append-only cost ledger. Unknown-priced rows
@@ -2822,6 +3037,15 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         "approval_mode": state.core.effective_approval_mode().as_str(),
         "sandbox": state.core.effective_sandbox_name(),
         "context_window": state.core.config().context_window,
+        "voice": {
+            "enabled": state.core.effective_voice().enabled,
+            "provider": state.core.effective_voice().provider,
+            "model": state.core.effective_voice().model,
+            "max_session_secs": state.core.effective_voice().max_session_secs,
+            "max_concurrent": state.core.effective_voice().max_concurrent,
+            "max_audio_bytes": state.core.effective_voice().max_audio_bytes,
+            "source": "effective",
+        },
         "cwd": state.core.cwd(),
         "warnings": state.core.config().warnings,
         "checks": checks,
@@ -7749,11 +7973,51 @@ async fn discover_models(
     }
     match state.core.discover_models(&name).await {
         Ok(models) => {
-            Json(serde_json::json!({ "provider": name, "models": models })).into_response()
+            if name == "bedrock" {
+                match state.core.bedrock_model_availability(&models).await {
+                    Ok(availability) => Json(serde_json::json!({ "provider": name, "models": models, "availability": availability })).into_response(),
+                    Err(e) => Json(serde_json::json!({ "provider": name, "models": models, "availability_error": e.to_string() })).into_response(),
+                }
+            } else {
+                Json(serde_json::json!({ "provider": name, "models": models })).into_response()
+            }
         }
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn model_availability(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    if name != "bedrock" {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error":"availability is only supported for bedrock"})),
+        )
+            .into_response();
+    }
+    let models = match state.core.discover_models("bedrock").await {
+        Ok(models) => models,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"provider":name,"error":e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    match state.core.bedrock_model_availability(&models).await {
+        Ok(availability) => {
+            Json(serde_json::json!({"provider":name,"models":availability})).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"provider":name,"error":e.to_string()})),
         )
             .into_response(),
     }
@@ -8571,6 +8835,18 @@ struct ConfigPatch {
     permission_mode: Option<String>,
     approval_mode: Option<String>,
     theme: Option<String>,
+    #[serde(default)]
+    voice_enabled: Option<bool>,
+    #[serde(default)]
+    voice_max_session_secs: Option<u64>,
+    #[serde(default)]
+    voice_max_concurrent: Option<usize>,
+    #[serde(default)]
+    voice_max_audio_bytes: Option<u64>,
+    #[serde(default)]
+    voice_provider: Option<Option<String>>,
+    #[serde(default)]
+    voice_model: Option<Option<String>>,
     /// Whether sub-agent delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses.
     #[serde(default)]
@@ -8761,6 +9037,66 @@ async fn patch_config_scope(
     }
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
     let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
+    if body
+        .voice_max_session_secs
+        .is_some_and(|v| !(1..=86_400).contains(&v))
+        || body
+            .voice_max_concurrent
+            .is_some_and(|v| !(1..=64).contains(&v))
+        || body
+            .voice_max_audio_bytes
+            .is_some_and(|v| !(1..=256 * 1024 * 1024).contains(&v))
+        || body
+            .voice_provider
+            .as_ref()
+            .and_then(|v| v.as_ref())
+            .is_some_and(|v| v.trim().is_empty() || v.chars().count() > 256)
+        || body
+            .voice_model
+            .as_ref()
+            .and_then(|v| v.as_ref())
+            .is_some_and(|v| v.trim().is_empty() || v.chars().count() > 256)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if body.voice_enabled.is_some()
+        || body.voice_max_session_secs.is_some()
+        || body.voice_max_concurrent.is_some()
+        || body.voice_max_audio_bytes.is_some()
+        || body.voice_provider.is_some()
+        || body.voice_model.is_some()
+    {
+        let result = if global {
+            vak_config::persist_global_voice_settings(
+                body.voice_enabled,
+                body.voice_max_session_secs,
+                body.voice_max_concurrent,
+                body.voice_max_audio_bytes,
+                body.voice_provider.clone(),
+                body.voice_model.clone(),
+            )
+        } else {
+            vak_config::persist_project_voice_settings(
+                state.core.cwd(),
+                body.voice_enabled,
+                body.voice_max_session_secs,
+                body.voice_max_concurrent,
+                body.voice_max_audio_bytes,
+                body.voice_provider.clone(),
+                body.voice_model.clone(),
+            )
+        };
+        if result.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        // Re-read the persisted layered value and publish it immediately;
+        // new voice sessions observe the change without a restart.
+        if let Ok(effective) =
+            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+        {
+            state.core.apply_persisted_voice(effective.voice);
+        }
+    }
     let current_route = state.core.effective_route();
     let route_change = body.provider.is_some() || body.model.is_some();
     let provider = route_change.then(|| {
