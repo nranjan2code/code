@@ -922,9 +922,8 @@ async fn drive_voice(
                                             data: utterance_audio.clone(),
                                         },
                                         vak_voice::ListenSpec {
-                                            format: vak_voice::ListenFormat::Pcm16,
-                                            sample_rate_hz: Some(16_000),
-                                            channels: Some(1),
+                                            model: persisted.model.clone(),
+                                            language: None,
                                         },
                                         &cancel,
                                     )
