@@ -1,5 +1,25 @@
 Status: implemented in 3.0.24
 
+## AWS Bedrock endpoint management
+
+Bedrock is a first-class provider in the shared/project configuration layers.
+The provider/model route is persisted atomically using the same inheritance
+and provenance rules as other providers. The bearer secret is resolved from
+the canonical secret chain as `AWS_BEARER_TOKEN_BEDROCK`; it is never stored
+in the TOML route or returned by the admin API.
+
+Discovery uses the configured Bedrock Mantle endpoint. When the host has a
+standard AWS SDK credential chain, the provider response also reports native
+Bedrock availability per model: agreement, authorization, entitlement, and
+regional status, plus an `invokable` result. Status is shown in Settings and
+models not confirmed fully available are disabled. A failed control-plane
+check is surfaced as an error rather than treated as authorization.
+
+This split supports headless vak hosted in AWS: Mantle inference can use the
+scoped bearer key, while availability checks use an IAM role, SSO/web
+identity, or another standard AWS credential source. Results are cached for
+five minutes, with the credential/endpoint identity included in the cache key.
+
 Shared / Global Configuration
 ==============================
 

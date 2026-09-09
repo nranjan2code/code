@@ -119,6 +119,13 @@ shipped behaviour rather than a proposal.
    `Core::discover_models` memoises it for 5 minutes. When discovery fails,
    surface the reason; never substitute a static list. Endpoint *hosts* are
    configuration and may have defaults; model *ids* may not.
+   AWS Bedrock additionally reports native control-plane status for each
+   discovered model: agreement, authorization, entitlement, and regional
+   availability. Only a fully available model is invokable in the admin
+   selector. Mantle inference uses the scoped `AWS_BEARER_TOKEN_BEDROCK`,
+   while native checks use the standard AWS SDK credential chain so headless
+   AWS deployments can use IAM roles, SSO, web identity, or environment
+   credentials. Failed checks remain explicitly unknown/unavailable.
 10. **Restricted filesystem access is workspace-rooted.** In read-only and
     workspace-write modes, automatic read/glob/grep access must resolve inside
     the canonical session workspace; traversal and symlink escapes fail
@@ -581,6 +588,10 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      no upstream deadline exists otherwise, WAV wrapping,
                      WorkPurpose::VoiceSynthesis receipts (docs/design/
                      38-voice-personality.md)
+crates/vak-voice      provider-neutral voice contracts, audio framing and
+                      resampling, VAD, streaming protocol, session lifecycle,
+                      discovery registry, and transcription validation
+                      (docs/design/49-live-voice.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       receipt entries (audit-only, projection-neutral),
                       compaction packet partitions (docs/design/17-context.md),
