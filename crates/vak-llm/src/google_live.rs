@@ -34,6 +34,10 @@ const LIVE_WS_PATH: &str =
 /// connection; short enough that a hung request can't tie up a task
 /// indefinitely.
 const LIVE_SESSION_TIMEOUT: Duration = Duration::from_secs(25);
+/// Some native-audio model revisions emit the complete audio turn but omit
+/// `turnComplete`. Once audio has arrived, a short quiet window is therefore
+/// sufficient to finalize the response while still allowing trailing chunks.
+const AUDIO_IDLE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Hard cap on synthesis input length. This is a paid, per-call API; an
 /// unbounded `text` field lets any bearer-authenticated caller run up
@@ -245,6 +249,8 @@ async fn speak_inner(
     voice_name: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, LlmError> {
+    let _ =
+        rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider());
     let url = format!("wss://{LIVE_WS_HOST}{LIVE_WS_PATH}?key={}", config.api_key);
 
     let connect_fut = tokio_tungstenite::connect_async(&url);
@@ -325,7 +331,16 @@ async fn speak_inner(
                 let partial = (!pcm.is_empty()).then(|| crate::types::AssistantMessage::empty(&config.model));
                 return Err(LlmError::Aborted { partial });
             }
-            m = next => m,
+            m = async {
+                if pcm.is_empty() {
+                    next.await
+                } else {
+                    match tokio::time::timeout(AUDIO_IDLE_TIMEOUT, next).await {
+                        Ok(message) => message,
+                        Err(_) => None,
+                    }
+                }
+            } => m,
         };
         match msg {
             Some(Ok(Message::Text(t))) => {
