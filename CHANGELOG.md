@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.42 — 2026-09-09
+
+- Expand fake-server MCP regression coverage for missing servers and malformed arguments.
+
 ## 3.0.41 — 2026-09-09
 
 - Add the data-driven Everyday helpful-details rail while preserving the Advanced dock.

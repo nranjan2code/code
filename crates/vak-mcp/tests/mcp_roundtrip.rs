@@ -189,6 +189,32 @@ async fn unknown_server_is_an_error_value() {
 }
 
 #[tokio::test]
+async fn missing_server_is_an_error_value_before_spawn() {
+    let tool = McpTool::new(manager());
+    let out = tool
+        .execute(
+            &json!({"action": "call", "tool": "echo", "arguments": {"text": "hello"}}),
+            &ctx(),
+        )
+        .await;
+    assert!(out.is_error);
+    assert!(out.content.contains("missing required parameter: server"));
+}
+
+#[tokio::test]
+async fn malformed_arguments_remain_typed_error_values() {
+    let tool = McpTool::new(manager());
+    let out = tool
+        .execute(
+            &json!({"action": "call", "server": "fake", "tool": "echo", "arguments": "not-an-object"}),
+            &ctx(),
+        )
+        .await;
+    assert!(out.is_error);
+    assert!(out.content.contains("arguments") || out.content.contains("invalid"));
+}
+
+#[tokio::test]
 async fn missing_action_parameter_is_rejected() {
     let tool = McpTool::new(manager());
     let out = tool.execute(&json!({}), &ctx()).await;
