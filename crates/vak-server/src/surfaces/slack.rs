@@ -48,6 +48,14 @@ pub struct SlackMessage {
     pub channel_id: String,
     pub user_id: String,
     pub text: String,
+    pub audio_url: Option<String>,
+    pub audio_mime: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct GatewayReply {
+    chunks: Vec<String>,
+    session_id: Option<String>,
 }
 
 /// Parse a `conversations.history` response into routable messages,
@@ -63,7 +71,14 @@ pub fn parse_history(channel_id: &str, body: &Value) -> Vec<SlackMessage> {
                 .filter(|m| m["bot_id"].is_null() && m["subtype"].is_null())
                 .filter_map(|m| {
                     let text = m["text"].as_str().unwrap_or_default().to_string();
-                    if text.trim().is_empty() {
+                    let audio = m["files"].as_array().and_then(|items| {
+                        items.iter().find(|f| {
+                            f["mimetype"]
+                                .as_str()
+                                .is_some_and(|mime| mime.starts_with("audio/"))
+                        })
+                    });
+                    if text.trim().is_empty() && audio.is_none() {
                         return None;
                     }
                     Some(SlackMessage {
@@ -71,6 +86,12 @@ pub fn parse_history(channel_id: &str, body: &Value) -> Vec<SlackMessage> {
                         channel_id: channel_id.to_string(),
                         user_id: m["user"].as_str()?.to_string(),
                         text,
+                        audio_url: audio
+                            .and_then(|f| f["url_private_download"].as_str())
+                            .map(str::to_string),
+                        audio_mime: audio
+                            .and_then(|f| f["mimetype"].as_str())
+                            .map(str::to_string),
                     })
                 })
                 .collect()
@@ -140,8 +161,20 @@ impl SlackBridge {
                     continue;
                 }
                 let reply = self.process(&message).await;
-                if let Err(e) = self.send_message(channel_id, &reply).await {
+                if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
                     eprintln!("[slack] send to {channel_id} failed: {e}");
+                }
+                if message.audio_url.is_some() {
+                    if let Err(e) = self
+                        .send_voice(
+                            channel_id,
+                            &reply.chunks.join("\n"),
+                            reply.session_id.as_deref(),
+                        )
+                        .await
+                    {
+                        eprintln!("[slack] voice reply unavailable: {e}");
+                    }
                 }
             }
         }
@@ -194,16 +227,50 @@ impl SlackBridge {
         Ok(parse_history(channel_id, &body))
     }
 
-    async fn process(&self, message: &SlackMessage) -> Vec<String> {
+    async fn process(&self, message: &SlackMessage) -> GatewayReply {
+        let mut text = message.text.clone();
+        let mut attachments = Vec::new();
+        if let Some(url) = &message.audio_url {
+            if let Ok(response) = http().get(url).bearer_auth(&self.bot_token).send().await
+                && response.status().is_success()
+                && let Ok(bytes) = response.bytes().await
+                && bytes.len() <= 16 * 1024 * 1024
+            {
+                use base64::Engine as _;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                attachments.push(serde_json::json!({
+                    "data": encoded.clone(),
+                    "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
+                    "kind": "audio",
+                    "filename": "voice",
+                }));
+                if let Ok(response) = http().post(format!("{}/voice/transcribe", self.gateway_url))
+                    .bearer_auth(&self.gateway_token)
+                    .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
+                    .send().await
+                    && response.status().is_success()
+                    && let Ok(value) = response.json::<Value>().await
+                    && let Some(transcript) = value["text"].as_str()
+                { text = format!("{}\n{}", text.trim(), transcript.trim()).trim().to_string(); }
+            }
+        }
         // 0c-03: real per-user chat/sender, never a fixed placeholder.
         let req = match InboundRequest::new(
             self,
             message.channel_id.clone(),
             message.user_id.clone(),
-            message.text.clone(),
+            text,
         ) {
-            Ok(req) => req.waiting().with_bot_id(self.bot_id.clone()),
-            Err(e) => return vec![format!("(bridge refused to send: {e})")],
+            Ok(req) => req
+                .with_attachments(attachments)
+                .waiting()
+                .with_bot_id(self.bot_id.clone()),
+            Err(e) => {
+                return GatewayReply {
+                    chunks: vec![format!("(bridge refused to send: {e})")],
+                    ..Default::default()
+                };
+            }
         };
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
@@ -212,16 +279,30 @@ impl SlackBridge {
             .send()
             .await;
         match res {
-            Ok(r) if r.status().as_u16() == 202 => {
-                vec!["(queued: I'm still working on your previous message)".into()]
-            }
-            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(v) => super::prepared_chunks(v, "slack")
-                    .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]),
-                Err(e) => vec![format!("(bad gateway reply: {e})")],
+            Ok(r) if r.status().as_u16() == 202 => GatewayReply {
+                chunks: vec!["(queued: I'm still working on your previous message)".into()],
+                ..Default::default()
             },
-            Ok(r) => vec![format!("(gateway error: {})", r.status())],
-            Err(e) => vec![format!("(gateway unreachable: {e})")],
+            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+                Ok(v) => {
+                    let session_id = v["session_id"].as_str().map(String::from);
+                    let chunks = super::prepared_chunks(v, "slack")
+                        .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
+                    GatewayReply { chunks, session_id }
+                }
+                Err(e) => GatewayReply {
+                    chunks: vec![format!("(bad gateway reply: {e})")],
+                    ..Default::default()
+                },
+            },
+            Ok(r) => GatewayReply {
+                chunks: vec![format!("(gateway error: {})", r.status())],
+                ..Default::default()
+            },
+            Err(e) => GatewayReply {
+                chunks: vec![format!("(gateway unreachable: {e})")],
+                ..Default::default()
+            },
         }
     }
 
@@ -247,6 +328,45 @@ impl SlackBridge {
                     body["error"].as_str().unwrap_or("?")
                 ));
             }
+        }
+        Ok(())
+    }
+
+    async fn send_voice(
+        &self,
+        channel_id: &str,
+        text: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), String> {
+        let response = http()
+            .post(format!("{}/voice/speak", self.gateway_url))
+            .bearer_auth(&self.gateway_token)
+            .json(&serde_json::json!({"text": text, "format": "wav", "session_id": session_id}))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("voice speak returned {}", response.status()));
+        }
+        let part = reqwest::multipart::Part::bytes(
+            response.bytes().await.map_err(|e| e.to_string())?.to_vec(),
+        )
+        .file_name("reply.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| e.to_string())?;
+        let sent = http()
+            .post(format!("{}/files.uploadV2", self.api_base))
+            .bearer_auth(&self.bot_token)
+            .multipart(
+                reqwest::multipart::Form::new()
+                    .text("channel_id", channel_id.to_string())
+                    .part("file", part),
+            )
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !sent.status().is_success() {
+            return Err(format!("slack voice upload returned {}", sent.status()));
         }
         Ok(())
     }
@@ -337,6 +457,18 @@ mod tests {
         assert_eq!(parsed[0].user_id, "U9");
         assert_eq!(parsed[0].channel_id, "C1");
         assert_eq!(parsed[1].text, "second");
+    }
+
+    #[test]
+    fn parses_audio_files_without_text_for_governed_transcription() {
+        let body = serde_json::json!({"messages":[{"ts":"1.1","text":"","user":"U9","files":[{"mimetype":"audio/ogg","url_private_download":"https://files.example/voice"}]}]});
+        let parsed = parse_history("C1", &body);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].audio_mime.as_deref(), Some("audio/ogg"));
+        assert_eq!(
+            parsed[0].audio_url.as_deref(),
+            Some("https://files.example/voice")
+        );
     }
 
     #[test]

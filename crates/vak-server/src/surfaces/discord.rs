@@ -54,6 +54,14 @@ pub struct DiscordMessage {
     pub channel_id: String,
     pub author_id: String,
     pub text: String,
+    pub audio_url: Option<String>,
+    pub audio_mime: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct GatewayReply {
+    chunks: Vec<String>,
+    session_id: Option<String>,
 }
 
 /// Parse a `GET /channels/{id}/messages` page into routable messages,
@@ -68,7 +76,14 @@ pub fn parse_messages(channel_id: &str, body: &Value) -> Vec<DiscordMessage> {
                 .filter(|m| m["author"]["bot"].as_bool() != Some(true))
                 .filter_map(|m| {
                     let text = m["content"].as_str().unwrap_or_default().to_string();
-                    if text.trim().is_empty() {
+                    let audio = m["attachments"].as_array().and_then(|items| {
+                        items.iter().find(|a| {
+                            a["content_type"]
+                                .as_str()
+                                .is_some_and(|mime| mime.starts_with("audio/"))
+                        })
+                    });
+                    if text.trim().is_empty() && audio.is_none() {
                         return None;
                     }
                     Some(DiscordMessage {
@@ -76,6 +91,10 @@ pub fn parse_messages(channel_id: &str, body: &Value) -> Vec<DiscordMessage> {
                         channel_id: channel_id.to_string(),
                         author_id: m["author"]["id"].as_str()?.to_string(),
                         text,
+                        audio_url: audio.and_then(|a| a["url"].as_str()).map(str::to_string),
+                        audio_mime: audio
+                            .and_then(|a| a["content_type"].as_str())
+                            .map(str::to_string),
                     })
                 })
                 .collect()
@@ -149,10 +168,56 @@ impl DiscordBridge {
                     continue;
                 }
                 let reply = self.process(&message).await;
-                if let Err(e) = self.send_message(channel_id, &reply).await {
+                if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
                     eprintln!("[discord] send to {channel_id} failed: {e}");
                 }
+                if message.audio_url.is_some() {
+                    if let Err(e) = self
+                        .send_voice(
+                            channel_id,
+                            &reply.chunks.join("\n"),
+                            reply.session_id.as_deref(),
+                        )
+                        .await
+                    {
+                        eprintln!("[discord] voice reply unavailable: {e}");
+                    }
+                }
             }
+        }
+        Ok(())
+    }
+
+    async fn send_voice(
+        &self,
+        channel_id: &str,
+        text: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), String> {
+        let response = http()
+            .post(format!("{}/voice/speak", self.gateway_url))
+            .bearer_auth(&self.gateway_token)
+            .json(&serde_json::json!({"text": text, "format": "wav", "session_id": session_id}))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("voice speak returned {}", response.status()));
+        }
+        let audio = response.bytes().await.map_err(|e| e.to_string())?;
+        let part = reqwest::multipart::Part::bytes(audio.to_vec())
+            .file_name("reply.wav")
+            .mime_str("audio/wav")
+            .map_err(|e| e.to_string())?;
+        let sent = http()
+            .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+            .header("Authorization", format!("Bot {}", self.bot_token))
+            .multipart(reqwest::multipart::Form::new().part("files[0]", part))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !sent.status().is_success() {
+            return Err(format!("discord voice upload returned {}", sent.status()));
         }
         Ok(())
     }
@@ -186,16 +251,58 @@ impl DiscordBridge {
     }
 
     /// One message through the gateway contract; wait for the final text.
-    async fn process(&self, message: &DiscordMessage) -> Vec<String> {
+    async fn process(&self, message: &DiscordMessage) -> GatewayReply {
+        let mut text = message.text.clone();
+        let mut attachments = Vec::new();
+        if let Some(url) = &message.audio_url {
+            match http()
+                .get(url)
+                .header("Authorization", format!("Bot {}", self.bot_token))
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(bytes) = response.bytes().await {
+                        if bytes.len() <= 16 * 1024 * 1024 {
+                            use base64::Engine as _;
+                            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                            attachments.push(serde_json::json!({
+                                "data": encoded.clone(),
+                                "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
+                                "kind": "audio",
+                                "filename": "voice",
+                            }));
+                            if let Ok(transcribed) = http().post(format!("{}/voice/transcribe", self.gateway_url))
+                                .bearer_auth(&self.gateway_token)
+                                .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
+                                .send().await
+                                && transcribed.status().is_success()
+                                && let Ok(value) = transcribed.json::<Value>().await
+                                && let Some(result) = value["text"].as_str()
+                            { text = format!("{}\n{}", text.trim(), result.trim()).trim().to_string(); }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         // 0c-03: real per-user chat/sender, never a fixed placeholder.
         let req = match InboundRequest::new(
             self,
             message.channel_id.clone(),
             message.author_id.clone(),
-            message.text.clone(),
+            text,
         ) {
-            Ok(req) => req.waiting().with_bot_id(self.bot_id.clone()),
-            Err(e) => return vec![format!("(bridge refused to send: {e})")],
+            Ok(req) => req
+                .with_attachments(attachments)
+                .waiting()
+                .with_bot_id(self.bot_id.clone()),
+            Err(e) => {
+                return GatewayReply {
+                    chunks: vec![format!("(bridge refused to send: {e})")],
+                    ..Default::default()
+                };
+            }
         };
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
@@ -204,16 +311,30 @@ impl DiscordBridge {
             .send()
             .await;
         match res {
-            Ok(r) if r.status().as_u16() == 202 => {
-                vec!["(queued: I'm still working on your previous message)".into()]
-            }
-            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(v) => super::prepared_chunks(v, "discord")
-                    .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]),
-                Err(e) => vec![format!("(bad gateway reply: {e})")],
+            Ok(r) if r.status().as_u16() == 202 => GatewayReply {
+                chunks: vec!["(queued: I'm still working on your previous message)".into()],
+                ..Default::default()
             },
-            Ok(r) => vec![format!("(gateway error: {})", r.status())],
-            Err(e) => vec![format!("(gateway unreachable: {e})")],
+            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+                Ok(v) => {
+                    let session_id = v["session_id"].as_str().map(String::from);
+                    let chunks = super::prepared_chunks(v, "discord")
+                        .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
+                    GatewayReply { chunks, session_id }
+                }
+                Err(e) => GatewayReply {
+                    chunks: vec![format!("(bad gateway reply: {e})")],
+                    ..Default::default()
+                },
+            },
+            Ok(r) => GatewayReply {
+                chunks: vec![format!("(gateway error: {})", r.status())],
+                ..Default::default()
+            },
+            Err(e) => GatewayReply {
+                chunks: vec![format!("(gateway unreachable: {e})")],
+                ..Default::default()
+            },
         }
     }
 
@@ -352,6 +473,18 @@ mod tests {
         assert_eq!(parsed[0].channel_id, "555");
         assert_eq!(parsed[0].author_id, "7");
         assert_eq!(parsed[1].id, "30");
+    }
+
+    #[test]
+    fn parses_audio_attachment_without_text() {
+        let body = serde_json::json!([{"id":"50","content":"","author":{"id":"7"},"attachments":[{"content_type":"audio/ogg","url":"https://cdn.example/voice"}]}]);
+        let parsed = parse_messages("555", &body);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].audio_mime.as_deref(), Some("audio/ogg"));
+        assert_eq!(
+            parsed[0].audio_url.as_deref(),
+            Some("https://cdn.example/voice")
+        );
     }
 
     #[test]
