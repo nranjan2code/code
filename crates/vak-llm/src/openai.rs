@@ -19,6 +19,136 @@ pub struct OpenAiConfig {
     pub base_url: String,
 }
 
+/// Batch transcription through the OpenAI-compatible `/audio/transcriptions`
+/// endpoint. The model is supplied by discovery/configuration; this adapter
+/// deliberately has no baked-in model catalogue or default.
+pub async fn transcribe(
+    config: &OpenAiConfig,
+    audio: &[u8],
+    mime: &str,
+    model: &str,
+    cancel: &CancellationToken,
+) -> Result<String, LlmError> {
+    if audio.is_empty() || mime.trim().is_empty() || model.trim().is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "audio, mime, and model are required".into(),
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err(LlmError::Aborted { partial: None });
+    }
+    let filename = if mime.contains("wav") {
+        "audio.wav"
+    } else if mime.contains("mpeg") || mime.contains("mp3") {
+        "audio.mp3"
+    } else {
+        "audio.bin"
+    };
+    let part = reqwest::multipart::Part::bytes(audio.to_vec())
+        .file_name(filename)
+        .mime_str(mime)
+        .map_err(|e| LlmError::InvalidRequest(e.to_string()))?;
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("model", model.to_string());
+    let url = format!(
+        "{}/audio/transcriptions",
+        config.base_url.trim_end_matches('/')
+    );
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = reqwest::Client::new().post(url).bearer_auth(&config.api_key).multipart(form).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+    };
+    let status = response.status().as_u16();
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|e| LlmError::Parse(e.to_string()))?;
+    if status >= 400 {
+        return Err(LlmError::InvalidRequest(format!(
+            "transcription provider returned HTTP {status}: {value}"
+        )));
+    }
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return Err(LlmError::Parse(
+            "provider returned an empty transcript".into(),
+        ));
+    }
+    Ok(text)
+}
+
+/// Synthesize speech through an OpenAI-compatible `/audio/speech` endpoint.
+/// The model is always explicit and the response is bounded before it is
+/// materialized, so a misbehaving provider cannot exhaust the process.
+pub async fn speak(
+    config: &OpenAiConfig,
+    text: &str,
+    model: &str,
+    voice: Option<&str>,
+    format: &str,
+    cancel: &CancellationToken,
+) -> Result<Vec<u8>, LlmError> {
+    if text.trim().is_empty() || model.trim().is_empty() || format.trim().is_empty() {
+        return Err(LlmError::InvalidRequest(
+            "text, model, and format are required".into(),
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err(LlmError::Aborted { partial: None });
+    }
+    let mut body = serde_json::json!({
+        "model": model,
+        "input": text,
+        "response_format": format,
+    });
+    if let Some(voice) = voice.filter(|v| !v.trim().is_empty()) {
+        body["voice"] = Value::String(voice.to_string());
+    }
+    let url = format!("{}/audio/speech", config.base_url.trim_end_matches('/'));
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = reqwest::Client::new().post(url).bearer_auth(&config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+    };
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let body = response.text().await.unwrap_or_default();
+        return Err(map_status_error(status, &body, None));
+    }
+    const MAX_AUDIO_BYTES: usize = 16 * 1024 * 1024;
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_AUDIO_BYTES as u64)
+    {
+        return Err(LlmError::InvalidRequest(
+            "provider audio exceeds 16 MiB".into(),
+        ));
+    }
+    let mut output = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        chunk = stream.next() => chunk,
+    } {
+        let chunk = chunk.map_err(|e| LlmError::Network(e.to_string()))?;
+        if output.len().saturating_add(chunk.len()) > MAX_AUDIO_BYTES {
+            return Err(LlmError::InvalidRequest(
+                "provider audio exceeds 16 MiB".into(),
+            ));
+        }
+        output.extend_from_slice(&chunk);
+    }
+    if output.is_empty() {
+        return Err(LlmError::Parse("provider returned empty audio".into()));
+    }
+    Ok(output)
+}
+
 #[derive(Clone)]
 pub struct OpenAiCompletionsProvider {
     http: reqwest::Client,

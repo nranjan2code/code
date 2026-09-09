@@ -1372,6 +1372,8 @@ const FINOPS_TREND_DAYS: u32 = 14;
 struct VoiceSpeakBody {
     text: String,
     #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
     bot_id: Option<String>,
     #[serde(default)]
     chat_key: Option<String>,
@@ -1436,34 +1438,38 @@ async fn voice_transcribe(
         .to_ascii_lowercase();
     if !matches!(
         provider.as_str(),
-        "google" | "gemini" | "google-live" | "gemini-live"
+        "google" | "gemini" | "google-live" | "gemini-live" | "openai" | "openai-compatible"
     ) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": format!("voice provider '{provider}' has no transcription adapter installed")})),
         ).into_response();
     }
-    let key =
-        vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
+    let key = if matches!(provider.as_str(), "openai" | "openai-compatible") {
+        vak_config::get_var("OPENAI_API_KEY")
+    } else {
+        vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+    };
     let Some(api_key) = key else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error":"no Gemini/Google credential configured for the selected voice provider"})),
+                Json(serde_json::json!({"error":"no credential configured for the selected voice provider"})),
         )
             .into_response();
     };
-    let mut config = vak_llm::google_live::GoogleLiveConfig::new(api_key, "");
-    if let Some(model) = settings.model.filter(|m| !m.trim().is_empty()) {
-        config.model = model;
-    }
-    match vak_llm::google_live::transcribe(
-        &config,
-        &audio,
-        &body.mime,
-        &tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    {
+    let model = settings.model.unwrap_or_default();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let result = if matches!(provider.as_str(), "openai" | "openai-compatible") {
+        let config = vak_llm::openai::OpenAiConfig {
+            api_key,
+            base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+        };
+        vak_llm::openai::transcribe(&config, &audio, &body.mime, &model, &cancel).await
+    } else {
+        let config = vak_llm::google_live::GoogleLiveConfig::new(api_key, &model);
+        vak_llm::google_live::transcribe(&config, &audio, &body.mime, &cancel).await
+    };
+    match result {
         Ok(text) => {
             if let Some(session_id) = body
                 .session_id
@@ -1480,7 +1486,7 @@ async fn voice_transcribe(
             }
             (
                 StatusCode::OK,
-                Json(serde_json::json!({"text": text, "provider":provider, "model": config.model})),
+                Json(serde_json::json!({"text": text, "provider":provider, "model": model})),
             )
                 .into_response()
         }
@@ -1639,6 +1645,75 @@ async fn voice_speak(
             wav,
         )
             .into_response();
+    }
+    if matches!(provider.as_str(), "openai" | "openai-compatible") {
+        let Some(api_key) =
+            vak_config::get_var("OPENAI_API_KEY").filter(|key| !key.trim().is_empty())
+        else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({"error":"no OPENAI_API_KEY configured for voice synthesis"}),
+                ),
+            )
+                .into_response();
+        };
+        let Some(model) = voice_settings
+            .model
+            .as_deref()
+            .filter(|m| !m.trim().is_empty())
+        else {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"voice synthesis requires an explicitly discovered model"}))).into_response();
+        };
+        let format = body.format.as_deref().unwrap_or("mp3");
+        let allowed = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
+        if !allowed.contains(&format) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":format!("unsupported OpenAI speech format '{format}'")}))).into_response();
+        }
+        let config = vak_llm::openai::OpenAiConfig {
+            api_key,
+            base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+        };
+        let result = vak_llm::openai::speak(
+            &config,
+            &body.text,
+            model,
+            voice_name.as_deref(),
+            format,
+            &CancellationToken::new(),
+        )
+        .await;
+        return match result {
+            Ok(audio) => {
+                let mime = match format {
+                    "mp3" => "audio/mpeg",
+                    "opus" => "audio/ogg",
+                    "aac" => "audio/aac",
+                    "flac" => "audio/flac",
+                    "pcm" => "audio/pcm",
+                    _ => "audio/wav",
+                };
+                if let Some(session_id) = body
+                    .session_id
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                {
+                    if let Ok(mut session) = state.core.open_session(session_id).await {
+                        let _ = session.append_voice_playback(
+                            uuid::Uuid::now_v7().to_string(),
+                            0,
+                            false,
+                        );
+                    }
+                }
+                ([(axum::http::header::CONTENT_TYPE, mime)], audio).into_response()
+            }
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error":error.to_string()})),
+            )
+                .into_response(),
+        };
     }
     if !matches!(
         provider.as_str(),
@@ -3109,6 +3184,10 @@ fn health_projection(state: &AppState) -> serde_json::Value {
             "max_concurrent": state.core.effective_voice().max_concurrent,
             "max_audio_bytes": state.core.effective_voice().max_audio_bytes,
             "source": "effective",
+            "active_sessions": state.voice_active.load(std::sync::atomic::Ordering::Relaxed),
+            "capacity_remaining": state.core.effective_voice().max_concurrent.saturating_sub(
+                state.voice_active.load(std::sync::atomic::Ordering::Relaxed),
+            ),
         },
         "cwd": state.core.cwd(),
         "warnings": state.core.config().warnings,
