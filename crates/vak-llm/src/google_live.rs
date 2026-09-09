@@ -431,6 +431,30 @@ mod tests {
         assert!(matches!(err, LlmError::InvalidRequest(_)));
     }
 
+    #[tokio::test]
+    async fn transcribe_rejects_cancelled_request_without_network() {
+        let config = GoogleLiveConfig::new("test-key-not-used", "discovered-model");
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let err = transcribe(&config, b"audio", "audio/pcm", &cancel)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, LlmError::Aborted { .. }));
+    }
+
+    #[test]
+    fn provider_status_errors_preserve_classification_and_message() {
+        assert!(
+            matches!(map_status_error(401, r#"{"error":{"message":"bad key"}}"#), LlmError::Auth(message) if message == "bad key")
+        );
+        assert!(
+            matches!(map_status_error(429, r#"{"error":{"message":"slow down"}}"#), LlmError::RateLimit { message, .. } if message == "slow down")
+        );
+        assert!(
+            matches!(map_status_error(503, r#"{"error":{"message":"busy"}}"#), LlmError::Overloaded(message) if message == "busy")
+        );
+    }
+
     #[test]
     fn transcription_request_contains_audio_and_strict_instruction() {
         let request = build_transcribe_request(&[0, 1, 2], "audio/pcm");
@@ -460,10 +484,13 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires GEMINI_API_KEY and network access"]
     async fn live_smoke_synthesizes_audio() {
-        let Ok(key) = std::env::var("GEMINI_API_KEY") else {
+        let Ok(key) = smoke_key() else {
             return;
         };
-        let config = GoogleLiveConfig::new(key, "discovered-model");
+        let Ok(model) = std::env::var("VAK_GEMINI_LIVE_MODEL") else {
+            return;
+        };
+        let config = GoogleLiveConfig::new(key, model);
         let bytes = speak(
             &config,
             "Say hello briefly.",
@@ -480,15 +507,22 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires GEMINI_API_KEY and network access"]
     async fn live_smoke_transcribes_audio() {
-        let Ok(key) = std::env::var("GEMINI_API_KEY") else {
+        let Ok(key) = smoke_key() else {
             return;
         };
-        let config = GoogleLiveConfig::new(key, "discovered-model");
+        let Ok(model) = std::env::var("VAK_GEMINI_TRANSCRIBE_MODEL") else {
+            return;
+        };
+        let config = GoogleLiveConfig::new(key, model);
         let audio = vec![0u8; 3200];
         let text = transcribe(&config, &audio, "audio/pcm", &CancellationToken::new())
             .await
             .expect("configured live provider should transcribe");
         assert!(!text.trim().is_empty());
+    }
+
+    fn smoke_key() -> Result<String, std::env::VarError> {
+        std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY"))
     }
 
     #[test]
