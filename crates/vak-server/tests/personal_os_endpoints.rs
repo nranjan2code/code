@@ -449,6 +449,8 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             // Belongs beside the config checks: "you set this up and it
             // does not work" is a health fact, not a transcript detail.
             "capability reach",
+            "voice configuration",
+            "local TTS backend",
             // Configured capabilities that are currently unusable, with the
             // reason and the fix. Previously these were rendered only into
             // the system prompt, so the model was told a server was down and
