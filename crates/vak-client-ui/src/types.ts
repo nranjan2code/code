@@ -330,7 +330,7 @@ export interface DirListing {
 }
 
 export interface ConfigSnapshot {
-  voice?: { enabled: boolean; provider?: string | null; model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
+  voice?: { enabled: boolean; provider?: string | null; model?: string | null; transcription_model?: string | null; synthesis_model?: string | null; realtime_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
   provider: string;
   model: string;
   provider_source?: string;
