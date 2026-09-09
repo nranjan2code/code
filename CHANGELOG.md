@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.37 — 2026-09-09
+
+- Record every provider dispatch in FinOps, including explicitly unpriced usage.
+
 ## 3.0.36 — 2026-09-09
 
 - Added operation-specific voice model configuration and scoped bot/chat overrides.
