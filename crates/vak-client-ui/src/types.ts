@@ -205,6 +205,7 @@ export type SandboxEvent =
     }
   | { kind: "Stdout"; execution_id: string; chunk: string }
   | { kind: "Stderr"; execution_id: string; chunk: string }
+  | { kind: "OutputTruncated"; execution_id: string }
   | { kind: "PackageInstalled"; execution_id: string; packages: string[] }
   | { kind: "ArtifactGenerated"; execution_id: string; path: string; mime_type: string; size_bytes: number }
   | { kind: "ProcessTelemetry"; execution_id: string; elapsed_ms: number; cpu_percent: number; memory_bytes: number }

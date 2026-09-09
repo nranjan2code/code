@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { activeId, activeComponentPreview, setActiveComponentPreview } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
+import { sandboxedSrcdoc } from "../safeUrl";
 
 interface ServerCfg {
   name: string;
@@ -21,6 +22,7 @@ export default function PreviewPane() {
   const [showLogs, setShowLogs] = createSignal(false);
   const [logs, setLogs] = createSignal<string[]>([]);
   const [componentHtml, setComponentHtml] = createSignal<string>("");
+  const [componentPreviewUrl, setComponentPreviewUrl] = createSignal<string | null>(null);
   const [componentLoading, setComponentLoading] = createSignal(false);
   const [componentError, setComponentError] = createSignal<string | null>(null);
   const [reloadKey, setReloadKey] = createSignal(0);
@@ -42,15 +44,18 @@ export default function PreviewPane() {
 
   const loadComponentContent = async (artifactPath?: string, existingHtml?: string) => {
     if (existingHtml) {
+      setComponentPreviewUrl(null);
       setComponentHtml(existingHtml);
       setComponentLoading(false);
       return;
     }
     if (!artifactPath) {
       setComponentHtml("");
+      setComponentPreviewUrl(null);
       return;
     }
     setComponentLoading(true);
+    setComponentPreviewUrl(api.previewFileUrl(artifactPath));
     setComponentError(null);
     try {
       const res = await api.readFile(artifactPath);
@@ -293,7 +298,8 @@ export default function PreviewPane() {
                 <div class="prev-frame-wrap" style="flex: 1; min-height: 0; background: #0f1117;">
                   <iframe
                     class="prev-frame"
-                    srcdoc={componentHtml()}
+                    src={componentPreviewUrl() ? `${componentPreviewUrl()}?reload=${reloadKey()}` : undefined}
+                    srcdoc={componentPreviewUrl() ? undefined : sandboxedSrcdoc(componentHtml(), cp().connectSrc ?? "'none'")}
                     title={cp().title}
                     sandbox="allow-scripts"
                   />

@@ -3471,7 +3471,13 @@ async fn execute_one(
         Some(tool) => {
             let (sandbox_sink, mut sandbox_rx) =
                 vak_tools::SandboxEventSink::new_with_id(call.id.clone());
-            let sandbox_sink = sandbox_sink.with_owner_session(session_id.to_string());
+            // Agent executions are always quarantined.  The Workbench contract
+            // promises that intermediate files stay under `.vak/scratch/`;
+            // leaving this opt-in made the normal production path run in the
+            // workspace root while only tests exercised containment.
+            let sandbox_sink = sandbox_sink
+                .with_owner_session(session_id.to_string())
+                .with_quarantine(true);
             let events_tx = events.clone();
             let forwarder = tokio::spawn(async move {
                 while let Some(sb_ev) = sandbox_rx.recv().await {

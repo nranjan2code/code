@@ -654,6 +654,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/keep", post(keep_best_run))
         .route("/sessions/{id}/discard", post(discard_best_run))
         .route("/fs/file", get(read_file).put(write_file))
+        .route("/fs/file/raw", get(read_file_raw))
+        .route("/fs/preview/{*path}", get(preview_file))
         .route(
             "/sandbox/records",
             get(list_sandbox_records).post(append_sandbox_record),
@@ -2852,9 +2854,10 @@ pub(crate) fn register_handle(
     let events_tx = events::EventBus::new();
     let side_events_tx = events::EventBus::new();
     let planner = delivery::merged_presentation_planner(&core);
-    let presentation = Arc::new(Mutex::new(crate::projection::snapshot_with_planner(
-        &id, &session, &planner,
-    )));
+    let mut presentation_snapshot =
+        crate::projection::snapshot_with_planner(&id, &session, &planner);
+    crate::projection::append_sandbox_artifacts(&mut presentation_snapshot, &durable_home, &id);
+    let presentation = Arc::new(Mutex::new(presentation_snapshot));
     let mut presentation_rx = events_tx.subscribe();
     let presentation_state = presentation.clone();
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
@@ -4905,7 +4908,9 @@ async fn events_sse(
                 // a duplicate of it, not new work.
                 Ok(framed) if framed.seq <= highest_replayed => None,
                 Ok(framed) => Some(Ok(seq_frame(&framed))),
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
+                Err(_) => Some(Ok(Event::default()
+                    .event("resync")
+                    .data("{\"reason\":\"live event consumer lagged\"}"))),
             });
             Box::pin(
                 tokio_stream::iter(resync_frame)
@@ -4932,10 +4937,13 @@ async fn presentation_snapshot(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
             let planner = delivery::merged_presentation_planner(&handle.core);
-            return Json(crate::projection::snapshot_with_planner(
-                &id, session, &planner,
-            ))
-            .into_response();
+            let mut timeline = crate::projection::snapshot_with_planner(&id, session, &planner);
+            crate::projection::append_sandbox_artifacts(
+                &mut timeline,
+                &handle.core.sessions_home(),
+                &id,
+            );
+            return Json(timeline).into_response();
         }
         let mut timeline = handle
             .presentation
@@ -4946,7 +4954,15 @@ async fn presentation_snapshot(
         return Json(timeline).into_response();
     }
     match open_historical_session(&state, &id) {
-        Some(session) => Json(crate::projection::snapshot(&id, &session)).into_response(),
+        Some(session) => {
+            let mut timeline = crate::projection::snapshot(&id, &session);
+            crate::projection::append_sandbox_artifacts(
+                &mut timeline,
+                &state.core.sessions_home(),
+                &id,
+            );
+            Json(timeline).into_response()
+        }
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
@@ -4974,7 +4990,15 @@ async fn presentation_events_sse(
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 guard
                     .as_ref()
-                    .map(|session| crate::projection::snapshot(&id, session))
+                    .map(|session| {
+                        let mut timeline = crate::projection::snapshot(&id, session);
+                        crate::projection::append_sandbox_artifacts(
+                            &mut timeline,
+                            &handle.core.sessions_home(),
+                            &id,
+                        );
+                        timeline
+                    })
                     .unwrap_or_else(|| {
                         handle
                             .presentation
@@ -6777,6 +6801,14 @@ async fn read_file(
             });
             match kind {
                 vak_core::files::FileKind::Text => {
+                    let mime = vak_core::files::mime_for(&path);
+                    if mime == "image/svg+xml" {
+                        use base64::Engine;
+                        body["data_url"] = serde_json::json!(format!(
+                            "data:{mime};base64,{}",
+                            base64::engine::general_purpose::STANDARD.encode(&bytes)
+                        ));
+                    }
                     body["content"] = serde_json::json!(String::from_utf8_lossy(&bytes));
                     body["editable"] = serde_json::json!(true);
                 }
@@ -6790,12 +6822,150 @@ async fn read_file(
                     body["editable"] = serde_json::json!(false);
                 }
                 vak_core::files::FileKind::Binary => {
+                    // Browser-renderable binary formats still need a safe,
+                    // authenticated representation. Keep the existing binary
+                    // classification (never editable), but expose bounded
+                    // data URLs for media/document viewers.
+                    let mime = match path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "pdf" => Some("application/pdf"),
+                        "mp3" => Some("audio/mpeg"),
+                        "wav" => Some("audio/wav"),
+                        "ogg" => Some("audio/ogg"),
+                        "mp4" => Some("video/mp4"),
+                        "webm" => Some("video/webm"),
+                        _ => None,
+                    };
+                    if let Some(mime) = mime
+                        && bytes.len() <= 16 * 1024 * 1024
+                    {
+                        use base64::Engine;
+                        body["data_url"] = serde_json::json!(format!(
+                            "data:{mime};base64,{}",
+                            base64::engine::general_purpose::STANDARD.encode(&bytes)
+                        ));
+                    }
                     body["editable"] = serde_json::json!(false);
                 }
             }
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
+    }
+}
+
+/// Authenticated raw artifact access for renderers that cannot consume a JSON
+/// data URL (compound web apps, large media, PDFs, and browser-native formats).
+/// The path is still workspace-confined and the response never exposes a
+/// filesystem path outside the requested relative name.
+async fn read_file_raw(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::body::Body;
+    use axum::response::IntoResponse;
+    let Some(path) = confined_path(state.core.cwd(), &q.path) else {
+        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
+    };
+    let mime = raw_mime_for(&path);
+    let disposition = if mime.starts_with("text/")
+        || mime == "image/svg+xml"
+        || mime == "application/pdf"
+        || mime.starts_with("audio/")
+        || mime.starts_with("video/")
+    {
+        "inline"
+    } else {
+        "attachment"
+    };
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("artifact")
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ' ') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let headers = [
+        (axum::http::header::CONTENT_TYPE, mime),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            &format!("{disposition}; filename=\"{filename}\""),
+        ),
+        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (axum::http::header::CACHE_CONTROL, "no-store"),
+    ];
+    (headers, Body::from(bytes)).into_response()
+}
+
+/// Serve a workspace-confined artifact through a stable path so compound HTML
+/// previews can resolve relative stylesheets, scripts, images, and imports.
+/// The response is still sandboxed by CSP; it is never a general static-file
+/// server.
+async fn preview_file(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::body::Body;
+    use axum::response::IntoResponse;
+    let Some(path) = confined_path(state.core.cwd(), &path) else {
+        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
+    };
+    let headers = [
+        (axum::http::header::CONTENT_TYPE, raw_mime_for(&path)),
+        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (axum::http::header::CACHE_CONTROL, "no-store"),
+        (
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            "sandbox allow-scripts; default-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'self'",
+        ),
+    ];
+    (headers, Body::from(bytes)).into_response()
+}
+
+fn raw_mime_for(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "md" => "text/markdown; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
     }
 }
 

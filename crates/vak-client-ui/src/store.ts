@@ -132,6 +132,7 @@ export interface WorkbenchExecution {
   scratchDir: string;
   stdout: string;
   stderr: string;
+  outputTruncated?: boolean;
   status: "running" | "completed" | "failed";
   exitCode?: number;
   durationMs?: number;
@@ -172,12 +173,19 @@ export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>
     if (!current) continue;
     if (kind === "Stdout") current.stdout += String(raw.chunk ?? "");
     else if (kind === "Stderr") current.stderr += String(raw.chunk ?? "");
+    else if (kind === "OutputTruncated") current.outputTruncated = true;
     else if (kind === "PackageInstalled") current.packages.push(...(Array.isArray(raw.packages) ? raw.packages.map(String) : []));
     else if (kind === "ArtifactGenerated") current.artifacts.push({ path: String(raw.path ?? ""), mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) });
     else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
     else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
   }
   if (rebuilt.size) setWorkbenchExecutions((prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) merged.set(id, item); return [...merged.values()]; });
+}
+
+/** A Workbench is scoped to the currently selected task, never global app history. */
+export function resetWorkbenchExecutions() {
+  setWorkbenchExecutions([]);
+  setActiveExecutionId(null);
 }
 
 export interface ActiveComponentPreview {
@@ -910,7 +918,21 @@ export function applyEvent(
         artifacts: [],
         timestamp: new Date().toLocaleTimeString(),
       };
-      setWorkbenchExecutions((prev) => [...prev, newExec]);
+      setWorkbenchExecutions((prev) => {
+        const existing = prev.find((item) => item.id === execId);
+        if (!existing) return [...prev, newExec];
+        // Re-attachment can replay ExecutionStarted after hydration. Keep
+        // accumulated output/artifacts while refreshing lifecycle metadata.
+        return prev.map((item) => item.id === execId ? {
+          ...item,
+          ownerSessionId: newExec.ownerSessionId ?? item.ownerSessionId,
+          tool: newExec.tool,
+          command: newExec.command,
+          language: newExec.language,
+          scratchDir: newExec.scratchDir,
+          status: item.status === "completed" || item.status === "failed" ? item.status : "running",
+        } : item);
+      });
       setActiveExecutionId(execId);
     } else if (sb.kind === "Stdout") {
       const execId = sb.execution_id;
@@ -926,6 +948,9 @@ export function applyEvent(
           prev.map((e) => (e.id === execId ? { ...e, stderr: e.stderr + sb.chunk } : e))
         );
       }
+    } else if (sb.kind === "OutputTruncated") {
+      const execId = sb.execution_id;
+      if (execId) setWorkbenchExecutions((prev) => prev.map((e) => e.id === execId ? { ...e, outputTruncated: true } : e));
     } else if (sb.kind === "PackageInstalled") {
       const execId = sb.execution_id;
       if (execId) {
@@ -941,10 +966,9 @@ export function applyEvent(
             e.id === execId
               ? {
                   ...e,
-                  artifacts: [
-                    ...e.artifacts,
-                    { path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes },
-                  ],
+                  artifacts: e.artifacts.some((artifact) => artifact.path === sb.path)
+                    ? e.artifacts
+                    : [...e.artifacts, { path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes }],
                 }
               : e
           )

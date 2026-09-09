@@ -2,6 +2,7 @@ import { createEffect, createSignal, Show } from "solid-js";
 import Icon from "../Icon";
 import { openComponentPreview } from "../../store";
 import * as api from "../../api";
+import { sandboxedSrcdoc } from "../../safeUrl";
 
 export interface UIPreviewData {
   status?: string;
@@ -162,7 +163,7 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
             style="position: relative; width: 100%; height: 390px; background: #0b0d13; overflow: hidden; border-top: 1px solid var(--border-soft);"
           >
             <iframe
-              srcdoc={htmlContent()}
+              srcdoc={sandboxedSrcdoc(htmlContent(), connectStatus())}
               title={title()}
               sandbox="allow-scripts"
               style="width: 100%; height: 100%; border: 0; display: block;"

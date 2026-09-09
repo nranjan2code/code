@@ -455,6 +455,7 @@ pub(crate) async fn render_response(
     markdown: String,
     requested: Option<&RequestedCapabilities>,
     outcome_metadata: Option<std::collections::BTreeMap<String, String>>,
+    session_id: Option<&str>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
     let job = DeliveryJob {
@@ -462,7 +463,12 @@ pub(crate) async fn render_response(
         target: format!("{surface}:{chat}"),
         kind: DeliveryKind::Assistant,
         content: DeliveryContent::Answer({
-            let mut answer = AnswerDraft::from_markdown(markdown);
+            let artifact_suffix = session_id
+                .and_then(|id| {
+                    crate::projection::sandbox_artifact_markdown(&core.sessions_home(), id)
+                })
+                .unwrap_or_default();
+            let mut answer = AnswerDraft::from_markdown(format!("{markdown}{artifact_suffix}"));
             if let Some(metadata) = outcome_metadata {
                 answer.metadata.extend(metadata.clone());
                 answer.document.metadata.extend(metadata);

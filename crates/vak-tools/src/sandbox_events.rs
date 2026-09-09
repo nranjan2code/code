@@ -29,10 +29,19 @@ pub enum SandboxEvent {
     },
 
     /// A chunk of stdout arrived from the running process.
-    Stdout { execution_id: String, chunk: String },
+    Stdout {
+        execution_id: String,
+        chunk: String,
+    },
 
     /// A chunk of stderr arrived from the running process.
-    Stderr { execution_id: String, chunk: String },
+    Stderr {
+        execution_id: String,
+        chunk: String,
+    },
+    OutputTruncated {
+        execution_id: String,
+    },
 
     /// A package was installed in the sandbox environment.
     PackageInstalled {
@@ -175,6 +184,12 @@ impl SandboxEventSink {
                 chunk: chunk.to_string(),
             });
         }
+    }
+
+    pub fn emit_output_truncated(&self) {
+        self.emit(SandboxEvent::OutputTruncated {
+            execution_id: self.execution_id.clone(),
+        });
     }
 
     pub fn emit_packages_installed(&self, packages: &[String]) {

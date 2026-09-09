@@ -20,3 +20,30 @@ export function safeUrl(value: string, media = false): boolean {
     normalized.startsWith("mailto:")
   );
 }
+
+/**
+ * Constrain generated document previews. `sandbox` isolates the document
+ * origin, while this CSP makes the network/media/script policy explicit
+ * instead of merely displaying a claimed `connect-src` value in the chrome.
+ */
+export function sandboxedSrcdoc(html: string, connectSrc = "'none'"): string {
+  const allowedConnect = connectSrc
+    .split(/\s+/)
+    .filter((token) => token === "'none'" || /^https?:\/\/[A-Za-z0-9._:*\-]+$/.test(token))
+    .join(" ") || "'none'";
+  const policy = [
+    "default-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "script-src 'unsafe-inline' blob:",
+    "style-src 'unsafe-inline' data:",
+    "img-src data: blob:",
+    "font-src data: blob:",
+    "media-src data: blob:",
+    `connect-src ${allowedConnect}`,
+  ].join("; ");
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
+  return /<head(?:\s[^>]*)?>/i.test(html)
+    ? html.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${meta}`)
+    : `<!doctype html><head>${meta}</head><body>${html}</body>`;
+}

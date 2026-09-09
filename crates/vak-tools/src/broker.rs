@@ -233,7 +233,7 @@ pub async fn worker_main() -> i32 {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let (sink, mut rx) =
                 crate::sandbox_events::SandboxEventSink::new_with_id(request.execution_id);
-            let ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            let ctx = ToolContext::new(cwd).with_sandbox_sink(sink.with_quarantine(true));
             let event_forwarder = tokio::spawn(async move {
                 let mut stderr = tokio::io::stderr();
                 while let Some(event) = rx.recv().await {

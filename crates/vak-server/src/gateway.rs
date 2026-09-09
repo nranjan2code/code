@@ -2242,6 +2242,7 @@ async fn gateway_inbound(
                 text.clone(),
                 body.capabilities.as_ref(),
                 outcome_metadata,
+                session_id.as_deref(),
             )
             .await
             {

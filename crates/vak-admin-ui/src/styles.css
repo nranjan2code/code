@@ -1898,7 +1898,7 @@ a.tab-btn {
 }
 .setup-step {
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line);
+  border-left: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.75rem 0.9rem;
   background: var(--surface);
@@ -1989,7 +1989,7 @@ a.tab-btn {
     linear-gradient(120deg, var(--accent-wash), transparent 62%),
     var(--surface-raised);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
 }
 .home-masthead[data-tone="ok"] { border-left-color: var(--green); }

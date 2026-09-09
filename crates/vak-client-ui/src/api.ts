@@ -790,6 +790,18 @@ export function readFile(path: string): Promise<FileResponse> {
   return req(`/fs/file?path=${encodeURIComponent(path)}`);
 }
 
+/** Authenticated raw bytes for browser-native artifact viewers/downloads. */
+export async function readFileRaw(path: string): Promise<string> {
+  const response = await authFetch(`/fs/file/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return URL.createObjectURL(await response.blob());
+}
+
+/** Same-origin preview URL for compound artifacts with relative assets. */
+export function previewFileUrl(path: string): string {
+  return `/fs/preview/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
 }

@@ -9,6 +9,7 @@ import {
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
+import { sandboxedSrcdoc } from "../safeUrl";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -129,8 +130,13 @@ export default function WorkbenchPanel() {
   // readers without duplicating the transcript.
   const pulseTimer = window.setInterval(() => setPulse((value) => value + 1), 1000);
   onCleanup(() => window.clearInterval(pulseTimer));
+  onCleanup(() => {
+    const url = artifactDataUrl();
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+  });
 
   let terminalRef: HTMLDivElement | undefined;
+  let artifactRequest = 0;
 
   const executions = () => workbenchExecutions();
   const currentExec = () => {
@@ -215,6 +221,7 @@ export default function WorkbenchPanel() {
   };
 
   const inspectArtifact = async (path: string) => {
+    const request = ++artifactRequest;
     // Artifact links are an intent to inspect, so move to the artifact
     // viewer immediately instead of leaving the operator on live logs.
     setTab("artifacts");
@@ -222,20 +229,31 @@ export default function WorkbenchPanel() {
     setLoadingArtifact(true);
     setArtifactError(null);
     setArtifactContent(null);
+    const previousUrl = artifactDataUrl();
+    if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
     setArtifactDataUrl(null);
     try {
       const res = await api.readFile(path);
+      if (request !== artifactRequest) return;
       if (res.data_url) {
         setArtifactDataUrl(res.data_url);
       } else if (res.content !== undefined) {
         setArtifactContent(res.content);
       } else {
-        setArtifactError("Unable to read file content.");
+        // Large/opaque formats use the authenticated raw endpoint instead of
+        // forcing every renderer through a base64 JSON response.
+        const rawUrl = await api.readFileRaw(path);
+        if (request !== artifactRequest) {
+          URL.revokeObjectURL(rawUrl);
+          return;
+        }
+        setArtifactDataUrl(rawUrl);
       }
     } catch (err) {
+      if (request !== artifactRequest) return;
       setArtifactError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingArtifact(false);
+      if (request === artifactRequest) setLoadingArtifact(false);
     }
   };
 
@@ -248,6 +266,12 @@ export default function WorkbenchPanel() {
 
   const isPdfArtifact = (path: string, mime?: string) =>
     mime === "application/pdf" || path.toLowerCase().endsWith(".pdf");
+
+  const isAudioArtifact = (path: string, mime?: string) =>
+    mime?.startsWith("audio/") || /\.(mp3|wav|ogg|m4a|aac)$/i.test(path);
+
+  const isVideoArtifact = (path: string, mime?: string) =>
+    mime?.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(path);
 
   const reviewCandidate = async () => {
     const exec = currentExec();
@@ -300,6 +324,9 @@ export default function WorkbenchPanel() {
             <button
               class="workbench-nav-btn"
               role="tab"
+              id="workbench-tab-execution"
+              aria-controls="workbench-panel-execution"
+              tabIndex={tab() === "execution" ? 0 : -1}
               aria-selected={tab() === "execution"}
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
@@ -309,6 +336,9 @@ export default function WorkbenchPanel() {
             <button
               class="workbench-nav-btn"
               role="tab"
+              id="workbench-tab-artifacts"
+              aria-controls="workbench-panel-artifacts"
+              tabIndex={tab() === "artifacts" ? 0 : -1}
               aria-selected={tab() === "artifacts"}
               classList={{ active: tab() === "artifacts" }}
               onClick={() => setTab("artifacts")}
@@ -354,7 +384,7 @@ export default function WorkbenchPanel() {
 
       <Show when={executions().length > 0}>
         <Show when={tab() === "execution"}>
-          <div class="workbench-body">
+          <div id="workbench-panel-execution" role="tabpanel" aria-labelledby="workbench-tab-execution" class="workbench-body">
             {/* Left list of runs */}
             <div class="workbench-runs-sidebar">
               <For each={executions()}>
@@ -567,6 +597,11 @@ export default function WorkbenchPanel() {
                               innerHTML={renderAnsiToHtml(exec().stderr)}
                             />
                           </Show>
+                          <Show when={exec().outputTruncated}>
+                            <div class="terminal-truncated" role="status">
+                              Output truncated after 1 MiB; the process continued safely.
+                            </div>
+                          </Show>
                         </Show>
                       </div>
                     </div>
@@ -602,7 +637,7 @@ export default function WorkbenchPanel() {
 
         {/* Artifacts Tab */}
         <Show when={tab() === "artifacts"}>
-          <div class="workbench-artifacts-tab">
+          <div id="workbench-panel-artifacts" role="tabpanel" aria-labelledby="workbench-tab-artifacts" class="workbench-artifacts-tab">
             <div class="artifacts-list-sidebar">
               <Show
                 when={allArtifacts().length > 0}
@@ -658,7 +693,7 @@ export default function WorkbenchPanel() {
                   <Show when={isHtmlArtifact(selectedArtifact()!) && artifactContent() !== null}>
                     <div style={{ width: "100%", height: "100%", "min-height": "400px" }}>
                       <iframe
-                        srcdoc={artifactContent()!}
+                        srcdoc={sandboxedSrcdoc(artifactContent()!)}
                         sandbox="allow-scripts"
                         style={{
                           width: "100%",
@@ -692,12 +727,22 @@ export default function WorkbenchPanel() {
                     />
                   </Show>
 
+                  <Show when={isAudioArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) && artifactDataUrl()}>
+                    <div class="media-preview"><audio src={artifactDataUrl()!} controls preload="metadata" /></div>
+                  </Show>
+
+                  <Show when={isVideoArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) && artifactDataUrl()}>
+                    <div class="media-preview"><video src={artifactDataUrl()!} controls preload="metadata" /></div>
+                  </Show>
+
                   {/* Code / Text Preview */}
                   <Show
                     when={
                       !isHtmlArtifact(selectedArtifact()!) &&
                       !isImageArtifact(selectedArtifact()!) &&
                       !isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
+                      !isAudioArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
+                      !isVideoArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
                       artifactContent() !== null
                     }
                   >

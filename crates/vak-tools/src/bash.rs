@@ -170,7 +170,13 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    sink.emit_finished(-1, duration_ms, Vec::new());
+                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                    let mut paths = Vec::new();
+                    for (rel_path, mime, size) in artifacts {
+                        sink.emit_artifact(&rel_path, &mime, size);
+                        paths.push(rel_path);
+                    }
+                    sink.emit_finished(-1, duration_ms, paths);
                 }
                 return ToolOutput {
                     content: interrupted_output(&out, &err, &format!("command timed out after {timeout_ms}ms")),
@@ -186,7 +192,13 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    sink.emit_finished(-1, duration_ms, Vec::new());
+                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                    let mut paths = Vec::new();
+                    for (rel_path, mime, size) in artifacts {
+                        sink.emit_artifact(&rel_path, &mime, size);
+                        paths.push(rel_path);
+                    }
+                    sink.emit_finished(-1, duration_ms, paths);
                 }
                 return ToolOutput { content: interrupted_output(&out, &err, "command cancelled"), is_error: true };
             }
@@ -336,6 +348,7 @@ async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
 ) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
+    let mut truncated = false;
     loop {
         match r.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
@@ -343,16 +356,24 @@ async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
                 let space = MAX_CAPTURE.saturating_sub(buf.len());
                 let taken = n.min(space);
                 buf.extend_from_slice(&chunk[..taken]);
-                if let Some(ref sink) = sink {
-                    let chunk_str = String::from_utf8_lossy(&chunk[..n]);
-                    if is_stderr {
-                        sink.emit_stderr(&chunk_str);
-                    } else {
-                        sink.emit_stdout(&chunk_str);
+                // Keep draining the pipe after the retained-output cap. A
+                // child must never block because the UI chose bounded memory.
+                // Do not continue forwarding unbounded data to the browser.
+                if taken < n && !truncated {
+                    truncated = true;
+                    if let Some(ref sink) = sink {
+                        sink.emit_output_truncated();
                     }
                 }
-                if buf.len() >= MAX_CAPTURE {
-                    break;
+                if taken > 0 && !truncated {
+                    let chunk_str = String::from_utf8_lossy(&chunk[..n]);
+                    if let Some(ref sink) = sink {
+                        if is_stderr {
+                            sink.emit_stderr(&chunk_str);
+                        } else {
+                            sink.emit_stdout(&chunk_str);
+                        }
+                    }
                 }
             }
         }
