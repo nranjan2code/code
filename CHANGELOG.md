@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.39 — 2026-09-09
+
+- Repair MCP calls from providers that omit the action discriminator and complete strict release-gate cleanup.
+
 ## 3.0.38 — 2026-09-09
 
 - Ship the adaptive presentation runtime, reusable experience packs, Everyday onboarding, cross-surface fallbacks, and release verification improvements.
