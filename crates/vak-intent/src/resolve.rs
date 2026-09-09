@@ -499,6 +499,12 @@ pub fn apply_classification(
         reading.clarity = clarity;
         applied += 1;
     }
+    // A classifier may omit stakes, but it may never lower the deterministic
+    // floor implied by the final act it selected.
+    let act_floor = implied_stakes(reading.act);
+    if reading.stakes.rank() < act_floor.rank() {
+        reading.stakes = act_floor;
+    }
     reading
         .domains
         .extend(classification.domains.iter().cloned());

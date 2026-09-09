@@ -170,13 +170,13 @@ impl CommitmentLedger {
     /// callers and exactly one ledger: a rule enforced at the write boundary
     /// cannot be bypassed by a surface that forgot about it.
     pub fn append(&self, event: &Event) -> Result<(), LedgerError> {
+        let current = self
+            .get(&event.commitment_id)?
+            .ok_or_else(|| LedgerError::UnknownCommitment(event.commitment_id.clone()))?;
+        if current.phase.is_terminal() {
+            return Err(LedgerError::AlreadyClosed(event.commitment_id.clone()));
+        }
         if let EventKind::Closed { verdict, .. } = &event.kind {
-            let current = self
-                .get(&event.commitment_id)?
-                .ok_or_else(|| LedgerError::UnknownCommitment(event.commitment_id.clone()))?;
-            if current.phase.is_terminal() {
-                return Err(LedgerError::AlreadyClosed(event.commitment_id.clone()));
-            }
             // The closure invariant, as a hard error rather than a lint.
             current.may_close(*verdict)?;
         }
@@ -263,6 +263,7 @@ impl CommitmentLedger {
         Ok(commitment_id)
     }
 }
+
 
 /// Fold events into current state.
 ///

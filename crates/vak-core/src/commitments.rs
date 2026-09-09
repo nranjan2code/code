@@ -52,7 +52,7 @@ pub fn economics(config: &vak_config::Config) -> Economics {
 /// command would manufacture `Observed` evidence out of a guess, which is
 /// precisely the laundering the satisfaction lattice exists to prevent.
 pub fn seed_criteria(intent: &Intent, objective: &str) -> Vec<WorkCriterion> {
-    if intent.reading.evidence.min_satisfaction().rank() <= Satisfaction::Cited.rank() {
+    if intent.reading.evidence.min_satisfaction().rank() < Satisfaction::Cited.rank() {
         return Vec::new();
     }
     vec![WorkCriterion {
