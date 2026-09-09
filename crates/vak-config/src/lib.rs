@@ -4489,7 +4489,11 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     #[test]
     fn voice_defaults_are_safe_and_serializable() {

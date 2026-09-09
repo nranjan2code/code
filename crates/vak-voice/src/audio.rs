@@ -74,6 +74,7 @@ pub fn wrap_wav(pcm: &[u8], spec: PcmSpec) -> Result<Vec<u8>, VoiceError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     #[test]

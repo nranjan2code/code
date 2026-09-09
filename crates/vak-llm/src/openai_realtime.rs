@@ -173,6 +173,7 @@ pub async fn round_trip(
 use base64::Engine;
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     #[test]

@@ -131,6 +131,7 @@ pub fn default_registry() -> VoiceRegistry {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -378,6 +379,7 @@ impl AudioAssembler {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod assembler_tests {
     use super::*;
     #[test]

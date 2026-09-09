@@ -926,6 +926,7 @@ fn value_as_text(value: Value) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

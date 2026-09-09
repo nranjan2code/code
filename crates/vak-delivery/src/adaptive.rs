@@ -133,6 +133,7 @@ pub fn project_preferred(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use vak_presentation::{

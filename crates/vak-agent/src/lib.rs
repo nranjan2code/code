@@ -3289,6 +3289,33 @@ fn normalize_mcp_alias(
             "arguments": call.input,
         });
     } else if call.name == "mcp" {
+        // Some providers ignore the `oneOf` discriminator and omit `action`.
+        // Recover the unambiguous shapes at the broker boundary so a malformed
+        // call does not strand an otherwise valid turn: server+tool means call;
+        // anything else is the harmless catalog request.
+        if let Some(obj) = call.input.as_object_mut()
+            && !obj.contains_key("action")
+        {
+            let has_server = obj
+                .get("server")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            let has_tool = obj
+                .get("tool")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            obj.insert(
+                "action".into(),
+                serde_json::Value::String(
+                    if has_server && has_tool {
+                        "call"
+                    } else {
+                        "list"
+                    }
+                    .into(),
+                ),
+            );
+        }
         // Dynamic broker auto-resolution: if the model called `mcp` with `action: "call"`
         // and specified `tool`, but omitted or left `server` empty, resolve `server`
         // dynamically if the tool name uniquely maps to an admitted server in `aliases`.
@@ -4297,6 +4324,36 @@ mod tool_recovery_tests {
         assert_eq!(
             normalized_read.input.get("path").and_then(|v| v.as_str()),
             Some("src/main.rs")
+        );
+    }
+
+    #[test]
+    fn mcp_missing_action_is_recovered_from_shape() {
+        use super::{McpToolAlias, PendingToolCall, normalize_mcp_alias};
+        let aliases = std::collections::HashMap::<String, McpToolAlias>::new();
+        let call = normalize_mcp_alias(
+            PendingToolCall {
+                id: "1".into(),
+                name: "mcp".into(),
+                input: serde_json::json!({"server":"weather","tool":"forecast"}),
+            },
+            &aliases,
+        );
+        assert_eq!(
+            call.input.get("action").and_then(|v| v.as_str()),
+            Some("call")
+        );
+        let list = normalize_mcp_alias(
+            PendingToolCall {
+                id: "2".into(),
+                name: "mcp".into(),
+                input: serde_json::json!({}),
+            },
+            &aliases,
+        );
+        assert_eq!(
+            list.input.get("action").and_then(|v| v.as_str()),
+            Some("list")
         );
     }
 }
