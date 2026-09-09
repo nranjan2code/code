@@ -1486,7 +1486,10 @@ async fn voice_transcribe(
         )
             .into_response();
     };
-    let model = voice_settings.model.unwrap_or_default();
+    let model = voice_settings
+        .transcription_model
+        .or(voice_settings.model)
+        .unwrap_or_default();
     let cancel = tokio_util::sync::CancellationToken::new();
     let result = if matches!(provider.as_str(), "openai" | "openai-compatible") {
         let config = vak_llm::openai::OpenAiConfig {
@@ -1620,7 +1623,10 @@ async fn voice_speak(
             .speak(
                 SpeakSpec {
                     text: body.text.clone(),
-                    model: voice_settings.model.clone(),
+                    model: voice_settings
+                        .synthesis_model
+                        .clone()
+                        .or_else(|| voice_settings.model.clone()),
                     voice: voice_name.clone(),
                     format,
                 },
@@ -1666,7 +1672,11 @@ async fn voice_speak(
         let mut receipt = vak_llm::WorkReceipt::new(
             vak_llm::WorkPurpose::VoiceSynthesis,
             "local",
-            voice_settings.model.as_deref().unwrap_or("offline"),
+            voice_settings
+                .synthesis_model
+                .as_deref()
+                .or(voice_settings.model.as_deref())
+                .unwrap_or("offline"),
         );
         receipt.record(
             vak_llm::AttemptReason::Initial,
@@ -1708,8 +1718,9 @@ async fn voice_speak(
                 .into_response();
         };
         let Some(model) = voice_settings
-            .model
-            .as_deref()
+            .synthesis_model
+            .clone()
+            .or_else(|| voice_settings.model.clone())
             .filter(|m| !m.trim().is_empty())
         else {
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"voice synthesis requires an explicitly discovered model"}))).into_response();
@@ -1726,7 +1737,7 @@ async fn voice_speak(
         let result = vak_llm::openai::speak(
             &config,
             &body.text,
-            model,
+            &model,
             voice_name.as_deref(),
             format,
             &CancellationToken::new(),
@@ -1790,7 +1801,11 @@ async fn voice_speak(
         }
     };
     let mut config = vak_llm::google_live::GoogleLiveConfig::new(api_key, "");
-    if let Some(model) = voice_settings.model.filter(|m| !m.trim().is_empty()) {
+    if let Some(model) = voice_settings
+        .synthesis_model
+        .or(voice_settings.model)
+        .filter(|m| !m.trim().is_empty())
+    {
         config.model = model;
     }
     let cancel = CancellationToken::new();

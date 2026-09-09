@@ -921,7 +921,10 @@ async fn drive_voice(
                                             data: utterance_audio.clone(),
                                         },
                                         vak_voice::ListenSpec {
-                                            model: persisted.model.clone(),
+                                            model: persisted
+                                                .transcription_model
+                                                .clone()
+                                                .or_else(|| persisted.model.clone()),
                                             language: None,
                                         },
                                         &cancel,
@@ -934,8 +937,11 @@ async fn drive_voice(
                                 else {
                                     continue;
                                 };
-                                let Some(model) =
-                                    persisted.model.clone().filter(|m| !m.trim().is_empty())
+                                let Some(model) = persisted
+                                    .transcription_model
+                                    .clone()
+                                    .or_else(|| persisted.model.clone())
+                                    .filter(|m| !m.trim().is_empty())
                                 else {
                                     continue;
                                 };
@@ -955,8 +961,11 @@ async fn drive_voice(
                                 .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
                                 .filter(|k| !k.trim().is_empty())
                             {
-                                let Some(model) =
-                                    persisted.model.clone().filter(|m| !m.trim().is_empty())
+                                let Some(model) = persisted
+                                    .transcription_model
+                                    .clone()
+                                    .or_else(|| persisted.model.clone())
+                                    .filter(|m| !m.trim().is_empty())
                                 else {
                                     continue;
                                 };
@@ -1047,7 +1056,10 @@ async fn drive_voice(
                                 .speak(
                                     SpeakSpec {
                                         text: text.clone(),
-                                        model: persisted.model.clone(),
+                                        model: persisted
+                                            .synthesis_model
+                                            .clone()
+                                            .or_else(|| persisted.model.clone()),
                                         voice: None,
                                         format: SpeakFormat::Pcm16,
                                     },
@@ -1073,7 +1085,11 @@ async fn drive_voice(
                                     let mut receipt = vak_llm::WorkReceipt::new(
                                         vak_llm::WorkPurpose::VoiceSynthesis,
                                         "local",
-                                        persisted.model.as_deref().unwrap_or("offline"),
+                                        persisted
+                                            .synthesis_model
+                                            .as_deref()
+                                            .or(persisted.model.as_deref())
+                                            .unwrap_or("offline"),
                                     );
                                     receipt.record(
                                         vak_llm::AttemptReason::Initial,
