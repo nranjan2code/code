@@ -3210,6 +3210,12 @@ fn health_projection(state: &AppState) -> serde_json::Value {
             "capacity_remaining": state.core.effective_voice().max_concurrent.saturating_sub(
                 state.voice_active.load(std::sync::atomic::Ordering::Relaxed),
             ),
+            // Historical voice telemetry is intentionally unavailable until
+            // it is derived from persisted evidence; never fabricate zeros.
+            "historical": {
+                "available": false,
+                "reason": "No persisted voice latency, error, or cost aggregates are available"
+            },
         },
         "cwd": state.core.cwd(),
         "warnings": state.core.config().warnings,

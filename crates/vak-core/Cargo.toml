@@ -26,6 +26,7 @@ vak-hooks = { workspace = true }
 vak-intent = { workspace = true }
 vak-commit = { workspace = true }
 vak-llm = { workspace = true }
+vak-voice = { workspace = true }
 vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
 vak-plugin = { workspace = true }
