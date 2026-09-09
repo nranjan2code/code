@@ -3297,15 +3297,15 @@ fn normalize_mcp_alias(
             let server_missing = obj
                 .get("server")
                 .is_none_or(|s| s.is_null() || s.as_str() == Some(""));
-            if is_call && server_missing {
-                if let Some(tool_name) = obj.get("tool").and_then(|t| t.as_str()) {
-                    if let Some(alias) = aliases.get(tool_name) {
-                        obj.insert(
-                            "server".into(),
-                            serde_json::Value::String(alias.server.clone()),
-                        );
-                    }
-                }
+            if is_call
+                && server_missing
+                && let Some(tool_name) = obj.get("tool").and_then(|t| t.as_str())
+                && let Some(alias) = aliases.get(tool_name)
+            {
+                obj.insert(
+                    "server".into(),
+                    serde_json::Value::String(alias.server.clone()),
+                );
             }
         }
     }
@@ -3903,10 +3903,10 @@ fn parse_text_tool_calls(text: &str) -> Vec<PendingToolCall> {
 
     // 1. Structured JSON blocks: ```tool_call ... ``` or <tool_call> ... </tool_call>
     for block in extract_tool_call_blocks(text) {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block) {
-            if let Some(call) = json_to_tool_call(&val) {
-                calls.push(call);
-            }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block)
+            && let Some(call) = json_to_tool_call(&val)
+        {
+            calls.push(call);
         }
     }
     if !calls.is_empty() {
@@ -4033,10 +4033,9 @@ fn json_to_tool_call(val: &serde_json::Value) -> Option<PendingToolCall> {
 fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
     let (write_idx, offset) = if let Some(idx) = text.find("write(") {
         (idx, "write(".len())
-    } else if let Some(idx) = text.find("write ") {
-        (idx, "write ".len())
     } else {
-        return None;
+        let idx = text.find("write ")?;
+        (idx, "write ".len())
     };
     let sub = text[write_idx + offset..].trim_start();
 
@@ -4064,8 +4063,8 @@ fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
             };
             let p = rest[..end_p].to_string();
             let after = rest[end_p + q.len_utf8()..].trim_start();
-            let after = if after.starts_with(',') {
-                after[1..].trim_start()
+            let after = if let Some(stripped) = after.strip_prefix(',') {
+                stripped.trim_start()
             } else {
                 after
             };
@@ -4087,14 +4086,14 @@ fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
 
         if let Some(c) =
             extract_content_param(content_sub).or_else(|| extract_raw_content(content_sub))
+            && !p.is_empty()
+            && !c.is_empty()
         {
-            if !p.is_empty() && !c.is_empty() {
-                return Some(PendingToolCall {
-                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                    name: "write".into(),
-                    input: serde_json::json!({"path": p, "content": c}),
-                });
-            }
+            return Some(PendingToolCall {
+                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                name: "write".into(),
+                input: serde_json::json!({"path": p, "content": c}),
+            });
         }
     }
     None
@@ -4103,8 +4102,7 @@ fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
 fn extract_raw_content(sub: &str) -> Option<String> {
     let sub = sub.trim_start();
     for triple in ["\"\"\"", "'''"] {
-        if sub.starts_with(triple) {
-            let rest = &sub[triple.len()..];
+        if let Some(rest) = sub.strip_prefix(triple) {
             let end = rest.find(triple)?;
             return Some(rest[..end].trim().to_string());
         }
@@ -4154,8 +4152,7 @@ fn extract_content_param(sub: &str) -> Option<String> {
     let idx = sub.find("content=")?;
     let after = sub[idx + "content=".len()..].trim_start();
     for triple in ["\"\"\"", "'''"] {
-        if after.starts_with(triple) {
-            let rest = &after[triple.len()..];
+        if let Some(rest) = after.strip_prefix(triple) {
             let end = rest.find(triple)?;
             return Some(rest[..end].to_string());
         }
@@ -4214,7 +4211,9 @@ fn unescape_string(raw: &str) -> String {
 fn parse_bash_call_from_text(text: &str) -> Option<PendingToolCall> {
     for needle in ["bash -c \"", "bash -c '"] {
         if let Some(idx) = text.find(needle) {
-            let quote = needle.chars().last().unwrap();
+            let Some(quote) = needle.chars().last() else {
+                continue;
+            };
             let rest = &text[idx + needle.len()..];
             if let Some(end) = rest.find(quote) {
                 let cmd = &rest[..end];
@@ -4232,14 +4231,13 @@ fn parse_bash_call_from_text(text: &str) -> Option<PendingToolCall> {
         let sub = &text[idx + 5..];
         if let Some(cmd) =
             extract_named_param(sub, "command=").or_else(|| extract_named_param(sub, "cmd="))
+            && !cmd.trim().is_empty()
         {
-            if !cmd.trim().is_empty() {
-                return Some(PendingToolCall {
-                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": cmd.trim()}),
-                });
-            }
+            return Some(PendingToolCall {
+                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                name: "bash".into(),
+                input: serde_json::json!({"command": cmd.trim()}),
+            });
         }
     }
     None
@@ -4588,7 +4586,7 @@ write(".vak/scratch/bloomberg.html", """
         assert!(
             calls[0].input["content"]
                 .as_str()
-                .unwrap()
+                .unwrap_or_default()
                 .contains("Bloomberg")
         );
     }
@@ -4605,13 +4603,13 @@ write(path="app.js", content="const data = [{ q: \"What?\", a: \"Answer\" }];")
         assert!(
             calls[0].input["content"]
                 .as_str()
-                .unwrap()
+                .unwrap_or_default()
                 .contains("What?")
         );
         assert!(
             calls[0].input["content"]
                 .as_str()
-                .unwrap()
+                .unwrap_or_default()
                 .contains("Answer")
         );
     }
@@ -4630,7 +4628,7 @@ write content=.vak/scratch/react_app.html \
         assert!(
             calls[0].input["content"]
                 .as_str()
-                .unwrap()
+                .unwrap_or_default()
                 .contains("React App")
         );
     }
