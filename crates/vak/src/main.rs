@@ -1358,6 +1358,9 @@ async fn run_exec(
                             }
                         }
                     }
+                    SandboxEvent::OutputTruncated { .. } => {
+                        eprintln!("  │! output truncated after the configured capture limit");
+                    }
                     SandboxEvent::PackageInstalled { packages, .. } => {
                         eprintln!("  │  📦 packages: {}", packages.join(", "));
                     }
