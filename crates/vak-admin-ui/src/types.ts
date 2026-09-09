@@ -458,6 +458,7 @@ export interface OperationsSnapshot {
     checks: Array<{ label: string; status: "pass" | "fail" | string; detail: string }>;
     facts: string[];
     failures: number;
+    voice?: { enabled: boolean; provider: string; model: string; max_concurrent: number; active_sessions: number; capacity_remaining: number; };
   };
   services: OpsStatus;
   gateway: {
