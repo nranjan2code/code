@@ -1,6 +1,7 @@
 //! Telegram surface adapter (docs/design/22-gateway.md G1): long-polls the
 //! Bot API and bridges messages through `POST /gateway/inbound`, then
-//! delivers the final assistant text back via `sendMessage`.
+//! delivers the final assistant text back via `sendMessage`; audio-originated
+//! turns also receive a governed native `sendVoice` reply when configured.
 //!
 //! The gateway stays transport-agnostic; this client runs anywhere it can
 //! reach both Telegram and a vak-server — laptop, VPS, sidecar. Launched via
@@ -11,6 +12,53 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 use crate::gateway::{InboundChannel, InboundRequest};
+
+/// Convert the server's canonical WAV synthesis artifact to Telegram's
+/// `sendVoice` contract (Ogg/Opus). ffmpeg is an optional host capability;
+/// when absent the caller can retain the text response and report the
+/// actionable error instead of sending malformed media.
+async fn wav_to_telegram_opus(wav: Vec<u8>) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "wav",
+            "-i",
+            "pipe:0",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "32k",
+            "-vbr",
+            "on",
+            "-f",
+            "ogg",
+            "pipe:1",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Telegram voice requires ffmpeg for Ogg/Opus conversion: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(&wav)
+            .await
+            .map_err(|e| format!("write ffmpeg input: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("wait for ffmpeg: {e}"))?;
+    if !output.status.success() || output.stdout.is_empty() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg Ogg/Opus conversion failed: {detail}"));
+    }
+    Ok(output.stdout)
+}
 
 fn telegram_http_error(operation: &str, error: &reqwest::Error) -> String {
     let kind = if error.is_timeout() {
@@ -201,6 +249,9 @@ struct TelegramUpdate {
     photo_file_id: Option<String>,
     /// A non-photo file attachment (code, logs, CSVs, ...).
     document: Option<TelegramDocument>,
+    /// Telegram voice-note file, kept distinct from documents so the
+    /// gateway can select a transcription adapter rather than an image path.
+    voice: Option<TelegramDocument>,
     /// Set instead of the fields above when this update is an
     /// inline-keyboard button tap rather than a message.
     callback: Option<TelegramCallback>,
@@ -276,7 +327,11 @@ impl TelegramBridge {
                 next = next.max(u.update_id + 1);
                 continue;
             }
-            if u.text.trim().is_empty() && u.photo_file_id.is_none() && u.document.is_none() {
+            if u.text.trim().is_empty()
+                && u.photo_file_id.is_none()
+                && u.document.is_none()
+                && u.voice.is_none()
+            {
                 continue;
             }
             let mut attachments = Vec::new();
@@ -308,6 +363,49 @@ impl TelegramBridge {
                     Err(e) => eprintln!("[telegram] document download failed: {e}"),
                 }
             }
+            if let Some(voice) = &u.voice {
+                match self.download_file(&voice.file_id).await {
+                    Ok((mime, bytes)) => {
+                        use base64::Engine as _;
+                        attachments.push(serde_json::json!({
+                            "mime": if mime == "application/octet-stream" { "audio/ogg" } else { &mime },
+                            "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+                            "kind": "audio",
+                            "filename": voice.file_name,
+                        }));
+                        if let Some(audio) = attachments.last()
+                            && let Some(data) = audio.get("data").and_then(Value::as_str)
+                        {
+                            let request = http()
+                                .post(format!("{}/voice/transcribe", self.gateway_url))
+                                .bearer_auth(&self.gateway_token)
+                                .json(&serde_json::json!({
+                                    "audio_base64": data,
+                                    "mime": audio["mime"],
+                                }))
+                                .send()
+                                .await;
+                            match request {
+                                Ok(r) if r.status().is_success() => {
+                                    if let Ok(v) = r.json::<Value>().await
+                                        && let Some(transcript) = v["text"].as_str()
+                                        && !transcript.trim().is_empty()
+                                    {
+                                        text = format!("{}\n{}", text.trim(), transcript.trim())
+                                            .trim()
+                                            .to_string();
+                                    }
+                                }
+                                Ok(r) => {
+                                    eprintln!("[telegram] transcription returned {}", r.status())
+                                }
+                                Err(e) => eprintln!("[telegram] transcription request failed: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[telegram] voice download failed: {e}"),
+                }
+            }
             let reply = self
                 .process(u.chat_id, u.sender_id, &text, &attachments)
                 .await;
@@ -316,6 +414,17 @@ impl TelegramBridge {
             self.send_message(u.chat_id, &reply)
                 .await
                 .map_err(|error| format!("send to {}: {error}", u.chat_id))?;
+            // Native voice delivery is best-effort: text remains the durable
+            // fallback when voice is disabled, unconfigured, or unavailable.
+            if attachments
+                .iter()
+                .any(|a| a.get("kind").and_then(Value::as_str) == Some("audio"))
+                && !reply.text.trim().is_empty()
+            {
+                if let Err(error) = self.send_voice(u.chat_id, &reply.text).await {
+                    eprintln!("[telegram] voice reply unavailable: {error}");
+                }
+            }
             next = next.max(u.update_id + 1);
         }
         Ok(next)
@@ -483,6 +592,7 @@ impl TelegramBridge {
                         text: String::new(),
                         photo_file_id: None,
                         document: None,
+                        voice: None,
                         callback: Some(TelegramCallback {
                             callback_id: callback_id.to_string(),
                             data: cq["data"].as_str().unwrap_or_default().to_string(),
@@ -517,8 +627,18 @@ impl TelegramBridge {
                                 .unwrap_or("application/octet-stream")
                                 .to_string(),
                         });
+                let voice = msg["voice"]["file_id"]
+                    .as_str()
+                    .map(|file_id| TelegramDocument {
+                        file_id: file_id.to_string(),
+                        file_name: "voice.ogg".into(),
+                        mime_type: "audio/ogg".into(),
+                    });
                 let routable = chat_id.is_some()
-                    && (text.is_some() || photo_file_id.is_some() || document.is_some());
+                    && (text.is_some()
+                        || photo_file_id.is_some()
+                        || document.is_some()
+                        || voice.is_some());
                 match (chat_id, routable) {
                     (Some(chat_id), true) => out.push(TelegramUpdate {
                         update_id,
@@ -527,6 +647,7 @@ impl TelegramBridge {
                         text: text.unwrap_or_default(),
                         photo_file_id,
                         document,
+                        voice,
                         callback: None,
                     }),
                     _ => out.push(TelegramUpdate {
@@ -536,6 +657,7 @@ impl TelegramBridge {
                         text: String::new(),
                         photo_file_id: None,
                         document: None,
+                        voice: None,
                         callback: None,
                     }),
                 }
@@ -596,6 +718,48 @@ impl TelegramBridge {
                 }
                 Err(e) => return Err(telegram_http_error("sendMessage", &e)),
             }
+        }
+        Ok(())
+    }
+
+    async fn send_voice(&self, chat_id: i64, text: &str) -> Result<(), String> {
+        let response = http()
+            .post(format!("{}/voice/speak", self.gateway_url))
+            .bearer_auth(&self.gateway_token)
+            .json(&serde_json::json!({"text": text, "format": "wav"}))
+            .send()
+            .await
+            .map_err(|e| format!("voice speak request: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!("voice speak returned {}", response.status()));
+        }
+        let audio = response
+            .bytes()
+            .await
+            .map_err(|e| format!("voice speak body: {e}"))?;
+        if audio.is_empty() {
+            return Err("voice speak returned empty audio".into());
+        }
+        // Telegram's native voice method only accepts an OGG container with
+        // Opus audio.  The provider-neutral synthesis endpoint deliberately
+        // returns WAV, so negotiate the transport codec here instead of
+        // silently uploading an invalid WAV as `sendVoice`.
+        let audio = wav_to_telegram_opus(audio.to_vec()).await?;
+        let part = reqwest::multipart::Part::bytes(audio)
+            .file_name("reply.ogg")
+            .mime_str("audio/ogg")
+            .map_err(|e| format!("voice mime: {e}"))?;
+        let body = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .part("voice", part);
+        let sent = http()
+            .post(format!("{}/bot{}/sendVoice", self.api_base, self.bot_token))
+            .multipart(body)
+            .send()
+            .await
+            .map_err(|e| format!("sendVoice: {e}"))?;
+        if !sent.status().is_success() {
+            return Err(format!("sendVoice returned {}", sent.status()));
         }
         Ok(())
     }
