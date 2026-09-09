@@ -577,7 +577,11 @@ mod tests {
                 };
                 for in_envelope in [true, false] {
                     assert_eq!(
-                        authority.approval_ceiling(Stakes::Irreversible, chrono::Utc::now(), in_envelope),
+                        authority.approval_ceiling(
+                            Stakes::Irreversible,
+                            chrono::Utc::now(),
+                            in_envelope
+                        ),
                         ApprovalCeiling::Ask,
                         "autonomy={autonomy:?} in_envelope={in_envelope}"
                     );

@@ -71,11 +71,11 @@ pub use authority::{
     Envelope, Escalation, GateFallback, PermissionCeiling,
 };
 pub use axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Satisfaction, Stakes};
-pub use engage::{FLOOR_DOMAINS, ORIENTATION_FLOOR};
 pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
     OutputShape, Posture, StopProfile, Urgency, derive,
 };
+pub use engage::{FLOOR_DOMAINS, ORIENTATION_FLOOR};
 pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update};
 pub use limits::{CapabilitySlice, Limits};
 pub use outcome::{
