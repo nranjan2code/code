@@ -1421,12 +1421,27 @@ async fn voice_transcribe(
         )
             .into_response();
     }
+    let provider = settings
+        .provider
+        .as_deref()
+        .unwrap_or("google")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(
+        provider.as_str(),
+        "google" | "gemini" | "google-live" | "gemini-live"
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("voice provider '{provider}' has no transcription adapter installed")})),
+        ).into_response();
+    }
     let key =
         vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
     let Some(api_key) = key else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error":"no Gemini credential configured"})),
+                Json(serde_json::json!({"error":"no Gemini/Google credential configured for the selected voice provider"})),
         )
             .into_response();
     };
@@ -1444,7 +1459,7 @@ async fn voice_transcribe(
     {
         Ok(text) => (
             StatusCode::OK,
-            Json(serde_json::json!({"text": text, "provider":"gemini", "model": config.model})),
+            Json(serde_json::json!({"text": text, "provider":provider, "model": config.model})),
         )
             .into_response(),
         Err(error) => (
