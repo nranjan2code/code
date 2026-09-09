@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.35 — 2026-09-09
+
+- Added operation-specific voice model configuration and scoped bot/chat overrides.
+
 ## 3.0.34 — 2026-09-09
 
 - First-class voice capability across provider routing, realtime sessions, local ASR/TTS, channels, admin, quotas, audit receipts, and protocol versioning.
