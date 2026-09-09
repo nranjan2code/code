@@ -21,6 +21,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures::SinkExt;
 use serde::Deserialize;
+use vak_voice::Transcriber;
 
 use crate::AppState;
 use crate::admin::SESSION_COOKIE;
@@ -903,40 +904,88 @@ async fn drive_voice(
                         // provider for one authoritative final transcript.
                         // The browser receives it through the normal control
                         // channel and dispatches it through the governed API.
-                        if !utterance_audio.is_empty()
-                            && persisted.provider.as_deref() != Some("local")
-                        {
+                        if !utterance_audio.is_empty() {
                             let key = vak_config::get_var("GEMINI_API_KEY")
                                 .or_else(|| vak_config::get_var("GOOGLE_API_KEY"));
-                            if let Some(key) = key.filter(|k| !k.trim().is_empty()) {
-                                let mut cfg = vak_llm::google_live::GoogleLiveConfig::new(key, "");
-                                if let Some(model) =
+                            let cancel = tokio_util::sync::CancellationToken::new();
+                            let provider = persisted
+                                .provider
+                                .as_deref()
+                                .unwrap_or("gemini")
+                                .trim()
+                                .to_ascii_lowercase();
+                            let result = if provider == "local" {
+                                vak_voice::LocalTranscriber::from_env()
+                                    .transcribe(
+                                        vak_voice::audio::AudioBlob {
+                                            mime: "audio/pcm".into(),
+                                            data: utterance_audio.clone(),
+                                        },
+                                        vak_voice::ListenSpec {
+                                            format: vak_voice::ListenFormat::Pcm16,
+                                            sample_rate_hz: Some(16_000),
+                                            channels: Some(1),
+                                        },
+                                        &cancel,
+                                    )
+                                    .await
+                                    .map_err(|e| vak_llm::LlmError::Provider(e.to_string()))
+                            } else if matches!(provider.as_str(), "openai" | "openai-compatible") {
+                                let Some(key) = vak_config::get_var("OPENAI_API_KEY")
+                                    .filter(|k| !k.trim().is_empty())
+                                else {
+                                    continue;
+                                };
+                                let Some(model) =
                                     persisted.model.clone().filter(|m| !m.trim().is_empty())
-                                {
-                                    cfg.model = model;
-                                }
-                                let cancel = tokio_util::sync::CancellationToken::new();
-                                if let Ok(text) = vak_llm::google_live::transcribe(
+                                else {
+                                    continue;
+                                };
+                                let cfg = vak_llm::openai::OpenAiConfig {
+                                    api_key: key,
+                                    base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+                                };
+                                vak_llm::openai::transcribe(
+                                    &cfg,
+                                    &utterance_audio,
+                                    "audio/pcm",
+                                    &model,
+                                    &cancel,
+                                )
+                                .await
+                            } else if let Some(key) = vak_config::get_var("GEMINI_API_KEY")
+                                .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+                                .filter(|k| !k.trim().is_empty())
+                            {
+                                let Some(model) =
+                                    persisted.model.clone().filter(|m| !m.trim().is_empty())
+                                else {
+                                    continue;
+                                };
+                                let cfg = vak_llm::google_live::GoogleLiveConfig::new(key, &model);
+                                vak_llm::google_live::transcribe(
                                     &cfg,
                                     &utterance_audio,
                                     "audio/pcm",
                                     &cancel,
                                 )
                                 .await
-                                {
-                                    if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
-                                        &vak_voice::protocol::Control::Transcript {
-                                            utterance_id: utterance_id.clone(),
-                                            text,
-                                            final_: true,
-                                        },
-                                    ) {
-                                        let _ = socket
-                                            .send(Message::Text(
-                                                String::from_utf8_lossy(&frame).into_owned().into(),
-                                            ))
-                                            .await;
-                                    }
+                            } else {
+                                continue;
+                            };
+                            if let Ok(text) = result {
+                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                    &vak_voice::protocol::Control::Transcript {
+                                        utterance_id: utterance_id.clone(),
+                                        text,
+                                        final_: true,
+                                    },
+                                ) {
+                                    let _ = socket
+                                        .send(Message::Text(
+                                            String::from_utf8_lossy(&frame).into_owned().into(),
+                                        ))
+                                        .await;
                                 }
                             }
                         }
