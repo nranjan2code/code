@@ -3334,6 +3334,17 @@ fn normalize_mcp_alias(
                     serde_json::Value::String(alias.server.clone()),
                 );
             }
+            if is_call
+                && obj
+                    .get("server")
+                    .and_then(|s| s.as_str())
+                    .is_none_or(str::is_empty)
+            {
+                obj.insert("action".into(), serde_json::Value::String("list".into()));
+                obj.remove("server");
+                obj.remove("tool");
+                obj.remove("arguments");
+            }
         }
     }
     call
@@ -4353,6 +4364,18 @@ mod tool_recovery_tests {
         );
         assert_eq!(
             list.input.get("action").and_then(|v| v.as_str()),
+            Some("list")
+        );
+        let repair = normalize_mcp_alias(
+            PendingToolCall {
+                id: "3".into(),
+                name: "mcp".into(),
+                input: serde_json::json!({"action":"call","tool":"forecast"}),
+            },
+            &aliases,
+        );
+        assert_eq!(
+            repair.input.get("action").and_then(|v| v.as_str()),
             Some("list")
         );
     }
