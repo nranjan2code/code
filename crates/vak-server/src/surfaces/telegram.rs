@@ -275,6 +275,7 @@ struct TelegramCallback {
 struct GatewayReply {
     text: String,
     delivery: Option<vak_delivery::DeliveryPacket>,
+    session_id: Option<String>,
 }
 
 /// A tapped button's `callback_data` ("approve:<id>" / "deny:<id>"),
@@ -421,7 +422,10 @@ impl TelegramBridge {
                 .any(|a| a.get("kind").and_then(Value::as_str) == Some("audio"))
                 && !reply.text.trim().is_empty()
             {
-                if let Err(error) = self.send_voice(u.chat_id, &reply.text).await {
+                if let Err(error) = self
+                    .send_voice(u.chat_id, &reply.text, reply.session_id.as_deref())
+                    .await
+                {
                     eprintln!("[telegram] voice reply unavailable: {error}");
                 }
             }
@@ -511,6 +515,7 @@ impl TelegramBridge {
                 return GatewayReply {
                     text: format!("(bridge refused to send: {e})"),
                     delivery: None,
+                    session_id: None,
                 };
             }
         };
@@ -526,24 +531,29 @@ impl TelegramBridge {
                 // for v1 tell the user the work is acknowledged.
                 text: "(queued: I'm still working on your previous message)".into(),
                 delivery: None,
+                session_id: None,
             },
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                 Ok(v) => GatewayReply {
                     text: v["text"].as_str().unwrap_or("(empty reply)").to_string(),
                     delivery: serde_json::from_value(v["delivery"].clone()).ok(),
+                    session_id: v["session_id"].as_str().map(String::from),
                 },
                 Err(e) => GatewayReply {
                     text: format!("(bad gateway reply: {e})"),
                     delivery: None,
+                    session_id: None,
                 },
             },
             Ok(r) => GatewayReply {
                 text: format!("(gateway error: {})", r.status()),
                 delivery: None,
+                session_id: None,
             },
             Err(e) => GatewayReply {
                 text: format!("(gateway unreachable: {e})"),
                 delivery: None,
+                session_id: None,
             },
         }
     }
@@ -722,11 +732,16 @@ impl TelegramBridge {
         Ok(())
     }
 
-    async fn send_voice(&self, chat_id: i64, text: &str) -> Result<(), String> {
+    async fn send_voice(
+        &self,
+        chat_id: i64,
+        text: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), String> {
         let response = http()
             .post(format!("{}/voice/speak", self.gateway_url))
             .bearer_auth(&self.gateway_token)
-            .json(&serde_json::json!({"text": text, "format": "wav"}))
+            .json(&serde_json::json!({"text": text, "format": "wav", "session_id": session_id}))
             .send()
             .await
             .map_err(|e| format!("voice speak request: {e}"))?;
