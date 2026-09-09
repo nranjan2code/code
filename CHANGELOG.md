@@ -5,6 +5,14 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.32 — 2026-09-09
+
+### UI Modernization Release
+
+- Refresh the client and admin interfaces with updated workbench, terminal,
+  settings, inbox, presentation, and status surfaces.
+- Rebuild and ship the embedded frontend bundles alongside the release.
+
 ## 3.0.31 — 2026-09-08
 
 ### Rich Modern Terminal Surface (`vak term`)
