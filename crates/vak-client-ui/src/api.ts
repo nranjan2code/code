@@ -42,6 +42,11 @@ export function backendUrl(): string {
   return auth.mode === "bearer" ? auth.base : "";
 }
 
+/** Token for transports such as WebSocket that cannot set Authorization. */
+export function backendToken(): string | undefined {
+  return auth.mode === "bearer" ? auth.token : undefined;
+}
+
 export async function initBackend(): Promise<BackendInfo> {
   return host.info();
 }

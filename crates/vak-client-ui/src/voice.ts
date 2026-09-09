@@ -1,3 +1,5 @@
+import { backendUrl, backendToken } from "./api";
+
 /** Client-side voice conversation state. Audio transport is deliberately
  * injected: browser and Tauri hosts can use different WebSocket/worklet
  * implementations while sharing transcript and interruption semantics. */
@@ -113,7 +115,15 @@ export class VoiceSessionSocket {
   constructor(private readonly callbacks: VoiceSocketCallbacks & { sessionId?: string }) {}
 
   connect(url?: string): Promise<void> {
-    url ??= `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/voice/session${this.callbacks.sessionId ? `?session_id=${encodeURIComponent(this.callbacks.sessionId)}` : ""}`;
+    if (!url) {
+      const base = backendUrl();
+      const wsBase = base ? base.replace(/^http:/, "ws:").replace(/^https:/, "wss:") : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+      const query = new URLSearchParams();
+      if (this.callbacks.sessionId) query.set("session_id", this.callbacks.sessionId);
+      const token = backendToken();
+      if (token) query.set("token", token);
+      url = `${wsBase}/voice/session${query.toString() ? `?${query}` : ""}`;
+    }
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
