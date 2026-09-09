@@ -205,4 +205,44 @@ mod tests {
             .await;
         assert!(matches!(result, Err(VoiceError::Unavailable(_))));
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_engine_receives_audio_without_provider_secrets() {
+        use crate::audio::AudioBlob;
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "vak-voice-transcriber-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            b"#!/bin/sh\nif [ -n \"$GEMINI_API_KEY\" ] || [ -n \"$OPENAI_API_KEY\" ]; then exit 9; fi\ncat >/dev/null\nprintf 'offline transcript\\n'\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let result = LocalTranscriber::new(&path)
+            .transcribe(
+                AudioBlob {
+                    data: vec![1, 2, 3],
+                    mime: "audio/ogg".into(),
+                },
+                ListenSpec {
+                    model: None,
+                    language: None,
+                },
+                &CancellationToken::new(),
+            )
+            .await;
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(result.unwrap(), "offline transcript");
+    }
 }
