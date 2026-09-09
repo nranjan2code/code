@@ -90,6 +90,7 @@ export interface Bot {
 /// `AllowlistRoute`'s "inherit unless overridden" idiom. Both fields are
 /// independently optional: a voice name with no persona, or vice versa.
 export interface VoiceConfig {
+  provider?: string | null;
   /// Provider-defined voice identifier. The catalogue is discovered at runtime.
   voice_name?: string | null;
   transcription_model?: string | null;

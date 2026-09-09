@@ -3551,6 +3551,8 @@ function VoiceConfigEditor(props: {
   pinned: boolean;
   setPinned: (v: boolean) => void;
   voiceName: string;
+  provider?: string;
+  setProvider?: (v: string) => void;
   setVoiceName: (v: string) => void;
   transcriptionModel: string;
   setTranscriptionModel: (v: string) => void;
@@ -3606,6 +3608,9 @@ function VoiceConfigEditor(props: {
       </label>
       <Show when={props.pinned}>
         <div class="binding-controls">
+          <Show when={props.setProvider}>
+            <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider"><option value="">Inherit voice provider</option><For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For></select>
+          </Show>
           <input
             list="vak-discovered-voices"
             value={props.voiceName}
@@ -3808,6 +3813,7 @@ function ChannelAccessEditor(props: {
   const [botId, setBotId] = createSignal(props.entry.bot_id ?? "");
   const [inheritBot, setInheritBot] = createSignal(props.entry.inherit_bot_policy);
   const [pinVoice, setPinVoice] = createSignal(!!props.entry.voice);
+  const [voiceProvider, setVoiceProvider] = createSignal(props.entry.voice?.provider ?? "");
   const [voiceName, setVoiceName] = createSignal(props.entry.voice?.voice_name ?? "");
   const [voicePersona, setVoicePersona] = createSignal(props.entry.voice?.persona ?? "");
   const [transcriptionModel, setTranscriptionModel] = createSignal(props.entry.voice?.transcription_model ?? "");
@@ -3836,7 +3842,7 @@ function ChannelAccessEditor(props: {
         policy: policy(),
         bot_id: botId() || null,
         inherit_bot_policy: inheritBot(),
-        voice: pinVoice() ? { voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
+        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
       });
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
       props.refresh();
@@ -3878,6 +3884,8 @@ function ChannelAccessEditor(props: {
       <VoiceConfigEditor
         pinned={pinVoice()}
         setPinned={setPinVoice}
+        provider={voiceProvider()}
+        setProvider={setVoiceProvider}
         voiceName={voiceName()}
         setVoiceName={setVoiceName}
         transcriptionModel={transcriptionModel()}
@@ -4103,6 +4111,7 @@ function BotAccessEditor(props: {
   const [policy, setPolicy] = createSignal<ChannelPolicy>(props.bot.policy ?? defaultChannelPolicy());
   const [pinVoice, setPinVoice] = createSignal(!!props.bot.voice);
   const [voiceName, setVoiceName] = createSignal(props.bot.voice?.voice_name ?? "");
+  const [voiceProvider, setVoiceProvider] = createSignal(props.bot.voice?.provider ?? "");
   const [voicePersona, setVoicePersona] = createSignal(props.bot.voice?.persona ?? "");
   const [transcriptionModel, setTranscriptionModel] = createSignal(props.bot.voice?.transcription_model ?? "");
   const [synthesisModel, setSynthesisModel] = createSignal(props.bot.voice?.synthesis_model ?? "");
@@ -4127,7 +4136,7 @@ function BotAccessEditor(props: {
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : null,
         permission_mode: pinPerm() ? perm() : null,
         policy: policy(),
-        voice: pinVoice() ? { voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
+        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
       });
       pushToast("info", `${props.bot.label} updated — chats bound to it pick this up on their next message`);
       props.refresh();

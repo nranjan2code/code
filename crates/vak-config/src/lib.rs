@@ -984,6 +984,9 @@ impl ChannelPolicy {
 /// `None` on the entity means "inherit the parent tier's voice entirely".
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct VoiceConfig {
+    /// Provider override for voice operations at this scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_name: Option<String>,
@@ -1010,6 +1013,7 @@ impl VoiceConfig {
     /// Overlay a narrower scope onto its parent. Missing fields inherit.
     pub fn overlay(parent: Option<&Self>, child: &Self) -> Self {
         Self {
+            provider: child.provider.clone().or_else(|| parent.and_then(|v| v.provider.clone())),
             voice_name: child.voice_name.clone().or_else(|| parent.and_then(|v| v.voice_name.clone())),
             transcription_model: child.transcription_model.clone().or_else(|| parent.and_then(|v| v.transcription_model.clone())),
             synthesis_model: child.synthesis_model.clone().or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
