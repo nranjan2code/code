@@ -4718,32 +4718,28 @@ impl Core {
             vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
             vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
         };
-        // Pre-dispatch budget admission (docs/design/15-reliability.md): active
-        // whenever any finops knob is configured.
-        let f = self.effective_finops();
-        if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
-            let sid = session
-                .header()
-                .map(|h| h.session_id.clone())
-                .unwrap_or_default();
-            // Reused for every turn of this session (not rebuilt per
-            // turn) so `max_run_usd`'s spend counter actually spans the
-            // whole run instead of resetting on each message.
-            cfg.spend_gate = Some(self.spend_gate_for(&sid));
+        // Every provider dispatch is settled into the FinOps ledger.  Budget
+        // admission remains a no-op when no cap is configured, while unknown
+        // prices are retained as explicit unpriced rows for auditability.
+        // Reuse one gate per session so run/day accounting spans turns.
+        let sid = session
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_default();
+        cfg.spend_gate = Some(self.spend_gate_for(&sid));
 
-            // MEA substrate (Phase H): auditor sees the workspace delta between
-            // this run's start checkpoint and the live tree.
-            {
-                let home = self.sessions_home();
-                let seq = self.next_checkpoint_seq(&sid);
-                let cwd = self.inner.cwd.clone();
-                cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
-                    home: home.clone(),
-                    sid: sid.clone(),
-                    seq,
-                    cwd,
-                }));
-            }
+        // MEA substrate (Phase H): auditor sees the workspace delta between
+        // this run's start checkpoint and the live tree.
+        {
+            let home = self.sessions_home();
+            let seq = self.next_checkpoint_seq(&sid);
+            let cwd = self.inner.cwd.clone();
+            cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
+                home: home.clone(),
+                sid: sid.clone(),
+                seq,
+                cwd,
+            }));
         }
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
