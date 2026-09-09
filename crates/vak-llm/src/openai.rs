@@ -41,6 +41,16 @@ pub async fn transcribe(
         "audio.wav"
     } else if mime.contains("mpeg") || mime.contains("mp3") {
         "audio.mp3"
+    } else if mime.contains("ogg") {
+        "audio.ogg"
+    } else if mime.contains("oga") {
+        "audio.oga"
+    } else if mime.contains("webm") {
+        "audio.webm"
+    } else if mime.contains("mp4") || mime.contains("m4a") {
+        "audio.m4a"
+    } else if mime.contains("flac") {
+        "audio.flac"
     } else {
         "audio.bin"
     };
