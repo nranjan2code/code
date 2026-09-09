@@ -2381,6 +2381,22 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .composer-wrap { padding-inline: clamp(16px, 5vw, 56px); }
 .composer-box { border-radius: 16px; box-shadow: 0 10px 32px rgba(0,0,0,.16); }
 .dock { max-width: min(44vw, 560px); box-shadow: -18px 0 40px rgba(0,0,0,.12); }
+.everyday-rail { grid-area: dock; display: flex; flex-direction: column; width: var(--dock-width, 520px); max-width: 44vw; min-height: 0; border-left: 1px solid var(--border-soft); background: var(--surface); }
+.everyday-rail-head { display: flex; align-items: flex-start; gap: 12px; min-height: 72px; padding: 18px 16px; border-bottom: 1px solid var(--border-soft); }
+.everyday-rail-head > div { flex: 1; min-width: 0; }
+.everyday-rail-head h2 { margin: 0; color: var(--text); font-size: 14px; font-weight: 620; letter-spacing: -.01em; }
+.everyday-rail-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.everyday-rail-head > .icon { color: var(--faint); margin-top: 1px; }
+.everyday-rail-empty { display: grid; place-items: center; gap: 10px; max-width: 260px; margin: auto; padding: 28px; color: var(--muted); text-align: center; font-size: 11.5px; line-height: 1.5; }
+.everyday-rail-empty strong { color: var(--text-soft); font-size: 12px; font-weight: 560; }
+.everyday-rail-empty-icon { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--border); border-radius: 12px; color: var(--muted); }
+.everyday-rail-sections { display: grid; gap: 2px; padding: 12px; }
+.everyday-rail-section { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border: 0; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text-soft); text-align: left; }
+.everyday-rail-section:hover { background: var(--surface-hover); color: var(--text); }
+.everyday-rail-section > .icon:first-child { color: var(--muted); }
+.everyday-rail-section > span:nth-child(2) { flex: 1; font-size: 12px; }
+.everyday-rail-count { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.everyday-rail-section > .icon:last-child { color: var(--faint); }
 .dock-tabs { min-height: 48px; padding: 7px 10px; gap: 4px; }
 .dock-tab { min-height: 32px; padding-inline: 10px; border-radius: 9px; }
 .main-stack.split { display: grid; grid-template-columns: minmax(0, var(--split-left, 50%)) 1px minmax(0, 1fr); }
@@ -2401,6 +2417,7 @@ body.is-resizing .split-divider { background: var(--accent); }
 @media (max-width: 900px) {
   .app { --dock-width: min(520px, calc(100vw - 16px)); }
   .dock { max-width: calc(100vw - 16px); box-shadow: -18px 0 44px rgba(0,0,0,.28); }
+  .everyday-rail { position: fixed; inset: 0 0 30px 0; z-index: 45; width: 100%; max-width: none; border-left: 0; box-shadow: var(--shadow-lg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
