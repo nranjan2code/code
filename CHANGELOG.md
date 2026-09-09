@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.34 — 2026-09-09
+
+- First-class voice capability across provider routing, realtime sessions, local ASR/TTS, channels, admin, quotas, audit receipts, and protocol versioning.
+
 **Supported history begins at 2.0.0.** Every version before it is
 unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
