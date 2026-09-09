@@ -55,6 +55,8 @@ export const activeHost: Host = {
       // No menu bar, no login item, no background lifecycle to own.
       case "tray":
         return false;
+      case "microphone":
+        return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
       default:
         return false;
     }
@@ -204,4 +206,3 @@ export const activeHost: Host = {
     await call("/auth/logout", { method: "POST", body: "{}" });
   },
 };
-

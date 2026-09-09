@@ -449,6 +449,10 @@ pub enum ActivityKind {
     Subagent,
     Diagnostic,
     Run,
+    /// A provisional or committed speech recognition segment.
+    VoiceTranscript,
+    /// Speech delivery and playback accounting for an assistant response.
+    VoicePlayback,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationOf, speak, toggleItemExpanded, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationOf, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
@@ -374,14 +374,6 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     } catch {
       return "Review the requested operation before allowing it.";
     }
-  });
-  // Narrate once per approval card, as soon as it appears -- not on every
-  // re-render (resolving it re-renders this same component).
-  onMount(() => {
-    if (props.item.resolved) return;
-    const p = primary();
-    const target = p ? `${p.key} ${p.value.slice(0, 60)}` : "";
-    void speak(`Agent wants to run: ${props.item.tool}${target ? ", " + target : ""}. Approve or deny?`);
   });
   return (
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>

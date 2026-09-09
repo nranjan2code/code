@@ -906,7 +906,10 @@ fn activity_item(
                 },
             )
         }
-        ActivityKind::RouteFallback | ActivityKind::Diagnostic => (
+        ActivityKind::RouteFallback
+        | ActivityKind::Diagnostic
+        | ActivityKind::VoiceTranscript
+        | ActivityKind::VoicePlayback => (
             OutputRole::System,
             OutputKind::Information,
             OutputContent::Information {

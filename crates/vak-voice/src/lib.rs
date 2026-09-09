@@ -17,7 +17,9 @@ pub mod session;
 pub mod transcribe;
 pub mod vad;
 
-pub use local::{LocalSpeaker, LocalTranscriber, LocalTtsReadiness, LocalTtsSpeaker, local_tts_readiness};
+pub use local::{
+    LocalSpeaker, LocalTranscriber, LocalTtsReadiness, LocalTtsSpeaker, local_tts_readiness,
+};
 
 /// Runtime catalogue of voice capabilities. Descriptors are immutable
 /// snapshots; provider implementations can refresh models and voices by

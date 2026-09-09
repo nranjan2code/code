@@ -154,6 +154,12 @@ pub fn default_registry() -> ProviderRegistry {
     );
     registry.register("opencode-zen", openai_compat("https://opencode.ai/zen/v1"));
     registry.register("ollama", openai_compat("http://localhost:11434/v1"));
+    // Amazon Bedrock Mantle exposes an OpenAI-compatible API. The region is
+    // part of the endpoint; callers may override it with VAK_BEDROCK_BASE_URL.
+    registry.register(
+        "bedrock",
+        openai_compat("https://bedrock-mantle.us-east-1.api.aws/v1"),
+    );
     registry
 }
 

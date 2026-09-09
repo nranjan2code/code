@@ -10,6 +10,7 @@ import type {
   WorkReceipt,
   OutputTimeline,
   PresentationStreamEvent,
+  VoiceProvidersResponse,
 } from "./types";
 
 /**
@@ -60,6 +61,10 @@ export function adoptBackend(info: BackendInfo): void {
 
 export function isBackendReady(): boolean {
   return auth.mode === "cookie" || !!auth.base;
+}
+
+export function listVoiceProviders(): Promise<VoiceProvidersResponse> {
+  return req<VoiceProvidersResponse>("/voice/providers");
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {

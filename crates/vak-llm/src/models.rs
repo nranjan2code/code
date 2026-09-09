@@ -20,6 +20,95 @@ pub struct ModelContext {
     pub output_tokens: Option<u64>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct BedrockModelAvailability {
+    pub model_id: String,
+    pub agreement_status: Option<String>,
+    pub agreement_error: Option<String>,
+    pub authorization_status: Option<String>,
+    pub entitlement_status: Option<String>,
+    pub region_status: Option<String>,
+    pub invokable: bool,
+}
+
+/// Read Bedrock's native control-plane availability projection. This
+/// intentionally remains separate from Mantle `/models`:
+/// catalogue membership is not proof that a model can be invoked.
+pub async fn bedrock_model_availability(
+    auth: &ProviderAuth,
+    model_ids: &[String],
+) -> Result<Vec<BedrockModelAvailability>, LlmError> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<
+        Mutex<
+            std::collections::HashMap<String, (std::time::Instant, Vec<BedrockModelAvailability>)>,
+        >,
+    > = OnceLock::new();
+    let cache_key = format!(
+        "{}:{:?}",
+        auth.credential_id.as_deref().unwrap_or_default(),
+        model_ids
+    );
+    if let Ok(cache) = CACHE
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        && let Some((at, value)) = cache.get(&cache_key)
+        && at.elapsed() < Duration::from_secs(300)
+    {
+        return Ok(value.clone());
+    }
+    let region = auth
+        .base_url
+        .as_deref()
+        .and_then(|url| url.split('.').nth(1))
+        .unwrap_or("us-east-1");
+    let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(aws_sdk_bedrock::config::Region::new(region.to_owned()))
+        .load()
+        .await;
+    let client = aws_sdk_bedrock::Client::new(&config);
+    let mut out = Vec::with_capacity(model_ids.len());
+    for model_id in model_ids {
+        let response = client
+            .get_foundation_model_availability()
+            .model_id(model_id)
+            .send()
+            .await
+            .map_err(|e| LlmError::Api {
+                status: 403,
+                message: e.to_string(),
+            })?;
+        let agreement_status = response
+            .agreement_availability()
+            .map(|v| v.status().as_str().to_owned());
+        let agreement_error = response
+            .agreement_availability()
+            .and_then(|v| v.error_message().map(str::to_owned));
+        let authorization_status = Some(response.authorization_status().as_str().to_owned());
+        let entitlement_status = Some(response.entitlement_availability().as_str().to_owned());
+        let region_status = Some(response.region_availability().as_str().to_owned());
+        out.push(BedrockModelAvailability {
+            model_id: response.model_id().to_owned(),
+            agreement_error,
+            invokable: agreement_status.as_deref() == Some("AVAILABLE")
+                && authorization_status.as_deref() == Some("AUTHORIZED")
+                && entitlement_status.as_deref() == Some("AVAILABLE")
+                && region_status.as_deref() == Some("AVAILABLE"),
+            agreement_status,
+            authorization_status,
+            entitlement_status,
+            region_status,
+        });
+    }
+    if let Ok(mut cache) = CACHE
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+    {
+        cache.insert(cache_key, (std::time::Instant::now(), out.clone()));
+    }
+    Ok(out)
+}
+
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 /// Hard stop on paging so a malformed cursor can never loop forever.
 const MAX_PAGES: usize = 20;
@@ -297,6 +386,7 @@ fn default_base_url(provider: &str) -> Option<&'static str> {
         "google" => Some(crate::google::GOOGLE_DEFAULT_BASE_URL),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "openrouter-responses" => Some("https://openrouter.ai/api/v1"),
+        "bedrock" => Some("https://bedrock-mantle.us-east-1.api.aws/v1"),
         "opencode-zen" => Some("https://opencode.ai/zen/v1"),
         "ollama" => Some("http://localhost:11434/v1"),
         _ => None,

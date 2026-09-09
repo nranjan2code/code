@@ -210,6 +210,27 @@ fn activity_roundtrips_without_entering_model_context() {
 }
 
 #[test]
+fn voice_activity_helpers_record_transcript_and_playback() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("voice.jsonl");
+    let mut log = SessionLog::create(path, header()).unwrap();
+    let transcript = log
+        .append_voice_transcript("u1", "open the build log", true)
+        .unwrap();
+    let playback = log.append_voice_playback("p1", 640, true).unwrap();
+    let EntryPayload::Activity(a) = transcript.payload else {
+        panic!("expected transcript activity")
+    };
+    assert_eq!(a.kind, ActivityKind::VoiceTranscript);
+    assert_eq!(a.data.get("finalized"), Some(&"true".to_string()));
+    let EntryPayload::Activity(a) = playback.payload else {
+        panic!("expected playback activity")
+    };
+    assert_eq!(a.kind, ActivityKind::VoicePlayback);
+    assert_eq!(a.status, ActivityStatus::Partial);
+}
+
+#[test]
 fn active_work_is_reconstructed_into_model_context() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("work.jsonl"), header()).unwrap();

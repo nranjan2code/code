@@ -84,6 +84,11 @@ export default function Settings() {
   const scope = () => settingsScope();
   const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
   const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
+  const [voiceProviders] = createResource(() => api.listVoiceProviders().catch(() => null));
+  const discoveredVoices = () => voiceProviders()?.providers.flatMap((provider) => provider.voices) ?? [];
+  async function updateVoice(patch: Record<string, unknown>) {
+    try { await api.patchConfig(patch); setConfig((current) => current ? { ...current, voice: { ...(current.voice ?? { enabled: false, max_session_secs: 900, max_concurrent: 2, max_audio_bytes: 16 * 1024 * 1024 }), ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k.replace(/^voice_/, ""), v])) } } : current); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
+  }
 
   // Prompt layers (docs/design/45). The layer resource is keyed on scope so
   // switching Shared/This project reloads the editable layer, while the
@@ -867,9 +872,16 @@ export default function Settings() {
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
               <Group title="Voice">
+                <Row title="Enable voice conversations" description="Allow microphone sessions and governed speech input/output."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
                 <Row title="Speak agent actions out loud" description="Narrate turn completions and permission prompts through the voice pipeline."><Switch label="Speak agent actions out loud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
+                <Row title="Session limit" description="Maximum duration for one voice session, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Concurrent sessions" description="Maximum simultaneous voice sessions for this scope."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Inbound audio budget" description="Maximum audio bytes accepted per session."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Voice providers" description="Providers are discovered from the server and reflect installed integrations and reachable credentials."><span class="settings-value">{voiceProviders.loading ? "Discovering…" : (voiceProviders()?.providers.map((provider) => `${provider.name}${provider.configured ? " · ready" : " · credential needed"}`).join(", ") || "None configured")}</span></Row>
+                <Row title="Voice provider route" description="Choose the provider for new voice sessions; blank uses the configured default."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null })}><option value="">Configured default</option><For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
+                <Row title="Voice model" description="Optional provider model identifier. Leave blank to use the provider's current default."><input type="text" value={config()?.voice?.model ?? ""} placeholder="Provider default" onChange={(e) => void updateVoice({ voice_model: e.currentTarget.value.trim() || null })} /></Row>
                 <Show when={uiPreferences.voiceEnabled}>
-                  <Row title="Voice" description="The synthesized voice used for narration."><select value={uiPreferences.voiceName} onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value)}><option value="Kore">Kore</option><option value="Puck">Puck</option><option value="Zephyr">Zephyr</option><option value="Charon">Charon</option><option value="Fenrir">Fenrir</option><option value="Aoede">Aoede</option></select></Row>
+                  <Row title="Voice" description="The synthesized voice discovered from configured providers."><select value={uiPreferences.voiceName} onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value)}><option value="">Provider default</option><For each={discoveredVoices()}>{(voice) => <option value={voice}>{voice}</option>}</For></select></Row>
                   <Row title="Persona" description="Optional style directive for how narration sounds."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
               </Group>

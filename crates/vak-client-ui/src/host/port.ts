@@ -26,7 +26,9 @@ export type HostFeature =
   /** OS notification centre (vs. the Web Notifications API). */
   | "system-notifications"
   /** A menu-bar/tray presence and a background service lifecycle. */
-  | "tray";
+  | "tray"
+  /** A user microphone can be captured by the host. */
+  | "microphone";
 
 /** Where a saved document ended up, so callers can word their own notice. */
 export type SaveOutcome =

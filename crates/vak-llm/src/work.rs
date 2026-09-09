@@ -19,6 +19,8 @@ pub enum WorkPurpose {
     Verify,
     /// A Gemini Live API text-to-speech dispatch (voice/personality).
     VoiceSynthesis,
+    /// Streaming or batch speech-to-text dispatch.
+    SpeechRecognition,
 }
 
 /// Why a dispatch was made. `Retry` covers same-candidate transient

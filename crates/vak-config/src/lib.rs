@@ -170,6 +170,73 @@ pub struct FileConfig {
     pub server: ServerSettings,
     #[serde(default)]
     pub plugins: PluginSettings,
+    #[serde(default)]
+    pub voice: Option<VoiceSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VoiceSettings {
+    pub enabled: bool,
+    /// Provider route is optional: absent means resolve the configured
+    /// provider default, preserving inheritance across config layers.
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub max_session_secs: u64,
+    pub max_concurrent: usize,
+    pub max_audio_bytes: u64,
+    /// Maximum batch voice requests per rolling minute per server process.
+    pub max_requests_per_minute: usize,
+    /// Maximum synthesis input characters per request.
+    pub max_text_chars: usize,
+}
+
+impl Default for VoiceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: None,
+            model: None,
+            max_session_secs: 900,
+            max_concurrent: 2,
+            max_audio_bytes: 16 * 1024 * 1024,
+            max_requests_per_minute: 60,
+            max_text_chars: 100_000,
+        }
+    }
+}
+
+impl VoiceSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("voice.provider", self.provider.as_deref()),
+            ("voice.model", self.model.as_deref()),
+        ] {
+            if let Some(value) = value {
+                if value.trim().is_empty() || value.chars().count() > 256 {
+                    return Err(format!(
+                        "{name} must be non-empty and at most 256 characters"
+                    ));
+                }
+            }
+        }
+        if self.max_session_secs == 0 || self.max_session_secs > 86_400 {
+            return Err("voice.max_session_secs must be between 1 and 86400".into());
+        }
+        if self.max_concurrent == 0 || self.max_concurrent > 64 {
+            return Err("voice.max_concurrent must be between 1 and 64".into());
+        }
+        if self.max_audio_bytes == 0 || self.max_audio_bytes > 256 * 1024 * 1024 {
+            return Err("voice.max_audio_bytes must be between 1 and 268435456".into());
+        }
+        if self.max_requests_per_minute == 0 || self.max_requests_per_minute > 10_000 {
+            return Err("voice.max_requests_per_minute must be between 1 and 10000".into());
+        }
+        if self.max_text_chars == 0 || self.max_text_chars > 10_000_000 {
+            return Err("voice.max_text_chars must be between 1 and 10000000".into());
+        }
+        Ok(())
+    }
 }
 
 /// How the HTTP surface is exposed (docs/design/48-web-client.md §4.2).
@@ -1144,6 +1211,7 @@ pub struct Config {
     pub feeds: FeedResolved,
     pub server: ServerResolved,
     pub plugins: PluginResolved,
+    pub voice: VoiceSettings,
     pub warnings: Vec<String>,
 }
 
@@ -1520,6 +1588,7 @@ impl Default for Config {
                 bus: BusResolved::default(),
             },
             plugins: PluginResolved::default(),
+            voice: VoiceSettings::default(),
             warnings: Vec::new(),
         }
     }
@@ -2525,6 +2594,117 @@ pub fn persist_project_finops_caps(
     persist_finops_caps_at(project_path(cwd), max_run_usd, max_day_usd)
 }
 
+/// Persist voice runtime policy at the selected configuration layer.
+pub fn persist_voice_settings_at(
+    path: PathBuf,
+    enabled: Option<bool>,
+    max_session_secs: Option<u64>,
+    max_concurrent: Option<usize>,
+    max_audio_bytes: Option<u64>,
+    provider: Option<Option<String>>,
+    model: Option<Option<String>>,
+) -> Result<(), ConfigError> {
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("top-level config must be a TOML table"),
+    })?;
+    let voice = table
+        .entry("voice")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| ConfigError::Write {
+            path: path.clone(),
+            source: std::io::Error::other("voice must be a TOML table"),
+        })?;
+    if let Some(v) = enabled {
+        voice.insert("enabled".into(), toml::Value::Boolean(v));
+    }
+    if let Some(v) = max_session_secs {
+        voice.insert("max_session_secs".into(), toml::Value::Integer(v as i64));
+    }
+    if let Some(v) = max_concurrent {
+        voice.insert("max_concurrent".into(), toml::Value::Integer(v as i64));
+    }
+    if let Some(v) = max_audio_bytes {
+        voice.insert("max_audio_bytes".into(), toml::Value::Integer(v as i64));
+    }
+    if let Some(v) = provider {
+        if let Some(v) = v {
+            voice.insert("provider".into(), toml::Value::String(v));
+        } else {
+            voice.remove("provider");
+        }
+    }
+    if let Some(v) = model {
+        if let Some(v) = v {
+            voice.insert("model".into(), toml::Value::String(v));
+        } else {
+            voice.remove("model");
+        }
+    }
+    let text = toml::to_string_pretty(&root).map_err(|e| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(e.to_string()),
+    })?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let temp = path.with_extension("toml.tmp");
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
+pub fn persist_project_voice_settings(
+    cwd: &Path,
+    e: Option<bool>,
+    s: Option<u64>,
+    c: Option<usize>,
+    b: Option<u64>,
+    provider: Option<Option<String>>,
+    model: Option<Option<String>>,
+) -> Result<(), ConfigError> {
+    persist_voice_settings_at(project_path(cwd), e, s, c, b, provider, model)
+}
+pub fn persist_global_voice_settings(
+    e: Option<bool>,
+    s: Option<u64>,
+    c: Option<usize>,
+    b: Option<u64>,
+    provider: Option<Option<String>>,
+    model: Option<Option<String>>,
+) -> Result<(), ConfigError> {
+    persist_voice_settings_at(
+        global_path().ok_or_else(|| ConfigError::Write {
+            path: PathBuf::from("<user-config>"),
+            source: std::io::Error::other("user home unavailable"),
+        })?,
+        e,
+        s,
+        c,
+        b,
+        provider,
+        model,
+    )
+}
+
 /// Persist the user-level `[finops]` defaults, inherited by project
 /// configs through [`load_with_trust`] until they set their own override.
 pub fn persist_global_finops_caps(
@@ -2776,6 +2956,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             cfg.context_window = w;
         }
     }
+    cfg.voice = merged.voice.unwrap_or_default();
     cfg.hooks = merged.hooks;
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
@@ -3669,6 +3850,10 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.context_window.is_some() {
         base.context_window = over.context_window;
     }
+    // Voice settings are scalar overrides; keep the narrower layer's intent.
+    if over.voice.is_some() {
+        base.voice = over.voice;
+    }
     if over.capabilities.inherit_hooks == Some(false) {
         base.hooks.clear();
     }
@@ -4179,6 +4364,57 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    #[test]
+    fn voice_defaults_are_safe_and_serializable() {
+        let settings = VoiceSettings::default();
+        assert!(!settings.enabled);
+        assert_eq!(settings.max_session_secs, 900);
+        assert_eq!(settings.max_concurrent, 2);
+        assert_eq!(settings.max_audio_bytes, 16 * 1024 * 1024);
+        assert_eq!(settings.max_requests_per_minute, 60);
+        assert_eq!(settings.max_text_chars, 100_000);
+        assert!(settings.validate().is_ok());
+        let encoded = toml::to_string(&settings).expect("voice settings serialize");
+        let decoded: VoiceSettings = toml::from_str(&encoded).expect("voice settings deserialize");
+        assert_eq!(decoded, settings);
+        let routed = VoiceSettings {
+            provider: Some("local".into()),
+            model: Some("offline-v1".into()),
+            ..settings
+        };
+        let encoded = toml::to_string(&routed).expect("routed voice settings serialize");
+        let decoded: VoiceSettings =
+            toml::from_str(&encoded).expect("routed voice settings deserialize");
+        assert_eq!(decoded.provider.as_deref(), Some("local"));
+        assert_eq!(decoded.model.as_deref(), Some("offline-v1"));
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn voice_validation_rejects_zero_and_excessive_limits() {
+        let mut settings = VoiceSettings::default();
+        settings.max_concurrent = 0;
+        assert!(settings.validate().is_err());
+        settings = VoiceSettings::default();
+        settings.max_audio_bytes = 512 * 1024 * 1024;
+        assert!(settings.validate().is_err());
+        settings = VoiceSettings::default();
+        settings.max_requests_per_minute = 0;
+        assert!(settings.validate().is_err());
+        settings = VoiceSettings::default();
+        settings.max_text_chars = 0;
+        assert!(settings.validate().is_err());
+        settings = VoiceSettings {
+            provider: Some(" ".into()),
+            ..VoiceSettings::default()
+        };
+        assert!(settings.validate().is_err());
+        settings = VoiceSettings {
+            model: Some("x".repeat(257)),
+            ..VoiceSettings::default()
+        };
+        assert!(settings.validate().is_err());
+    }
     use super::*;
 
     #[test]

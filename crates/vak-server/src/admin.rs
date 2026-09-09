@@ -462,6 +462,23 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "sandbox": state.core.effective_sandbox_name(),
         "subagents": state.core.effective_subagents(),
         "theme": state.core.effective_theme(),
+        "voice": {
+            "enabled": state.core.effective_voice().enabled,
+            "max_session_secs": state.core.effective_voice().max_session_secs,
+            "max_concurrent": state.core.effective_voice().max_concurrent,
+            "max_audio_bytes": state.core.effective_voice().max_audio_bytes,
+            // Keep quota semantics explicit for operators. These values are
+            // the live workspace admission limits; narrower bot/chat pins
+            // are reported by their binding endpoints and never merged here.
+            "quota": {
+                "session_seconds": state.core.effective_voice().max_session_secs,
+                "concurrent_sessions": state.core.effective_voice().max_concurrent,
+                "inbound_audio_bytes": state.core.effective_voice().max_audio_bytes,
+                "scope": "workspace",
+                "source": "effective",
+            },
+            "source": "effective",
+        },
         "work": {
             "enabled": work.enabled,
             "default_mode": work.default_mode,

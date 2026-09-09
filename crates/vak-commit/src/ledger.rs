@@ -264,7 +264,6 @@ impl CommitmentLedger {
     }
 }
 
-
 /// Fold events into current state.
 ///
 /// Returns `None` when the first event is not an `Opened`, which is how a

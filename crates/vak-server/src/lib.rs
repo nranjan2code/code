@@ -1650,21 +1650,10 @@ async fn voice_speak(
                 }
             }
         }
-        let mut wav = Vec::with_capacity(44 + pcm.len());
-        let data_len = pcm.len() as u32;
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes());
-        wav.extend_from_slice(&16_000u32.to_le_bytes());
-        wav.extend_from_slice(&32_000u32.to_le_bytes());
-        wav.extend_from_slice(&2u16.to_le_bytes());
-        wav.extend_from_slice(&16u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&data_len.to_le_bytes());
-        wav.extend_from_slice(&pcm);
+        // The configured executable receives the requested format contract and
+        // returns that encoded representation. Preserve it byte-for-byte here;
+        // wrapping every response as WAV would corrupt PCM, Opus, and MP3.
+        let audio = pcm;
         if let Some(session_id) = body
             .session_id
             .as_deref()
@@ -1702,7 +1691,7 @@ async fn voice_speak(
                     receipt_json.as_str(),
                 ),
             ],
-            wav,
+            audio,
         )
             .into_response();
     }

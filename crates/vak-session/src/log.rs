@@ -241,6 +241,60 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Activity(activity)))
     }
 
+    /// Append a finalized or provisional voice transcript. The transcript
+    /// is an audit projection; callers must append a normal Message entry
+    /// separately when the utterance is committed as model input.
+    pub fn append_voice_transcript(
+        &mut self,
+        activity_id: impl Into<String>,
+        text: impl Into<String>,
+        finalized: bool,
+    ) -> Result<Entry, SessionError> {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("text".into(), text.into());
+        data.insert("finalized".into(), finalized.to_string());
+        self.append_activity(crate::types::ActivityRecord {
+            activity_id: activity_id.into(),
+            turn: None,
+            kind: crate::types::ActivityKind::VoiceTranscript,
+            status: if finalized {
+                crate::types::ActivityStatus::Succeeded
+            } else {
+                crate::types::ActivityStatus::Running
+            },
+            label: "Voice transcript".into(),
+            detail: None,
+            data,
+        })
+    }
+
+    /// Append what the playback client reports it emitted. This is distinct
+    /// from provider output because buffering and interruption can prevent
+    /// the user from hearing the complete synthesis.
+    pub fn append_voice_playback(
+        &mut self,
+        activity_id: impl Into<String>,
+        emitted_ms: u64,
+        interrupted: bool,
+    ) -> Result<Entry, SessionError> {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("emitted_ms".into(), emitted_ms.to_string());
+        data.insert("interrupted".into(), interrupted.to_string());
+        self.append_activity(crate::types::ActivityRecord {
+            activity_id: activity_id.into(),
+            turn: None,
+            kind: crate::types::ActivityKind::VoicePlayback,
+            status: if interrupted {
+                crate::types::ActivityStatus::Partial
+            } else {
+                crate::types::ActivityStatus::Succeeded
+            },
+            label: "Voice playback".into(),
+            detail: None,
+            data,
+        })
+    }
+
     /// Record this turn's resolved intent.
     ///
     /// Appended before the turn dispatches, so the note it carries is in the

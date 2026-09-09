@@ -330,6 +330,7 @@ export interface DirListing {
 }
 
 export interface ConfigSnapshot {
+  voice?: { enabled: boolean; provider?: string | null; model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
   provider: string;
   model: string;
   provider_source?: string;
@@ -585,4 +586,18 @@ export interface OnboardingState {
   first_result: StepState;
   core_ready: boolean;
   unattended_ready: boolean;
+}
+
+export interface VoiceProviderDescriptor {
+  name: string;
+  endpointing: "server" | "client";
+  formats: Array<"pcm16" | "ogg_opus" | "mp3" | "wav">;
+  voices: string[];
+  models: string[];
+  configured?: boolean;
+}
+
+export interface VoiceProvidersResponse {
+  providers: VoiceProviderDescriptor[];
+  discovery: string;
 }

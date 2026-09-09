@@ -26,6 +26,7 @@ export const activeHost: Host = {
       "multi-workspace",
       "system-notifications",
       "tray",
+      "microphone",
     ];
     return supported.includes(feature);
   },

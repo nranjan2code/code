@@ -24,6 +24,7 @@ vak-intent = { workspace = true }
 vak-plugin = { workspace = true }
 vak-delivery = { workspace = true }
 vak-llm = { workspace = true }
+vak-voice = { workspace = true }
 futures = { workspace = true }
 vak-ops = { path = "../vak-ops" }
 vak-session = { workspace = true }

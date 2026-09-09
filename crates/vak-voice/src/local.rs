@@ -30,13 +30,33 @@ pub struct LocalTtsReadiness {
 pub fn local_tts_readiness() -> LocalTtsReadiness {
     let executable = std::env::var_os("VAK_LOCAL_TTS").map(std::path::PathBuf::from);
     let Some(path) = executable else {
-        return LocalTtsReadiness { configured: false, ready: false, executable: None, detail: "not configured (optional local TTS)".into() };
+        return LocalTtsReadiness {
+            configured: false,
+            ready: false,
+            executable: None,
+            detail: "not configured (optional local TTS)".into(),
+        };
     };
     let display = path.display().to_string();
     match std::fs::metadata(&path) {
-        Ok(meta) if meta.is_file() => LocalTtsReadiness { configured: true, ready: true, executable: Some(display), detail: "executable is present".into() },
-        Ok(_) => LocalTtsReadiness { configured: true, ready: false, executable: Some(display), detail: "configured path is not a regular file".into() },
-        Err(error) => LocalTtsReadiness { configured: true, ready: false, executable: Some(display), detail: format!("configured executable is unavailable: {error}") },
+        Ok(meta) if meta.is_file() => LocalTtsReadiness {
+            configured: true,
+            ready: true,
+            executable: Some(display),
+            detail: "executable is present".into(),
+        },
+        Ok(_) => LocalTtsReadiness {
+            configured: true,
+            ready: false,
+            executable: Some(display),
+            detail: "configured path is not a regular file".into(),
+        },
+        Err(error) => LocalTtsReadiness {
+            configured: true,
+            ready: false,
+            executable: Some(display),
+            detail: format!("configured executable is unavailable: {error}"),
+        },
     }
 }
 

@@ -20,6 +20,7 @@ import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import { IntentStrip } from "./IntentStrip";
+import VoiceControl from "./VoiceControl";
 
 /** Context-window gauge; sits with the run controls in the composer. */
 function Ring(props: { pct: number; label: string }): JSX.Element {
@@ -609,6 +610,7 @@ export default function Composer(props: { cwd: string }) {
               <span class="composer-at">/</span>
               <span>skills</span>
             </button>
+            <VoiceControl sessionId={activeId() ?? undefined} onFinal={(value) => { void sendPrompt(value, undefined, undefined, activeId()); }} />
             <input
               ref={fileInput}
               type="file"

@@ -346,7 +346,8 @@ const defaultUiPreferences: UiPreferences = {
   externalMedia: true,
   autoplayMedia: false,
   voiceEnabled: false,
-  voiceName: "Kore",
+  // Empty means provider default; concrete voices come from /voice/providers.
+  voiceName: "",
   voicePersona: "",
   soundCues: true,
 };
@@ -897,7 +898,8 @@ export function applyEvent(
     }
     // Short narration only -- the full summary can run long and reads
     // awkwardly aloud; a one-word cue is enough to signal completion.
-    void speak(ev.RunFinished.is_error ? "Task failed." : "Done.");
+    // Voice conversations own playback. Turn completion is surfaced in the
+    // transcript and must not trigger an unscoped one-shot narration request.
     cueTurnFinish(ev.RunFinished.is_error);
     opts.onFinish?.(ev.RunFinished.summary);
   } else if ("Sandbox" in ev) {

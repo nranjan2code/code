@@ -107,7 +107,24 @@ impl InboundRequest {
     }
 
     pub fn with_attachments(mut self, attachments: Vec<serde_json::Value>) -> Self {
-        self.attachments = attachments;
+        const MAX_AUDIO_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
+        self.attachments = attachments
+            .into_iter()
+            .filter_map(|mut attachment| {
+                if attachment.get("kind").and_then(|v| v.as_str()) == Some("audio") {
+                    let encoded = attachment
+                        .get("data")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if encoded.len() > MAX_AUDIO_ATTACHMENT_BYTES.saturating_mul(4) / 3 {
+                        attachment["data"] = serde_json::Value::String(String::new());
+                        attachment["error"] =
+                            serde_json::Value::String("audio attachment exceeds 16 MiB".into());
+                    }
+                }
+                Some(attachment)
+            })
+            .collect();
         self
     }
 
@@ -1680,6 +1697,8 @@ struct InboundAttachment {
     /// text the model can read directly or it isn't included at all).
     #[serde(default = "default_attachment_kind")]
     kind: String,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 fn default_image_mime() -> String {
@@ -1731,6 +1750,19 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
             )));
             continue;
         }
+        if a.kind == "audio" {
+            let filename = a.filename.as_deref().unwrap_or("audio");
+            if let Some(error) = a.error.as_deref() {
+                blocks.push(vak_llm::ContentBlock::text(format!(
+                    "[audio attachment '{filename}' rejected: {error}]"
+                )));
+                continue;
+            }
+            blocks.push(vak_llm::ContentBlock::text(format!(
+                "[audio attachment '{filename}' received; transcription provider is not configured]"
+            )));
+            continue;
+        }
         blocks.push(vak_llm::ContentBlock::image_base64(
             a.mime.clone(),
             a.data.trim().to_string(),
@@ -1740,6 +1772,10 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
         role: vak_llm::Role::User,
         content: blocks,
     }
+}
+
+pub(crate) fn compose_voice_prompt(text: &str) -> vak_llm::Message {
+    compose_prompt(text, &[])
 }
 
 // ---- Approval forwarding (G2) ----------------------------------------------
@@ -2173,6 +2209,26 @@ async fn gateway_inbound(
         _ => expanded_text,
     };
     let prompt = compose_prompt(&attributed, &body.attachments);
+    // Audio ingress is an auditable presentation event as well as model
+    // input.  Keep the transcript activity on the append-only session ledger
+    // before dispatch so channel bridges and the web voice client have the
+    // same durable evidence.  The bridge supplies the authoritative text;
+    // the normal prompt entry is still recorded by the turn executor.
+    if body
+        .attachments
+        .iter()
+        .any(|a| a.kind == "audio" && !a.data.trim().is_empty())
+    {
+        if let Ok(mut session) = handle.session.lock()
+            && let Some(session) = session.as_mut()
+        {
+            let _ = session.append_voice_transcript(
+                uuid::Uuid::now_v7().to_string(),
+                attributed.clone(),
+                true,
+            );
+        }
+    }
     // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)
     // to the chat it's actually running in, in the plain `<surface>:<chat>`
     // shape `deliver_to` already uses everywhere — not the possibly
@@ -2508,6 +2564,24 @@ fn start_turn_chain(
     let core = core.clone();
     let gw = state.gateway.clone();
     tokio::spawn(execute_turn_chain(core, gw, handle, prompt, reply));
+}
+
+/// Voice and other non-HTTP surfaces use the same governed executor while
+/// already holding the frozen session core and gateway state.
+pub(crate) fn start_turn_chain_with_gateway(
+    gateway: Arc<GatewayState>,
+    core: &Core,
+    handle: Arc<SessionHandle>,
+    prompt: vak_llm::Message,
+    reply: Option<oneshot::Sender<String>>,
+) {
+    tokio::spawn(execute_turn_chain(
+        core.clone(),
+        gateway,
+        handle,
+        prompt,
+        reply,
+    ));
 }
 
 async fn execute_turn_chain(
@@ -2896,6 +2970,56 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn voice_prompt_is_a_normal_user_message() {
+        let prompt = compose_voice_prompt("  turn the lights on  ");
+        assert_eq!(prompt.role, vak_llm::Role::User);
+        assert_eq!(prompt.content.len(), 1);
+        match &prompt.content[0] {
+            vak_llm::ContentBlock::Text { text } => {
+                assert_eq!(text, "  turn the lights on  ");
+            }
+            other => panic!("voice prompt used unexpected content block: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audio_attachment_is_never_advertised_as_an_image() {
+        let prompt = compose_prompt(
+            "",
+            &[InboundAttachment {
+                kind: "audio".into(),
+                mime: "audio/ogg".into(),
+                data: "not-model-input".into(),
+                filename: Some("voice.ogg".into()),
+                error: None,
+            }],
+        );
+        assert!(matches!(
+            &prompt.content[0],
+            vak_llm::ContentBlock::Text { text } if text.contains("audio attachment")
+        ));
+    }
+
+    #[test]
+    fn inbound_audio_budget_marks_oversized_payloads() {
+        struct Channel;
+        impl InboundChannel for Channel {
+            fn surface(&self) -> &'static str {
+                "test"
+            }
+        }
+        let encoded = "A".repeat(16 * 1024 * 1024 * 4 / 3 + 1);
+        let request = InboundRequest::new(&Channel, "chat", "sender", "voice")
+            .unwrap()
+            .with_attachments(vec![serde_json::json!({"kind":"audio", "data": encoded})]);
+        assert_eq!(request.attachments[0]["data"], "");
+        assert_eq!(
+            request.attachments[0]["error"],
+            "audio attachment exceeds 16 MiB"
+        );
+    }
+
     /// The console resolved a chat's mode WITHOUT the bot tier, so a bot
     /// pinned narrower than its chat ran narrow and displayed wide — and a
     /// chat with no pin under a bot that had one displayed the workspace's
@@ -3041,6 +3165,7 @@ mod tests {
             data: data.into(),
             filename: Some("notes.py".into()),
             kind: "document".into(),
+            error: None,
         }
     }
 
@@ -3081,6 +3206,7 @@ mod tests {
                 data: "aGVsbG8=".into(),
                 filename: None,
                 kind: "image".into(),
+                error: None,
             }],
         );
         assert!(matches!(
