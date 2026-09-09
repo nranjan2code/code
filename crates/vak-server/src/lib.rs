@@ -1377,6 +1377,11 @@ struct VoiceSpeakBody {
     chat_key: Option<String>,
     #[serde(default)]
     voice_override: Option<vak_config::VoiceConfig>,
+    /// Optional append-only ledger to attribute this synthesis to. Bridges
+    /// may populate it after gateway admission; callers without a session
+    /// remain fully supported.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1384,6 +1389,8 @@ struct VoiceTranscribeBody {
     audio_base64: String,
     #[serde(default = "default_voice_mime")]
     mime: String,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 fn default_voice_mime() -> String {
     "audio/ogg".into()
@@ -1457,11 +1464,26 @@ async fn voice_transcribe(
     )
     .await
     {
-        Ok(text) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"text": text, "provider":provider, "model": config.model})),
-        )
-            .into_response(),
+        Ok(text) => {
+            if let Some(session_id) = body
+                .session_id
+                .as_deref()
+                .filter(|id| !id.trim().is_empty())
+            {
+                if let Ok(mut session) = state.core.open_session(session_id).await {
+                    let _ = session.append_voice_transcript(
+                        uuid::Uuid::now_v7().to_string(),
+                        text.clone(),
+                        true,
+                    );
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"text": text, "provider":provider, "model": config.model})),
+            )
+                .into_response()
+        }
         Err(error) => (
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({"error": error.to_string()})),
@@ -1583,6 +1605,15 @@ async fn voice_speak(
         wav.extend_from_slice(b"data");
         wav.extend_from_slice(&data_len.to_le_bytes());
         wav.extend_from_slice(&pcm);
+        if let Some(session_id) = body
+            .session_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            if let Ok(mut session) = state.core.open_session(session_id).await {
+                let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
+            }
+        }
         let mut receipt = vak_llm::WorkReceipt::new(
             vak_llm::WorkPurpose::VoiceSynthesis,
             "local",
@@ -1656,6 +1687,16 @@ async fn voice_speak(
 
     match result {
         Ok(wav) => {
+            if let Some(session_id) = body
+                .session_id
+                .as_deref()
+                .filter(|id| !id.trim().is_empty())
+            {
+                if let Ok(mut session) = state.core.open_session(session_id).await {
+                    let _ =
+                        session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
+                }
+            }
             receipt.record(
                 vak_llm::AttemptReason::Initial,
                 vak_llm::FailureDomain::Unknown,
