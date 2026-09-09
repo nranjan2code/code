@@ -5968,6 +5968,25 @@ function Settings() {
             </div>
           </section>
 
+          <section class="panel" data-testid="voice-settings">
+            <div class="panel-title-row">
+              <div>
+                <h2>Voice</h2>
+                <p class="dim">Global voice defaults for this scope. Bots and chats inherit these unless they pin their own voice.</p>
+              </div>
+              <span class="chip">{config()?.voice?.source ?? (configScope() === "user" ? "Global" : "Workspace")}</span>
+            </div>
+            <Show when={config()?.voice} fallback={<div class="dim">Voice configuration unavailable.</div>}>
+              {(voice) => <>
+                <label class="inherit-toggle"><input type="checkbox" checked={voice().enabled} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")} /> Enable voice conversations</label>
+                <div class="form-row"><label>Provider</label><input value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} /></div>
+                <div class="form-row"><label>Transcription model</label><input value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} /></div>
+                <div class="form-row"><label>Synthesis model</label><input value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} /></div>
+                <div class="form-row"><label>Realtime model</label><input value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} /></div>
+              </>}
+            </Show>
+          </section>
+
           <section class="panel">
             <div class="panel-title-row">
               <div>
