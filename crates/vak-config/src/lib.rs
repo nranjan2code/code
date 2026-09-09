@@ -3535,6 +3535,8 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "tools",
     "heartbeat",
     "plugins",
+    "intent",
+    "voice",
 ];
 const KNOWN_PLUGINS_KEYS: &[&str] = &[
     "enabled",
