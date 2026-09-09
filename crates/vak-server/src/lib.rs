@@ -1525,7 +1525,12 @@ async fn voice_speak(
         });
 
     let voice_settings = state.core.effective_voice();
-    let provider = voice_settings.provider.as_deref().unwrap_or("google");
+    let provider = voice_settings
+        .provider
+        .as_deref()
+        .unwrap_or("google")
+        .trim()
+        .to_ascii_lowercase();
     if provider == "local" {
         use vak_voice::{LocalSpeaker, SpeakFormat, SpeakSpec, Speaker};
         let speaker = LocalSpeaker;
@@ -1605,7 +1610,7 @@ async fn voice_speak(
             .into_response();
     }
     if !matches!(
-        provider,
+        provider.as_str(),
         "google" | "gemini" | "google-live" | "gemini-live"
     ) {
         return (
