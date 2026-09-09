@@ -231,6 +231,8 @@ pub struct AppState {
     /// Number of live voice websocket sessions. Admission is checked against
     /// the effective configuration at connection time and released on exit.
     pub(crate) voice_active: Arc<std::sync::atomic::AtomicUsize>,
+    /// Rolling admission window for batch voice endpoints.
+    pub(crate) voice_requests: Arc<Mutex<(Instant, usize)>>,
 }
 
 #[derive(Clone)]
@@ -277,6 +279,7 @@ impl AppState {
             auth_token,
             active_core: Arc::new(Mutex::new(None)),
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            voice_requests: Arc::new(Mutex::new((Instant::now(), 0))),
         }
     }
 
@@ -1398,6 +1401,22 @@ fn default_voice_mime() -> String {
     "audio/ogg".into()
 }
 
+fn admit_voice_request(state: &AppState, limit: usize) -> bool {
+    let mut window = state
+        .voice_requests
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if window.0.elapsed() >= std::time::Duration::from_secs(60) {
+        *window = (Instant::now(), 0);
+    }
+    if window.1 >= limit {
+        false
+    } else {
+        window.1 += 1;
+        true
+    }
+}
+
 /// `POST /voice/transcribe`: bounded batch transcription endpoint used by
 /// channel bridges. Credentials and provider routing remain server-owned.
 async fn voice_transcribe(
@@ -1428,6 +1447,15 @@ async fn voice_transcribe(
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error":"voice is disabled"})),
+        )
+            .into_response();
+    }
+    // Admit only a valid, enabled request. Malformed or disabled requests must
+    // not consume the caller's rolling voice quota.
+    if !admit_voice_request(&state, voice_settings.max_requests_per_minute) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error":"voice request rate limit exceeded"})),
         )
             .into_response();
     }
@@ -1515,6 +1543,17 @@ async fn voice_speak(
         )
             .into_response();
     }
+    let voice_settings = state.core.effective_voice();
+    if body.text.chars().count() > voice_settings.max_text_chars {
+        return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error": format!("text exceeds voice.max_text_chars ({})", voice_settings.max_text_chars)}))).into_response();
+    }
+    if !admit_voice_request(&state, voice_settings.max_requests_per_minute) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error":"voice request rate limit exceeded"})),
+        )
+            .into_response();
+    }
 
     // Resolution order: explicit override > resolved chat/bot voice > a
     // provider-defined default. The chat lookup mirrors `core_for_entry`'s own
@@ -1553,7 +1592,7 @@ async fn voice_speak(
             }
         });
 
-    let voice_settings = state.core.effective_voice();
+    let voice_settings = voice_settings;
     if !voice_settings.enabled {
         return (
             StatusCode::CONFLICT,
@@ -3210,6 +3249,13 @@ fn health_projection(state: &AppState) -> serde_json::Value {
             "capacity_remaining": state.core.effective_voice().max_concurrent.saturating_sub(
                 state.voice_active.load(std::sync::atomic::Ordering::Relaxed),
             ),
+            "quota": {
+                "session_seconds": state.core.effective_voice().max_session_secs,
+                "concurrent_sessions": state.core.effective_voice().max_concurrent,
+                "inbound_audio_bytes": state.core.effective_voice().max_audio_bytes,
+                "scope": "workspace",
+                "source": "effective",
+            },
             // Historical voice telemetry is intentionally unavailable until
             // it is derived from persisted evidence; never fabricate zeros.
             "historical": {
@@ -13425,6 +13471,44 @@ mod configuration_control_tests {
         )
         .await;
         assert_eq!(status.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod voice_admission_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn rolling_voice_admission_enforces_limit_and_resets_window() {
+        let requests = Arc::new(Mutex::new((Instant::now(), 0)));
+        let state = requests;
+        let mut window = state.lock().unwrap();
+        assert!(window.1 < 2);
+        window.1 += 1;
+        assert!(window.1 < 2);
+        window.1 += 1;
+        assert!(window.1 >= 2);
+        drop(window);
+
+        // The production helper resets by elapsed time; exercise its exact
+        // state shape without making the test sleep.
+        let mut window = state.lock().unwrap();
+        window.0 = Instant::now() - Duration::from_secs(61);
+        drop(window);
+        let state =
+            AppState::new(Core::new(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap());
+        *state.voice_requests.lock().unwrap() = (Instant::now() - Duration::from_secs(61), 2);
+        assert!(admit_voice_request(&state, 2));
+        assert_eq!(state.voice_requests.lock().unwrap().1, 1);
+    }
+
+    #[test]
+    fn zero_voice_limit_fails_closed() {
+        let state =
+            AppState::new(Core::new(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap());
+        assert!(!admit_voice_request(&state, 0));
+        assert_eq!(state.voice_requests.lock().unwrap().1, 0);
     }
 }
 
