@@ -12,6 +12,7 @@ pub mod google;
 pub mod google_live;
 pub mod models;
 pub mod openai;
+pub mod openai_realtime;
 pub mod openai_responses;
 pub mod provider_status;
 pub mod registry;
