@@ -90,14 +90,28 @@ export interface Bot {
 /// `AllowlistRoute`'s "inherit unless overridden" idiom. Both fields are
 /// independently optional: a voice name with no persona, or vice versa.
 export interface VoiceConfig {
-  /// A Gemini Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
+  /// Provider-defined voice identifier. The catalogue is discovered at runtime.
   voice_name?: string | null;
   /// Free-text style directive fed into the synthesis system instruction,
   /// e.g. "warm, upbeat, and enthusiastic".
   persona?: string | null;
 }
 
+export interface VoiceProviderSummary {
+  name: string;
+  formats: string[];
+  voices: string[];
+  models: string[];
+  configured: boolean;
+}
+
+export interface VoiceProviderListResponse {
+  providers: VoiceProviderSummary[];
+  discovery?: string;
+}
+
 export interface ConfigInfo {
+  voice?: { enabled: boolean; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
   provider: string;
   model: string;
   provider_source?: string;
@@ -351,7 +365,19 @@ export interface ProviderListResponse {
 export interface DiscoveredModelsResponse {
   provider: string;
   models: string[];
+  availability?: BedrockModelAvailability[];
+  availability_error?: string;
   error?: string;
+}
+
+export interface BedrockModelAvailability {
+  model_id: string;
+  agreement_status?: string;
+  agreement_error?: string;
+  authorization_status?: string;
+  entitlement_status?: string;
+  region_status?: string;
+  invokable: boolean;
 }
 
 /// Matches `finops_status`'s actual JSON exactly (`vak-server/src/lib.rs`)

@@ -23,7 +23,7 @@ import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, ConfigLayer, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
-  PermissionMode, ProviderSummary,
+  PermissionMode, ProviderSummary, VoiceProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
@@ -3541,11 +3541,6 @@ function ChannelPermissionPicker(props: {
   );
 }
 
-/// Gemini Live API's named prebuilt voices, as validated in the scratchpad
-/// script (docs/design plan, section 2) — the same set `google_live.rs`
-/// accepts for `voice_name`.
-const VOICE_NAMES = ["Kore", "Puck", "Zephyr", "Charon", "Fenrir", "Aoede"];
-
 /// Optional per-bot/per-chat voice + persona pin, parallel to
 /// `ChannelPermissionPicker`. Unchecked means inherit up the same
 /// `route`/`permission_mode` chain — `chat.voice.or(bot.voice)`, gated by
@@ -3563,6 +3558,10 @@ function VoiceConfigEditor(props: {
   subject: "bot" | "chat";
 }) {
   const [previewing, setPreviewing] = createSignal(false);
+  const [voiceProviders] = createResource(() => api.voiceProviders().catch(() => ({ providers: [] })));
+  const discoveredVoices = createMemo(() =>
+    (voiceProviders()?.providers ?? []).flatMap((provider: VoiceProviderSummary) => provider.voices),
+  );
   let audioEl: HTMLAudioElement | undefined;
 
   const preview = async () => {
@@ -3598,10 +3597,16 @@ function VoiceConfigEditor(props: {
       </label>
       <Show when={props.pinned}>
         <div class="binding-controls">
-          <select value={props.voiceName} onChange={(e) => props.setVoiceName(e.currentTarget.value)}>
-            <option value="">Default voice</option>
-            <For each={VOICE_NAMES}>{(v) => <option value={v}>{v}</option>}</For>
-          </select>
+          <input
+            list="vak-discovered-voices"
+            value={props.voiceName}
+            onInput={(e) => props.setVoiceName(e.currentTarget.value)}
+            placeholder="Provider default or discovered voice id"
+            aria-label="Voice identifier"
+          />
+          <datalist id="vak-discovered-voices">
+            <For each={discoveredVoices()}>{(v) => <option value={v} />}</For>
+          </datalist>
           <button disabled={previewing()} onClick={() => void preview()}>
             {previewing() ? "Playing…" : "Preview"}
           </button>
@@ -5592,6 +5597,7 @@ function Settings() {
   const [selectedProvider, setSelectedProvider] = createSignal("anthropic");
   const [selectedModel, setSelectedModel] = createSignal("");
   const [discoveredModels, setDiscoveredModels] = createSignal<string[]>([]);
+  const [bedrockAvailability, setBedrockAvailability] = createSignal<import("./types").BedrockModelAvailability[]>([]);
   const [loadingModels, setLoadingModels] = createSignal(false);
   const [modelError, setModelError] = createSignal("");
   const [providerKeyInput, setProviderKeyInput] = createSignal("");
@@ -5635,9 +5641,12 @@ function Settings() {
       const res = await api.models(provider);
       const models = res.models ?? [];
       setDiscoveredModels(models);
+      setBedrockAvailability(res.availability ?? []);
+      setModelError(res.availability_error ?? "");
       if (models.length > 0 && !models.includes(selectedModel())) setSelectedModel(models[0]);
     } catch (err) {
       setDiscoveredModels([]);
+      setBedrockAvailability([]);
       // Almost always "no key for this provider yet", which the free-text
       // model field below already lets the operator work around.
       setModelError(`${err}`);
@@ -5805,7 +5814,12 @@ function Settings() {
                     ref={(el) => syncSelect(el, selectedModel, discoveredModels)}
                     onChange={(e) => setSelectedModel(e.currentTarget.value)}
                   >
-                    <For each={discoveredModels()}>{(m) => <option value={m}>{m}</option>}</For>
+                    <For each={discoveredModels()}>{(m) => {
+                      const status = bedrockAvailability().find((item) => item.model_id === m);
+                      return <option value={m} disabled={selectedProvider() === "bedrock" && !!status && !status.invokable}>
+                        {status && !status.invokable ? `${m} (not invokable)` : m}
+                      </option>;
+                    }}</For>
                   </select>
                 </Show>
               </div>
@@ -5815,6 +5829,14 @@ function Settings() {
                   its key isn’t stored yet. Add the key below, or type a model name in by hand.
                   ({modelError()})
                 </p>
+              </Show>
+              <Show when={selectedProvider() === "bedrock" && bedrockAvailability().length > 0}>
+                <div class="dim" style="{ 'margin-top': '8px' }">
+                  <For each={bedrockAvailability()}>{(item) => <p><span class="mono">{item.model_id}</span> · {item.invokable ? "invokable" : "not invokable"} · agreement {item.agreement_status ?? "unknown"} · authorization {item.authorization_status ?? "unknown"}{item.agreement_error ? ` · ${item.agreement_error}` : ""}</p>}</For>
+                </div>
+              </Show>
+              <Show when={selectedProvider() === "bedrock" && modelError()}>
+                <p class="dim">Bedrock authorization status could not be checked: {modelError()}</p>
               </Show>
               <div class="row-gap" style="margin-top:10px">
                 <button

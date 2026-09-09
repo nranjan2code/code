@@ -32,6 +32,7 @@ import type {
   PermissionRules,
   PermissionRulesView,
   ProviderListResponse,
+  VoiceProviderListResponse,
   RebuildStats,
   SearchHit,
   SecurityEvent,
@@ -523,6 +524,9 @@ export const api = {
 
   models: (providerName: string): Promise<DiscoveredModelsResponse> =>
     fetch(`/providers/${encodeURIComponent(providerName)}/models`).then((r) => handle(r)),
+
+  voiceProviders: (): Promise<VoiceProviderListResponse> =>
+    fetch("/voice/providers").then((r) => handle(r)),
 
   setProviderKey: (provider: string, key: string, scope: ConfigScope): Promise<void> =>
     fetch("/config/key", {
