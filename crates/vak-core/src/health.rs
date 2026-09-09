@@ -771,6 +771,31 @@ mod tests {
     }
 
     #[test]
+    fn doctor_reports_voice_disabled_without_treating_it_as_failure() {
+        let workspace = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let core = Core::new(workspace.path().to_path_buf()).unwrap();
+        core.set_sessions_home(home.path().to_path_buf());
+        let mut voice = core.effective_voice();
+        voice.enabled = false;
+        core.apply_persisted_voice(voice);
+
+        let report = collect(&core, None);
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.label == "voice configuration")
+            .expect("voice doctor check");
+        assert_eq!(check.detail.as_deref(), Ok("disabled"));
+        assert!(
+            report
+                .facts
+                .iter()
+                .any(|fact| fact.starts_with("voice: off"))
+        );
+    }
+
+    #[test]
     fn parity_passes_without_manifest() {
         let home = tempfile::tempdir().unwrap();
         let manifest = home.path().join("install.json");
