@@ -74,6 +74,13 @@ PAGES = [
         "How vak turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface.",
     ),
     (
+        "vak.html",
+        "/vak",
+        "Vāk",
+        "Vāk — vak",
+        "The philosophy behind vak: meaningful expression made durable, intelligible, and accountable before it becomes action.",
+    ),
+    (
         "surfaces.html",
         "/surfaces",
         "Surfaces",

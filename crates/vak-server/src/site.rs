@@ -38,6 +38,7 @@ static SITE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/site/dist");
 pub(crate) const ROUTES: &[(&str, &str)] = &[
     ("/", "index.html"),
     ("/outcomes", "outcomes/index.html"),
+    ("/vak", "vak/index.html"),
     ("/surfaces", "surfaces/index.html"),
     ("/security", "security/index.html"),
     ("/install", "install/index.html"),

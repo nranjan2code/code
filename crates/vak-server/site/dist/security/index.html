@@ -203,6 +203,12 @@ h1 .soft { color: var(--muted); }
 .hero-actions { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .hero-note { margin-top: 14px; font-size: 12.5px; color: var(--faint); }
 .hero-note code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.signal { margin-top: 55px; display: flex; align-items: center; gap: 14px; color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .025em; }
+.signal i { width: 44px; height: 1px; flex: none; background: var(--border); position: relative; overflow: hidden; }
+.signal i::after { content: ""; position: absolute; inset: 0; background: var(--accent); transform: translateX(-100%); animation: signal-travel 2.8s var(--ease) infinite; }
+.signal-word { transition: color 260ms ease, transform 260ms var(--ease); }
+.signal-word.active { color: var(--accent-bright); transform: translateY(-2px); }
+@keyframes signal-travel { 0% { transform: translateX(-100%); } 48%, 100% { transform: translateX(100%); } }
 
 /* The build readout. Version and commit only: `/` is auth-exempt, so this
    page must not disclose bind address, permission mode, or anything else
@@ -531,6 +537,8 @@ html.js .reveal.in {
      they broke mid-word ("workspace-\nwrite"). Stack them full width. */
   .modes { display: grid; grid-template-columns: 1fr; width: 100%; border-radius: var(--radius); }
   .modes button { border-radius: var(--radius-sm); text-align: left; padding: 8px 12px; }
+  .signal { flex-wrap: wrap; gap: 10px; line-height: 1.7; }
+  .signal i { width: 22px; }
 }
 @media (max-width: 480px) {
   /* Three columns at this width left "blast radius" wrapping in a 84px
@@ -545,7 +553,7 @@ html.js .reveal.in {
 
 @media (prefers-reduced-motion: reduce) {
   html.js .reveal, html.js .tape .step { opacity: 1; transform: none; transition: none; }
-  .dot.run { animation: none; }
+  .dot.run, .vak-glyph svg.alive path, .vak-glyph svg.alive circle, .signal i::after { animation: none; }
   .btn, .door, .rail, .rail-nav a, .modes button { transition: none; }
 }
 
@@ -708,6 +716,41 @@ html.js .reveal.in {
 .next a:hover { color: var(--accent); }
 .next a::after { content: " →"; color: var(--accent); }
 
+/* ---- Vāk story ----------------------------------------------------------- */
+.vak-callout { padding: 92px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); background: var(--surface); }
+.vak-callout-grid { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.1fr); gap: 72px; align-items: center; }
+.vak-callout h2 { font-size: clamp(30px, 4vw, 48px); letter-spacing: -.04em; }
+.vak-callout .section-lead { margin: 16px 0 22px; }
+.vak-glyph { color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-align: center; }
+.vak-glyph svg, .philosophy-mark svg { width: 100%; height: auto; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.vak-glyph svg.alive path { stroke-dasharray: 5 9; animation: vak-flow 5s linear infinite; }
+.vak-glyph svg.alive circle { animation: vak-core 3.2s ease-in-out infinite; transform-origin: center; }
+@keyframes vak-flow { to { stroke-dashoffset: -56; } }
+@keyframes vak-core { 0%, 100% { transform: scale(1); opacity: .72; } 50% { transform: scale(1.24); opacity: 1; } }
+.vak-glyph span { display: block; margin-top: 14px; color: var(--muted); }
+.text-link { color: var(--text); font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: 5px; }
+.text-link:hover { color: var(--accent); }
+.sub-hero { padding: 92px 0 82px; border-bottom: 1px solid var(--border-soft); }
+.philosophy-intro { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); gap: 80px; align-items: center; }
+.philosophy-intro h1 { font-size: clamp(48px, 7vw, 82px); line-height: .98; letter-spacing: -.065em; }
+.philosophy-intro .lead { max-width: 54ch; margin-top: 28px; }
+.philosophy-mark { color: var(--accent); text-align: center; }
+.philosophy-mark p { margin-top: 10px; font-family: var(--mono); font-size: 14px; line-height: 1.7; }
+.philosophy-mark p span { color: var(--muted); font-size: 11px; }
+.philosophy-body { padding: 100px 0; }
+.vak-principles { margin-top: 56px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 70px; }
+.vak-principles article { padding: 28px 0 32px; border-top: 1px solid var(--border); }
+.principle-word { color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.vak-principles h3 { margin-top: 18px; font-size: 25px; letter-spacing: -.025em; }
+.vak-principles p { margin-top: 10px; color: var(--text-soft); max-width: 48ch; }
+.philosophy-loop { padding: 92px 0 110px; background: var(--surface); border-top: 1px solid var(--border-soft); }
+.loop-line { display: flex; align-items: center; gap: 13px; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.loop-line i { width: 38px; height: 1px; flex: none; background: var(--accent); opacity: .7; }
+.philosophy-loop h2 { margin-top: 62px; font-size: clamp(34px, 5vw, 62px); line-height: 1.05; letter-spacing: -.055em; }
+.philosophy-loop .section-lead { margin-top: 22px; max-width: 55ch; }
+.philosophy-actions { display: flex; gap: 12px; margin-top: 32px; }
+@media (max-width: 720px) { .vak-callout-grid, .philosophy-intro { grid-template-columns: 1fr; gap: 38px; } .vak-callout { padding: 64px 0; } .vak-glyph { max-width: 320px; } .sub-hero { padding: 62px 0; } .philosophy-body { padding: 68px 0; } .vak-principles { grid-template-columns: 1fr; margin-top: 36px; } .philosophy-loop { padding: 64px 0 76px; } .loop-line { flex-wrap: wrap; white-space: normal; } .philosophy-actions { flex-wrap: wrap; } }
+
 @media (max-width: 1000px) {
   .sim { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .facts-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -733,6 +776,7 @@ html.js .reveal.in {
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
       <a href="/outcomes">Outcomes</a>
+      <a href="/vak">Vāk</a>
       <a href="/surfaces">Surfaces</a>
       <a href="/security" class="on" aria-current="page">Security</a>
       <a href="/install">Install</a>
@@ -1490,6 +1534,25 @@ html.js .reveal.in {
     });
   }
 
+  function vakMark() {
+    var mark = document.querySelector(".vak-glyph");
+    var prompt = $("vak-prompt");
+    if (!mark || !prompt || reduceQuery.matches) return;
+    mark.addEventListener("pointerenter", function () { prompt.textContent = "you bring the intent"; });
+    mark.addEventListener("pointerleave", function () { prompt.textContent = "intent · expression · action"; });
+    var svg = mark.querySelector("svg");
+    if (svg) svg.classList.add("alive");
+    var words = $$(".signal-word");
+    if (words.length) {
+      var index = 0;
+      setInterval(function () {
+        words[index].classList.remove("active");
+        index = (index + 1) % words.length;
+        words[index].classList.add("active");
+      }, 2400);
+    }
+  }
+
   ready(function () {
     var M = window.Motion;
     var reduce = reduceQuery.matches;
@@ -1504,6 +1567,7 @@ html.js .reveal.in {
     try { switcher(M, reduce); } catch (e) {}
     try { simulator(M, reduce); } catch (e) {}
     try { copyButtons(); } catch (e) {}
+    try { vakMark(); } catch (e) {}
   });
 })();
 </script>

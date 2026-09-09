@@ -460,6 +460,25 @@
     });
   }
 
+  function vakMark() {
+    var mark = document.querySelector(".vak-glyph");
+    var prompt = $("vak-prompt");
+    if (!mark || !prompt || reduceQuery.matches) return;
+    mark.addEventListener("pointerenter", function () { prompt.textContent = "you bring the intent"; });
+    mark.addEventListener("pointerleave", function () { prompt.textContent = "intent · expression · action"; });
+    var svg = mark.querySelector("svg");
+    if (svg) svg.classList.add("alive");
+    var words = $$(".signal-word");
+    if (words.length) {
+      var index = 0;
+      setInterval(function () {
+        words[index].classList.remove("active");
+        index = (index + 1) % words.length;
+        words[index].classList.add("active");
+      }, 2400);
+    }
+  }
+
   ready(function () {
     var M = window.Motion;
     var reduce = reduceQuery.matches;
@@ -474,5 +493,6 @@
     try { switcher(M, reduce); } catch (e) {}
     try { simulator(M, reduce); } catch (e) {}
     try { copyButtons(); } catch (e) {}
+    try { vakMark(); } catch (e) {}
   });
 })();
