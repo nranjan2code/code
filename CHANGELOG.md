@@ -14,6 +14,17 @@ for those releases were removed from this file; `git log` holds them.
 - Improve Workbench artifact rendering, responsive layout, accessibility, and delivery projections.
 - Ship regenerated desktop, web, and admin bundles.
 
+### First-Class Voice Foundation
+
+- Add governed voice sessions with bounded inbound/outbound audio, cancellation,
+  append-only transcript/playback activities, and live capacity reporting.
+- Add Gemini and OpenAI-compatible transcription/synthesis adapters with explicit
+  configured models, capability discovery, and secure credential provenance.
+- Add configurable local transcription and native voice handling for Telegram,
+  Discord, and Slack, including Telegram Ogg/Opus conversion.
+- Add voice settings, provider discovery, administration, and deterministic
+  security/channel integration coverage.
+
 ## 3.0.32 — 2026-09-09
 
 ### UI Modernization Release

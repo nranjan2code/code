@@ -1,5 +1,9 @@
 # 38 — Voice & Personality (Gemini Live)
-Status: implemented in 2.0.0
+Status: implemented as the legacy narration/configuration layer in 2.0.0;
+the full-duplex and provider-neutral replacement is documented in
+[49-live-voice](49-live-voice.md). Voice identifiers and provider defaults are
+now discovered or explicitly configured; this document's historical examples
+must not be treated as a runtime catalogue.
 
 ## Problem
 
@@ -28,7 +32,7 @@ Lives as `voice: Option<VoiceConfig>` on both `Bot` and `AllowlistEntry`
 `GatewayState::resolve_voice` exactly the way `effective_route_override`
 resolves `route`: the chat's own override wins; otherwise, if
 `inherit_bot_policy` hasn't broken the chain, its bound bot's voice;
-otherwise no voice (caller falls back to a built-in default, `"Kore"`).
+otherwise no voice (the selected provider supplies its configured default).
 No new "break inheritance" flag — `inherit_bot_policy` already governs
 policy and route together, and voice rides the same switch, since all
 three describe "this chat's relationship to its bot."

@@ -37,6 +37,7 @@ Most agents make you choose between capability and legibility. vak is built arou
 | **Failure is part of the contract** | Typed errors, bounded retries, watchdogs, circuit breakers, frozen route ladders, and preserved partial output. |
 | **Extensions stay extensions** | Skills, hooks, MCP servers, custom commands, and flows add capability without bloating the kernel. |
 | **Your models, your machine** | Use Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, or Ollama; model catalogues are discovered from the provider. |
+| **First-class voice** | Use governed voice sessions, bounded transcription/synthesis, discovered provider capabilities, local transcription, and Telegram/Discord/Slack voice I/O; configuration and credentials stay administratable and scoped. |
 
 ## Quick start
 

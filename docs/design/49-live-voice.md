@@ -7,7 +7,43 @@ a provider abstraction that treats Gemini Live, OpenAI Realtime, and a
 fully local stack (whisper.cpp + Piper/Kokoro) as peers, across desktop,
 web, and Telegram.
 
-Status: proposal.
+Status: shipped foundation with known extensions. The governed voice WebSocket,
+bounded transcription and synthesis endpoints, Gemini and OpenAI-compatible
+batch adapters, local executable transcription, channel voice I/O for
+Telegram/Discord/Slack, append-only session activities, capability discovery,
+admin/settings surfaces, and live operations capacity reporting are shipped.
+Realtime listener adapters, local TTS, richer delivery receipts, and full
+browser/Tauri end-to-end coverage remain extensions.
+
+The current implementation includes the `vak-voice` crate (PCM/WAV
+primitives, VAD, framing, lifecycle, interruption accounting, and provider
+descriptors), a loopback-origin-checked `/voice/session` WebSocket with a
+persisted per-session audio budget, live admin/settings configuration, and a
+browser/Tauri transport and microphone capability seam. These pieces are
+deliberately provider-neutral: model and voice identifiers remain discovered
+from configured integrations rather than hard-coded. The sections below mix shipped behavior and target contract; each subsection labels gaps explicitly. Telegram currently forwards bounded audio to the gateway and converts synthesized WAV to Telegram-compatible Ogg/Opus for native voice delivery; Telegram, Discord, and Slack channel transcription route through the governed batch endpoint.
+
+The `local` route now also has a complete bounded synthesis path: a finalized
+local transcript is passed to `vak-voice::LocalSpeaker` and returned as PCM
+over the voice WebSocket (or as a WAV response from `/voice/speak`). Provider
+and model route values are persisted through the authenticated admin config
+surface and shown in health/doctor output. Channel media delivery and
+Additional realtime provider adapters and a local TTS executable contract
+remain future work; the existing local transcription executable contract is
+documented in the configuration and health surfaces.
+
+Credential handling is intentionally outside the voice protocol: provider
+keys are resolved through vak's existing secret lookup chain and are never
+included in control frames, session transcripts, provider descriptors, or
+health/admin responses. Live provider checks must inject credentials only for
+the duration of the process that performs the check.
+
+Completion gate for the shipped foundation: deterministic tests exercise
+bounded provider transcription/synthesis, cancellation, secret isolation,
+channel session propagation, native Telegram format conversion, and
+append-only transcript/playback activities. Realtime listener streaming and
+offline TTS require additional integration coverage before they are called
+complete.
 
 Related: 38-voice-personality (the narration path this replaces and the
 `VoiceConfig` inheritance tier it keeps), 41-capability-registry (the
@@ -20,7 +56,12 @@ and now joins).
 
 ---
 
-## Problem
+## Problem (historical baseline)
+
+The following describes the gaps that motivated this design. It is retained
+to explain the implementation decisions; statements about the old narration
+path and missing diagnostics describe the pre voice-foundation release and
+must not be read as the current product status.
 
 Voice shipped once (`1380497 feat: voice & personality via Gemini Live`)
 and is present in the committed bundles, but it is invisible for six
@@ -51,20 +92,15 @@ zero hits). Doc 38 lists full-duplex as an explicit non-goal.
    "the person who could repair the configuration saw nothing" — as the
    thing this project set out to kill. Voice reproduces it.
 6. **The documented Telegram path was never built.** Doc 38 claims the
-   gateway attaches a voice note when a chat resolves to a voice. No such
-   code exists: `surfaces/telegram.rs` has no `sendVoice`, `GatewayReply`
-   (line 224) has no audio field, and inbound parsing (~line 279) reads
-   only text/photo/document — a voice note is dropped. Doc 22 line 57
-   still says "No media I/O (images/voice/TTS) yet."
+   gateway attaches a voice note when a chat resolves to a voice. The bridge downloads bounded voice notes, transcribes through the governed endpoint, and converts synthesized output to Telegram-compatible Ogg/Opus for `sendVoice`; failures preserve the text reply.
 
-Structurally, the root cause of 3–6 is one thing: `google_live::speak()`
+Structurally, the root cause of 3–6 was one thing: `google_live::speak()`
 is a **free function called straight from an axum handler**, not an impl
 of `Provider` (`crates/vak-llm/src/lib.rs:41`). It is absent from
 `ProviderRegistry`, from the circuit breaker, from the route ladder, from
-key management, and from `doctor`. It also hardcodes
-`gemini-3.1-flash-live-preview`, violating invariant 9 (catalogues are
-discovered, never hardcoded) — as does the hardcoded
-`Kore/Puck/Zephyr/…` voice list in `Settings.tsx:~805`.
+key management, and from `doctor`. The current implementation routes through
+the configured provider, requires an explicit discovered model where the
+provider needs one, and obtains voice identifiers from capability discovery.
 
 ---
 
@@ -434,9 +470,9 @@ both shape and risk.
 ```toml
 [voice]
 enabled          = false
-provider         = "gemini-live"   # | "openai-realtime" | "local"
+provider         = "gemini-live"   # configured provider identifier
 model            = ""              # "" = discovered default; never hardcoded
-voice_name       = "Kore"
+voice_name       = ""              # empty = provider default
 max_concurrent   = 2               # a paid per-minute API on an authenticated endpoint
 max_session_secs = 900             # the LIVE_SESSION_TIMEOUT lesson, generalized
 
@@ -454,8 +490,11 @@ must not be able to open a microphone on the machine that cloned it.
 Register `voice` in `KNOWN_TOP_KEYS` so an unknown key warns rather than
 passing silently.
 
-Keys go through `Core::provider_auth_for_leg` and the credential pool,
-**not** a bare `get_var("GEMINI_API_KEY")` as the handler does today.
+Keys are resolved through the configured credential boundary before a remote
+adapter is called. The handler only reads the canonical project/shared
+credential lookup (`vak_config::get_var`) after selecting a non-local route;
+local synthesis and capture never require a cloud key, and keys are never
+returned by discovery or admin APIs.
 
 ### 9. Migration
 
