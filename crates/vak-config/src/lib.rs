@@ -107,6 +107,12 @@ pub struct Profile {
 #[serde(default)]
 pub struct FileConfig {
     pub provider: Option<String>,
+    /// Operation-specific model pins. `model` remains the shared legacy
+    /// fallback; these fields let transcription, synthesis, and realtime
+    /// routes be configured independently without embedding provider ids.
+    pub transcription_model: Option<String>,
+    pub synthesis_model: Option<String>,
+    pub realtime_model: Option<String>,
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
     pub max_turns: Option<usize>,
@@ -182,6 +188,11 @@ pub struct VoiceSettings {
     /// provider default, preserving inheritance across config layers.
     pub provider: Option<String>,
     pub model: Option<String>,
+    /// Legacy shared model field. New callers should use the operation-specific
+    /// pins below; when they are absent this value is used for compatibility.
+    pub transcription_model: Option<String>,
+    pub synthesis_model: Option<String>,
+    pub realtime_model: Option<String>,
     pub max_session_secs: u64,
     pub max_concurrent: usize,
     pub max_audio_bytes: u64,
@@ -196,6 +207,9 @@ impl Default for VoiceSettings {
         Self {
             enabled: false,
             provider: None,
+            transcription_model: None,
+            synthesis_model: None,
+            realtime_model: None,
             model: None,
             max_session_secs: 900,
             max_concurrent: 2,
@@ -210,7 +224,19 @@ impl VoiceSettings {
     pub fn validate(&self) -> Result<(), String> {
         for (name, value) in [
             ("voice.provider", self.provider.as_deref()),
+            (
+                "voice.transcription_model",
+                self.transcription_model.as_deref(),
+            ),
+            ("voice.synthesis_model", self.synthesis_model.as_deref()),
+            ("voice.realtime_model", self.realtime_model.as_deref()),
             ("voice.model", self.model.as_deref()),
+            (
+                "voice.transcription_model",
+                self.transcription_model.as_deref(),
+            ),
+            ("voice.synthesis_model", self.synthesis_model.as_deref()),
+            ("voice.realtime_model", self.realtime_model.as_deref()),
         ] {
             if let Some(value) = value {
                 if value.trim().is_empty() || value.chars().count() > 256 {
@@ -236,6 +262,18 @@ impl VoiceSettings {
             return Err("voice.max_text_chars must be between 1 and 10000000".into());
         }
         Ok(())
+    }
+
+    pub fn transcription_model(&self) -> Option<&str> {
+        self.transcription_model
+            .as_deref()
+            .or(self.model.as_deref())
+    }
+    pub fn synthesis_model(&self) -> Option<&str> {
+        self.synthesis_model.as_deref().or(self.model.as_deref())
+    }
+    pub fn realtime_model(&self) -> Option<&str> {
+        self.realtime_model.as_deref().or(self.model.as_deref())
     }
 }
 
@@ -2604,6 +2642,33 @@ pub fn persist_voice_settings_at(
     provider: Option<Option<String>>,
     model: Option<Option<String>>,
 ) -> Result<(), ConfigError> {
+    persist_voice_settings_at_with_models(
+        path,
+        enabled,
+        max_session_secs,
+        max_concurrent,
+        max_audio_bytes,
+        provider,
+        model,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Persist voice settings including operation-specific model pins.
+pub fn persist_voice_settings_at_with_models(
+    path: PathBuf,
+    enabled: Option<bool>,
+    max_session_secs: Option<u64>,
+    max_concurrent: Option<usize>,
+    max_audio_bytes: Option<u64>,
+    provider: Option<Option<String>>,
+    model: Option<Option<String>>,
+    transcription_model: Option<Option<String>>,
+    synthesis_model: Option<Option<String>>,
+    realtime_model: Option<Option<String>>,
+) -> Result<(), ConfigError> {
     let mut root = if path.is_file() {
         let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
             path: path.clone(),
@@ -2652,6 +2717,19 @@ pub fn persist_voice_settings_at(
             voice.insert("model".into(), toml::Value::String(v));
         } else {
             voice.remove("model");
+        }
+    }
+    for (key, value) in [
+        ("transcription_model", transcription_model),
+        ("synthesis_model", synthesis_model),
+        ("realtime_model", realtime_model),
+    ] {
+        if let Some(v) = value {
+            if let Some(v) = v {
+                voice.insert(key.into(), toml::Value::String(v));
+            } else {
+                voice.remove(key);
+            }
         }
     }
     let text = toml::to_string_pretty(&root).map_err(|e| ConfigError::Write {
