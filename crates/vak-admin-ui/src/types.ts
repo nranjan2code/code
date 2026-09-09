@@ -100,9 +100,12 @@ export interface VoiceConfig {
 export interface VoiceProviderSummary {
   name: string;
   formats: string[];
+  input_formats: string[];
   voices: string[];
   models: string[];
   configured: boolean;
+  model_provenance?: string | null;
+  voice_provenance?: string | null;
 }
 
 export interface VoiceProviderListResponse {
@@ -353,6 +356,10 @@ export interface ProviderSummary {
   credential_ids?: string[];
   requires_key: boolean;
   configured: boolean;
+  key_in_project?: boolean;
+  key_in_user?: boolean;
+  key_in_process?: boolean;
+  key_source?: "project" | "user" | "process" | "none";
 }
 
 export interface ProviderListResponse {

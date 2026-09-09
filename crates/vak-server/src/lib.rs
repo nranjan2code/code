@@ -1763,8 +1763,11 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
                 "default_base_url": descriptor.default_base_url,
                 "endpointing": descriptor.endpointing,
                 "formats": descriptor.formats,
+                "input_formats": descriptor.input_formats,
                 "voices": descriptor.voices,
                 "models": descriptor.models,
+                "model_provenance": descriptor.model_provenance,
+                "voice_provenance": descriptor.voice_provenance,
                 "configured": configured,
             })
         })
@@ -7942,6 +7945,7 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
         let requires_key = name != "ollama";
         let configured = state.core.provider_configured(&name);
         let credential_ids = state.core.provider_credential_ids(&name);
+        let (project_key, user_key, process_key) = state.core.provider_key_sources(&name);
         providers.push(serde_json::json!({
             "name": name,
             "env_var": Core::provider_env_var(&name),
@@ -7950,6 +7954,10 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
             "credential_ids": credential_ids,
             "requires_key": requires_key,
             "configured": configured,
+            "key_in_project": project_key,
+            "key_in_user": user_key,
+            "key_in_process": process_key,
+            "key_source": if project_key { "project" } else if user_key { "user" } else if process_key { "process" } else { "none" },
         }));
     }
     Json(serde_json::json!({

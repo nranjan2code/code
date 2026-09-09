@@ -426,6 +426,7 @@ struct CoreInner {
     /// matching `vak_config::Config`.
     rules_override: std::sync::Mutex<Option<PermissionRuleLists>>,
     theme_override: std::sync::Mutex<Option<String>>,
+    voice_override: std::sync::Mutex<Option<vak_config::VoiceSettings>>,
     theme_runtime_pinned: std::sync::atomic::AtomicBool,
     /// Live overrides for `[memory]` toggles (docs/design/23-memory.md).
     /// No CLI flag pins these today, so unlike route/theme/max_turns there
@@ -926,6 +927,7 @@ impl Core {
                 )),
                 task_sandboxes: std::sync::Mutex::new(HashMap::new()),
                 theme_override: std::sync::Mutex::new(None),
+                voice_override: std::sync::Mutex::new(None),
                 theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 memory_search_enabled_override: std::sync::Mutex::new(None),
                 memory_write_enabled_override: std::sync::Mutex::new(None),
@@ -979,6 +981,17 @@ impl Core {
 
     pub fn apply_persisted_work(&self, work: vak_config::WorkResolved) {
         Self::write_override(&self.inner.work_override, Some(work));
+    }
+
+    /// Effective live voice runtime settings. Persisted updates are applied
+    /// without restarting the daemon; existing sessions keep their limits.
+    pub fn effective_voice(&self) -> vak_config::VoiceSettings {
+        Self::read_override(&self.inner.voice_override)
+            .unwrap_or_else(|| self.inner.config.voice.clone())
+    }
+
+    pub fn apply_persisted_voice(&self, voice: vak_config::VoiceSettings) {
+        Self::write_override(&self.inner.voice_override, Some(voice));
     }
 
     pub fn effective_plugins(&self) -> vak_config::PluginResolved {
@@ -3390,6 +3403,19 @@ impl Core {
                     "ollama",
                 )),
             }),
+            "bedrock" => {
+                let api_key = required_key("AWS_BEARER_TOKEN_BEDROCK", "bedrock")?;
+                let base_url = vak_config::get_var("VAK_BEDROCK_BASE_URL")
+                    .or_else(|| Some("https://bedrock-mantle.us-east-1.api.aws/v1".into()));
+                Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        base_url.as_deref().unwrap_or_default(),
+                        &api_key,
+                    )),
+                    api_key,
+                    base_url,
+                })
+            }
             other => Err(CoreError::MissingAuth {
                 env: format!("(no auth wiring for '{other}' yet)"),
                 provider: other.into(),
@@ -3405,6 +3431,7 @@ impl Core {
             "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEYS"),
             "opencode-zen" => Some("OPENCODE_API_KEYS"),
             "ollama" => None,
+            "bedrock" => Some("AWS_BEARER_TOKEN_BEDROCK"),
             _ => None,
         }
     }
@@ -3502,6 +3529,7 @@ impl Core {
             "openai" | "openai-responses" => Some("OPENAI_API_KEY"),
             "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEY"),
             "opencode-zen" => Some("OPENCODE_API_KEY"),
+            "bedrock" => Some("AWS_BEARER_TOKEN_BEDROCK"),
             _ => None,
         }
     }
@@ -3516,6 +3544,7 @@ impl Core {
                 | "openrouter"
                 | "openrouter-responses"
                 | "opencode-zen"
+                | "bedrock"
                 | "ollama"
         )
     }
@@ -3542,6 +3571,21 @@ impl Core {
                 singular || plural
             }
         }
+    }
+
+    /// Secret provenance for administrative displays. Values are deliberately
+    /// reduced to booleans; credentials and their fingerprints never leave
+    /// the process through this API.
+    pub fn provider_key_sources(&self, provider: &str) -> (bool, bool, bool) {
+        let Some(env) = Self::provider_env_var(provider) else {
+            return (false, false, false);
+        };
+        let project = vak_config::read_env_file_var(&self.inner.cwd.join(".env"), env).is_some();
+        let user = vak_config::read_env_file_var(&self.user_env_file(), env).is_some();
+        let process = std::env::var(env)
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty());
+        (project, user, process)
     }
 
     /// Persists the Shared provider key. Prefer [`Self::set_provider_key_scoped`]
@@ -3807,6 +3851,14 @@ impl Core {
             return Err(error.into());
         }
         Ok(all)
+    }
+
+    pub async fn bedrock_model_availability(
+        &self,
+        model_ids: &[String],
+    ) -> Result<Vec<vak_llm::models::BedrockModelAvailability>, CoreError> {
+        let auth = self.provider_auth_for("bedrock")?;
+        Ok(vak_llm::models::bedrock_model_availability(&auth, model_ids).await?)
     }
 
     /// Read provider-published account metadata without exposing credentials.
@@ -5891,6 +5943,32 @@ mod channel_mcp_network_tests {
             "anthropic-pool-key",
         );
         assert_eq!(auth.credential_id.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn bedrock_uses_the_shared_bearer_key_and_mantle_endpoint() {
+        vak_config::set_override("AWS_BEARER_TOKEN_BEDROCK", "bedrock-test-key");
+        vak_config::set_override(
+            "VAK_BEDROCK_BASE_URL",
+            "https://bedrock-mantle.us-east-1.api.aws/v1",
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(directory.path().to_path_buf(), true).unwrap();
+        let auth = core.provider_auth_for("bedrock").unwrap();
+        assert!(core.provider_configured("bedrock"));
+        vak_config::clear_override("AWS_BEARER_TOKEN_BEDROCK");
+        vak_config::clear_override("VAK_BEDROCK_BASE_URL");
+
+        assert_eq!(
+            Core::provider_env_var("bedrock"),
+            Some("AWS_BEARER_TOKEN_BEDROCK")
+        );
+        assert_eq!(auth.api_key, "bedrock-test-key");
+        assert_eq!(
+            auth.base_url.as_deref(),
+            Some("https://bedrock-mantle.us-east-1.api.aws/v1")
+        );
+        assert!(Core::provider_known("bedrock"));
     }
 
     /// An un-matched server keeps its own configured value; the deny list

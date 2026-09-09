@@ -5903,7 +5903,7 @@ function Settings() {
                 </p>
               </div>
               <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
-                {keyConfigured() ? "saved" : "not saved yet"}
+                {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
               </span>
             </div>
             <div class="form-row">
