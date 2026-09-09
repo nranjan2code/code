@@ -1405,12 +1405,14 @@ async fn voice_transcribe(
     Json(body): Json<VoiceTranscribeBody>,
 ) -> axum::response::Response {
     use base64::Engine as _;
+    let voice_settings = state.core.effective_voice();
+    let audio_limit = voice_settings.max_audio_bytes.min(16 * 1024 * 1024);
     let audio = match base64::engine::general_purpose::STANDARD.decode(body.audio_base64.trim()) {
-        Ok(bytes) if !bytes.is_empty() && bytes.len() <= 16 * 1024 * 1024 => bytes,
+        Ok(bytes) if !bytes.is_empty() && (bytes.len() as u64) <= audio_limit => bytes,
         Ok(_) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error":"audio must be 1 byte to 16 MiB"})),
+                Json(serde_json::json!({"error": format!("audio must be 1 byte to {} bytes", audio_limit)})),
             )
                 .into_response();
         }
@@ -1422,15 +1424,14 @@ async fn voice_transcribe(
                 .into_response();
         }
     };
-    let settings = state.core.effective_voice();
-    if !settings.enabled {
+    if !voice_settings.enabled {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error":"voice is disabled"})),
         )
             .into_response();
     }
-    let provider = settings
+    let provider = voice_settings
         .provider
         .as_deref()
         .unwrap_or("google")
@@ -1457,7 +1458,7 @@ async fn voice_transcribe(
         )
             .into_response();
     };
-    let model = settings.model.unwrap_or_default();
+    let model = voice_settings.model.unwrap_or_default();
     let cancel = tokio_util::sync::CancellationToken::new();
     let result = if matches!(provider.as_str(), "openai" | "openai-compatible") {
         let config = vak_llm::openai::OpenAiConfig {
@@ -1553,6 +1554,13 @@ async fn voice_speak(
         });
 
     let voice_settings = state.core.effective_voice();
+    if !voice_settings.enabled {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "voice is disabled" })),
+        )
+            .into_response();
+    }
     let provider = voice_settings
         .provider
         .as_deref()
