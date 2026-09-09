@@ -321,7 +321,10 @@ async fn stop_gate_blocks_premature_report_until_verified() {
         .count();
     assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
 
-    let report = std::fs::read_to_string(dir.path().join("report.md")).unwrap();
+    // Agent bash runs in its per-call quarantine directory; the report must
+    // survive there rather than contaminating the workspace root.
+    let report = std::fs::read_to_string(dir.path().join(".vak/scratch/t1/report.md"))
+        .expect("verified report survives in the quarantined scratch directory");
     assert!(report.contains("4200"));
 }
 
