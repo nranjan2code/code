@@ -987,6 +987,15 @@ pub struct VoiceConfig {
     /// Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_name: Option<String>,
+    /// Provider model override for transcription at this scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription_model: Option<String>,
+    /// Provider model override for synthesis at this scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthesis_model: Option<String>,
+    /// Provider model override for realtime sessions at this scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realtime_model: Option<String>,
     /// **Deprecated** (docs/design/45-prompt-layers.md): the bot/chat
     /// `identity` prompt block is the persona now, so a bot's spoken and
     /// written selves cannot drift apart. Still read as a fallback when no
@@ -995,6 +1004,19 @@ pub struct VoiceConfig {
     /// should set the `identity` block instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
+}
+
+impl VoiceConfig {
+    /// Overlay a narrower scope onto its parent. Missing fields inherit.
+    pub fn overlay(parent: Option<&Self>, child: &Self) -> Self {
+        Self {
+            voice_name: child.voice_name.clone().or_else(|| parent.and_then(|v| v.voice_name.clone())),
+            transcription_model: child.transcription_model.clone().or_else(|| parent.and_then(|v| v.transcription_model.clone())),
+            synthesis_model: child.synthesis_model.clone().or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
+            realtime_model: child.realtime_model.clone().or_else(|| parent.and_then(|v| v.realtime_model.clone())),
+            persona: child.persona.clone().or_else(|| parent.and_then(|v| v.persona.clone())),
+        }
+    }
 }
 
 // Note: the `Bot` entity itself (id/surface/label/token_env/policy/

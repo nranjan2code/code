@@ -92,6 +92,9 @@ export interface Bot {
 export interface VoiceConfig {
   /// Provider-defined voice identifier. The catalogue is discovered at runtime.
   voice_name?: string | null;
+  transcription_model?: string | null;
+  synthesis_model?: string | null;
+  realtime_model?: string | null;
   /// Free-text style directive fed into the synthesis system instruction,
   /// e.g. "warm, upbeat, and enthusiastic".
   persona?: string | null;

@@ -1398,14 +1398,13 @@ impl GatewayState {
         let entry = self
             .allowlist_get(key)
             .filter(|e| e.status == AllowlistStatus::Allowed);
-        entry.as_ref().and_then(|e| e.voice.clone()).or_else(|| {
-            entry
+        let parent = entry
                 .as_ref()
                 .filter(|e| e.inherit_bot_policy)
                 .and_then(|e| e.bot_id.as_deref())
                 .and_then(|id| self.bot_get(id))
-                .and_then(|b| b.voice)
-        })
+                .and_then(|b| b.voice);
+        entry.as_ref().and_then(|e| e.voice.as_ref()).map(|v| vak_config::VoiceConfig::overlay(parent.as_ref(), v)).or(parent)
     }
 
     /// Drop the cached route revision for `key` without dropping the
