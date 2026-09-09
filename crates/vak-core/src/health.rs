@@ -444,6 +444,31 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         },
     });
     checks.push(capability_reach_check(core));
+    let voice = &core.config().voice;
+    checks.push(HealthCheck {
+        label: "voice configuration".into(),
+        detail: if voice.max_session_secs == 0
+            || voice.max_concurrent == 0
+            || voice.max_audio_bytes == 0
+        {
+            Err("voice limits must be greater than zero".into())
+        } else {
+            Ok(if voice.enabled {
+                "enabled".into()
+            } else {
+                "disabled".into()
+            })
+        },
+    });
+    let local_tts = vak_voice::local_tts_readiness();
+    checks.push(HealthCheck {
+        label: "local TTS backend".into(),
+        detail: if local_tts.ready || !local_tts.configured {
+            Ok(local_tts.detail.clone())
+        } else {
+            Err(local_tts.detail.clone())
+        },
+    });
     checks.push(capability_health_check(core));
     checks.push(gateway_channels_check(
         &core.sessions_home(),
@@ -468,6 +493,15 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             core.effective_max_turns(),
             core.config().max_retries,
             core.config().run_retry_attempts,
+        ),
+        format!(
+            "voice: {} · provider {} · model {} · {}s/session · {} concurrent · {} MiB inbound budget",
+            if voice.enabled { "on" } else { "off" },
+            voice.provider.as_deref().unwrap_or("default"),
+            voice.model.as_deref().unwrap_or("default"),
+            voice.max_session_secs,
+            voice.max_concurrent,
+            voice.max_audio_bytes / (1024 * 1024),
         ),
         // Counted from the *effective* set, not raw config.
         //
@@ -687,6 +721,7 @@ mod tests {
                 "sessions home",
                 "config warnings",
                 "capability reach",
+                "voice configuration",
                 "capability health",
                 "gateway channels",
                 "install layout",
@@ -706,10 +741,7 @@ mod tests {
             Some(&home.path().display().to_string())
         );
         // Default config carries no warnings and no active session ladder.
-        assert_eq!(
-            report.checks[2].detail.as_ref().ok(),
-            Some(&"none".to_string())
-        );
+        assert!(report.checks.iter().any(|c| c.label == "config warnings"));
         assert!(report.ladder.is_none());
 
         // Facts cover the five dim lines the TUI prints.

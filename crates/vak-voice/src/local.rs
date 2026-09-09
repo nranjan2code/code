@@ -16,6 +16,30 @@ pub struct LocalTtsSpeaker {
     executable: Option<std::path::PathBuf>,
 }
 
+/// Read-only readiness information for administration and doctor surfaces.
+/// This deliberately inspects filesystem metadata only; it never executes the
+/// configured program and never exposes inherited environment values.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LocalTtsReadiness {
+    pub configured: bool,
+    pub ready: bool,
+    pub executable: Option<String>,
+    pub detail: String,
+}
+
+pub fn local_tts_readiness() -> LocalTtsReadiness {
+    let executable = std::env::var_os("VAK_LOCAL_TTS").map(std::path::PathBuf::from);
+    let Some(path) = executable else {
+        return LocalTtsReadiness { configured: false, ready: false, executable: None, detail: "not configured (optional local TTS)".into() };
+    };
+    let display = path.display().to_string();
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.is_file() => LocalTtsReadiness { configured: true, ready: true, executable: Some(display), detail: "executable is present".into() },
+        Ok(_) => LocalTtsReadiness { configured: true, ready: false, executable: Some(display), detail: "configured path is not a regular file".into() },
+        Err(error) => LocalTtsReadiness { configured: true, ready: false, executable: Some(display), detail: format!("configured executable is unavailable: {error}") },
+    }
+}
+
 impl LocalTtsSpeaker {
     pub fn from_env() -> Self {
         Self {
@@ -257,7 +281,7 @@ impl Speaker for LocalTtsSpeaker {
             let _ = child.kill().await;
             return Err(VoiceError::Cancelled);
         }
-        let mut stdout = child
+        let stdout = child
             .stdout
             .take()
             .ok_or_else(|| VoiceError::Unavailable("local TTS did not provide stdout".into()))?;

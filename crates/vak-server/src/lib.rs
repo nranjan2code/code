@@ -1568,15 +1568,22 @@ async fn voice_speak(
         .trim()
         .to_ascii_lowercase();
     if provider == "local" {
-        use vak_voice::{LocalSpeaker, SpeakFormat, SpeakSpec, Speaker};
-        let speaker = LocalSpeaker;
+        use vak_voice::{LocalTtsSpeaker, SpeakFormat, SpeakSpec, Speaker};
+        let format = match body.format.as_deref().unwrap_or("wav") {
+            "pcm" | "pcm16" => SpeakFormat::Pcm16,
+            "wav" => SpeakFormat::Wav,
+            "opus" | "ogg_opus" => SpeakFormat::OggOpus,
+            "mp3" => SpeakFormat::Mp3,
+            value => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("unsupported local speech format '{value}'")}))).into_response(),
+        };
+        let speaker = LocalTtsSpeaker::from_env();
         let mut stream = match speaker
             .speak(
                 SpeakSpec {
                     text: body.text.clone(),
                     model: voice_settings.model.clone(),
                     voice: voice_name.clone(),
-                    format: SpeakFormat::Pcm16,
+                    format,
                 },
                 CancellationToken::new(),
             )
@@ -1642,9 +1649,15 @@ async fn voice_speak(
             None,
         );
         let receipt_json = serde_json::to_string(&receipt).unwrap_or_else(|_| "{}".into());
+        let content_type = match format {
+            SpeakFormat::Pcm16 => "audio/pcm",
+            SpeakFormat::Wav => "audio/wav",
+            SpeakFormat::OggOpus => "audio/ogg",
+            SpeakFormat::Mp3 => "audio/mpeg",
+        };
         return (
             [
-                (axum::http::header::CONTENT_TYPE, "audio/wav"),
+                (axum::http::header::CONTENT_TYPE, content_type),
                 (
                     axum::http::header::HeaderName::from_static("x-vak-work-receipt"),
                     receipt_json.as_str(),
@@ -1852,6 +1865,7 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
                 "model_provenance": descriptor.model_provenance,
                 "voice_provenance": descriptor.voice_provenance,
                 "configured": configured,
+                "readiness": (descriptor.name == "local").then(vak_voice::local_tts_readiness),
             })
         })
         .collect();
