@@ -302,6 +302,24 @@ print('  ✓ %d integrations offered as peers; key present, never returned' % le
 " || fail "the integration catalog is wrong"
 fi
 
+# --- mcp: configure fake server and verify roundtrip --------------------
+step "mcp configuration and server registration"
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+    -H 'content-type: application/json' \
+    -d "{\"servers\":{\"fake\":{\"command\":\"python3\",\"args\":[\"$ROOT_DIR/scripts/fake_mcp_server.py\"]}}}" \
+    "$BASE/config/mcp" > "$CHECK_DIR/mcp-put.json"
+
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/config/mcp" > "$CHECK_DIR/mcp-get.json"
+python3 -c "
+import json
+d = json.load(open('$CHECK_DIR/mcp-get.json'))
+servers = d.get('servers', {})
+assert 'fake' in servers, f'fake mcp server missing from config: {d}'
+assert servers['fake']['command'] == 'python3'
+print('  ✓ fake mcp server configured and returned via /config/mcp')
+" || fail "mcp configuration failed"
+ok "mcp configuration verified"
+
 pkill -f "$CHECK_DIR" 2>/dev/null || true
 sleep 1
 

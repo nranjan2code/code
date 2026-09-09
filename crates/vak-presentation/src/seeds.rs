@@ -76,22 +76,40 @@ fn binding(path: &str) -> SpecValue {
 
 #[allow(clippy::manual_unwrap_or_default)]
 fn seed(id: &str, accepts: &str) -> StoredPresentation {
-    let primitives = [
-        Primitive::Section,
-        Primitive::Stack,
-        Primitive::Row,
-        Primitive::Timeline,
-        Primitive::Checklist,
-        Primitive::Table,
-        Primitive::Comparison,
-        Primitive::Steps,
-        Primitive::Progress,
-        Primitive::KeyValue,
-        Primitive::Disclosure,
-    ];
-    let root_primitive = primitives[id.bytes().map(usize::from).sum::<usize>() % primitives.len()];
+    let root_primitive = match accepts {
+        "itinerary" | "schedule" | "timeline" | "milestones" | "incident-timeline" => {
+            Primitive::Timeline
+        }
+        "checklist" | "shopping_list" | "reading_list" | "habit_plan" => Primitive::Checklist,
+        "comparison" | "comparison_table" | "pros_cons" | "scorecard" => Primitive::Comparison,
+        "budget" | "finance_summary" | "invoice_summary" | "inventory" => Primitive::Table,
+        "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
+        "progress" | "status" => Primitive::Progress,
+        "metric" | "benchmark" => Primitive::Metric,
+        "coding.diff" => Primitive::Diff,
+        "test.report" => Primitive::TestMatrix,
+        "terminal.view" => Primitive::Terminal,
+        _ => {
+            let primitives = [
+                Primitive::Section,
+                Primitive::Stack,
+                Primitive::Row,
+                Primitive::Timeline,
+                Primitive::Checklist,
+                Primitive::Table,
+                Primitive::Comparison,
+                Primitive::Steps,
+                Primitive::Progress,
+                Primitive::KeyValue,
+                Primitive::Disclosure,
+            ];
+            primitives[id.bytes().map(usize::from).sum::<usize>() % primitives.len()]
+        }
+    };
     let mut props = BTreeMap::new();
     props.insert("title".into(), binding("$.title"));
+    props.insert("subtitle".into(), binding("$.subtitle"));
+    props.insert("items".into(), binding("$.items"));
     let mut text_props = BTreeMap::new();
     text_props.insert("text".into(), binding("$.summary"));
     let spec = PresentationSpec {

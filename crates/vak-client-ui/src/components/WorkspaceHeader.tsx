@@ -108,133 +108,57 @@ export default function WorkspaceHeader() {
           <button class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
         </Show>
         <div class="workspace-title">
-        <div class="workspace-title-row">
-          <h1>{title()}</h1>
-          <Show when={activeId()}>
-            <span class="run-state" classList={{ active: isRunning(activeId()) }}>
-              <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
-                aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
-              {taskStatus()}
-            </span>
-          </Show>
-        </div>
-        <div class="workspace-meta">
-          {activeId() ? `Task ${activeId()!.slice(0, 8)}` : "Choose a task or start a new one"}
-        </div>
+          <div class="workspace-title-row">
+            <h1>{title()}</h1>
+            <Show when={presentationMode() === "advanced" && activeId()}>
+              <span class="run-state" classList={{ active: isRunning(activeId()) }}>
+                <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
+                  aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
+                {taskStatus()}
+              </span>
+            </Show>
+          </div>
         </div>
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
-        <Show when={activeId()}>
-        <div class="workspace-action-group task-actions" role="group" aria-label="Task views">
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Side question ⌘;"
-          classList={{ on: sideOpen() }}
-          aria-pressed={sideOpen()}
-          aria-label="Ask a side question"
-          disabled={!activeId()}
-          onClick={() => setSideOpen((value) => !value)}
-        >
-          <Icon name="chat" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Compare approaches"
-          aria-label="Compare multiple approaches"
-          disabled={!activeId()}
-          onClick={() => setBestOfOpen(true)}
-        >
-          <Icon name="layers" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip={'Split view ⌘\\'}
-          classList={{ on: !!splitId() }}
-          aria-pressed={!!splitId()}
-          aria-label="Toggle split view"
-          disabled={!activeId()}
-          onClick={() => void toggleSplit()}
-        >
-          <Icon name="grid" />
-        </button>
-        </div>
-        <details class="workspace-more">
-          <summary class="icon-button has-tooltip" data-tooltip="More task actions" aria-label="More task actions"><Icon name="tune" /></summary>
-          <div class="workspace-more-menu" role="menu">
-            <button role="menuitem" onClick={() => setHistoryOpen(true)} disabled={!activeId()}><Icon name="history" />History</button>
-            <button role="menuitem" onClick={() => setReceiptsOpen(true)} disabled={!activeId()}><Icon name="receipt" />Dispatch forensics</button>
-            <button role="menuitem" onClick={() => setWorkOpen(true)} disabled={!activeId()}><span class="menu-letter">W</span>Managed work</button>
-            <button role="menuitem" onClick={() => void exportTranscript()} disabled={!activeId() || exporting()}><Icon name="download" />Download transcript</button>
-          </div>
-        </details>
-        </Show>
-        <span class="action-separator" aria-hidden="true" />
-        <button
-          class="presentation-mode-toggle"
-          classList={{ advanced: presentationMode() === "advanced" }}
-          aria-label={`Presentation mode: ${presentationMode() === "everyday" ? "Everyday" : "Advanced"}`}
-          aria-pressed={presentationMode() === "advanced"}
-          title="Switch between simple and developer detail"
-          onClick={() => setPresentationMode(presentationMode() === "everyday" ? "advanced" : "everyday")}
-        >
-          {presentationMode() === "everyday" ? "Everyday" : "Advanced"}
-        </button>
-        <span class="action-separator" aria-hidden="true" />
-        <button
-          class="icon-button has-tooltip inbox-bell"
-          data-tooltip="Inbox"
-          classList={{ on: inboxOpen() }}
-          aria-pressed={inboxOpen()}
-          aria-label={inboxUnread() > 0 ? `Inbox, ${countLabel(inboxUnread())} unread` : "Inbox"}
-          onClick={() => setInboxOpen(!inboxOpen())}
-        >
-          <Icon name="bell" />
-          <Show when={inboxUnread() > 0}>
-            <span class="bell-count" aria-hidden="true">{countLabel(inboxUnread())}</span>
-          </Show>
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Recall search ⌘K"
-          aria-label="Recall search across sessions"
-          onClick={() => setSearchOpen(true)}
-        >
-          <Icon name="search" />
-        </button>
-        <span class="action-separator" aria-hidden="true" />
-        <div class="workspace-action-group" role="group" aria-label="Workspace surfaces">
-        {primaryTools.map((tool) => (
+        <div class="presentation-mode-segmented" role="radiogroup" aria-label="Presentation mode">
           <button
-            class={`icon-button has-tooltip tool-${tool.id}`}
-            data-tooltip={tool.label}
-            classList={{ on: dockTab() === tool.id }}
-            aria-pressed={dockTab() === tool.id}
-            aria-label={tool.label}
-            onClick={() => setDockTab((current) => (current === tool.id ? null : tool.id))}
+            type="button"
+            role="radio"
+            class="mode-pill-btn"
+            classList={{ active: presentationMode() === "everyday" }}
+            aria-checked={presentationMode() === "everyday"}
+            onClick={() => setPresentationMode("everyday")}
           >
-            <Icon name={tool.icon} />
+            Everyday
           </button>
-        ))}
-        <details class="workspace-more surface-more">
-          <summary class="icon-button has-tooltip" data-tooltip="More workspace surfaces" aria-label="More workspace surfaces"><Icon name="tune" /></summary>
+          <button
+            type="button"
+            role="radio"
+            class="mode-pill-btn"
+            classList={{ active: presentationMode() === "advanced" }}
+            aria-checked={presentationMode() === "advanced"}
+            onClick={() => setPresentationMode("advanced")}
+          >
+            Advanced
+          </button>
+        </div>
+
+        <details class="workspace-more">
+          <summary class="icon-button has-tooltip" data-tooltip="More options" aria-label="More options"><Icon name="more" size={16} /></summary>
           <div class="workspace-more-menu" role="menu">
-            {secondaryTools.map((tool) => (
-              <button role="menuitem" onClick={() => setDockTab(tool.id)}><Icon name={tool.icon} />{tool.label}</button>
-            ))}
+            <Show when={activeId()}>
+              <button role="menuitem" onClick={() => setSideOpen(!sideOpen())}><Icon name="chat" />Side question ⌘;</button>
+              <button role="menuitem" onClick={() => setBestOfOpen(true)}><Icon name="layers" />Compare approaches</button>
+              <button role="menuitem" onClick={() => void toggleSplit()}><Icon name="grid" />Split view ⌘\</button>
+              <button role="menuitem" onClick={() => setHistoryOpen(true)}><Icon name="history" />History</button>
+              <button role="menuitem" onClick={() => setReceiptsOpen(true)}><Icon name="receipt" />Dispatch forensics</button>
+              <button role="menuitem" onClick={() => setWorkOpen(true)}><span class="menu-letter">W</span>Managed work</button>
+              <button role="menuitem" onClick={() => void exportTranscript()} disabled={exporting()}><Icon name="download" />Download transcript</button>
+            </Show>
+            <button role="menuitem" onClick={() => setSearchOpen(true)}><Icon name="search" />Search ⌘K</button>
           </div>
         </details>
-        </div>
-        <span class="action-separator" aria-hidden="true" />
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip={dockTab() ? "Close right panel" : "Open right panel"}
-          aria-label={dockTab() ? "Close right panel" : "Open right panel"}
-          aria-pressed={!!dockTab()}
-          classList={{ on: !!dockTab() }}
-          onClick={() => setDockTab((current) => current ? null : "workbench")}
-        >
-          <Icon name="sidebar" />
-        </button>
       </div>
     </header>
   );

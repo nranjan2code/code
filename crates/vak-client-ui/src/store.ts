@@ -240,9 +240,15 @@ const storedPresentationMode = localStorage.getItem("vak.presentationMode");
 export const [presentationMode, setPresentationModeSignal] = createSignal<PresentationMode>(
   storedPresentationMode === "advanced" ? "advanced" : "everyday",
 );
+export const [everydayRailOpen, setEverydayRailOpen] = createSignal(true);
 export function setPresentationMode(mode: PresentationMode) {
   setPresentationModeSignal(mode);
   localStorage.setItem("vak.presentationMode", mode);
+  if (mode === "advanced" && !dockTab()) {
+    setDockTab("workbench");
+  } else if (mode === "everyday" && dockTab() === "workbench") {
+    setDockTab(null);
+  }
 }
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */

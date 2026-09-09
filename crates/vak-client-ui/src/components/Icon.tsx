@@ -20,9 +20,13 @@ export type IconName =
   | "grid"
   | "history"
   | "layers"
+  | "lock"
+  | "more"
   | "palette"
+  | "pin"
   | "plug"
   | "preview"
+  | "pulse"
   | "receipt"
   | "restore"
   | "search"
@@ -31,6 +35,8 @@ export type IconName =
   | "sidebar"
   | "spark"
   | "stop"
+  | "sync"
+  | "tag"
   | "terminal"
   | "trash"
   | "timer"
@@ -57,9 +63,13 @@ const paths: Record<IconName, () => JSX.Element> = {
   grid: () => <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
   history: () => <><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" /><path d="M3.5 4v4.5H8" /><path d="M12 8v4l2.5 2" /></>,
   layers: () => <><path d="m12 3 9 5-9 5-9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" /></>,
+  lock: () => <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+  more: () => <><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /><circle cx="5" cy="12" r="1.5" /></>,
   palette: () => <><path d="M12 3a9 9 0 0 0 0 18h1.5a1.5 1.5 0 0 0 0-3H13a2 2 0 0 1 0-4h2a6 6 0 0 0 6-6c0-3-4-5-9-5Z" /><circle cx="7.5" cy="10.5" r=".7" /><circle cx="10" cy="7" r=".7" /><circle cx="15" cy="7" r=".7" /></>,
+  pin: () => <><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7z" /><circle cx="12" cy="9" r="2.5" /></>,
   plug: () => <><path d="m8 12 8-8M14 3l7 7M5 13l6 6M3 21l5-5M16 8l-5 5" /></>,
   preview: () => <><circle cx="12" cy="12" r="3" /><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /></>,
+  pulse: () => <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
   restore: () => <><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" /><path d="M3.5 4v4.5H8" /><path d="m9 12 2 2 4-4" /></>,
   search: () => <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
   shield: () => <path d="M12 3 5 6v5c0 4.5 2.8 8 7 10 4.2-2 7-5.5 7-10V6Z" />,
@@ -67,6 +77,8 @@ const paths: Record<IconName, () => JSX.Element> = {
   sidebar: () => <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
   spark: () => <><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7Z" /></>,
   stop: () => <rect x="7" y="7" width="10" height="10" rx="2" />,
+  sync: () => <><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" /></>,
+  tag: () => <><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7z" /><circle cx="12" cy="9" r="2.5" /></>,
   terminal: () => <><path d="m5 7 5 5-5 5M12 17h7" /></>,
   trash: () => <><path d="M4 7h16M10 11v5M14 11v5M6 7l1 13h10l1-13M9 7V4h6v3" /></>,
   timer: () => <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></>,

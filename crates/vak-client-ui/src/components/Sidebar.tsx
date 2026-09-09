@@ -276,7 +276,9 @@ export default function Sidebar() {
         <button class="sb-nav-item sb-new" onClick={() => void newSession()}>
           <Icon name="add" />
           <span>{presentationMode() === "everyday" ? "New conversation" : "New task"}</span>
-          <kbd>⌘N</kbd>
+          <Show when={presentationMode() === "advanced"}>
+            <kbd>⌘N</kbd>
+          </Show>
         </button>
         <Show when={presentationMode() === "everyday"}>
           <button class="sb-nav-item" onClick={() => void newSession()}>
@@ -287,27 +289,37 @@ export default function Sidebar() {
             <Icon name="check" />
             <span>My tasks</span>
           </button>
+          <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
+            <Icon name="timer" />
+            <span>Reminders</span>
+          </button>
+          <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
+            <Icon name="archive" />
+            <span>Saved</span>
+          </button>
         </Show>
-        <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
-          <Icon name="timer" />
-          <span>{presentationMode() === "everyday" ? "Reminders" : "Automations"}</span>
-        </button>
-        <button
-          class="sb-nav-item"
-          classList={{ active: inboxOpen() }}
-          aria-label={inboxUnread() > 0 ? `Inbox, ${inboxUnread()} unread` : "Inbox"}
-          onClick={() => setInboxOpen(!inboxOpen())}
-        >
-          <Icon name="bell" />
-          <span>Inbox</span>
-          <Show when={inboxUnread() > 0}>
-            <small class="sb-nav-count">{inboxUnread() > 99 ? "99+" : inboxUnread()}</small>
-          </Show>
-        </button>
-        <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
-          <Icon name="archive" />
-          <span>{presentationMode() === "everyday" ? "Saved" : "Archived tasks"}</span>
-        </button>
+        <Show when={presentationMode() === "advanced"}>
+          <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
+            <Icon name="timer" />
+            <span>Automations</span>
+          </button>
+          <button
+            class="sb-nav-item"
+            classList={{ active: inboxOpen() }}
+            aria-label={inboxUnread() > 0 ? `Inbox, ${inboxUnread()} unread` : "Inbox"}
+            onClick={() => setInboxOpen(!inboxOpen())}
+          >
+            <Icon name="bell" />
+            <span>Inbox</span>
+            <Show when={inboxUnread() > 0}>
+              <small class="sb-nav-count">{inboxUnread() > 99 ? "99+" : inboxUnread()}</small>
+            </Show>
+          </button>
+          <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
+            <Icon name="archive" />
+            <span>Archived tasks</span>
+          </button>
+        </Show>
       </nav>
 
       <Show when={searchOpen()}>
@@ -325,100 +337,146 @@ export default function Sidebar() {
         </div>
       </Show>
 
-      <div class="sb-section-row">
-        <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Workspaces"}</span>
-        <Show when={filter() === "archived"}>
-          <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
-        </Show>
-        <Show when={filter() !== "archived"}>
-          <button class="sb-section-add has-tooltip" data-tooltip="Open workspace" aria-label="Open workspace" disabled={workspaceSwitching()} onClick={() => void switchWorkspace()}><Icon name="add" size={14} /></button>
-        </Show>
-      </div>
-
-      <div class="sb-list">
-        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No workspaces yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a workspace to start a task with its files and history."}</small></div>}>
-          <For each={groups()}>
-            {(group) => (
-              <section class="workspace-group">
-                <div
-                  class="workspace-group-row"
-                  classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY, cwd: group.cwd, name: group.name });
-                  }}
-                >
-                  <button class="workspace-group-head" title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchWorkspace(group.cwd)}>
-                    <Icon name="folder" size={14} />
-                    <span>{group.name}</span>
-                    <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
-                  </button>
-                  <Show when={filter() !== "archived"}>
-                    <button
-                      class="workspace-forget has-tooltip"
-                      data-tooltip={backend().cwd === group.cwd ? `Close & remove ${group.name} from list (keeps files)` : `Remove ${group.name} from list (keeps files)`}
-                      aria-label={`Remove ${group.name} from the workspace list`}
-                      disabled={workspaceSwitching()}
-                      onClick={(e) => { e.stopPropagation(); void requestForgetWorkspace(group.cwd, group.name); }}
-                    >
-                      <Icon name="close" size={12} />
-                    </button>
-                  </Show>
-                </div>
-                <For each={group.sessions}>
-                  {(session: SessionSummary) => (
-                    // A single interactive element cannot nest others — the
-                    // whole row used to be one <button> with two more
-                    // <span role="button"> inside it, which is invalid HTML
-                    // and made "view transcript"/"archive" unreachable by
-                    // keyboard (no tabindex, no key handler; a click was
-                    // the only way in). This is a plain row with three
-                    // sibling controls instead.
-                    <div
-                      class="sb-item"
-                      classList={{ active: activeId() === session.session_id }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
-                      }}
-                    >
-                      <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
-                        <span class="session-icon"><Icon name="chat" size={14} /></span>
-                        <span class="sb-item-copy">
-                          <span class="sb-title">{session.title || "Untitled task"}</span>
-                          <span class="sb-item-meta">
-                            <Show when={!session.archived} fallback={<span>archived</span>}>
-                              <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
-                                role="img"
-                                aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
-                              {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
-                            </Show>
-                          </span>
-                        </span>
-                      </button>
-                      <button class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
-                        <Icon name="history" size={13} />
-                      </button>
-                      <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, !session.archived); }}>
-                        <Icon name={session.archived ? "restore" : "archive"} size={13} />
-                      </button>
-                      <Show when={session.archived}>
-                        <button class="sb-archive has-tooltip danger" data-tooltip="Permanently delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); void requestDeleteSession(session); }}>
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </Show>
-                      <span class="sb-time">{relTime(session.updated_at)}</span>
-                    </div>
-                  )}
-                </For>
-                <Show when={!group.sessions.length}>
-                  <div class="workspace-empty">No tasks</div>
-                </Show>
-              </section>
+      <Show when={presentationMode() === "everyday"}>
+        <div class="sb-list">
+          <div class="sb-section-row">
+            <span class="sb-section-title">Recent</span>
+          </div>
+          <For each={visible().slice(0, 3)}>
+            {(session) => (
+              <div
+                class="sb-item"
+                classList={{ active: activeId() === session.session_id }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
+                }}
+              >
+                <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
+                  <span class="session-icon"><Icon name="chat" size={14} /></span>
+                  <span class="sb-item-copy">
+                    <span class="sb-title">{session.title || "Untitled conversation"}</span>
+                  </span>
+                </button>
+              </div>
             )}
           </For>
-        </Show>
-      </div>
+          <Show when={visible().length > 3}>
+            <div class="sb-section-row" style={{ "margin-top": "12px" }}>
+              <span class="sb-section-title">Earlier</span>
+            </div>
+            <For each={visible().slice(3)}>
+              {(session) => (
+                <div
+                  class="sb-item"
+                  classList={{ active: activeId() === session.session_id }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
+                  }}
+                >
+                  <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
+                    <span class="session-icon"><Icon name="chat" size={14} /></span>
+                    <span class="sb-item-copy">
+                      <span class="sb-title">{session.title || "Untitled conversation"}</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
+
+      <Show when={presentationMode() === "advanced"}>
+        <div class="sb-section-row">
+          <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Workspaces"}</span>
+          <Show when={filter() === "archived"}>
+            <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
+          </Show>
+          <Show when={filter() !== "archived"}>
+            <button class="sb-section-add has-tooltip" data-tooltip="Open workspace" aria-label="Open workspace" disabled={workspaceSwitching()} onClick={() => void switchWorkspace()}><Icon name="add" size={14} /></button>
+          </Show>
+        </div>
+
+        <div class="sb-list">
+          <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No workspaces yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a workspace to start a task with its files and history."}</small></div>}>
+            <For each={groups()}>
+              {(group) => (
+                <section class="workspace-group">
+                  <div
+                    class="workspace-group-row"
+                    classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenu({ x: e.clientX, y: e.clientY, cwd: group.cwd, name: group.name });
+                    }}
+                  >
+                    <button class="workspace-group-head" title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchWorkspace(group.cwd)}>
+                      <Icon name="folder" size={14} />
+                      <span>{group.name}</span>
+                      <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
+                    </button>
+                    <Show when={filter() !== "archived"}>
+                      <button
+                        class="workspace-forget has-tooltip"
+                        data-tooltip={backend().cwd === group.cwd ? `Close & remove ${group.name} from list (keeps files)` : `Remove ${group.name} from list (keeps files)`}
+                        aria-label={`Remove ${group.name} from the workspace list`}
+                        disabled={workspaceSwitching()}
+                        onClick={(e) => { e.stopPropagation(); void requestForgetWorkspace(group.cwd, group.name); }}
+                      >
+                        <Icon name="close" size={12} />
+                      </button>
+                    </Show>
+                  </div>
+                  <For each={group.sessions}>
+                    {(session: SessionSummary) => (
+                      <div
+                        class="sb-item"
+                        classList={{ active: activeId() === session.session_id }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
+                        }}
+                      >
+                        <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
+                          <span class="session-icon"><Icon name="chat" size={14} /></span>
+                          <span class="sb-item-copy">
+                            <span class="sb-title">{session.title || "Untitled task"}</span>
+                            <span class="sb-item-meta">
+                              <Show when={!session.archived} fallback={<span>archived</span>}>
+                                <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
+                                  role="img"
+                                  aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
+                                {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
+                              </Show>
+                            </span>
+                          </span>
+                        </button>
+                        <button class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                          <Icon name="history" size={13} />
+                        </button>
+                        <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, !session.archived); }}>
+                          <Icon name={session.archived ? "restore" : "archive"} size={13} />
+                        </button>
+                        <Show when={session.archived}>
+                          <button class="sb-archive has-tooltip danger" data-tooltip="Permanently delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); void requestDeleteSession(session); }}>
+                            <Icon name="trash" size={13} />
+                          </button>
+                        </Show>
+                        <span class="sb-time">{relTime(session.updated_at)}</span>
+                      </div>
+                    )}
+                  </For>
+                  <Show when={!group.sessions.length}>
+                    <div class="workspace-empty">No tasks</div>
+                  </Show>
+                </section>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
 
       <div class="sidebar-footer">
         <button class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>

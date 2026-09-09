@@ -76,6 +76,7 @@ import {
   setArmedGoal,
   goalAppliesTo,
   presentationMode,
+  everydayRailOpen,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -1121,7 +1122,7 @@ export default function App() {
               <InboxPage />
             </Show>
           </div>
-          <Show when={presentationMode() === "everyday" && !dockTab()}>
+          <Show when={presentationMode() === "everyday" && everydayRailOpen() && !dockTab()}>
             <EverydayContextRail />
           </Show>
           <Show when={dockTab()}>
@@ -1131,7 +1132,7 @@ export default function App() {
               <div class="dock" data-dock={tab()}>
                 <div class="dock-tabs">
                   <For each={[
-                    ["workbench", "Workbench", "terminal"],
+                    ["workbench", "Activity", "pulse"],
                     ["diff", "Changes", "diff"],
                     ["terminal", "Terminal", "code"],
                   ] as const}>
