@@ -89,7 +89,10 @@ pub fn default_registry() -> VoiceRegistry {
         (
             "local",
             Endpointing::Client,
-            vec![SpeakFormat::Pcm16, SpeakFormat::Wav, SpeakFormat::OggOpus],
+            // LocalSpeaker emits canonical PCM/WAV only.  Container conversion
+            // belongs to the channel adapter (for example Telegram's Ogg/Opus
+            // requirement), so do not advertise a format it cannot produce.
+            vec![SpeakFormat::Pcm16, SpeakFormat::Wav],
         ),
     ] {
         let env_var = match name {
@@ -128,6 +131,20 @@ pub fn default_registry() -> VoiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_descriptor_matches_local_speaker_formats() {
+        let registry = default_registry();
+        let descriptor = registry.get("local").expect("local descriptor");
+        let speaker = LocalSpeaker;
+        assert!(
+            descriptor
+                .formats
+                .iter()
+                .all(|format| speaker.supports(*format))
+        );
+        assert!(!speaker.supports(SpeakFormat::OggOpus));
+    }
 
     #[test]
     fn default_catalogue_is_capability_only() {
