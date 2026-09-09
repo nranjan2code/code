@@ -1,4 +1,10 @@
 //! Screen 4: Attention Inbox, Memory & Scheduled Automation Tasks.
+//!
+//! All data is real:
+//! - Inbox entries derived from SSE `AgentEvent` (approvals, errors, budget alerts)
+//! - Health warnings surfaced as inbox items
+//! - Memory store shows real workspace path + health warnings
+//! - Skill proposals and scheduled tasks derived from real session/health data
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -6,7 +12,8 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::app::DeckFocus;
+use crate::api::HealthReport;
+use crate::app::{DeckFocus, InboxEntry, InboxKind};
 use crate::theme::{Symbols, Theme};
 
 pub struct InboxView<'a> {
@@ -15,6 +22,8 @@ pub struct InboxView<'a> {
     pub alert_acknowledged: bool,
     pub skill_promoted: bool,
     pub watchdog_restarted: bool,
+    pub inbox_entries: &'a [InboxEntry],
+    pub health: &'a HealthReport,
 }
 
 impl<'a> Widget for InboxView<'a> {
@@ -38,109 +47,47 @@ impl<'a> Widget for InboxView<'a> {
         // -------------------------------------------------------------
         // LEFT DECK: Prioritized Attention Inbox
         // -------------------------------------------------------------
-        let alert_line = if self.alert_acknowledged {
-            Line::from(vec![
-                Span::styled(
-                    "[17:42:01] ",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    "✓ [ACKNOWLEDGED] Budget Alert: ",
-                    self.theme.style_ok().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("Threshold reviewed by operator. ", self.theme.style_card()),
-                Span::styled(
-                    "[ ACKNOWLEDGED ]",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-            ])
+        let inbox_lines: Vec<Line> = if self.inbox_entries.is_empty() {
+            vec![Line::from(vec![Span::styled(
+                "Inbox is clear — awaiting real events…",
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            )])]
         } else {
-            Line::from(vec![
-                Span::styled(
-                    "[17:42:01] ",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    "! [URGENT] Budget Alert: ",
-                    self.theme.style_danger().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "Cost-limit threshold exceeded ($5.00 limit). ",
-                    self.theme.style_card(),
-                ),
-                Span::styled("[ [a] Ack ]", self.theme.style_tab_active()),
-            ])
+            self.inbox_entries
+                .iter()
+                .rev()
+                .take(5)
+                .map(|entry| {
+                    let (icon, style) = self.icon_for_kind(&entry.kind);
+                    let action_hint = match &entry.actionable {
+                        Some(_) => " [ [a] Ack ] [ [p] Promote ] [ [r] Restart ]".to_string(),
+                        None => String::new(),
+                    };
+                    Line::from(vec![
+                        Span::styled(
+                            format!("[{}] ", entry.timestamp),
+                            self.theme.style_card().add_modifier(Modifier::DIM),
+                        ),
+                        Span::styled(format!("{icon} [{:?}] ", entry.kind), style),
+                        Span::styled(
+                            &entry.title,
+                            self.theme.style_card().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(&entry.body, self.theme.style_card()),
+                        Span::styled(
+                            action_hint,
+                            self.theme.style_card().add_modifier(Modifier::DIM),
+                        ),
+                    ])
+                })
+                .collect()
         };
 
-        let watchdog_line = if self.watchdog_restarted {
-            Line::from(vec![
-                Span::styled(
-                    "[17:39:12] ",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    "✓ [RECOVERED] Watchdog Service: ",
-                    self.theme.style_ok().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "Process stream_monitor online (PID 5104). ",
-                    self.theme.style_card(),
-                ),
-                Span::styled(
-                    "[ ONLINE ]",
-                    self.theme.style_ok().add_modifier(Modifier::BOLD),
-                ),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    "[17:39:12] ",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    "! [ERROR] Watchdog Failure: ",
-                    self.theme.style_danger().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "Process monitor stream_monitor failed. ",
-                    self.theme.style_card(),
-                ),
-                Span::styled("[ [r] Restart ] [ [x] Analyze ]", self.theme.style_info()),
-            ])
-        };
-
-        let unread_count = if self.alert_acknowledged && self.watchdog_restarted {
-            1
-        } else if self.alert_acknowledged || self.watchdog_restarted {
-            2
-        } else {
-            3
-        };
-
-        let inbox_lines = vec![
-            alert_line,
-            Line::from(vec![Span::raw("")]),
-            Line::from(vec![
-                Span::styled(
-                    "[17:41:30] ",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    "! [PENDING] Approval Request: ",
-                    self.theme.style_warn().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "deploy_script.sh waiting execution grant. ",
-                    self.theme.style_card(),
-                ),
-                Span::styled(
-                    "[ [y] Approve ] [ [d] Deny ]",
-                    self.theme.style_card().add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![Span::raw("")]),
-            watchdog_line,
-        ];
+        let unread_count = self
+            .inbox_entries
+            .iter()
+            .filter(|e| !matches!(e.kind, InboxKind::Heartbeat))
+            .count();
 
         let inbox_block = Block::default()
             .borders(Borders::ALL)
@@ -162,39 +109,43 @@ impl<'a> Widget for InboxView<'a> {
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(40), // Memory store
-                Constraint::Percentage(30), // Skill proposals
-                Constraint::Percentage(30), // Scheduled tasks
+                Constraint::Percentage(40),
+                Constraint::Percentage(30),
+                Constraint::Percentage(30),
             ])
             .split(deck_chunks[1]);
 
-        // Memory Store
-        let mem_lines = vec![
-            Line::from(vec![Span::styled(
-                "USER.md Profile Notes:",
+        // Memory Store — real from health cwd + warnings
+        let mem_lines: Vec<Line> = {
+            let mut lines = vec![Line::from(vec![Span::styled(
+                "Workspace Memory:",
                 self.theme.style_card().add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![
+            )])];
+            lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {} Coding style: ", Symbols::BULLET),
+                    format!("  {} Path: ", Symbols::BULLET),
                     self.theme.style_accent(),
                 ),
-                Span::styled(
-                    "TypeScript ES6+, 2-space indentation.",
-                    self.theme.style_card(),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    format!("  {} Verification: ", Symbols::BULLET),
-                    self.theme.style_accent(),
-                ),
-                Span::styled(
-                    "Prioritize local hermetic vitest runs.",
-                    self.theme.style_card(),
-                ),
-            ]),
-        ];
+                Span::styled(&self.health.cwd, self.theme.style_card()),
+            ]));
+            if !self.health.warnings.is_empty() {
+                for w in &self.health.warnings {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {} Warning: ", Symbols::STATUS_ACTIVE),
+                            self.theme.style_warn(),
+                        ),
+                        Span::styled(w, self.theme.style_card()),
+                    ]));
+                }
+            } else {
+                lines.push(Line::from(vec![Span::styled(
+                    "  (no warnings)",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                )]));
+            }
+            lines
+        };
 
         let mem_block = Block::default()
             .borders(Borders::ALL)
@@ -206,26 +157,40 @@ impl<'a> Widget for InboxView<'a> {
             .block(mem_block)
             .render(right_chunks[0], buf);
 
-        // Skill Proposals Queue
-        let prop_action = if self.skill_promoted {
-            Line::from(vec![Span::styled(
-                "  [ ✓ PROMOTED TO PIPELINE ]",
-                self.theme.style_ok().add_modifier(Modifier::BOLD),
-            )])
-        } else {
-            Line::from(vec![
-                Span::styled("  [ [p] Promote ] ", self.theme.style_ok()),
-                Span::styled("  [ [r] Reject ]", self.theme.style_danger()),
-            ])
-        };
+        // Skill Proposals Queue — real from inbox entries
+        let prop_entries: Vec<&InboxEntry> = self
+            .inbox_entries
+            .iter()
+            .filter(|e| e.kind == InboxKind::SkillProposal)
+            .collect();
 
-        let prop_lines = vec![
-            Line::from(vec![Span::styled(
-                "Prop 1: git_diff_viewer plugin v0.9",
-                self.theme.style_card().add_modifier(Modifier::BOLD),
-            )]),
-            prop_action,
-        ];
+        let prop_lines: Vec<Line> = if prop_entries.is_empty() {
+            vec![Line::from(vec![Span::styled(
+                "(no skill proposals pending)",
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            )])]
+        } else {
+            let mut lines = Vec::new();
+            for entry in prop_entries.iter().take(3) {
+                lines.push(Line::from(vec![Span::styled(
+                    entry.title.clone(),
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(vec![Span::styled(
+                    if self.skill_promoted {
+                        "  [ ✓ PROMOTED TO PIPELINE ]"
+                    } else {
+                        "  [ [p] Promote ]  [ [r] Reject ]"
+                    },
+                    if self.skill_promoted {
+                        self.theme.style_ok().add_modifier(Modifier::BOLD)
+                    } else {
+                        self.theme.style_card().add_modifier(Modifier::DIM)
+                    },
+                )]));
+            }
+            lines
+        };
 
         let prop_block = Block::default()
             .borders(Borders::ALL)
@@ -237,29 +202,41 @@ impl<'a> Widget for InboxView<'a> {
             .block(prop_block)
             .render(right_chunks[1], buf);
 
-        // Scheduled Tasks & Automation
-        let task_lines = vec![
-            Line::from(vec![
-                Span::styled(
-                    format!("{} Task: agent_metrics_backup ", Symbols::STATUS_ACTIVE),
-                    self.theme.style_ok(),
-                ),
-                Span::styled(
-                    "(Next: 2h 14m)",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    format!("{} Watchdog: check_api_endpoints ", Symbols::STATUS_ACTIVE),
-                    self.theme.style_ok(),
-                ),
-                Span::styled(
-                    "(Next: 4m 12s)",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-            ]),
-        ];
+        // Scheduled Tasks & Automation — real from inbox entries
+        let task_entries: Vec<&InboxEntry> = self
+            .inbox_entries
+            .iter()
+            .filter(|e| e.kind == InboxKind::ScheduledTask)
+            .collect();
+
+        let task_lines: Vec<Line> = if task_entries.is_empty() {
+            vec![Line::from(vec![Span::styled(
+                "(no scheduled tasks reported)",
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            )])]
+        } else {
+            task_entries
+                .iter()
+                .take(4)
+                .map(|entry| {
+                    let status_icon = if entry.body.contains("Next:") {
+                        Symbols::STATUS_ACTIVE
+                    } else {
+                        Symbols::CHECK
+                    };
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} {} ", status_icon, entry.title),
+                            self.theme.style_ok(),
+                        ),
+                        Span::styled(
+                            &entry.body,
+                            self.theme.style_card().add_modifier(Modifier::DIM),
+                        ),
+                    ])
+                })
+                .collect()
+        };
 
         let task_block = Block::default()
             .borders(Borders::ALL)
@@ -270,5 +247,40 @@ impl<'a> Widget for InboxView<'a> {
         Paragraph::new(task_lines)
             .block(task_block)
             .render(right_chunks[2], buf);
+    }
+}
+
+impl<'a> InboxView<'a> {
+    fn icon_for_kind(&self, kind: &InboxKind) -> (&'static str, ratatui::style::Style) {
+        match kind {
+            InboxKind::BudgetAlert => (
+                Symbols::CROSS,
+                self.theme.style_danger().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::ApprovalPending => (
+                Symbols::STATUS_ACTIVE,
+                self.theme.style_warn().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::ApprovalDenied => (
+                Symbols::CROSS,
+                self.theme.style_danger().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::WatchdogFailure => (
+                Symbols::CROSS,
+                self.theme.style_danger().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::SkillProposal => (
+                Symbols::STATUS_ACTIVE,
+                self.theme.style_info().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::ScheduledTask => (
+                Symbols::STATUS_ACTIVE,
+                self.theme.style_ok().add_modifier(Modifier::BOLD),
+            ),
+            InboxKind::Heartbeat => (
+                Symbols::STATUS_IDLE,
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            ),
+        }
     }
 }

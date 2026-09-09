@@ -43,6 +43,8 @@ pub struct HeaderView<'a> {
     pub model_name: &'a str,
     pub host_endpoint: &'a str,
     pub spend_usd: f64,
+    pub connected: bool,
+    pub error: Option<String>,
     pub theme: &'a Theme,
 }
 
@@ -58,6 +60,10 @@ impl<'a> Widget for HeaderView<'a> {
         let mut spans = Vec::new();
         spans.push(Span::raw(" "));
 
+        // Connection status dot
+        let conn_dot = if self.connected { "🟢 " } else { "🔴 " };
+        spans.push(Span::raw(conn_dot));
+
         for (tab, label) in tabs {
             let is_active = self.active_tab == tab;
             let dot = if is_active { "● " } else { "○ " };
@@ -71,15 +77,24 @@ impl<'a> Widget for HeaderView<'a> {
             spans.push(Span::raw(" "));
         }
 
-        // Right-aligned telemetry badge
-        let right_text = format!(
-            "{} • {} • {} • ${:.3} ",
-            self.session_name, self.model_name, self.host_endpoint, self.spend_usd
-        );
-        let right_span = Span::styled(
-            right_text,
-            self.theme.style_card().add_modifier(Modifier::DIM),
-        );
+        // Right-aligned telemetry badge — all real values from health.
+        let right_text = if let Some(err) = &self.error {
+            format!(
+                "ERROR: {} • {} • {} • {} ",
+                err, self.session_name, self.model_name, self.host_endpoint
+            )
+        } else {
+            format!(
+                "{} • {} • {} • ${:.3} ",
+                self.session_name, self.model_name, self.host_endpoint, self.spend_usd
+            )
+        };
+        let right_style = if self.connected {
+            self.theme.style_card()
+        } else {
+            self.theme.style_card().add_modifier(Modifier::DIM)
+        };
+        let right_span = Span::styled(right_text, right_style.add_modifier(Modifier::DIM));
 
         let left_para = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
         let right_para = Paragraph::new(Line::from(vec![right_span])).alignment(Alignment::Right);

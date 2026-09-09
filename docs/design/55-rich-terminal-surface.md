@@ -1,6 +1,6 @@
 # 55 — Rich Terminal Surface (`vak term`)
 
-Status: **Shipped in v3.0.30**. Greenfield interactive console surface implemented in `crates/vak-terminal`, invoked via `vak term` / `Surface::Terminal`. Preserves the headless Unix-composable CLI (`vak exec`, `vak plan`, etc.) intact without regression.
+Status: **Real API-connected in v3.0.32**. Greenfield interactive console surface implemented in `crates/vak-terminal`, invoked via `vak term` / `Surface::Terminal`. Connects to a live vak server over HTTP/SSE — every rendered value (health, sessions, models, MCP inventory, approval state, telemetry, incidents) is fetched from real API endpoints or derived from real SSE event streams. Replaces the previous offline prototype that hardcoded all session names, model names, URLs, and mock data.
 
 ---
 

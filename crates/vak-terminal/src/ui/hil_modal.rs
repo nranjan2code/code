@@ -12,6 +12,7 @@ use crate::theme::Theme;
 pub struct HilModalView<'a> {
     pub state: &'a HilApprovalState,
     pub theme: &'a Theme,
+    pub remember: crate::hil::RememberMode,
 }
 
 impl<'a> Widget for HilModalView<'a> {
@@ -71,7 +72,10 @@ impl<'a> Widget for HilModalView<'a> {
                 ),
                 Span::styled(&self.state.workspace_path, self.theme.style_card()),
                 Span::styled(
-                    format!("   COST: +${:.3} est.", self.state.cost_estimate_usd),
+                    format!(
+                        "   COST: +${:.3} est.",
+                        self.state.cost_estimate_usd.unwrap_or(0.0)
+                    ),
                     self.theme.style_card().add_modifier(Modifier::DIM),
                 ),
             ]),
@@ -120,6 +124,10 @@ impl<'a> Widget for HilModalView<'a> {
             .render(chunks[1], buf);
 
         // 3. Action Pills
+        let remember_label = match self.remember {
+            crate::hil::RememberMode::Yes => "[r] Remember: ON",
+            crate::hil::RememberMode::No => "[r] Remember: OFF",
+        };
         let action_spans = vec![
             Span::styled(
                 " [y] Approve Once ",
@@ -136,6 +144,15 @@ impl<'a> Widget for HilModalView<'a> {
             Span::styled(
                 " [e] Edit In-Place ",
                 self.theme.style_info().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                remember_label,
+                if self.remember == crate::hil::RememberMode::Yes {
+                    self.theme.style_ok().add_modifier(Modifier::BOLD)
+                } else {
+                    self.theme.style_card().add_modifier(Modifier::DIM)
+                },
             ),
             Span::raw("   "),
             Span::styled(

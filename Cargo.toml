@@ -70,6 +70,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
+bytes = "1"
 # Gemini Live API (bidi voice synthesis) speaks raw WebSocket frames.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }

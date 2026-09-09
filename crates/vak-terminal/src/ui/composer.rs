@@ -12,6 +12,8 @@ use crate::theme::{Symbols, Theme};
 pub struct ComposerView<'a> {
     pub composer: &'a ReplComposer,
     pub theme: &'a Theme,
+    pub connected: bool,
+    pub error: Option<String>,
 }
 
 impl<'a> Widget for ComposerView<'a> {
@@ -22,16 +24,35 @@ impl<'a> Widget for ComposerView<'a> {
             .split(area);
 
         // 1. Input Box
+        let prompt_label = if self.connected {
+            format!(" {} ", Symbols::PROMPT_CHEVRON)
+        } else {
+            format!(" {} ", Symbols::STATUS_ACTIVE)
+        };
         let prompt_span = Span::styled(
-            format!(" {} ", Symbols::PROMPT_CHEVRON),
+            prompt_label,
             self.theme.style_accent().add_modifier(Modifier::BOLD),
         );
 
         let input_text = &self.composer.buffer;
-        let input_span = Span::styled(input_text, self.theme.style_card());
+        let input_span = if self.connected {
+            Span::styled(input_text, self.theme.style_card())
+        } else {
+            Span::styled(
+                input_text,
+                self.theme.style_card().add_modifier(Modifier::DIM),
+            )
+        };
         let cursor_span = Span::styled("█", self.theme.style_accent());
 
-        let line = Line::from(vec![prompt_span, input_span, cursor_span]);
+        let mut line_spans = vec![prompt_span, input_span, cursor_span];
+        if let Some(err) = &self.error {
+            line_spans.push(Span::styled(
+                format!("  [ERR: {err}]"),
+                self.theme.style_danger(),
+            ));
+        }
+        let line = Line::from(line_spans);
 
         let block = Block::default()
             .borders(Borders::ALL)

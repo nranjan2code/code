@@ -1,6 +1,6 @@
 //! Multi-line REPL input composer, history navigation, and slash command autocomplete.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ReplComposer {
     pub buffer: String,
     pub cursor_pos: usize,
@@ -65,19 +65,6 @@ pub const AVAILABLE_SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Exit terminal",
     },
 ];
-
-impl Default for ReplComposer {
-    fn default() -> Self {
-        Self {
-            buffer: String::new(),
-            cursor_pos: 0,
-            history: Vec::new(),
-            history_idx: None,
-            slash_palette_open: false,
-            selected_slash_cmd: 0,
-        }
-    }
-}
 
 impl ReplComposer {
     pub fn new() -> Self {

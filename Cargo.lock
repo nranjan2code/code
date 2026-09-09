@@ -6803,7 +6803,7 @@ dependencies = [
 name = "vak-terminal"
 version = "3.0.32"
 dependencies = [
- "base64 0.22.1",
+ "bytes",
  "chrono",
  "crossterm",
  "futures",
@@ -6811,19 +6811,9 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "similar",
+ "thiserror 2.0.20",
  "tokio",
- "tokio-util",
- "unicode-width 0.2.0",
- "vak-agent",
- "vak-config",
- "vak-core",
- "vak-delivery",
- "vak-llm",
- "vak-ops",
- "vak-permission",
- "vak-session",
- "vak-tools",
+ "uuid",
 ]
 
 [[package]]

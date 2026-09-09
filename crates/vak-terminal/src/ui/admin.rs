@@ -1,4 +1,11 @@
-//! Screen 3: Remote Administration & Settings Cockpit (Workspaces, Permissions, MCP, Gateways).
+//! Screen 3: Remote Administration & Settings Cockpit.
+//!
+//! All data is real:
+//! - Workspace from `/health` cwd
+//! - Permission mode from `/health` + PATCH via server API
+//! - MCP inventory from `GET /config/mcp`
+//! - Gateway/bot status from `GET /gateway/bots` + `GET /gateway/approvals`
+//! - Pending approval queue from SSE `ApprovalRequested` events
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -6,8 +13,10 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::app::DeckFocus;
+use crate::api::{GatewayApprovals, HealthReport, McpServerDef, SessionInfo};
+use crate::app::{DeckFocus, McpRow};
 use crate::theme::{Symbols, Theme};
+use std::collections::HashMap;
 
 pub struct AdminView<'a> {
     pub theme: &'a Theme,
@@ -16,6 +25,13 @@ pub struct AdminView<'a> {
     pub workspace_name: &'a str,
     pub deck_focus: DeckFocus,
     pub pending_chat_status: Option<bool>,
+    pub mcp_rows: &'a [McpRow],
+    pub mcp_servers: &'a HashMap<String, McpServerDef>,
+    pub gateway: &'a GatewayApprovals,
+    pub sessions: &'a [SessionInfo],
+    pub pending_chats: &'a [crate::app::PendingChatEntry],
+    pub health: &'a HealthReport,
+    pub connected: bool,
 }
 
 impl<'a> Widget for AdminView<'a> {
@@ -41,37 +57,41 @@ impl<'a> Widget for AdminView<'a> {
         // -------------------------------------------------------------
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(50), // Workspace tree
-                Constraint::Percentage(50), // Security engine
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(deck_chunks[0]);
 
-        // CorePool Workspaces
-        let ws_lines = vec![
-            Line::from(vec![Span::styled(
-                format!(" {} root ", Symbols::CARET_EXPANDED),
+        // CorePool Workspaces — real from sessions/health
+        let ws_lines: Vec<Line> = {
+            let mut lines = vec![Line::from(vec![Span::styled(
+                format!(" {} {} ", Symbols::CARET_EXPANDED, self.workspace_name),
                 self.theme.style_accent().add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![
-                Span::styled("   ├── configs/       ", self.theme.style_card()),
-                Span::styled("[SHARED BASE LAYER]", self.theme.style_info()),
-            ]),
-            Line::from(vec![
+            )])];
+            let session_count = self.sessions.len();
+            lines.push(Line::from(vec![
+                Span::styled("  sessions/           ", self.theme.style_card()),
                 Span::styled(
-                    format!("   ├── projects/{:<6} ", self.workspace_name),
-                    self.theme.style_card(),
+                    format!("[{} active]", session_count),
+                    self.theme.style_info(),
                 ),
-                Span::styled("[ACTIVE WORKSPACE ●]", self.theme.style_ok()),
-            ]),
-            Line::from(vec![
-                Span::styled("   └── users/global/  ", self.theme.style_card()),
-                Span::styled(
-                    "USER.md (Profile)",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-            ]),
-        ];
+            ]));
+            for s in self.sessions.iter().take(3) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("    ├── {} ", s.session_id),
+                        self.theme.style_card(),
+                    ),
+                    Span::styled(
+                        format!("[{}]", s.status()),
+                        if s.status() == "active" {
+                            self.theme.style_ok()
+                        } else {
+                            self.theme.style_card()
+                        },
+                    ),
+                ]));
+            }
+            lines
+        };
 
         let ws_block = Block::default()
             .borders(Borders::ALL)
@@ -83,7 +103,7 @@ impl<'a> Widget for AdminView<'a> {
             .block(ws_block)
             .render(left_chunks[0], buf);
 
-        // Security Engine
+        // Security Engine — real permission mode from health
         let perm_lines = vec![
             Line::from(vec![Span::styled(
                 "PERMISSION MODES: ",
@@ -99,7 +119,11 @@ impl<'a> Widget for AdminView<'a> {
                             Symbols::STATUS_IDLE
                         }
                     ),
-                    self.theme.style_ok().add_modifier(Modifier::BOLD),
+                    if self.selected_permission_mode == "WorkspaceWrite" {
+                        self.theme.style_ok().add_modifier(Modifier::BOLD)
+                    } else {
+                        self.theme.style_card()
+                    },
                 ),
                 Span::styled(
                     "(Permits workspace reads & edits; escapes denied)",
@@ -178,45 +202,58 @@ impl<'a> Widget for AdminView<'a> {
             .render(left_chunks[1], buf);
 
         // -------------------------------------------------------------
-        // RIGHT DECK: MCP Servers, Gateways, Pending Chat Queue
+        // RIGHT DECK: MCP Servers, Channel Gateways, Pending Chat Queue
         // -------------------------------------------------------------
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7), // MCP Servers
-                Constraint::Length(5), // Channel Gateways
-                Constraint::Min(6),    // Pending Queue
+                Constraint::Length(7),
+                Constraint::Length(5),
+                Constraint::Min(6),
             ])
             .split(deck_chunks[1]);
 
-        // MCP Server Inventory
-        let mcp_lines = vec![
-            Line::from(vec![Span::styled(
+        // MCP Server Inventory — real from /config/mcp
+        let mcp_lines: Vec<Line> = if self.mcp_rows.is_empty() {
+            vec![
+                Line::from(vec![Span::styled(
+                    "SERVER NAME    TOOLS    MEMORY      STATUS",
+                    self.theme.style_card().add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(vec![Span::styled(
+                    "(no MCP servers configured)",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                )]),
+            ]
+        } else {
+            let mut lines = vec![Line::from(vec![Span::styled(
                 "SERVER NAME    TOOLS    MEMORY      STATUS",
                 self.theme.style_card().add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(vec![
-                Span::styled(
-                    "tavily         14       2.1 GB      ",
-                    self.theme.style_card(),
-                ),
-                Span::styled("OK", self.theme.style_ok()),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    "docker         21       4.8 GB      ",
-                    self.theme.style_card(),
-                ),
-                Span::styled("OK", self.theme.style_ok()),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    "github          9       3.5 GB      ",
-                    self.theme.style_card(),
-                ),
-                Span::styled("OK", self.theme.style_ok()),
-            ]),
-        ];
+            )])];
+            for row in self.mcp_rows {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{:<14} ", row.name), self.theme.style_card()),
+                    Span::styled(format!("{:<8} ", row.tool_count), self.theme.style_card()),
+                    Span::styled(
+                        format!("{:<5.1}GB ", row.memory_mb),
+                        self.theme.style_card(),
+                    ),
+                    Span::styled(
+                        match row.status {
+                            crate::app::McpStatus::Ok => "OK",
+                            crate::app::McpStatus::Error => "ERR",
+                            crate::app::McpStatus::Starting => "…",
+                        },
+                        match row.status {
+                            crate::app::McpStatus::Ok => self.theme.style_ok(),
+                            crate::app::McpStatus::Error => self.theme.style_danger(),
+                            crate::app::McpStatus::Starting => self.theme.style_warn(),
+                        },
+                    ),
+                ]));
+            }
+            lines
+        };
 
         let mcp_block = Block::default()
             .borders(Borders::ALL)
@@ -228,24 +265,43 @@ impl<'a> Widget for AdminView<'a> {
             .block(mcp_block)
             .render(right_chunks[0], buf);
 
-        // Channel Gateways
-        let gw_lines = vec![
-            Line::from(vec![
-                Span::styled("Telegram Bot:  ", self.theme.style_card()),
-                Span::styled("ACTIVE (14 users) ", self.theme.style_ok()),
-            ]),
-            Line::from(vec![
-                Span::styled("Discord Bot:   ", self.theme.style_card()),
-                Span::styled(
-                    "INACTIVE (reconnect 30s)",
-                    self.theme.style_card().add_modifier(Modifier::DIM),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Slack Gateway: ", self.theme.style_card()),
-                Span::styled("DEPLOYING", self.theme.style_warn()),
-            ]),
-        ];
+        // Channel Gateways — real from gateway approvals/bots data
+        let gw_lines: Vec<Line> = {
+            let mode = if self.gateway.enabled {
+                "ENABLED"
+            } else {
+                "DISABLED"
+            };
+            let mode_style = if self.gateway.enabled {
+                self.theme.style_ok()
+            } else {
+                self.theme.style_warn()
+            };
+            vec![
+                Line::from(vec![
+                    Span::styled("Mode: ", self.theme.style_card()),
+                    Span::styled(mode, mode_style.add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Approver: ", self.theme.style_card()),
+                    Span::styled(
+                        self.gateway.approver.clone().unwrap_or("(none)".into()),
+                        self.theme.style_card(),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("Forwarding: ", self.theme.style_card()),
+                    Span::styled(
+                        format!(
+                            "{} ({}s)",
+                            if self.gateway.forwarding { "ON" } else { "OFF" },
+                            self.gateway.timeout_secs
+                        ),
+                        self.theme.style_info(),
+                    ),
+                ]),
+            ]
+        };
 
         let gw_block = Block::default()
             .borders(Borders::ALL)
@@ -257,7 +313,7 @@ impl<'a> Widget for AdminView<'a> {
             .block(gw_block)
             .render(right_chunks[1], buf);
 
-        // Pending Authorization Queue
+        // Pending Authorization Queue — real from pending_chats (SSE-derived)
         let action_pill = match self.pending_chat_status {
             None => Line::from(vec![
                 Span::styled(" [ [y] Approve ] ", self.theme.style_tab_active()),
@@ -277,23 +333,35 @@ impl<'a> Widget for AdminView<'a> {
             )]),
         };
 
-        let queue_lines = vec![
-            Line::from(vec![
-                Span::styled("INBOUND USER:  ", self.theme.style_card()),
-                Span::styled(
-                    "U_9124 (Discord: #general)",
-                    self.theme.style_accent().add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("PROVENANCE:    ", self.theme.style_card()),
-                Span::styled(
-                    "Unknown sender; held at gateway gate",
+        let queue_lines: Vec<Line> = if self.pending_chats.is_empty() {
+            vec![
+                Line::from(vec![Span::styled(
+                    "INBOUND USER:  ",
                     self.theme.style_card(),
-                ),
-            ]),
-            action_pill,
-        ];
+                )]),
+                Line::from(vec![Span::styled(
+                    "(no pending approvals)",
+                    self.theme.style_card().add_modifier(Modifier::DIM),
+                )]),
+                action_pill,
+            ]
+        } else {
+            let chat = &self.pending_chats[0];
+            vec![
+                Line::from(vec![
+                    Span::styled("INBOUND USER:  ", self.theme.style_card()),
+                    Span::styled(
+                        format!("{} ({})", chat.sender, chat.surface),
+                        self.theme.style_accent().add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("PROVENANCE:    ", self.theme.style_card()),
+                    Span::styled(&chat.preview, self.theme.style_card()),
+                ]),
+                action_pill,
+            ]
+        };
 
         let queue_block = Block::default()
             .borders(Borders::ALL)

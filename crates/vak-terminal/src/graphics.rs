@@ -17,10 +17,10 @@ impl GraphicsProtocol {
     /// Autodetect terminal graphics support from environment variables.
     pub fn detect() -> Self {
         // Ghostty, Kitty, WezTerm support Kitty graphics protocol natively
-        if let Ok(term) = std::env::var("TERM") {
-            if term.contains("kitty") || term.contains("ghostty") || term.contains("wezterm") {
-                return GraphicsProtocol::Kitty;
-            }
+        if let Ok(term) = std::env::var("TERM")
+            && (term.contains("kitty") || term.contains("ghostty") || term.contains("wezterm"))
+        {
+            return GraphicsProtocol::Kitty;
         }
         if std::env::var("KITTY_WINDOW_ID").is_ok()
             || std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
@@ -58,8 +58,9 @@ pub struct HalfBlockImage {
 }
 
 impl HalfBlockImage {
-    /// Generate a sample live wireframe preview for React dashboards.
-    pub fn sample_dashboard_wireframe(width: u16, height: u16) -> Self {
+    /// Generate a placeholder image buffer of the given dimensions.
+    /// Used when no real preview image is available yet from the launch server.
+    pub fn placeholder(width: u16, height: u16) -> Self {
         let w = width.max(10) as usize;
         let h = height.max(4) as usize;
         let mut cells = Vec::with_capacity(w * h);
@@ -79,7 +80,7 @@ impl HalfBlockImage {
                         fg: Color::Rgb(0x34, 0x34, 0x2f),
                         bg: Color::Rgb(0x17, 0x17, 0x14),
                     });
-                } else if y >= 2 && y <= 4 && x >= 3 && x <= w.saturating_sub(4) {
+                } else if (2..=4).contains(&y) && x >= 3 && x <= w.saturating_sub(4) {
                     // Sparkline wave
                     let wave_val = ((x as f32 * 0.4).sin() * 2.0) as i32;
                     let target_y = 3 + wave_val;
@@ -121,12 +122,12 @@ impl HalfBlockImage {
         for y in 0..draw_h {
             for x in 0..draw_w {
                 let idx = y * (self.width as usize) + x;
-                if let Some(cell) = self.cells.get(idx) {
-                    if let Some(cell_ref) = buf.cell_mut((area.x + x as u16, area.y + y as u16)) {
-                        cell_ref.set_char(cell.char_glyph);
-                        cell_ref.set_fg(cell.fg);
-                        cell_ref.set_bg(cell.bg);
-                    }
+                if let Some(cell) = self.cells.get(idx)
+                    && let Some(cell_ref) = buf.cell_mut((area.x + x as u16, area.y + y as u16))
+                {
+                    cell_ref.set_char(cell.char_glyph);
+                    cell_ref.set_fg(cell.fg);
+                    cell_ref.set_bg(cell.bg);
                 }
             }
         }
