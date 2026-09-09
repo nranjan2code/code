@@ -9073,6 +9073,12 @@ struct ConfigPatch {
     voice_provider: Option<Option<String>>,
     #[serde(default)]
     voice_model: Option<Option<String>>,
+    #[serde(default)]
+    voice_transcription_model: Option<Option<String>>,
+    #[serde(default)]
+    voice_synthesis_model: Option<Option<String>>,
+    #[serde(default)]
+    voice_realtime_model: Option<Option<String>>,
     /// Whether sub-agent delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses.
     #[serde(default)]
@@ -9282,6 +9288,15 @@ async fn patch_config_scope(
             .as_ref()
             .and_then(|v| v.as_ref())
             .is_some_and(|v| v.trim().is_empty() || v.chars().count() > 256)
+        || [
+            body.voice_transcription_model.as_ref(),
+            body.voice_synthesis_model.as_ref(),
+            body.voice_realtime_model.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|v| v.trim().is_empty() || v.chars().count() > 256)
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -9291,25 +9306,45 @@ async fn patch_config_scope(
         || body.voice_max_audio_bytes.is_some()
         || body.voice_provider.is_some()
         || body.voice_model.is_some()
+        || body.voice_transcription_model.is_some()
+        || body.voice_synthesis_model.is_some()
+        || body.voice_realtime_model.is_some()
     {
         let result = if global {
-            vak_config::persist_global_voice_settings(
-                body.voice_enabled,
-                body.voice_max_session_secs,
-                body.voice_max_concurrent,
-                body.voice_max_audio_bytes,
-                body.voice_provider.clone(),
-                body.voice_model.clone(),
+            vak_config::global_path().map_or_else(
+                || {
+                    Err(vak_config::ConfigError::Write {
+                        path: std::path::PathBuf::from("<user-config>"),
+                        source: std::io::Error::other("user home unavailable"),
+                    })
+                },
+                |path| {
+                    vak_config::persist_voice_settings_at_with_models(
+                        path,
+                        body.voice_enabled,
+                        body.voice_max_session_secs,
+                        body.voice_max_concurrent,
+                        body.voice_max_audio_bytes,
+                        body.voice_provider.clone(),
+                        body.voice_model.clone(),
+                        body.voice_transcription_model.clone(),
+                        body.voice_synthesis_model.clone(),
+                        body.voice_realtime_model.clone(),
+                    )
+                },
             )
         } else {
-            vak_config::persist_project_voice_settings(
-                state.core.cwd(),
+            vak_config::persist_voice_settings_at_with_models(
+                vak_config::project_path(state.core.cwd()),
                 body.voice_enabled,
                 body.voice_max_session_secs,
                 body.voice_max_concurrent,
                 body.voice_max_audio_bytes,
                 body.voice_provider.clone(),
                 body.voice_model.clone(),
+                body.voice_transcription_model.clone(),
+                body.voice_synthesis_model.clone(),
+                body.voice_realtime_model.clone(),
             )
         };
         if result.is_err() {
