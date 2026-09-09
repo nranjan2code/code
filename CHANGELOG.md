@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.38 — 2026-09-09
+
+- Ship the adaptive presentation runtime, reusable experience packs, Everyday onboarding, cross-surface fallbacks, and release verification improvements.
+
 ## 3.0.37 — 2026-09-09
 
 - Record every provider dispatch in FinOps, including explicitly unpriced usage.
