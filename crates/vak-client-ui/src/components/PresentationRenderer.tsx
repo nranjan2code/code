@@ -419,8 +419,9 @@ function StructuredView(props: { output: import("../types").StructuredOutput; fa
 
 type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
 
-// Recipes advertise semantic types; aliases resolve through this registry so
-// adding a new server recipe does not require another conditional branch.
+// Every named semantic type resolves through this single registry. Adding a
+// new server recipe or adapter only requires one entry here — never an
+// additional conditional branch in StructuredRenderer.
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "research.synthesis": ({ data }) => <ResearchCards data={data} />,
   research: ({ data }) => <ResearchCards data={data} />,
@@ -440,62 +441,35 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   timeline: ({ data }) => <TimelineCard data={data} />,
   itinerary: ({ data }) => <TimelineCard data={data} />,
   checklist: ({ data }) => <TimelineCard data={data} />,
-  chart: ({ data }) => <UniversalChart data={data} />,
+  chart: ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "link.preview": ({ data }) => (
+    <a class="rich-link-card" href={safeUrl(data.url) ? data.url : undefined} target="_blank" rel="noreferrer noopener">
+      <Show when={uiPreferences.externalMedia && typeof data.image_url === "string" && safeUrl(data.image_url, true)}><img src={data.image_url as string} alt="" loading="lazy" /></Show>
+      <span><strong>{String(data.title ?? data.url)}</strong><small>{String(data.description ?? data.site_name ?? data.url)}</small></span>
+    </a>
+  ),
+  metric: ({ data }) => (
+    <div class="rich-metric"><small>{String(data.label ?? "Metric")}</small><strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong></div>
+  ),
 };
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
   const semanticType = props.output.semantic_type.toLowerCase();
   const registered = STRUCTURED_RENDERERS[semanticType];
-  if (registered && (semanticType !== "chart" || Array.isArray(payload?.series))) {
+  if (registered) {
     return registered({ data: payload, output: props.output });
   }
-  // Everyday is a presentation density, not a capability filter. Technical
-  // results remain available to everyone; the mode controls surrounding chrome
-  // and copy, while the same renderer preserves parity with Advanced.
-  if (props.output.semantic_type === "research.synthesis") {
-    return <ResearchCards data={payload} />;
-  }
-  if (props.output.semantic_type === "coding.diff") {
-    return <DiffInspector data={payload} />;
-  }
-  if (props.output.semantic_type === "test.report") {
-    return <TestMatrix data={payload} />;
-  }
-  if (props.output.semantic_type === "terminal.view") {
-    return <TerminalConsole data={payload} />;
-  }
-  if (["data.grid", "table", "comparison"].includes(props.output.semantic_type)) {
-    return <DataGrid data={payload} />;
-  }
-  if (["recipe.card", "recipe"].includes(props.output.semantic_type)) {
-    return <RecipeCard data={payload} />;
-  }
-  if (props.output.semantic_type === "ui.preview") {
-    return <UIPreviewCard data={payload} />;
-  }
-  if (["plan.timeline", "timeline", "itinerary", "checklist"].includes(props.output.semantic_type)) {
-    return <TimelineCard data={payload} />;
-  }
-  if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
-    return <UniversalChart data={payload} />;
-  }
-  if (props.output.semantic_type === "link.preview" && typeof payload.url === "string") {
-    return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer noopener">
-      <Show when={uiPreferences.externalMedia && typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" loading="lazy" /></Show>
-      <span><strong>{String(payload.title ?? payload.url)}</strong><small>{String(payload.description ?? payload.site_name ?? payload.url)}</small></span>
-    </a>;
-  }
-  if (props.output.semantic_type === "metric") {
-    return <div class="rich-metric"><small>{String(payload.label ?? "Metric")}</small><strong>{String(payload.value ?? "—")}{payload.unit ? ` ${String(payload.unit)}` : ""}</strong></div>;
-  }
-  if (props.output.semantic_type.startsWith("media.") && uiPreferences.externalMedia && typeof payload.source === "string" && safeUrl(payload.source, true)) {
+  // Pattern-based and shape-based fallbacks below — these cannot be exact-key
+  // registry entries because they match prefixes or payload shapes, not fixed
+  // semantic type strings.
+  if (semanticType.startsWith("media.") && uiPreferences.externalMedia && typeof payload.source === "string" && safeUrl(payload.source, true)) {
     return payload.media_type === "image" || String(payload.media_type).startsWith("image/")
       ? <figure class="rich-media"><img src={payload.source} alt={String(payload.alt ?? "")} /><Show when={payload.alt}><figcaption>{String(payload.alt)}</figcaption></Show></figure>
       : String(payload.media_type).startsWith("video/") ? <video class="rich-video" src={payload.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(payload.alt ?? "Video")} />
       : <a class="rich-media-link" href={payload.source} target="_blank" rel="noreferrer noopener">Open {String(payload.media_type ?? "media")}</a>;
   }
-  if (props.output.semantic_type === "document" || (payload && Array.isArray(payload.blocks))) {
+  if (semanticType === "document" || (payload && Array.isArray(payload.blocks))) {
     return <PresentationDocumentView document={payload} />;
   }
   if (payload && payload.root && typeof payload.root === "object" && typeof payload.root.primitive === "string") {
@@ -519,6 +493,7 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
     </div>
   );
 }
+
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const ordered = () => props.items.filter((item) => (presentationMode() === "everyday" ? "outcome" : density()) !== "outcome" || !["progress", "retry", "information"].includes(item.kind));

@@ -15,6 +15,7 @@ import {
   switchModel,
   usageOf,
   workspaceSwitching,
+  presentationMode,
 } from "../store";
 import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -583,36 +584,38 @@ export default function Composer(props: { cwd: string }) {
         />
         <div class="composer-toolbar">
           <div class="composer-lead">
-            <button
-              class="composer-project"
-              title={`${props.cwd} — click to switch workspace`}
-              onClick={() => void switchWorkspace()}
-            >
-              <Icon name="folder" size={14} />
-              <span>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</span>
-              <Icon name="chevron" size={12} />
-            </button>
-            <select
-              class="composer-mode"
-              value={health()?.permission_mode ?? ""}
-              onChange={(e) => void changeMode(e.currentTarget.value)}
-              title="Permission mode — applies to new tool calls immediately"
-            >
-              <option value="ReadOnly">Read only</option>
-              <option value="WorkspaceWrite">Workspace write</option>
-              <option value="FullAccess">Full access</option>
-            </select>
-            <Show when={modelList().length > 0}>
-              <select
-                class="composer-mode composer-model-select"
-                value={health()?.model ?? ""}
-                onChange={(e) => void switchModel(e.currentTarget.value)}
-                title={`Active model: ${health()?.model ?? ""} — click to switch`}
+            <Show when={presentationMode() === "advanced"}>
+              <button
+                class="composer-project"
+                title={`${props.cwd} — click to switch workspace`}
+                onClick={() => void switchWorkspace()}
               >
-                <For each={modelList()}>
-                  {(m) => <option value={m}>{m}</option>}
-                </For>
+                <Icon name="folder" size={14} />
+                <span>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</span>
+                <Icon name="chevron" size={12} />
+              </button>
+              <select
+                class="composer-mode"
+                value={health()?.permission_mode ?? ""}
+                onChange={(e) => void changeMode(e.currentTarget.value)}
+                title="Permission mode — applies to new tool calls immediately"
+              >
+                <option value="ReadOnly">Read only</option>
+                <option value="WorkspaceWrite">Workspace write</option>
+                <option value="FullAccess">Full access</option>
               </select>
+              <Show when={modelList().length > 0}>
+                <select
+                  class="composer-mode composer-model-select"
+                  value={health()?.model ?? ""}
+                  onChange={(e) => void switchModel(e.currentTarget.value)}
+                  title={`Active model: ${health()?.model ?? ""} — click to switch`}
+                >
+                  <For each={modelList()}>
+                    {(m) => <option value={m}>{m}</option>}
+                  </For>
+                </select>
+              </Show>
             </Show>
             <button class="composer-context" title="Mention file (@)" onClick={beginMention}>
               <span class="composer-at">@</span>
@@ -661,18 +664,20 @@ export default function Composer(props: { cwd: string }) {
             </div>
           </Show>
           <div class="composer-actions">
-            <div
-              class="composer-tokens-pill"
-              title={`Input ${inTok()} tokens · output ${outTok()} tokens · context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
-            >
-              <Ring
-                pct={ctxPct()}
-                label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
-              />
-              <span class="composer-tokens">
-                {inTok()} in · {outTok()} out
-              </span>
-            </div>
+            <Show when={presentationMode() === "advanced"}>
+              <div
+                class="composer-tokens-pill"
+                title={`Input ${inTok()} tokens · output ${outTok()} tokens · context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
+              >
+                <Ring
+                  pct={ctxPct()}
+                  label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
+                />
+                <span class="composer-tokens">
+                  {inTok()} in · {outTok()} out
+                </span>
+              </div>
+            </Show>
             <Show
               when={isRunning(activeId())}
               fallback={

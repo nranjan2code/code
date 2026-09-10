@@ -21,17 +21,19 @@ function stripVakFence(text: string): string {
   return rest || "Structured output rendered in the presentation timeline.";
 }
 
-// Prompt metadata is model-visible context, not user-facing answer prose.
-// Keep it in the append-only transcript for auditability, but remove only
-// exact generated metadata lines from the ordinary conversation surface.
 function cleanAssistantText(text: string): string {
-  return text
+  const normalized = text
+    .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/im, "")
+    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed)[\s\S]*$/i, "")
+    .replace(/(?:\r?\n)?\s*completed\s*$/i, "");
+
+  return normalized
     .split("\n")
     .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
     .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed)\s*$/i.test(line))
     .filter((line) => !/^\s*completed\s*$/i.test(line))
     .join("\n")
-    .replace(/^\s*\n|\n\s*$/g, "")
+    .replace(/^\s*\n+|\n+\s*$/g, "")
     .trim();
 }
 
@@ -519,6 +521,9 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
+          <div class="user-turn-head">
+            <span class="turn-author-chip">You</span>
+          </div>
           <div class="md"><Markdown text={item.text} /></div>
           <MessageActions text={item.text} role="user" />
         </div>
@@ -529,23 +534,39 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     const displayText = cleanAssistantText(item.text);
     return (
       <div class="msg assistant">
-        <Show when={displayText} fallback={<span class="caret" />}>
-          <Markdown text={displayText} streaming={item.streaming} />
+        <div class="assistant-turn-head">
+          <span class="assistant-avatar-mark">
+            <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
+          </span>
+          <span class="assistant-name">Vak</span>
           <Show when={item.streaming}>
-            <span class="caret" />
+            <span class="assistant-live-pulse" title="Generating">
+              <span class="dot run" />
+            </span>
           </Show>
-        </Show>
-        <Show when={!item.streaming && displayText}>
-          <MessageActions text={displayText} role="assistant" />
-        </Show>
+        </div>
+        <div class="assistant-turn-body">
+          <Show when={displayText} fallback={<span class="caret" />}>
+            <Markdown text={displayText} streaming={item.streaming} />
+            <Show when={item.streaming}>
+              <span class="caret" />
+            </Show>
+          </Show>
+          <Show when={!item.streaming && displayText}>
+            <MessageActions text={displayText} role="assistant" />
+          </Show>
+        </div>
       </div>
     );
   }
   if (item.kind === "thinking") {
     return (
       <details class="thinking" open={!item.done}>
-        <summary>thinking</summary>
-        <pre>{item.text}</pre>
+        <summary class="thinking-summary">
+          <span class="thinking-sparkle"><Icon name="spark" size={13} /></span>
+          <span>{item.done ? "Thought process" : "Thinking…"}</span>
+        </summary>
+        <pre class="thinking-pre">{item.text}</pre>
       </details>
     );
   }

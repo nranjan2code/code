@@ -70,8 +70,13 @@ outcome-directed runtime release, the 2026 unified sandboxed execution runtime
 `\r` carriage return folding, 500ms process telemetry with RSS memory and duration
 badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/`
 with live sandboxed iframe/image/code artifact preview, and package installation tracking),
-and the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
-NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues).
+the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
+NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues),
+and the modern presentation system 2026 (`docs/design/60-modern-presentation-system-2026.md`:
+dual-density Everyday vs Advanced mode with sliding segmented control, elevated user bubbles and Vak
+brand mark with live generator pulse, clean prose with prompt scaffolding scrubbing, collapsible
+thinking sparkles, theme packs across Dark Obsidian, Quiet Sage, Soft Paper, High Contrast, and Light,
+uniform outcome card architecture without regex heuristics, and sandboxed preview card styling).
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 
@@ -500,6 +505,11 @@ shipped behaviour rather than a proposal.
   never mounted. Presentation snapshot/SSE endpoints are reconnectable
   projections over the ledger and live events; legacy transcript, `AgentEvent`,
   webhook, and channel text paths remain compatibility surfaces.
+  Outcome cards follow a uniform contract: each specialized renderer consumes typed
+  `props: { data: T }` through the single `STRUCTURED_RENDERERS` registry without
+  duplicate fallback blocks or bespoke regex-scraping heuristics. Recipes,
+  research citations, charts, diffs, and sandboxed previews are first-class, fully
+  styled outcome components backed by real validated payloads.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing
