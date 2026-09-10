@@ -1499,6 +1499,31 @@ mod tests {
     }
 
     #[test]
+    fn every_supported_chat_surface_keeps_readable_output_and_fallback() {
+        let source = "# Plan\n\nA short answer with [a link](https://example.com).\n\n- One\n- Two\n";
+        for (surface, markup) in [
+            ("telegram", Markup::TelegramHtml),
+            ("slack", Markup::SlackMrkdwn),
+            ("discord", Markup::DiscordMarkdown),
+        ] {
+            let mut input = job(markup, Some(256));
+            input.content = DeliveryContent::Answer(AnswerDraft::from_markdown(source));
+            input.profile.surface = surface.into();
+            let packet = render(&input).expect("supported chat surface renders");
+            assert_eq!(packet.fallback_markdown, source);
+            assert!(!packet.chunks.is_empty(), "{surface} emitted no chunks");
+            assert!(
+                packet
+                    .chunks
+                    .iter()
+                    .all(|chunk| !chunk.trim().is_empty()),
+                "{surface} emitted an empty chunk"
+            );
+            assert!(packet.chunks.iter().all(|chunk| chunk.chars().count() <= 256));
+        }
+    }
+
+    #[test]
     fn packet_preserves_outcome_metadata_for_channel_consumers() {
         let mut input = job(Markup::Markdown, None);
         let DeliveryContent::Answer(answer) = &mut input.content else {
