@@ -376,9 +376,9 @@ function StructuredView(props: { output: import("../types").StructuredOutput; fa
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
-  if (presentationMode() === "everyday" && ["coding.diff", "test.report", "terminal.view"].includes(props.output.semantic_type)) {
-    return <div class="everyday-result"><strong>Result ready</strong><span>Switch to Advanced for technical detail.</span></div>;
-  }
+  // Everyday is a presentation density, not a capability filter. Technical
+  // results remain available to everyone; the mode controls surrounding chrome
+  // and copy, while the same renderer preserves parity with Advanced.
   if (props.output.semantic_type === "research.synthesis") {
     return <ResearchCards data={payload} />;
   }
@@ -391,16 +391,16 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   if (props.output.semantic_type === "terminal.view") {
     return <TerminalConsole data={payload} />;
   }
-  if (props.output.semantic_type === "data.grid") {
+  if (["data.grid", "table", "comparison"].includes(props.output.semantic_type)) {
     return <DataGrid data={payload} />;
   }
-  if (props.output.semantic_type === "recipe.card") {
+  if (["recipe.card", "recipe"].includes(props.output.semantic_type)) {
     return <RecipeCard data={payload} />;
   }
   if (props.output.semantic_type === "ui.preview") {
     return <UIPreviewCard data={payload} />;
   }
-  if (props.output.semantic_type === "plan.timeline" || props.output.semantic_type === "timeline") {
+  if (["plan.timeline", "timeline", "itinerary", "checklist"].includes(props.output.semantic_type)) {
     return <TimelineCard data={payload} />;
   }
   if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
