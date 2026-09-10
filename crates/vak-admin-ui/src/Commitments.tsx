@@ -167,6 +167,7 @@ function WhyCell(props: { priority?: CommitmentPriority }) {
           }
         >
           <button
+            type="button"
             class="why"
             aria-expanded={open()}
             onClick={() => setOpen(!open())}
@@ -227,7 +228,7 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
     <Show
       when={open()}
       fallback={
-        <button class="ghost small" onClick={() => setOpen(true)}>
+        <button type="button" class="ghost small" onClick={() => setOpen(true)}>
           Close
         </button>
       }
@@ -246,10 +247,10 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
           onInput={(e) => setNote(e.currentTarget.value)}
           aria-label="Closing note"
         />
-        <button disabled={busy()} onClick={() => void close()}>
+        <button type="button" disabled={busy()} onClick={() => void close()}>
           {busy() ? "…" : "Confirm"}
         </button>
-        <button class="ghost small" onClick={() => setOpen(false)}>
+        <button type="button" class="ghost small" onClick={() => setOpen(false)}>
           Cancel
         </button>
       </div>
@@ -409,7 +410,7 @@ export function Commitments() {
           />
           Include closed
         </label>
-        <button class="ghost small" onClick={() => void refetch()}>
+        <button type="button" class="ghost small" onClick={() => void refetch()}>
           Refresh
         </button>
       </div>

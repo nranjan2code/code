@@ -65,9 +65,15 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
   const onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.classList.contains("cb-copy")) {
-      void navigator.clipboard.writeText(target.getAttribute("data-copy") ?? "");
-      target.textContent = "copied";
-      setTimeout(() => (target.textContent = "copy"), 900);
+      void navigator.clipboard.writeText(target.getAttribute("data-copy") ?? "")
+        .then(() => {
+          target.textContent = "copied";
+          setTimeout(() => (target.textContent = "copy"), 900);
+        })
+        .catch(() => {
+          target.textContent = "copy failed";
+          setTimeout(() => (target.textContent = "copy"), 1400);
+        });
       return;
     }
     const code = target.closest("code.ic[data-path]");
@@ -78,4 +84,3 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
 
   return <div class="md" classList={{ streaming: !!props.streaming }} ref={el} onClick={onClick} />;
 }
-

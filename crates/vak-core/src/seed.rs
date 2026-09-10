@@ -1,4 +1,4 @@
-//! Shared capability seeds, applied by **setup** and never by install.
+//! Shared capability seeds, applied by **setup** and reconciled by install/update.
 //!
 //! Lives in `vak-core` because every surface that can run setup needs it:
 //! the CLI (`vak setup seed`) and the web wizard (`POST /onboarding/seed`)
@@ -11,8 +11,12 @@
 //! when the prefix happened to equal the platform default, so any
 //! `--prefix` install silently got nothing; and it never ran on update, so
 //! a seed shipped in a release reached nobody who upgraded. Setup owns it
-//! now, against the workspace the operator actually chose.
+//! now, against the workspace the operator actually chose. Updates run the
+//! same reconciliation so newly shipped standard capabilities reach existing
+//! workspaces without overwriting user edits.
 
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use vak_config::HookConfig;
@@ -79,17 +83,15 @@ const PLUGIN_SKILLS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-pub fn seed_shared_capabilities() {
+const SEED_MANIFEST: &str = ".seed-manifest.json";
+
+pub fn seed_shared_capabilities() -> Result<(), String> {
     let root = vak_config::paths::default_workspace().join(".vak");
-    if let Err(error) = seed_skills(&root.join("skills")) {
-        eprintln!("warning: Shared skill seed failed: {error}");
-    }
-    if let Err(error) = seed_plugins(&root) {
-        eprintln!("warning: Shared plugin seed failed: {error}");
-    }
-    if let Err(error) = cleanup_retired_plugins(&root) {
-        eprintln!("warning: Retired plugin cleanup failed: {error}");
-    }
+    seed_skills(&root.join("skills"))
+        .map_err(|error| format!("Shared skill seed failed: {error}"))?;
+    seed_plugins(&root).map_err(|error| format!("Shared plugin seed failed: {error}"))?;
+    cleanup_retired_plugins(&root)
+        .map_err(|error| format!("Retired plugin cleanup failed: {error}"))?;
     let hooks = [HookConfig {
         event: "session_start".into(),
         matcher: None,
@@ -98,12 +100,11 @@ pub fn seed_shared_capabilities() {
         enabled: false,
         failure_mode: Some("open".into()),
     }];
-    if let Err(error) = vak_config::seed_global_hooks_if_empty(&hooks) {
-        eprintln!("warning: Shared automation seed failed: {error}");
-    }
-    if let Err(error) = vak_config::seed_global_plugins_network_allow_if_empty() {
-        eprintln!("warning: Shared plugin network seed failed: {error}");
-    }
+    vak_config::seed_global_hooks_if_empty(&hooks)
+        .map_err(|error| format!("Shared automation seed failed: {error}"))?;
+    vak_config::seed_global_plugins_network_allow_if_empty()
+        .map_err(|error| format!("Shared plugin network seed failed: {error}"))?;
+    Ok(())
 }
 
 /// Remove plugin packages whose skill descriptions reference retired tool
@@ -124,20 +125,22 @@ fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>
             "removing retired plugin '{name}' (references retired tools: {})",
             retired_tools.join(", ")
         );
-        if let Err(error) = store.remove(name) {
-            eprintln!("warning: could not remove retired plugin '{name}': {error}");
-        } else {
-            // Prune stale network_allow entries for the removed plugin.
-            if let Err(error) = vak_config::prune_plugins_network_allow(root, name) {
-                eprintln!("warning: could not prune network_allow for '{name}': {error}");
-            }
-        }
+        store
+            .remove(name)
+            .map_err(|error| format!("could not remove retired plugin '{name}': {error}"))?;
+        // Prune stale network_allow entries for the removed plugin. Leaving
+        // this behind would advertise a capability that no longer exists.
+        vak_config::prune_plugins_network_allow(root, name)
+            .map_err(|error| format!("could not prune network_allow for '{name}': {error}"))?;
     }
     Ok(())
 }
 
 fn seed_skills(root: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(root)?;
+    let manifest_root = root.parent().unwrap_or(root);
+    let mut shipped = load_seed_manifest(manifest_root);
+    let previous = shipped.clone();
     for (name, description, body) in PLUGIN_SKILLS {
         let path = root.join(name).join("SKILL.md");
         let expected = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n");
@@ -152,17 +155,61 @@ fn seed_skills(root: &Path) -> std::io::Result<()> {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("SKILL.md");
-        if path.exists() {
-            continue;
-        }
         let content = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n");
-        std::fs::write(path, content)?;
+        let expected = content.as_bytes();
+        let expected_digest = digest(expected);
+        match std::fs::read(&path) {
+            Ok(current) if digest(&current) == expected_digest => {
+                shipped.insert(name.to_string(), expected_digest);
+            }
+            Ok(current) => {
+                // Only advance a seed when the file still equals the last
+                // bytes we shipped. An untracked pre-existing file is treated
+                // as user-owned and is never overwritten.
+                if previous
+                    .get(*name)
+                    .is_some_and(|old| *old == digest(&current))
+                {
+                    std::fs::write(&path, expected)?;
+                    shipped.insert(name.to_string(), expected_digest);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::write(&path, expected)?;
+                shipped.insert(name.to_string(), expected_digest);
+            }
+            Err(error) => return Err(error),
+        }
     }
+    write_seed_manifest(manifest_root, &shipped)?;
+    Ok(())
+}
+
+fn digest(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn load_seed_manifest(root: &Path) -> BTreeMap<String, String> {
+    std::fs::read(root.join(SEED_MANIFEST))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_seed_manifest(root: &Path, shipped: &BTreeMap<String, String>) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(shipped).map_err(std::io::Error::other)?;
+    let manifest_path = root.join(SEED_MANIFEST);
+    let temporary = manifest_path.with_extension("json.tmp");
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(temporary, manifest_path)?;
     Ok(())
 }
 
 fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let store = PluginStore::new(root);
+    let mut shipped = load_seed_manifest(root);
     // Stage inside the plugin root rather than the system temp dir: same
     // filesystem as the destination, so installing is a rename and never a
     // cross-device copy — the same reason the installer stages inside its
@@ -192,9 +239,27 @@ fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             .list()?
             .into_iter()
             .find(|plugin| plugin.name == *name)
-            && existing.capabilities.skills.is_empty()
         {
-            let _ = store.remove(name)?;
+            let staged_digest = digest_of_directory(&package)?;
+            let installed_digest = digest_of_directory(&existing.package_path).ok();
+            if existing.digest == staged_digest {
+                shipped.insert(format!("plugin:{name}"), existing.digest);
+            } else if installed_digest.as_deref() == Some(existing.digest.as_str())
+                && shipped.get(&format!("plugin:{name}")) == Some(&existing.digest)
+            {
+                let installed = store.update_local(
+                    &package,
+                    InstallOptions {
+                        scope: InstallScope::User,
+                        allow_unlicensed: false,
+                    },
+                )?;
+                if !installed.enabled {
+                    let _ = store.enable(name)?;
+                }
+                shipped.insert(format!("plugin:{name}"), installed.digest);
+            }
+            continue;
         }
         let installed = store.install_local(
             &package,
@@ -206,7 +271,52 @@ fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         if !installed.enabled {
             let _ = store.enable(name)?;
         }
+        shipped.insert(format!("plugin:{name}"), installed.digest);
     }
     let _ = std::fs::remove_dir_all(&staging);
+    write_seed_manifest(root, &shipped)?;
     Ok(())
+}
+
+fn digest_of_directory(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let inspection = vak_plugin::inspect_package(root)?;
+    Ok(inspection.digest)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn seed_manifest_tracks_standard_skills_without_clobbering_edits() {
+        let _home = vak_config::paths::isolate_home_for_tests();
+        let _ = seed_shared_capabilities();
+        let root = vak_config::paths::default_workspace().join(".vak");
+        let manifest: BTreeMap<String, String> = serde_json::from_slice(
+            &std::fs::read(root.join(SEED_MANIFEST)).expect("seed manifest"),
+        )
+        .expect("valid seed manifest");
+        assert_eq!(manifest.len(), SKILLS.len() + PLUGINS.len());
+
+        let edited = root.join("skills/debugging/SKILL.md");
+        let before = std::fs::read(&edited).expect("seed skill");
+        std::fs::write(&edited, [before.as_slice(), b"\noperator edit\n"].concat())
+            .expect("edit seed skill");
+        let _ = seed_shared_capabilities();
+        let after = std::fs::read(&edited).expect("edited seed skill");
+        assert!(after.ends_with(b"\noperator edit\n"));
+
+        let plugins = PluginStore::new(&root).list().expect("seed plugins");
+        let package = plugins
+            .iter()
+            .find(|plugin| plugin.name == "developer-starter")
+            .expect("developer starter")
+            .package_path
+            .join("operator-note.txt");
+        std::fs::write(&package, "operator edit\n").expect("edit plugin package");
+        let _ = seed_shared_capabilities();
+        assert!(package.is_file(), "edited plugin package was overwritten");
+    }
 }

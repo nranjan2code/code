@@ -20,6 +20,7 @@ export default function DiffPane(props: { sessionId: string | null }) {
   const [loading, setLoading] = createSignal(false);
   const [comment, setComment] = createSignal<CommentTarget | null>(null);
   const [commentText, setCommentText] = createSignal("");
+  const [commentError, setCommentError] = createSignal<string | null>(null);
   const [sentCount, setSentCount] = createSignal(0);
 
   // The server answers a non-git workspace with { error } and no diff
@@ -38,7 +39,7 @@ export default function DiffPane(props: { sessionId: string | null }) {
       return;
     }
     setLoading(true);
-    setError(null);
+    setCommentError(null);
     try {
       const res = await api.readDiff(id);
       if (res.error) {
@@ -69,10 +70,15 @@ export default function DiffPane(props: { sessionId: string | null }) {
     const c = comment();
     const id = props.sessionId ?? activeId();
     if (!c || !id || !commentText().trim()) return;
-    await api.steer(id, `[diff comment ${c.path}:${c.line}] ${commentText().trim()}`);
-    setSentCount((n) => n + 1);
-    setComment(null);
-    setCommentText("");
+    setError(null);
+    try {
+      await api.steer(id, `[diff comment ${c.path}:${c.line}] ${commentText().trim()}`);
+      setSentCount((n) => n + 1);
+      setComment(null);
+      setCommentText("");
+    } catch (e) {
+      setCommentError(`Could not send diff comment: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   // One-shot high-signal review of the working tree (design doc D3).
@@ -109,11 +115,12 @@ export default function DiffPane(props: { sessionId: string | null }) {
       <div class="dock-head">
         <span>Changes{sentCount() ? ` · ${sentCount()} steered` : ""}</span>
         <span class="dock-head-actions">
-          <button class="chip sm" onClick={() => void refresh()} disabled={loading()}>
+          <button type="button" class="chip sm" onClick={() => void refresh()} disabled={loading()}>
             {loading() ? "…" : "refresh"}
           </button>
           <Show when={props.sessionId ?? activeId()}>
             <button
+              type="button"
               class="chip sm"
               title="Ask Vak to review these changes (logic + security)"
               disabled={isRunning(props.sessionId ?? activeId()) || !entries().length}
@@ -177,13 +184,14 @@ export default function DiffPane(props: { sessionId: string | null }) {
                               }
                             >
                               <div class="dcomment">
+                                <Show when={commentError()}><div class="error-state" role="alert">{commentError()}</div></Show>
                                 <input
                                   placeholder="comment for the agent…"
                                   value={commentText()}
                                   onInput={(e) => setCommentText(e.currentTarget.value)}
                                   onKeyDown={(e) => e.key === "Enter" && void submitComment()}
                                 />
-                                <button class="btn primary sm" onClick={() => void submitComment()}>
+                                <button type="button" class="btn primary sm" onClick={() => void submitComment()}>
                                   send
                                 </button>
                               </div>

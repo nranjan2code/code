@@ -38,7 +38,7 @@ const SETUP_ORDER = [
 export default function SetupBanner() {
   // Derived on every read, like every other consumer of this projection:
   // a key removed elsewhere has to make setup incomplete again here too.
-  const [state] = createResource(() => api.onboarding().catch(() => null));
+  const [state, { refetch }] = createResource(() => api.onboarding());
 
   // The projection serializes one field per step; "which is owed" is
   // derived here rather than shipped, so there is no second list to keep
@@ -54,7 +54,7 @@ export default function SetupBanner() {
   };
 
   return (
-    <Show when={missing()}>
+    <Show when={state.error} fallback={<Show when={missing()}>
       {(step) => (
         <div class="setup-banner" role="status">
           <span class="setup-banner-mark"><Icon name="spark" size={15} /></span>
@@ -70,6 +70,15 @@ export default function SetupBanner() {
           </button>
         </div>
       )}
+    </Show>}>
+      <div class="setup-banner" role="alert">
+        <span class="setup-banner-mark"><Icon name="spark" size={15} /></span>
+        <div class="setup-banner-text">
+          <strong>Setup status unavailable</strong>
+          <span class="dim">{String(state.error)}</span>
+        </div>
+        <button class="btn primary sm" type="button" onClick={() => void refetch()}>Retry</button>
+      </div>
     </Show>
   );
 }

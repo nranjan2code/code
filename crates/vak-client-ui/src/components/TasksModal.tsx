@@ -202,14 +202,14 @@ export default function TasksModal() {
                   </Show>
                 </div>
                 <div class="task-actions">
-                  <button class="chip sm" onClick={() => void runNow(t)}>run now</button>
+                  <button type="button" class="chip sm" onClick={() => void runNow(t)}>run now</button>
                   <Show when={t.last_session_id}>
-                    <button class="chip sm" onClick={() => openDiff(t)}>diff</button>
+                    <button type="button" class="chip sm" onClick={() => openDiff(t)}>diff</button>
                   </Show>
-                  <button class="chip sm" onClick={() => void toggle(t)}>
+                  <button type="button" class="chip sm" onClick={() => void toggle(t)}>
                     {t.enabled ? "pause" : "resume"}
                   </button>
-                  <button class="chip sm danger-chip" onClick={() => void remove(t)}>delete</button>
+                  <button type="button" class="chip sm danger-chip" onClick={() => void remove(t)}>delete</button>
                 </div>
               </div>
             )}
@@ -263,14 +263,14 @@ export default function TasksModal() {
                   />
                 </div>
                 <div class="task-add-row">
-                  <button class="btn primary" disabled={!draftValid()} onClick={() => void add()}>create</button>
-                  <button class="btn" onClick={() => { setAdding(false); setError(null); }}>cancel</button>
+                  <button type="button" class="btn primary" disabled={!draftValid()} onClick={() => void add()}>create</button>
+                  <button type="button" class="btn" onClick={() => { setAdding(false); setError(null); }}>cancel</button>
                 </div>
               </div>
             }
           >
             <div class="task-add-row">
-              <button class="btn primary" disabled={!activeId()} onClick={() => setAdding(true)}>
+              <button type="button" class="btn primary" disabled={!activeId()} onClick={() => setAdding(true)}>
                 + New task
               </button>
             </div>
@@ -278,7 +278,7 @@ export default function TasksModal() {
 
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">runs fire on the gateway server, not this window · cron uses local time · latest worktree kept for review</span>
-            <button class="btn primary" onClick={() => setTasksOpen(false)}>Close</button>
+            <button type="button" class="btn primary" onClick={() => setTasksOpen(false)}>Close</button>
           </div>
         </div>
       </div>

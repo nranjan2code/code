@@ -18,6 +18,7 @@ export default function MermaidViewer(props: { source: string; title?: string })
   const [svgHtml, setSvgHtml] = createSignal<string | null>(null);
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal(false);
+  const [copyFailed, setCopyFailed] = createSignal(false);
   const [isRendering, setIsRendering] = createSignal(true);
 
   let containerRef!: HTMLDivElement;
@@ -78,12 +79,14 @@ export default function MermaidViewer(props: { source: string; title?: string })
   });
 
   const handleCopySource = async () => {
+    setCopyFailed(false);
     try {
       await navigator.clipboard.writeText(props.source);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {
-      // ignore
+      setCopied(false);
+      setCopyFailed(true);
     }
   };
 
@@ -123,8 +126,8 @@ export default function MermaidViewer(props: { source: string; title?: string })
               Source
             </button>
           </div>
-          <button class="pill-action-btn" onClick={handleCopySource}>
-            {copied() ? "✓ Copied" : "Copy Source"}
+          <button type="button" class="pill-action-btn" onClick={handleCopySource}>
+            {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
           </button>
           <Show when={svgHtml() && viewMode() === "diagram"}>
             <button class="pill-action-btn" onClick={handleDownloadSvg}>

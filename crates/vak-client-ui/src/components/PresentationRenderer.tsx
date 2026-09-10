@@ -129,7 +129,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
     <div class="semantic-code" classList={{ diff: !!props.diff }}>
       <div class="semantic-code-head">
         <span>{props.filename ?? props.language ?? (props.diff ? "diff" : "text")}</span>
-        <button onClick={(event) => copy(event.currentTarget)}>Copy</button>
+        <button type="button" onClick={(event) => copy(event.currentTarget)}>Copy</button>
       </div>
       <pre ref={pre}><code>{props.content}</code></pre>
     </div>
@@ -261,7 +261,7 @@ function Artifact(props: { item: OutputItem }) {
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
-      <Show when={path()}>{(value) => <button class="artifact-open" onClick={() => void openFileSmart(value())}>Open</button>}</Show>
+      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => void openFileSmart(value())}>Open</button>}</Show>
     </article>
   );
 }
@@ -271,14 +271,20 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
   const content = props.item.content;
   const pending = () => props.item.status === "pending";
   return (
-    <section class="approval semantic-approval">
+    <section
+      class="approval semantic-approval"
+      role={pending() ? "alert" : "status"}
+      aria-live={pending() ? "assertive" : "polite"}
+      aria-atomic="true"
+      aria-label={`${pending() ? "Approval requested" : "Approval resolved"} for ${content.tool}`}
+    >
       <div class="ap-head">Approval requested — {content.tool}</div>
       <div class="ap-reason">{content.reason}</div>
       <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{content.args_json}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
         <div class="ap-actions">
-          <button class="btn primary" onClick={() => void approve(content.request_id, true, props.sessionId)}>Allow once</button>
-          <button class="btn danger" onClick={() => void approve(content.request_id, false, props.sessionId)}>Deny</button>
+          <button type="button" class="btn primary" onClick={() => void approve(content.request_id, true, props.sessionId)}>Allow once</button>
+          <button type="button" class="btn danger" onClick={() => void approve(content.request_id, false, props.sessionId)}>Deny</button>
         </div>
       </Show>
     </section>
@@ -287,19 +293,24 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
 
 function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
   const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
   const review = async (verdict: "accepted" | "needs_work" | "rejected") => {
     setBusy(true);
+    setError(null);
     try {
       const turn = props.item.actions.find((action) => action.data.verdict === verdict)?.data.turn;
       await api.recordOutcomeReview(props.sessionId, verdict, turn ? Number(turn) : undefined);
       window.location.reload();
+    } catch (cause) {
+      setError(`Could not record review: ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
       setBusy(false);
     }
   };
   return <Show when={props.item.actions.length > 0}>
     <div class="outcome-review-actions" aria-label="Outcome review">
-      <For each={props.item.actions}>{(action) => <button class="settings-button" disabled={busy()} onClick={() => void review(action.data.verdict as "accepted" | "needs_work" | "rejected")}>{action.label}</button>}</For>
+      <Show when={error()}><div class="error-state" role="alert">{error()}</div></Show>
+      <For each={props.item.actions}>{(action) => <button type="button" class="settings-button" disabled={busy()} onClick={() => void review(action.data.verdict as "accepted" | "needs_work" | "rejected")}>{action.label}</button>}</For>
     </div>
   </Show>;
 }

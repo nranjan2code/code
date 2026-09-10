@@ -24,6 +24,8 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
 
 export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void {
   const previouslyFocused = document.activeElement as HTMLElement | null;
+  const hadTabIndex = el.hasAttribute("tabindex");
+  if (!hadTabIndex) el.setAttribute("tabindex", "-1");
 
   // Initial focus: the first focusable element, or the dialog itself (it
   // needs `tabindex="-1"` in markup were it not already interactive) so a
@@ -66,6 +68,7 @@ export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void 
   const observer = new MutationObserver(() => {
     if (!document.contains(el)) {
       el.removeEventListener("keydown", onKeydown);
+      if (!hadTabIndex) el.removeAttribute("tabindex");
       // Restore focus to whatever opened the dialog — a closed modal must
       // not strand focus on `document.body`.
       if (previouslyFocused && document.contains(previouslyFocused)) {

@@ -65,7 +65,7 @@ export function PromptsSection(props: {
   const [effective, { refetch: refetchEffective }] = createResource<PromptEffective>(
     () => api.promptEffective(),
   );
-  const [roles] = createResource(() => api.promptRoles().catch(() => ({ roles: [] })));
+  const [roles, { refetch: refetchRoles }] = createResource(() => api.promptRoles());
 
   const [editing, setEditing] = createSignal<PromptBlock | null>(null);
   const [draft, setDraft] = createSignal("");
@@ -134,6 +134,13 @@ export function PromptsSection(props: {
         Editing <strong>{scopeLabel(props.scope())}</strong>
         <Show when={layer()?.path}> · <code>{layer()!.path}</code></Show>
       </p>
+      <Show when={roles.error}>
+        <div class="error-state" role="alert">
+          Prompt-role discovery is unavailable. Role options may be incomplete.
+          <button class="ghost small" onClick={() => refetchRoles()}>Retry</button>
+          <details><summary>Details</summary><pre class="mono">{String(roles.error)}</pre></details>
+        </div>
+      </Show>
 
       <div class="prompts-grid">
         {/* ------------------------------------------ editable settings -- */}

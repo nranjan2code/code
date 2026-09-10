@@ -90,9 +90,9 @@ export default function RecipeCard(props: { data: RecipeData }) {
           <Show when={props.data.servings !== undefined}>
           <span style={{ "font-size": "12px", color: "var(--text-muted)" }}>Servings:</span>
           <div class="servings-stepper">
-            <button aria-label="Decrease servings" disabled={servings() <= 1} onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
+            <button type="button" aria-label="Decrease servings" disabled={servings() <= 1} onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
             <span class="servings-num">{servings()}</span>
-            <button aria-label="Increase servings" disabled={servings() >= 10000} onClick={() => setServings(servings() + 1)}>+</button>
+            <button type="button" aria-label="Increase servings" disabled={servings() >= 10000} onClick={() => setServings(servings() + 1)}>+</button>
           </div>
           </Show>
         </div>

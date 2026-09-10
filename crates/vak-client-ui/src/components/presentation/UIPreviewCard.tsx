@@ -21,6 +21,7 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
   const [error, setError] = createSignal<string | null>(null);
   const [reloadKey, setReloadKey] = createSignal(0);
   const [copied, setCopied] = createSignal(false);
+  const [copyFailed, setCopyFailed] = createSignal(false);
 
   const path = () => props.data.artifact_path ?? "";
 
@@ -83,10 +84,16 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  const handleCopySource = () => {
-    void navigator.clipboard.writeText(htmlContent());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const handleCopySource = async () => {
+    setCopyFailed(false);
+    try {
+      await navigator.clipboard.writeText(htmlContent());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+      setCopyFailed(true);
+    }
   };
 
   const title = () => props.data.title || "Interactive Component Preview";
@@ -177,8 +184,8 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
               <span style="font-size: 10.5px; color: var(--faint); font-family: var(--mono);">
                 Quarantined: {path()}
               </span>
-              <button class="pill-action-btn" onClick={handleCopySource}>
-                {copied() ? "✓ Copied" : "Copy Source"}
+              <button type="button" class="pill-action-btn" onClick={handleCopySource}>
+                {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
               </button>
             </div>
             <pre

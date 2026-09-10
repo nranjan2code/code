@@ -30,7 +30,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "target" / "debug" / "vak"
 
 
-def global_skills() -> pathlib.Path:
+def global_skills(explicit: str | None = None) -> pathlib.Path:
+    if explicit:
+        return pathlib.Path(explicit)
     if configured := os.environ.get("VAK_HOME"):
         return pathlib.Path(configured) / "skills"
     if sys.platform == "darwin":
@@ -106,8 +108,9 @@ def assert_result(result: Result, needle: str | None = None) -> Result:
     return result
 
 
-def run_offline_matrix(results: list[Result], repeat: int, feed_site: str | None) -> None:
-    global_validation = [str(BIN), "skills", "validate", str(global_skills()), "--json"]
+def run_offline_matrix(results: list[Result], repeat: int, feed_site: str | None,
+                       skills_root: str | None) -> None:
+    global_validation = [str(BIN), "skills", "validate", str(global_skills(skills_root)), "--json"]
     for index in range(repeat):
         results.append(assert_result(run(f"skills-validate-{index}", global_validation)))
 
@@ -256,13 +259,14 @@ def main() -> int:
     parser.add_argument("--provider", default="ollama")
     parser.add_argument("--model", default="gemma4:e2b-mlx")
     parser.add_argument("--feed-site", help="temporary site-packages directory containing scripts/feeds requirements")
+    parser.add_argument("--skills-root", help="explicit directory containing global SKILL.md files")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if not BIN.exists():
         raise SystemExit(f"missing built binary: {BIN}")
 
     results: list[Result] = []
-    run_offline_matrix(results, max(1, args.repeat), args.feed_site)
+    run_offline_matrix(results, max(1, args.repeat), args.feed_site, args.skills_root)
     if args.live:
         run_live_matrix(results, args.provider, args.model, max(1, args.repeat))
 

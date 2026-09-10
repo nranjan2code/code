@@ -9,11 +9,17 @@ export interface TerminalData {
 
 export default function TerminalConsole(props: { data: TerminalData }) {
   const [copied, setCopied] = createSignal(false);
+  const [copyError, setCopyError] = createSignal(false);
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(props.data.output);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const handleCopy = async () => {
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(props.data.output);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopyError(true);
+    }
   };
 
   const isSuccess = () => props.data.exit_code === 0;
@@ -33,8 +39,8 @@ export default function TerminalConsole(props: { data: TerminalData }) {
           </span>
         </div>
         <div class="card-actions">
-          <button class="pill-action-btn" onClick={handleCopy}>
-            {copied() ? "✓ Copied" : "Copy Output"}
+          <button type="button" class="pill-action-btn" onClick={handleCopy}>
+            {copied() ? "✓ Copied" : copyError() ? "Copy failed" : "Copy Output"}
           </button>
         </div>
       </div>

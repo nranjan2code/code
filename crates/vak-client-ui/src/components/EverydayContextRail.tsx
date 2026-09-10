@@ -1,15 +1,22 @@
 import { For, Show, createMemo } from "solid-js";
-import { activeId, itemsOf, presentationOf, presentationMode, setDockTab, setEverydayRailOpen } from "../store";
+import { activeId, hydratingId, presentationErrorOf, presentationOf, presentationMode, setDockTab, setEverydayRailOpen, workbenchExecutions } from "../store";
 import Icon, { type IconName } from "./Icon";
 
 /**
  * The Everyday companion rail provides a stable, clean place for useful context:
  * files, notes, and next steps without crowding the conversation.
  */
-export default function EverydayContextRail() {
+export default function EverydayContextRail(props: { onRetry?: (id: string) => void }) {
   const task = createMemo(() => activeId());
   const timeline = createMemo(() => presentationOf(task()));
-  const files = createMemo(() => itemsOf(task()).filter((item) => item.kind === "tool" || item.kind === "assistant").length);
+  const presentationError = createMemo(() => presentationErrorOf(task()));
+  const loading = createMemo(() => !!task() && hydratingId() === task() && !timeline());
+  // Only count artifacts that the workbench can actually open. Transcript
+  // messages and tool calls are not files, and counting them made this rail
+  // claim files existed when there were none.
+  const files = createMemo(() => workbenchExecutions()
+    .filter((execution) => !execution.ownerSessionId || execution.ownerSessionId === task())
+    .reduce((count, execution) => count + execution.artifacts.length, 0));
   const notes = createMemo(() => timeline()?.items.filter((item) => item.kind === "outcome").length ?? 0);
   const nextSteps = createMemo(() => timeline()?.goal?.additions.length ?? 0);
 
@@ -30,7 +37,22 @@ export default function EverydayContextRail() {
         </div>
 
         <div class="everyday-rail-body">
-          <Show when={(timeline()?.items.length ?? 0) === 0} fallback={
+          <Show when={loading()}>
+            <div class="everyday-rail-empty" role="status" aria-live="polite">
+              <div class="everyday-rail-empty-icon"><Icon name="spark" size={26} /></div>
+              <p class="everyday-rail-empty-text">Loading conversation details…</p>
+            </div>
+          </Show>
+          <Show when={!loading() && presentationError()}>
+            <div class="everyday-rail-empty" role="status">
+              <div class="everyday-rail-empty-icon"><Icon name="warning" size={26} /></div>
+              <p class="everyday-rail-empty-text">Conversation details are temporarily unavailable.</p>
+              <button type="button" class="everyday-rail-retry" onClick={() => task() && props.onRetry?.(task()!)}>
+                Retry details
+              </button>
+            </div>
+          </Show>
+          <Show when={!loading() && !presentationError() && (timeline()?.items.length ?? 0) === 0} fallback={
             <div class="everyday-rail-preview" aria-label="Conversation highlights">
               <For each={timeline()?.items.slice(0, 4) ?? []}>
                 {(item) => <div class="everyday-rail-preview-row">

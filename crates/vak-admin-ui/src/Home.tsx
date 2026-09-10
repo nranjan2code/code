@@ -713,17 +713,17 @@ export function Home() {
   // Operations Center's own poll does. That is the point: an incident is now
   // opened and resolved while an operator sits on Home, not only while
   // someone happens to have Operations open.
-  const [ops, opsActions] = createResource(() => api.operations().catch(() => null));
-  const [finops, finopsActions] = createResource(() => api.finops().catch(() => null));
-  const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals().catch(() => null));
-  const [sessions] = createResource(sessionsVersion, () => api.sessions().catch(() => null));
-  const [bestofn] = createResource(sessionsVersion, () => api.bestofn().catch(() => null));
-  const [config] = createResource(statsVersion, () => api.config().catch(() => null));
-  const [onboarding] = createResource(statsVersion, () => api.onboarding().catch(() => null));
-  const [gateway] = createResource(statsVersion, () => api.gatewayStatus().catch(() => null));
-  const [allowlist] = createResource(statsVersion, () => api.gatewayAllowlist().catch(() => null));
-  const [proposals] = createResource(statsVersion, () => api.skillProposals().catch(() => null));
-  const [inbox] = createResource(statsVersion, () => api.inbox(true, 20).catch(() => null));
+  const [ops, opsActions] = createResource(() => api.operations());
+  const [finops, finopsActions] = createResource(() => api.finops());
+  const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
+  const [sessions, sessionsActions] = createResource(sessionsVersion, () => api.sessions());
+  const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn());
+  const [config, configActions] = createResource(statsVersion, () => api.config());
+  const [onboarding, onboardingActions] = createResource(statsVersion, () => api.onboarding());
+  const [gateway, gatewayActions] = createResource(statsVersion, () => api.gatewayStatus());
+  const [allowlist, allowlistActions] = createResource(statsVersion, () => api.gatewayAllowlist());
+  const [proposals, proposalsActions] = createResource(statsVersion, () => api.skillProposals());
+  const [inbox, inboxActions] = createResource(statsVersion, () => api.inbox(true, 20));
 
   const opsTimer = window.setInterval(() => opsActions.refetch(), 10_000);
   const finopsTimer = window.setInterval(() => finopsActions.refetch(), 30_000);
@@ -745,6 +745,9 @@ export function Home() {
 
   const snapshot = () => ops() ?? null;
   const opsFailed = () => !ops.loading && ops() == null;
+  const auxiliaryFailures = createMemo(() => [
+    finops, approvals, sessions, bestofn, config, onboarding, gateway, allowlist, proposals, inbox,
+  ].filter((resource) => !resource.loading && !!resource.error).length);
 
   const failedChecks = createMemo(() => (snapshot()?.health.checks ?? []).filter((c) => c.status === "fail"));
   const openIncidents = createMemo(() =>
@@ -1091,6 +1094,14 @@ export function Home() {
     opsActions.refetch();
     finopsActions.refetch();
     approvalActions.refetch();
+    sessionsActions.refetch();
+    bestofnActions.refetch();
+    configActions.refetch();
+    onboardingActions.refetch();
+    gatewayActions.refetch();
+    allowlistActions.refetch();
+    proposalsActions.refetch();
+    inboxActions.refetch();
     pushToast("info", "Re-read every probe");
   };
 
@@ -1112,6 +1123,12 @@ export function Home() {
           <button onClick={newSession}>+ New session</button>
         </>}
       />
+      <Show when={auxiliaryFailures() > 0}>
+        <div class="error-state" role="status">
+          <strong>Telemetry is incomplete.</strong>
+          <p>{auxiliaryFailures()} supporting probe{auxiliaryFailures() === 1 ? " is" : "s are"} unavailable; counts and empty states below may be partial.</p>
+        </div>
+      </Show>
 
       <section class="home-masthead" data-tone={opsFailed() || blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}>
         <div class="home-masthead-main">

@@ -222,7 +222,7 @@ export default function WorkspaceGate() {
                 </p>
                 <Show when={error()}><div class="gate-err">{error()}</div></Show>
                 <DirectoryPicker disabled={busy()} onPick={(dir) => void consider(dir)} />
-                <button class="btn subtle" disabled={busy()} onClick={() => setBrowsing(false)}>
+                <button type="button" class="btn subtle" disabled={busy()} onClick={() => setBrowsing(false)}>
                   Cancel
                 </button>
               </>
@@ -243,13 +243,13 @@ export default function WorkspaceGate() {
                 </p>
                 <Show when={error()}><div class="gate-err">{error()}</div></Show>
                 <div class="gate-actions">
-                  <button class="btn primary" disabled={busy()} onClick={() => void start(r().path, false)}>
+                  <button type="button" class="btn primary" disabled={busy()} onClick={() => void start(r().path, false)}>
                     Open safely
                   </button>
-                  <button class="btn" disabled={busy()} onClick={() => void start(r().path, true)}>
+                  <button type="button" class="btn" disabled={busy()} onClick={() => void start(r().path, true)}>
                     Trust this folder
                   </button>
-                  <button class="btn subtle" disabled={busy()} onClick={() => setReview(null)}>
+                  <button type="button" class="btn subtle" disabled={busy()} onClick={() => setReview(null)}>
                     Cancel
                   </button>
                 </div>

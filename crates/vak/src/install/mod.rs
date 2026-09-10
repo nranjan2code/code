@@ -666,7 +666,10 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
     // Idempotent by construction: a skill already on disk is left alone, and
     // the hook table is only written when empty. Safe to run on every sync,
     // which is what makes it safe to put here rather than behind a flag.
-    vak_core::seed::seed_shared_capabilities();
+    if let Err(error) = vak_core::seed::seed_shared_capabilities() {
+        eprintln!("error: {error}");
+        return 1;
+    }
 
     let requested: Vec<&str> = if names.is_empty() {
         vak_ops::services::default_service_names(&cli)
@@ -777,6 +780,10 @@ fn update(
     match feed.decide(&installed.version)? {
         Decision::UpToDate { installed, offered } => {
             println!("up to date ({installed} installed, {offered} offered)");
+            if !dry_run {
+                vak_core::seed::seed_shared_capabilities()
+                    .map_err(|error| format!("capability update failed: {error}"))?;
+            }
             return Ok(None);
         }
         Decision::Upgrade { from, to } => {
@@ -855,6 +862,13 @@ fn update(
         return Err(format!("release {} offers nothing for {key}", feed.version));
     }
     tx.commit()?;
+
+    // Capability seeds live in the canonical Shared workspace rather than
+    // inside the executable prefix. Reconcile them after every real update,
+    // including releases that add no new binary component. The seed manifest
+    // advances untouched shipped content and preserves user edits.
+    vak_core::seed::seed_shared_capabilities()
+        .map_err(|error| format!("capability update failed: {error}"))?;
 
     // Carry forward components the feed did not ship, so the manifest
     // keeps describing the whole install rather than only what moved.

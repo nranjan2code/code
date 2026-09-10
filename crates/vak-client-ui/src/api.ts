@@ -939,7 +939,7 @@ export async function speak(
 
 export function openEventStream(
   id: string,
-  onEvent: (ev: AgentEvent) => void,
+  onEvent: (ev: AgentEvent, lastEventId?: string) => void,
   onError?: () => void,
   /** The server lost our place in the replay ring: whatever is on screen
    *  may be missing events, and only a re-read of the durable transcript
@@ -947,8 +947,11 @@ export function openEventStream(
   onResync?: () => void,
   /** Fires when the stream is actually carrying events again. */
   onOpen?: () => void,
+  /** Resume cursor for a client-created replacement EventSource. */
+  resumeFrom?: string,
 ): EventSource {
-  const es = eventSource(`/sessions/${encodeURIComponent(id)}/events`);
+  const path = `/sessions/${encodeURIComponent(id)}/events${resumeFrom ? `?last_event_id=${encodeURIComponent(resumeFrom)}` : ""}`;
+  const es = eventSource(path);
   es.onopen = () => onOpen?.();
   // A named event, so it cannot be confused with an agent event that
   // happens to carry a similar shape.
@@ -971,7 +974,7 @@ export function openEventStream(
       return; // not JSON: a keep-alive or comment frame, not an error
     }
       try {
-        onEvent(parsed);
+        onEvent(parsed, m.lastEventId || undefined);
       } catch (eventErr) {
         // Report and move on rather than either vanish (the defect this
         // replaces) or take the whole stream down over one bad event.
@@ -985,6 +988,7 @@ export function openEventStream(
 export function openSideStream(
   id: string,
   onEvent: (ev: AgentEvent) => void,
+  onError?: () => void,
 ): EventSource {
   const es = eventSource(`/sessions/${encodeURIComponent(id)}/side/events`);
   es.onmessage = (m) => {
@@ -994,6 +998,7 @@ export function openSideStream(
       // ignore keep-alive frames
     }
   };
+  es.onerror = () => onError?.();
   return es;
 }
 

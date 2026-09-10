@@ -56,8 +56,8 @@ Audited 2026-09-02 against `main` at 1.0.3. Every row was read, not inferred.
 | Fact | Evidence |
 |---|---|
 | `self install` is **not inert** — it seeds capabilities, creates `~/vak-home`, syncs services, starts the gateway, installs a desktop tray unit, and stops Telegram | `run_install` → `seed::seed_shared_capabilities` + `bootstrap_default_workspace_if_fresh` in `crates/vak/src/install/mod.rs` |
-| Seeds run **only** when the prefix equals the platform default, so any `--prefix` install silently gets no skills, no plugins, no hooks | same function, `if root.prefix() == platform_default_prefix()` |
-| Seeds run on install but **never on update**, so a new seed shipped in a release reaches nobody who updates | `run_update` never calls `seed::` |
+| Initial install seeding is tied to the platform-default install bootstrap; later explicit setup/update reconciliation targets the canonical Shared workspace | install bootstrap guard plus `seed_shared_capabilities()` callers in setup/update/services-sync |
+| Seeds were install-only, so new standard capability content shipped in a release reached nobody who updated | `seed_shared_capabilities()` is invoked by setup/update paths and uses a manifest to advance untouched shipped skills/plugins while preserving edits |
 | `uninstall --purge` removes the prefix, service units, and `data_home` — but leaves `~/vak-home`, which holds the entire Shared config layer, `.env` secrets, seeded skills, and installed plugins | `run_uninstall`; `default_workspace()` in `crates/vak-config/src/paths.rs` resolves outside `data_home()` |
 | Uninstall does not remove the `/usr/local/bin/vak` symlink the installer itself told the user to create | `report_next_steps` suggests it; nothing reverses it |
 | A legacy `com.vak.telegram` unit is still in the service table, kept alive by suppression logic in two separate places | `SERVICES` in `crates/vak-ops/src/services.rs`; `legacy_telegram_superseded` in both `run_status` and `run_services_sync` |
@@ -311,7 +311,7 @@ remedy, rather than at first tool call.
 ### Step 5 — Capabilities
 
 Show what the seed brings: the six Shared skills and two starter plugins in
-`crates/vak/src/install/seed.rs`, as a reviewable list with a per-item
+`crates/vak-core/src/seed.rs`, as a reviewable list with a per-item
 toggle. Materialize on confirm, into the chosen workspace's Shared layer —
 **not** as a side effect of install, and **not** conditional on the prefix.
 
@@ -495,7 +495,7 @@ contract; a step that cannot name its layer is not ready to ship.
 | Provider key | `<PROVIDER>_API_KEY` | canonical user `.env` | via `Core::set_provider_key` only |
 | Route | `provider` + `model`, atomically | **Shared** by default; project when the user says "just this workspace" | one atomic write, never two |
 | Permission posture | `permission_mode` | Shared, unless scoped | revoke-before-apply |
-| Seeds | skills, plugins, hooks | Shared (`~/vak-home/.vak/`) | versioned; never overwrites an edited file |
+| Seeds | skills, plugins, hooks | Shared (`~/vak-home/.vak/`) | skills/plugins are manifest-versioned: untouched shipped content advances, edited content is preserved; hooks/network defaults seed only when empty |
 | Integrations | MCP server definition | Shared by default, project on request | key to the corresponding `.env` |
 | Channels | `Bot` identity, policy, route | gateway state + per-bot `.env` token var | token var name is dynamic per bot id |
 | Services | unit files | platform service manager | captures the Step 2 workspace identity |
@@ -533,7 +533,7 @@ about a deep inheritance chain is a value you cannot attribute.
 | Event | Config behavior |
 |---|---|
 | **Install** | touches no config, no `.env`, no workspace. The one exception today — pinning `VAK_GATEWAY_TOKEN` — moves to setup's activation step, where the console it authenticates is actually being started. |
-| **Update** | preserves every layer untouched. If a release changes the seed set, the delta is *offered*, never applied. Config schema is additive-only within a major version. |
+| **Update** | preserves every user-edited layer and applies standard skill/plugin seed deltas only when the installed content still matches Vak's recorded shipped digest; new content is added, edited or independently installed content is left untouched. Config schema is additive-only within a major version. |
 | **Reinstall** | reads existing config and skips every settled step. It never rewrites a settled answer. |
 | **Uninstall** | removes units and the prefix; config and secrets survive. |
 | **Uninstall --purge** | removes `data_home()` **and** `~/vak-home` (D3) — which means the Shared config layer, the canonical `.env`, every seeded skill, every installed plugin, and every session. Preserve-allowlist, symlink refusal, second confirmation naming exactly what dies. Project-layer `.vak/` directories inside other repositories are **not** touched: they are the user's files in the user's projects, and a purge is not a licence to walk the filesystem. That exception is stated in the confirmation. |

@@ -32,6 +32,7 @@ type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
 
 export default function Sidebar() {
   const [filter, setFilter] = createSignal<Filter>("all");
+  const [everydayTasksOpen, setEverydayTasksOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; cwd: string; name: string } | null>(null);
@@ -169,8 +170,8 @@ export default function Sidebar() {
       if (next && (isRunning(session.session_id) || session.running)) {
         try {
           await api.cancelRun(session.session_id);
-        } catch {
-          // ignore
+        } catch (error) {
+          throw new Error(`could not stop the active task before archiving: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       await api.setArchived(session.session_id, next);
@@ -230,8 +231,8 @@ export default function Sidebar() {
           if (isRunning(session.session_id) || session.running) {
             try {
               await api.cancelRun(session.session_id);
-            } catch {
-              // ignore
+            } catch (error) {
+              throw new Error(`could not stop the active task before deletion: ${error instanceof Error ? error.message : String(error)}`);
             }
           }
           await api.deleteSession(session.session_id);
@@ -268,12 +269,12 @@ export default function Sidebar() {
             aria-expanded={searchOpen()}
             onClick={() => setSearchOpen((open) => !open)}
           ><Icon name="search" /></button>
-          <button class="icon-button subtle has-tooltip" data-tooltip="Hide sidebar ⌘B" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
+          <button type="button" class="icon-button subtle has-tooltip" data-tooltip="Hide sidebar ⌘B" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
         </div>
       </div>
 
       <nav class="sb-nav" aria-label="Primary">
-        <button class="sb-nav-item sb-new" onClick={() => void newSession()}>
+        <button type="button" class="sb-nav-item sb-new" onClick={() => void newSession()}>
           <Icon name="add" />
           <span>{presentationMode() === "everyday" ? "New conversation" : "New task"}</span>
           <Show when={presentationMode() === "advanced"}>
@@ -281,19 +282,19 @@ export default function Sidebar() {
           </Show>
         </button>
         <Show when={presentationMode() === "everyday"}>
-          <button class="sb-nav-item" onClick={() => void newSession()}>
+          <button type="button" class="sb-nav-item" classList={{ active: !everydayTasksOpen() }} onClick={() => { setEverydayTasksOpen(false); void newSession(); }}>
             <Icon name="spark" />
             <span>Home</span>
           </button>
-          <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
-            <Icon name="check" />
+          <button type="button" class="sb-nav-item" classList={{ active: everydayTasksOpen() }} onClick={() => setEverydayTasksOpen(true)}>
+            <Icon name="chat" />
             <span>My tasks</span>
           </button>
-          <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
+          <button type="button" class="sb-nav-item" onClick={() => setTasksOpen(true)}>
             <Icon name="timer" />
-            <span>Reminders</span>
+            <span>Reminders &amp; recurring work</span>
           </button>
-          <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
+          <button type="button" class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
             <Icon name="archive" />
             <span>Saved</span>
           </button>
@@ -340,9 +341,9 @@ export default function Sidebar() {
       <Show when={presentationMode() === "everyday"}>
         <div class="sb-list">
           <div class="sb-section-row">
-            <span class="sb-section-title">Recent</span>
+            <span class="sb-section-title">{everydayTasksOpen() ? "My tasks" : "Recent"}</span>
           </div>
-          <For each={visible().slice(0, 3)}>
+          <For each={everydayTasksOpen() ? visible() : visible().slice(0, 3)}>
             {(session) => (
               <div
                 class="sb-item"
@@ -361,7 +362,7 @@ export default function Sidebar() {
               </div>
             )}
           </For>
-          <Show when={visible().length > 3}>
+          <Show when={!everydayTasksOpen() && visible().length > 3}>
             <div class="sb-section-row" style={{ "margin-top": "12px" }}>
               <span class="sb-section-title">Earlier</span>
             </div>
@@ -392,7 +393,7 @@ export default function Sidebar() {
         <div class="sb-section-row">
           <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Workspaces"}</span>
           <Show when={filter() === "archived"}>
-            <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
+            <button type="button" class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
           </Show>
           <Show when={filter() !== "archived"}>
             <button class="sb-section-add has-tooltip" data-tooltip="Open workspace" aria-label="Open workspace" disabled={workspaceSwitching()} onClick={() => void switchWorkspace()}><Icon name="add" size={14} /></button>
@@ -439,7 +440,7 @@ export default function Sidebar() {
                           setSessionContextMenu({ x: e.clientX, y: e.clientY, session });
                         }}
                       >
-                        <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
+                    <button type="button" class="sb-item-main" onClick={() => void activate(session.session_id)}>
                           <span class="session-icon"><Icon name="chat" size={14} /></span>
                           <span class="sb-item-copy">
                             <span class="sb-title">{session.title || "Untitled task"}</span>
@@ -453,14 +454,14 @@ export default function Sidebar() {
                             </span>
                           </span>
                         </button>
-                        <button class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                        <button type="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
                           <Icon name="history" size={13} />
                         </button>
-                        <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, !session.archived); }}>
+                        <button type="button" class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, !session.archived); }}>
                           <Icon name={session.archived ? "restore" : "archive"} size={13} />
                         </button>
                         <Show when={session.archived}>
-                          <button class="sb-archive has-tooltip danger" data-tooltip="Permanently delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); void requestDeleteSession(session); }}>
+                          <button type="button" class="sb-archive has-tooltip danger" data-tooltip="Permanently delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); void requestDeleteSession(session); }}>
                             <Icon name="trash" size={13} />
                           </button>
                         </Show>
@@ -479,7 +480,7 @@ export default function Sidebar() {
       </Show>
 
       <div class="sidebar-footer">
-        <button class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
+        <button type="button" class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
         {/* Only where a session is a thing that exists. A session you
             cannot end is a problem on any machine someone else can reach,
             and the desktop has none to end. */}
@@ -523,10 +524,14 @@ export default function Sidebar() {
             </Show>
             <button
               class="context-menu-item"
-              onClick={() => {
-                void navigator.clipboard.writeText(menu().cwd);
-                setNotice({ kind: "info", text: `Copied path to clipboard.` });
+              onClick={async () => {
                 setContextMenu(null);
+                try {
+                  await navigator.clipboard.writeText(menu().cwd);
+                  setNotice({ kind: "info", text: `Copied path to clipboard.` });
+                } catch {
+                  setNotice({ kind: "error", text: "Could not copy the folder path. Clipboard access was denied." });
+                }
               }}
             >
               <Icon name="copy" size={13} />
@@ -579,10 +584,15 @@ export default function Sidebar() {
             </button>
             <button
               class="context-menu-item"
-              onClick={() => {
-                void navigator.clipboard.writeText(menu().session.session_id);
-                setNotice({ kind: "info", text: "Copied task ID to clipboard." });
+              onClick={async () => {
+                const id = menu().session.session_id;
                 setSessionContextMenu(null);
+                try {
+                  await navigator.clipboard.writeText(id);
+                  setNotice({ kind: "info", text: "Copied task ID to clipboard." });
+                } catch {
+                  setNotice({ kind: "error", text: "Could not copy the task ID. Clipboard access was denied." });
+                }
               }}
             >
               <Icon name="copy" size={13} />

@@ -2,7 +2,8 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { api, AuthRequired } from "./api";
 import {
   CHANNEL_MODES, ICONS, Icon, MODES, PageHeader, PathCell, SEC_KINDS, SETUP_STEPS, StatCard,
-  chatSurfaces, confirmDestructive, modeLabel, providerLabel, secKindLabel, setChatSurfaces,
+  chatSurfaces, chatSurfacesError, confirmDestructive, modeLabel, providerLabel, secKindLabel, setChatSurfaces,
+  setChatSurfacesError,
   surfaceIds, surfaceLabel,
 } from "./display";
 import { Home } from "./Home";
@@ -279,6 +280,7 @@ function Login() {
         <input
           type="password"
           placeholder="access token"
+          aria-label="Access token"
           autocomplete="current-password"
           autofocus
           value={token()}
@@ -300,10 +302,10 @@ function Login() {
 
 function Sessions() {
   const [sessions, { refetch }] = createResource(sessionsVersion, () => api.sessions());
-  const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn().catch(() => ({ runs: [], total: 0 })));
+  const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn());
   // Needed only for `workspace_project_hash` — which rows this console
   // instance can archive/delete/export, versus read-only across projects.
-  const [config] = createResource(() => api.config().catch(() => null));
+  const [config, { refetch: refetchConfig }] = createResource(() => api.config());
   const [q, setQ] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
@@ -317,8 +319,8 @@ function Sessions() {
     setBusySession(s.session_id);
     try {
       await api.archiveSession(s.session_id, !s.archived);
+      await refetch();
       pushToast("info", s.archived ? "Unarchived" : "Archived");
-      refetch();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -332,8 +334,8 @@ function Sessions() {
     setBusySession(s.session_id);
     try {
       await api.deleteSession(s.session_id);
+      await refetch();
       pushToast("info", "Session deleted");
-      refetch();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -349,8 +351,8 @@ function Sessions() {
     setBulkBusy(true);
     try {
       const res = await api.deleteAllArchived();
+      await refetch();
       pushToast("info", `Deleted ${res.deleted} archived session${res.deleted === 1 ? "" : "s"}`);
-      refetch();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -376,9 +378,8 @@ function Sessions() {
     setBusyCandidate(sessionId);
     try {
       await api.keepBestRun(sessionId);
+      await Promise.all([bestofnActions.refetch(), refetch()]);
       pushToast("info", "Kept. Those changes are now in your workspace.");
-      bestofnActions.refetch();
-      refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -391,9 +392,8 @@ function Sessions() {
     setBusyCandidate(sessionId);
     try {
       await api.discardBestRun(sessionId);
+      await Promise.all([bestofnActions.refetch(), refetch()]);
       pushToast("info", "Draft discarded");
-      bestofnActions.refetch();
-      refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -412,8 +412,22 @@ function Sessions() {
   return (
     <div class="view">
       <PageHeader title="Sessions" description="Every conversation vak has had — read one, pick up where it left off, or compare the drafts of a task it tried several ways." />
+      <Show when={config.error}>
+        <div class="error-state" role="alert">
+          <strong>Workspace ownership information unavailable.</strong>
+          <p>{String(config.error)} Local-session actions are temporarily hidden until this is read successfully.</p>
+          <button class="ghost small" type="button" onClick={() => void refetchConfig()}>Retry workspace details</button>
+        </div>
+      </Show>
       {/* Best of N Candidate Runs Card */}
-      <Show when={(bestofn()?.runs?.length ?? 0) > 0}>
+      <Show when={bestofn.error}>
+        <section class="panel panel-alert callout" role="alert">
+          <strong>Could not load comparison drafts</strong>
+          <p class="dim">{String(bestofn.error)}</p>
+          <button class="ghost small" type="button" onClick={() => void bestofnActions.refetch()}>Retry</button>
+        </section>
+      </Show>
+      <Show when={!bestofn.error && (bestofn()?.runs?.length ?? 0) > 0}>
         <section class="panel" style="margin-bottom:14px">
           <div class="panel-title-row">
             <div>
@@ -585,8 +599,8 @@ function Transcript(props: { sessionId: string }) {
     setSubagentBusy(child.id);
     try {
       await api.stopSubagent(props.sessionId, child.id);
+      await refetchSubagents();
       pushToast("info", "Subagent stop requested");
-      refetchSubagents();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -634,7 +648,7 @@ function Transcript(props: { sessionId: string }) {
           })
       : Promise.resolve(null),
   );
-  const [checkpointsData, { refetch: refetchCheckpoints }] = createResource(activeTab, (t) => t === "checkpoints" ? api.checkpoints(props.sessionId).catch(() => ({ checkpoints: [] })) : Promise.resolve(null));
+  const [checkpointsData, { refetch: refetchCheckpoints }] = createResource(activeTab, (t) => t === "checkpoints" ? api.checkpoints(props.sessionId) : Promise.resolve(null));
 
   const PAGE = 100;
 
@@ -712,9 +726,8 @@ function Transcript(props: { sessionId: string }) {
       // this tab never ran anything on it.
       await api.attach(props.sessionId);
       await api.restoreCheckpoint(props.sessionId, seq);
+      await Promise.all([refetchCheckpoints(), load(true)]);
       pushToast("info", `Restored to checkpoint #${seq}`);
-      refetchCheckpoints();
-      load(true);
     } catch (err) {
       pushToast("alert", `${err}`);
     }
@@ -935,7 +948,10 @@ function Transcript(props: { sessionId: string }) {
         {/* Checkpoints Tab */}
         <Match when={activeTab() === "checkpoints"}>
           <Show when={!checkpointsData.loading} fallback={<div class="empty">Loading checkpoints…</div>}>
-            <Show when={(checkpointsData()?.checkpoints?.length ?? 0) > 0} fallback={<div class="empty">No save points yet. Vak records one each time it finishes a piece of work.</div>}>
+            <Show when={checkpointsData.error}>
+              <div class="error-state" role="alert">Could not load checkpoints: {String(checkpointsData.error)} <button class="ghost small" type="button" onClick={() => void refetchCheckpoints()}>Retry</button></div>
+            </Show>
+            <Show when={!checkpointsData.error && (checkpointsData()?.checkpoints?.length ?? 0) > 0} fallback={<Show when={!checkpointsData.error}><div class="empty">No save points yet. Vak records one each time it finishes a piece of work.</div></Show>}>
               <table class="table">
                 <thead>
                   <tr><th>#</th><th>when</th><th>commit</th><th>what changed</th><th /></tr>
@@ -978,6 +994,17 @@ const EXTENSION_TABS = [
   { hash: "#/integrations/tasks", label: "Scheduled tasks" },
 ] as const;
 
+const KNOWLEDGE_TABS = [
+  { hash: "#/memory", label: "Memory" },
+  { hash: "#/feeds", label: "Feeds" },
+  { hash: "#/search", label: "Search" },
+] as const;
+
+function knowledgeTab(): string {
+  const r = route().split("?", 1)[0];
+  return KNOWLEDGE_TABS.find((t) => r === t.hash || r.startsWith(`${t.hash}/`))?.hash ?? "#/memory";
+}
+
 function extensionsTab(): string {
   const r = route();
   return EXTENSION_TABS.slice(1).find((t) => r.startsWith(t.hash))?.hash ?? "#/integrations";
@@ -987,21 +1014,23 @@ interface ExtensionsCtx {
   scope: () => ConfigScope;
   plugins: () => import("./types").PluginItem[];
   pluginsLoading: () => boolean;
-  refetchPlugins: () => void;
+  refetchPlugins: () => void | Promise<unknown>;
   mcp: () => Record<string, McpServerConfig>;
   mcpLoading: () => boolean;
-  refetchMcp: () => void;
+  mcpError: () => unknown;
+  refetchMcp: () => void | Promise<unknown>;
   hooks: () => HookConfig[];
   hooksLoading: () => boolean;
-  refetchHooks: () => void;
+  hooksError: () => unknown;
+  refetchHooks: () => void | Promise<unknown>;
   skills: () => SkillItem[];
   skillsLoading: () => boolean;
   proposals: () => SkillProposal[];
   proposalsLoading: () => boolean;
-  refetchSkills: () => void;
+  refetchSkills: () => void | Promise<unknown>;
   tasks: () => TaskItem[];
   tasksLoading: () => boolean;
-  refetchTasks: () => void;
+  refetchTasks: () => void | Promise<unknown>;
   /** Parsed allow/ask/deny rules from the running config. */
   rules: () => ParsedRule[];
   /** Effective permission mode, which decides everything no rule covers. */
@@ -1103,13 +1132,13 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       }, props.ctx.scope());
+      await props.ctx.refetchMcp();
       pushToast("info", `Connected ‘${name}’`);
       setNewName("");
       setNewCmd("");
       setNewArgs("");
       setNewNetwork(false);
       setNewEnv("");
-      props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1124,8 +1153,8 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     delete next[name];
     try {
       await api.putMcpServers(next, props.ctx.scope());
+      await props.ctx.refetchMcp();
       pushToast("info", `Disconnected ‘${name}’`);
-      props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1154,9 +1183,9 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       }, props.ctx.scope());
+      await props.ctx.refetchMcp();
       pushToast("info", `Updated ‘${name}’`);
       setEditing("");
-      props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1173,9 +1202,8 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     try {
       await api.enableIntegration(entry.id, props.ctx.scope(), key);
       setIntegrationKeys((current) => ({ ...current, [entry.id]: "" }));
+      await Promise.all([catalogActions.refetch(), props.ctx.refetchMcp()]);
       pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Global" : "Workspace"}`);
-      await catalogActions.refetch();
-      props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1189,11 +1217,10 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     setIntegrationBusy(entry.id);
     try {
       await api.removeIntegration(entry.id, props.ctx.scope());
+      await Promise.all([catalogActions.refetch(), props.ctx.refetchMcp()]);
       pushToast("info", props.ctx.scope() === "project" && entry.inherited
         ? `${entry.label} workspace override cleared`
         : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Global" : "Workspace"}`);
-      await catalogActions.refetch();
-      props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1290,6 +1317,10 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
               </thead>
               <tbody><SkeletonRows cols={6} /></tbody>
             </table>
+          </Match>
+
+          <Match when={props.ctx.mcpError()}>
+            <div class="error-state" role="alert">Could not load connected apps: {String(props.ctx.mcpError())} <button class="ghost small" type="button" onClick={() => props.ctx.refetchMcp()}>Retry</button></div>
           </Match>
 
           <Match when={servers().length === 0}>
@@ -1491,11 +1522,11 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const pluginScope = () => props.ctx.scope() === "user" ? "user" as const : "workspace" as const;
   const [sources, { refetch: refetchSources }] = createResource(
     pluginScope,
-    (scope) => api.pluginSources(scope).catch(() => ({ sources: [] })),
+    (scope) => api.pluginSources(scope),
   );
   const [catalog, { refetch: refetchCatalog }] = createResource(
     () => [catalogQuery(), pluginScope()] as const,
-    ([query, scope]) => api.pluginCatalog(query, scope).catch(() => ({ entries: [], errors: [] })),
+    ([query, scope]) => api.pluginCatalog(query, scope),
   );
   const refresh = props.ctx.refetchPlugins;
   const install = async (update: boolean) => {
@@ -1505,11 +1536,10 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     try {
       if (update) await api.pluginUpdate(value, pluginScope());
       else await api.pluginInstall(value, pluginScope());
+      await Promise.all([refetchSources(), refetchCatalog()]);
       pushToast("info", update ? "Plugin generation staged" : "Plugin installed disabled");
       setPath("");
       refresh();
-      void refetchSources();
-      void refetchCatalog();
     } catch (error) {
       pushToast("alert", `${error}`);
     } finally {
@@ -1537,11 +1567,18 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     </div>
     <div class="panel">
       <div class="panel-title-row"><div><h2>Catalog sources</h2><p>Register a local marketplace snapshot for review. Sources start disabled and are revalidated before activation.</p></div></div>
+      <Show when={sources.error || catalog.error}>
+        <div class="error-state" role="alert">
+          Catalog data is unavailable; empty results are unknown, not absent.
+          <Show when={sources.error}> Sources: {String(sources.error)} <button class="ghost small" type="button" onClick={() => void refetchSources()}>Retry sources</button></Show>
+          <Show when={catalog.error}> Catalog: {String(catalog.error)} <button class="ghost small" type="button" onClick={() => void refetchCatalog()}>Retry catalog</button></Show>
+        </div>
+      </Show>
       <div class="form-row"><label>Catalog directory<input class="mono" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} placeholder="/path/to/catalog" /></label></div>
       <div class="form-row"><label>Label<input value={sourceLabel()} onInput={(e) => setSourceLabel(e.currentTarget.value)} placeholder="Team catalog" /></label></div>
       <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="form-row"><label>Key ID<input class="mono" value={keyId()} onInput={(e) => setKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={publicKey()} onInput={(e) => setPublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={signature()} onInput={(e) => setSignature(e.currentTarget.value)} /></label></div></details>
-      <button disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); void refetchSources(); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
-      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope()); void refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope()); void refetchSources(); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+      <button type="button" disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed); await refetchSources(); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
+      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
       <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
       <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
         <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div>
@@ -1579,8 +1616,8 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
     try {
       if (promote) await api.promoteProposal(id);
       else await api.rejectProposal(id);
+      await props.ctx.refetchSkills();
       pushToast("info", promote ? "Promoted to an active skill" : "Proposal rejected");
-      props.ctx.refetchSkills();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1748,10 +1785,10 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           failure_mode: failureMode(),
         },
       ], props.ctx.scope());
+      await props.ctx.refetchHooks();
       pushToast("info", `Added — runs ${(HOOK_EVENT_LABELS[event()] ?? event()).toLowerCase()}`);
       setCommand("");
       setMatcher("");
-      props.ctx.refetchHooks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1766,8 +1803,8 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     next.splice(index, 1);
     try {
       await api.putHooks(next, props.ctx.scope());
+      await props.ctx.refetchHooks();
       pushToast("info", "Automation removed");
-      props.ctx.refetchHooks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1788,8 +1825,8 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     next[index] = { ...current, ...patch };
     try {
       await api.putHooks(next, props.ctx.scope());
+      await props.ctx.refetchHooks();
       pushToast("info", ok);
-      props.ctx.refetchHooks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -1858,6 +1895,10 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
               <thead><tr><th>on</th><th>when</th><th>fires on</th><th>runs</th><th>give up after</th><th /></tr></thead>
               <tbody><SkeletonRows cols={6} /></tbody>
             </table>
+          </Match>
+
+          <Match when={props.ctx.hooksError()}>
+            <div class="error-state" role="alert">Could not load automations: {String(props.ctx.hooksError())} <button class="ghost small" type="button" onClick={() => props.ctx.refetchHooks()}>Retry</button></div>
           </Match>
 
           <Match when={props.ctx.hooks().length === 0}>
@@ -2039,8 +2080,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
     setBusyId(id);
     try {
       await work();
+      await props.ctx.refetchTasks();
       pushToast("info", ok);
-      props.ctx.refetchTasks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -2064,7 +2105,7 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
       setPrompt("");
       setSchedule("");
       setModelPin("");
-      props.ctx.refetchTasks();
+      await props.ctx.refetchTasks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -2094,9 +2135,9 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
         schedule: editSchedule().trim() || null,
         model_pin: editModelPin().trim() || null,
       });
+      await props.ctx.refetchTasks();
       pushToast("info", "Task updated");
       setEditingId("");
-      props.ctx.refetchTasks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -2273,24 +2314,23 @@ function ExtensionsSection() {
     scope: configScope,
     plugins: () => plugins()?.plugins ?? [],
     pluginsLoading: () => plugins.loading,
-    refetchPlugins: () => void pluginsActions.refetch(),
+    refetchPlugins: async () => { await pluginsActions.refetch(); },
     mcp: () => mcp()?.servers ?? {},
     mcpLoading: () => mcp.loading,
-    refetchMcp: () => void mcpActions.refetch(),
+    mcpError: () => mcp.error,
+    refetchMcp: async () => { await mcpActions.refetch(); },
     hooks: () => hooks()?.hooks ?? [],
     hooksLoading: () => hooks.loading,
-    refetchHooks: () => void hooksActions.refetch(),
+    hooksError: () => hooks.error,
+    refetchHooks: async () => { await hooksActions.refetch(); },
     skills: () => skills()?.skills ?? [],
     skillsLoading: () => skills.loading,
     proposals: () => proposals()?.proposals ?? [],
     proposalsLoading: () => proposals.loading,
-    refetchSkills: () => {
-      void skillsActions.refetch();
-      void proposalsActions.refetch();
-    },
+    refetchSkills: async () => { await Promise.all([skillsActions.refetch(), proposalsActions.refetch()]); },
     tasks: () => tasks()?.tasks ?? [],
     tasksLoading: () => tasks.loading,
-    refetchTasks: () => void tasksActions.refetch(),
+    refetchTasks: async () => { await tasksActions.refetch(); },
     rules: createMemo(() => parseRuleLists(config()?.permissions)),
     mode: () => config()?.permission_mode ?? "WorkspaceWrite",
     rulesKnown: () => rulesReported(config()),
@@ -2444,8 +2484,7 @@ function MemoryView() {
     setTogglingFlag(key);
     try {
       await api.patchConfigScope(configScope(), { [key]: next });
-      await refetchConfig();
-      void refetchLayer();
+      await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", `${next ? "Enabled" : "Disabled"} in ${configScope() === "user" ? "Global" : "Workspace"}`);
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -2472,10 +2511,10 @@ function MemoryView() {
     setBusy(true);
     try {
       await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined);
+      await refetch();
       pushToast("info", "Vak will remember that");
       setNoteText("");
       setTag("");
-      refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -2488,8 +2527,8 @@ function MemoryView() {
     try {
       const note = memoryData()?.notes?.find((m) => m.id === id);
       await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace");
+      await refetch();
       pushToast("info", "Forgotten");
-      refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     }
@@ -2547,6 +2586,7 @@ function MemoryView() {
                 <label class="toggle">
                   <input
                     type="checkbox"
+                    aria-label={f.title}
                     checked={f.on()}
                     disabled={configData.loading || togglingFlag() === f.key}
                     onChange={(e) => void toggleMemoryFlag(f.key, e.currentTarget.checked)}
@@ -2589,7 +2629,8 @@ function MemoryView() {
                           if (!editText().trim()) return;
                           try {
                             await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim());
-                            setEditing(null); refetch();
+                            await refetch();
+                            setEditing(null);
                             pushToast("info", "Memory amended");
                           } catch (err) {
                             pushToast("alert", `${err}`);
@@ -2625,7 +2666,7 @@ function MemoryView() {
           </div>
           <div class="form-row">
             <label>Applies to</label>
-            <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
+              <select aria-label="Memory note scope" value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
               <option value="project">Workspace</option>
               <option value="profile">Me, in every workspace</option>
             </select>
@@ -3099,7 +3140,7 @@ function Inbox() {
     setAcking(id);
     try {
       await api.inboxAck(id);
-      refetch();
+      await refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -3278,9 +3319,9 @@ function WorkspaceNames(props: { ctx: GatewayCtx }) {
     setSaving(true);
     try {
       await api.patchWorkspaceName(path, name);
+      await props.ctx.refresh();
       pushToast("info", `Workspace renamed to “${name}”`);
       setEditing(null);
-      props.ctx.refresh();
     } catch (error) { pushToast("alert", `Could not rename workspace: ${error}`); }
     finally { setSaving(false); }
   };
@@ -3327,8 +3368,8 @@ function GatewayBindingEditor(props: {
     setBusy(true);
     try {
       await operation();
+      await props.refresh();
       pushToast("info", message);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -3566,7 +3607,7 @@ function VoiceConfigEditor(props: {
   subject: "bot" | "chat";
 }) {
   const [previewing, setPreviewing] = createSignal(false);
-  const [voiceProviders] = createResource(() => api.voiceProviders().catch(() => ({ providers: [] })));
+  const [voiceProviders] = createResource(() => api.voiceProviders());
   const discoveredVoices = createMemo(() =>
     (voiceProviders()?.providers ?? []).flatMap((provider: VoiceProviderSummary) => provider.voices),
   );
@@ -3608,6 +3649,11 @@ function VoiceConfigEditor(props: {
       </label>
       <Show when={props.pinned}>
         <div class="binding-controls">
+          <Show when={voiceProviders.error}>
+            <div class="error-state" role="alert">
+              Voice discovery unavailable: {String(voiceProviders.error)}. Entering an exact voice id is still possible.
+            </div>
+          </Show>
           <Show when={props.setProvider}>
             <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider"><option value="">Inherit voice provider</option><For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For></select>
           </Show>
@@ -3643,9 +3689,9 @@ function ChannelCapabilityPolicy(props: {
   value: ChannelPolicy;
   onChange: (value: ChannelPolicy) => void;
 }) {
-  const [mcp] = createResource(() => api.mcpServers().catch(() => ({ servers: {} })));
-  const [skills] = createResource(() => api.skills().catch(() => ({ skills: [] })));
-  const [hooks] = createResource(() => api.hooks().catch(() => ({ hooks: [] })));
+  const [mcp] = createResource(() => api.mcpServers());
+  const [skills] = createResource(() => api.skills());
+  const [hooks] = createResource(() => api.hooks());
   const update = (patch: Partial<ChannelPolicy>) => props.onChange({ ...props.value, ...patch });
 
   // A server is matched as `name/*` (see `Core::filter_mcp`), a skill by its
@@ -3688,6 +3734,14 @@ function ChannelCapabilityPolicy(props: {
 
   return (
     <section class="channel-capabilities">
+      <Show when={mcp.error || skills.error || hooks.error}>
+        <div class="error-state" role="alert">
+          Capability discovery is incomplete. Empty options below are unknown, not denied.
+          <Show when={mcp.error}> MCP: {String(mcp.error)}</Show>
+          <Show when={skills.error}> Skills: {String(skills.error)}</Show>
+          <Show when={hooks.error}> Hooks: {String(hooks.error)}</Show>
+        </div>
+      </Show>
       <div class="binding-meta">
         By default this channel gets whatever the workspace allows. Anything you change here can
         only take access away, never add it.
@@ -3844,8 +3898,8 @@ function ChannelAccessEditor(props: {
         inherit_bot_policy: inheritBot(),
         voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
       });
+      await props.refresh();
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -3987,8 +4041,8 @@ function PendingChannelCard(props: {
           `${props.entry.key}: "${modeLabel(entry.permission_mode)}" is more than that workspace allows, so it was reduced to "${modeLabel(entry.effective_permission_mode)}".`,
         );
       }
+      await props.refresh();
       pushToast("info", `Approved ${props.entry.key}${entry.workspace ? ` — working in ${entry.workspace}` : ", but no workspace was set"}`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4000,8 +4054,8 @@ function PendingChannelCard(props: {
     setBusy(true);
     try {
       await api.denyGatewayAllowlist(props.entry.key);
+      await props.refresh();
       pushToast("info", `Turned away ${props.entry.key}`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4138,8 +4192,8 @@ function BotAccessEditor(props: {
         policy: policy(),
         voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
       });
+      await props.refresh();
       pushToast("info", `${props.bot.label} updated — chats bound to it pick this up on their next message`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4228,10 +4282,10 @@ function BotRow(props: {
     setBusy("save");
     try {
       await api.putBotIdToken(props.bot.id, token);
+      await props.refresh();
       setEditing(false);
       setDraft("");
       pushToast("info", `${props.bot.label} token saved`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4244,8 +4298,8 @@ function BotRow(props: {
     setBusy("remove");
     try {
       await api.removeBotIdToken(props.bot.id);
+      await props.refresh();
       pushToast("info", `${props.bot.label} token removed`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4258,8 +4312,8 @@ function BotRow(props: {
     setBusy("delete");
     try {
       await api.deleteBot(props.bot.id);
+      await props.refresh();
       pushToast("info", `${props.bot.label} deleted`);
-      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4345,11 +4399,11 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
     setBusy(true);
     try {
       await api.createBot(id().trim(), surface(), label().trim() || id().trim());
+      await props.ctx.refresh();
       pushToast("info", `Bot "${id().trim()}" added — set its token below`);
       setAdding(false);
       setId("");
       setLabel("");
-      props.ctx.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4497,8 +4551,8 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     try {
       await api.patchGatewayBinding(key, {});
       setManualKey("");
+      await props.ctx.refresh();
       pushToast("info", `Added ${key}. It uses the workspace defaults until you change them.`);
-      props.ctx.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -4836,8 +4890,8 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
   });
   const saveWorkspace = async () => {
     const result = await api.patchGatewayWorkspace(workspace());
+    await props.ctx.refresh();
     setWorkspaceDirty(false);
-    props.ctx.refresh();
     if (result.restart_required) {
       window.setTimeout(() => window.location.reload(), 1200);
     }
@@ -4991,9 +5045,9 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
   const [chosenProvider, setChosenProvider] = createSignal("");
   const [models, { refetch: refetchModels }] = createResource(
     () => chosenProvider() || undefined,
-    (name: string) => api.models(name).catch(() => ({ provider: name, models: [] as string[] })),
+    (name: string) => api.models(name),
   );
-  const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
+  const [providers, { refetch: refetchProviders }] = createResource(() => api.providers());
 
   const run = async (what: string, f: () => Promise<unknown>) => {
     setBusy(true);
@@ -5018,6 +5072,12 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
 
       <Match when={props.step === "provider" || props.step === "route"}>
         <div class="setup-action-grid">
+          <Show when={providers.error}>
+            <div class="error-state" role="alert">
+              Could not discover providers: {String(providers.error)}
+              <button class="ghost small" type="button" onClick={() => void refetchProviders()}>Retry</button>
+            </div>
+          </Show>
           <select value={chosenProvider()} onChange={(e) => setChosenProvider(e.currentTarget.value)}>
             <option value="">Choose a service…</option>
             <For each={providers()?.providers ?? []}>
@@ -5025,6 +5085,12 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
             </For>
           </select>
           <Show when={chosenProvider()}>
+            <Show when={models.error}>
+              <div class="error-state" role="alert">
+                Could not discover models for {chosenProvider()}: {String(models.error)}
+                <button class="ghost small" type="button" onClick={() => void refetchModels()}>Retry</button>
+              </div>
+            </Show>
             <input
               type="password"
               autocomplete="off"
@@ -5130,7 +5196,7 @@ function SetupWizard() {
       } else {
         pushToast("alert", `${failed.length} service(s) failed: ${failed.map((u) => u.name).join(", ")}`);
       }
-      refetch();
+      await refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -5235,14 +5301,18 @@ function GatewaySection() {
       .chatSurfaces()
       .then((surfaces) => {
         setChatSurfaces(surfaces);
+        setChatSurfacesError(null);
         return surfaces;
       })
-      .catch(() => []),
+      .catch((error) => {
+        setChatSurfacesError(error instanceof Error ? error.message : String(error));
+        return [];
+      }),
   );
   const [status, { refetch: refetchStatus }] = createResource(() => api.gatewayStatus());
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
-  const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
-  const [bots, { refetch: refetchBots }] = createResource(() => api.listBots().catch(() => ({ bots: [] })));
+  const [providers] = createResource(() => api.providers());
+  const [bots, { refetch: refetchBots }] = createResource(() => api.listBots());
 
   const refresh = () => {
     refetchStatus();
@@ -5269,6 +5339,23 @@ function GatewaySection() {
         description="Manage the shared/workspace baseline, then narrow it per bot and per chat. A chat can never escalate beyond its workspace permission ceiling."
         actions={<a class="ghost small button-link" href="#/settings">Edit workspace baseline</a>}
       />
+      <Show when={chatSurfacesError()}>
+        <div class="error-state" role="alert">
+          Channel discovery is unavailable. Empty channel options below are unknown,
+          not unconfigured. <button class="ghost small" onClick={() => location.reload()}>Retry</button>
+          <details><summary>Details</summary><pre class="mono">{chatSurfacesError()}</pre></details>
+        </div>
+      </Show>
+      <Show when={providers.error || bots.error}>
+        <section class="panel panel-alert callout" role="alert" style="margin-bottom:14px">
+          <strong>Some channel configuration is unavailable</strong>
+          <p class="dim">
+            {providers.error ? `Provider discovery failed: ${String(providers.error)}. ` : ""}
+            {bots.error ? `Bot discovery failed: ${String(bots.error)}.` : ""}
+            Empty sections below must not be treated as unconfigured.
+          </p>
+        </section>
+      </Show>
       <section class="panel channel-inheritance-note" style="margin-bottom:14px">
         <div class="panel-title-row">
           <div>
@@ -5376,13 +5463,13 @@ function ApprovalForwarding() {
       const next = await api.setGatewayApprovals(
         mode === "forward" ? { mode, approver: target().trim() } : { mode },
       );
+      await refetch();
       pushToast(
         "info",
         next.mode === "forward"
           ? `Gates now go to ${next.approver} for a yes or no`
           : "Gates on chat surfaces are refused without asking",
       );
-      refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -5500,7 +5587,7 @@ function ApprovalForwarding() {
 /// scope, both of which the server enforces: a malformed rule is rejected
 /// whole rather than half-written, and a learned Allow can never shadow an
 /// explicit Deny because the engine aggregates by severity.
-function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
+function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<void> }) {
   const [view, { refetch }] = createResource(
     () => props.scope,
     (scope: ConfigScope) => api.permissionRules(scope),
@@ -5520,9 +5607,8 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
     setBusy(true);
     try {
       await api.setPermissionRules(props.scope, { [d]: next });
+      await Promise.all([refetch(), props.onSaved()]);
       pushToast("info", message);
-      refetch();
-      props.onSaved();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -5544,7 +5630,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
   return (
     <div class="rule-editor">
       <div class="row-gap">
-        <button class="ghost small" onClick={() => setOpen(!open())}>
+        <button type="button" class="ghost small" onClick={() => setOpen(!open())}>
           {open() ? "Done editing" : "Edit rules"}
         </button>
         <span class="dim">
@@ -5706,9 +5792,13 @@ function Settings() {
   const guard = async (work: () => Promise<void>, ok: string) => {
     try {
       await work();
+      // A mutation is not complete from the editor's perspective until both
+      // the effective projection and the edited layer have been read back.
+      // Awaiting these closes the window where a success toast accompanies
+      // stale controls, especially when switching scopes immediately after
+      // saving.
+      await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", ok);
-      refetchConfig();
-      refetchLayer();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5725,8 +5815,8 @@ function Settings() {
       if (busNkey().trim()) body.nats_nkey_seed = busNkey().trim();
       if (busSecretEnv().trim()) body.workspace_secret_env = busSecretEnv().trim();
       await api.putBusConfig(body);
+      await refetchBus();
       pushToast("info", "Bus configuration saved — takes effect on next server restart");
-      void refetchBus();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5739,8 +5829,8 @@ function Settings() {
     if (!confirmDestructive("Remove all NATS credentials from the workspace .env? The bus connection will stop on restart.")) return;
     try {
       await api.deleteBusConfig();
+      await refetchBus();
       pushToast("info", "Bus credentials removed");
-      void refetchBus();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5752,9 +5842,9 @@ function Settings() {
     setSavingKey(true);
     try {
       await api.setProviderKey(selectedProvider(), providerKeyInput().trim(), configScope());
+      await refetchProviders();
       pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Global" : "Workspace"}`);
       setProviderKeyInput("");
-      refetchProviders();
       await discover(selectedProvider());
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -5813,6 +5903,13 @@ function Settings() {
         title="Settings"
         description="Choose the model, permissions, defaults, and inheritance boundary for vak."
       />
+      <Show when={config.error || layer.error || providersData.error}>
+        <div class="error-state" role="alert">
+          <strong>Some settings could not be loaded.</strong>
+          <p>{String(config.error || layer.error || providersData.error)}</p>
+          <button class="ghost small" type="button" onClick={() => { void refetchConfig(); void refetchLayer(); void refetchProviders(); }}>Retry settings</button>
+        </div>
+      </Show>
       <div class="two-col">
         <div class="stack">
           <section class="panel">
@@ -5826,6 +5923,7 @@ function Settings() {
               <div class="form-row">
                 <label>Provider</label>
                 <select
+                  aria-label="Provider"
                   value={selectedProvider()}
                   ref={(el) => syncSelect(el, selectedProvider, () => providersData()?.providers)}
                   onChange={(e) => setSelectedProvider(e.currentTarget.value)}
@@ -5842,6 +5940,7 @@ function Settings() {
                   fallback={
                     <input
                       class="mono"
+                      aria-label="Model"
                       placeholder={loadingModels() ? "Asking the provider…" : "claude-sonnet-4-5-20250929"}
                       value={selectedModel()}
                       onInput={(e) => setSelectedModel(e.currentTarget.value)}
@@ -5849,6 +5948,7 @@ function Settings() {
                   }
                 >
                   <select
+                    aria-label="Model"
                     value={selectedModel()}
                     ref={(el) => syncSelect(el, selectedModel, discoveredModels)}
                     onChange={(e) => setSelectedModel(e.currentTarget.value)}
@@ -5966,7 +6066,7 @@ function Settings() {
                     void guard(async () => {
                       if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
                       await api.deleteProviderKey(selectedProvider(), configScope());
-                      refetchProviders();
+                      await refetchProviders();
                       setDiscoveredModels([]);
                     }, `Key deleted for ${providerLabel(selectedProvider())}`)
                   }
@@ -5988,10 +6088,10 @@ function Settings() {
             <Show when={config()?.voice} fallback={<div class="dim">Voice configuration unavailable.</div>}>
               {(voice) => <>
                 <label class="inherit-toggle"><input type="checkbox" checked={voice().enabled} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")} /> Enable voice conversations</label>
-                <div class="form-row"><label>Provider</label><input value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} /></div>
-                <div class="form-row"><label>Transcription model</label><input value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} /></div>
-                <div class="form-row"><label>Synthesis model</label><input value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} /></div>
-                <div class="form-row"><label>Realtime model</label><input value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} /></div>
+                <div class="form-row"><label for="voice-provider">Provider</label><input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} /></div>
+                <div class="form-row"><label for="voice-transcription-model">Transcription model</label><input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} /></div>
+                <div class="form-row"><label for="voice-synthesis-model">Synthesis model</label><input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} /></div>
+                <div class="form-row"><label for="voice-realtime-model">Realtime model</label><input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} /></div>
               </>}
             </Show>
           </section>
@@ -6013,7 +6113,13 @@ function Settings() {
                 </span>
               </Show>
             </div>
-            <Show when={busData()}>
+            <Show when={busData()} fallback={
+              <div class="error-state" role="alert">
+                <strong>Event bus configuration unavailable.</strong>
+                <p>{busData.error ? String(busData.error) : "No configuration response was returned."}</p>
+                <button class="ghost small" type="button" onClick={() => void refetchBus()}>Retry bus settings</button>
+              </div>
+            }>
               <div class="form-row">
                 <label>NATS URL</label>
                 <input
@@ -6311,7 +6417,7 @@ interface NavItem {
   hash: string;
   label: string;
   icon: string;
-  group: "Home" | "Work" | "Operations" | "Governance" | "Knowledge" | "Settings";
+  group: "Overview" | "Work" | "Operate" | "Configure" | "System";
   scope: "global" | "project" | "switchable" | "layered";
   badge?: () => string;
   /// Sub-destinations, rendered in the sidebar while the section is open.
@@ -6347,13 +6453,13 @@ function navHref(hash: string): string {
 }
 
 const NAV: NavItem[] = [
-  { group: "Home", hash: "#/setup", label: "Setup", icon: ICONS.overview, scope: "project" },
-  { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
+  { group: "Overview", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
+  { group: "Overview", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
+  { group: "Overview", hash: "#/setup", label: "Setup", icon: ICONS.overview, scope: "project" },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
-  { group: "Work", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
   {
-    group: "Operations",
+    group: "Operate",
     hash: "#/operations",
     label: "Operations",
     icon: ICONS.operations,
@@ -6366,7 +6472,7 @@ const NAV: NavItem[] = [
   // a run, what runs unattended — and they read as four screens for the
   // same reason the Gateway does.
   {
-    group: "Governance",
+    group: "Configure",
     hash: "#/integrations",
     label: "Extensions",
     icon: ICONS.integrations,
@@ -6380,7 +6486,7 @@ const NAV: NavItem[] = [
   // the destination is nameable from the nav rather than found by
   // scrolling one long view.
   {
-    group: "Governance",
+    group: "Configure",
     hash: "#/gateway",
     label: "Channels",
     icon: ICONS.gateway,
@@ -6388,16 +6494,25 @@ const NAV: NavItem[] = [
     children: GATEWAY_TABS,
     activeChild: gatewayTab,
   },
-  { group: "Governance", hash: "#/security", label: "Security", icon: ICONS.security, scope: "global" },
-  { group: "Knowledge", hash: "#/memory", label: "Memory", icon: ICONS.memory, scope: "project" },
-  { group: "Knowledge", hash: "#/feeds", label: "Feeds", icon: ICONS.feeds, scope: "project" },
-  { group: "Knowledge", hash: "#/search", label: "Search", icon: ICONS.search, scope: "global" },
-  { group: "Settings", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
-  { group: "Settings", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts, scope: "layered" },
-  { group: "Settings", hash: "#/settings", label: "Settings", icon: ICONS.settings, scope: "layered" },
+  { group: "Configure", hash: "#/security", label: "Permissions & security", icon: ICONS.security, scope: "global" },
+  { group: "Configure", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts, scope: "layered" },
+  {
+    group: "Configure",
+    hash: "#/memory",
+    label: "Knowledge",
+    icon: ICONS.memory,
+    scope: "project",
+    children: KNOWLEDGE_TABS,
+    activeChild: knowledgeTab,
+  },
+  { group: "Configure", hash: "#/settings", label: "Model & providers", icon: ICONS.settings, scope: "layered" },
+  { group: "System", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
 ];
 
 function routeScope(current: string): NavItem["scope"] {
+  if (current === "#/feeds" || current.startsWith("#/feeds/") || current === "#/search" || current.startsWith("#/search/")) {
+    return "project";
+  }
   if (current === "#/sessions" || current.startsWith("#/sessions/")) return "global";
   return NAV.find((item) => current === item.hash || current.startsWith(`${item.hash}/`))?.scope ?? "global";
 }
@@ -6434,11 +6549,8 @@ function FeedsSection() {
   const [runs, { refetch: refetchRuns }] = createResource(() => api.feedRuns());
   const [quarantine, { refetch: refetchQuarantine }] = createResource(() => api.feedQuarantine());
 
-  const refetchAll = () => {
-    refetchStats();
-    refetchConfigured();
-    refetchRuns();
-    refetchQuarantine();
+  const refetchAll = async () => {
+    await Promise.all([refetchStats(), refetchConfigured(), refetchRuns(), refetchQuarantine()]);
   };
 
   const doSearch = async () => {
@@ -6457,8 +6569,8 @@ function FeedsSection() {
   const toggleSource = async (src: import("./types").ConfiguredFeedSource) => {
     try {
       await api.feedUpdateSource(src.id, { enabled: !src.enabled }, src.scope);
+      await refetchConfigured();
       pushToast("info", `${src.name} ${src.enabled ? "disabled" : "enabled"}`);
-      refetchConfigured();
     } catch (e) {
       pushToast("alert", `Could not update "${src.name}": ${e}`);
     }
@@ -6469,8 +6581,8 @@ function FeedsSection() {
     if (!confirm(`Remove source "${name}"? This stops it from being checked, but keeps items already collected.`)) return;
     try {
       await api.feedDeleteSource(source.id, source.scope);
+      await refetchAll();
       pushToast("info", `Source "${name}" removed`);
-      refetchAll();
     } catch (e) {
       pushToast("alert", `Could not remove "${name}": ${e}`);
     }
@@ -6486,9 +6598,9 @@ function FeedsSection() {
     const name = source.name;
     try {
       await api.feedUpdateSource(source.id, { interval: editInterval(), trust: editTrust() }, source.scope);
+      await refetchConfigured();
       pushToast("info", `"${name}" updated`);
       setEditingSource(null);
-      refetchConfigured();
     } catch (e) {
       pushToast("alert", `Could not update "${name}": ${e}`);
     }
@@ -6499,8 +6611,8 @@ function FeedsSection() {
     if (!confirm(`Delete alert "${name}"?`)) return;
     try {
       await api.feedDeleteAlert(name, alert.scope);
+      await refetchAlerts();
       pushToast("info", `Alert "${name}" deleted`);
-      refetchAlerts();
     } catch (e) {
       pushToast("alert", `Could not delete alert "${name}": ${e}`);
     }
@@ -6509,8 +6621,8 @@ function FeedsSection() {
   const triggerIngest = async () => {
     try {
       const res = await api.feedIngest();
+      await refetchAll();
       pushToast("info", `Found ${res.new_items} new item${res.new_items === 1 ? "" : "s"} across ${res.sources_ingested} source${res.sources_ingested === 1 ? "" : "s"}`);
-      refetchAll();
     } catch (e) {
       pushToast("alert", `Could not check for new items: ${e}`);
     }
@@ -6623,7 +6735,7 @@ function FeedsSection() {
           <div class="panel-title-row"><div><h2>Quarantine</h2><p class="dim">External content held from search and alerts until reviewed.</p></div></div>
           <Show when={quarantine()} fallback={<div class="empty">No quarantined items.</div>}>
             <For each={quarantine()!.items}>
-              {(item) => <div class="feed-source-card"><div class="info"><div class="name">{item.title}</div><div class="meta">{item.source_name} · {item.security_detail || "security review required"}</div></div><button class="small" onClick={async () => { try { await api.feedReleaseItem(item.id); refetchQuarantine(); pushToast("info", "Item released"); } catch (e) { pushToast("alert", `Could not release item: ${e}`); } }}>Release</button></div>}
+              {(item) => <div class="feed-source-card"><div class="info"><div class="name">{item.title}</div><div class="meta">{item.source_name} · {item.security_detail || "security review required"}</div></div><button type="button" class="small" onClick={async () => { try { await api.feedReleaseItem(item.id); await refetchQuarantine(); pushToast("info", "Item released"); } catch (e) { pushToast("alert", `Could not release item: ${e}`); } }}>Release</button></div>}
             </For>
           </Show>
         </section>
@@ -6736,7 +6848,7 @@ function FeedsSection() {
           <Show when={alertFormOpen()}>
             <AlertForm
               onClose={() => setAlertFormOpen(false)}
-              onAdded={() => { setAlertFormOpen(false); refetchAlerts(); }}
+              onAdded={async () => { await refetchAlerts(); setAlertFormOpen(false); }}
             />
           </Show>
           <Show when={!alerts.error} fallback={<LoadError message={`${alerts.error}`} onRetry={() => refetchAlerts()} />}>
@@ -6805,13 +6917,13 @@ function FeedsSection() {
       </Show>
 
       <Show when={wizardOpen()}>
-        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={() => { setWizardOpen(false); refetchAll(); }} />
+        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={async () => { await refetchAll(); setWizardOpen(false); }} />
       </Show>
     </div>
   );
 }
 
-function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
+function AlertForm(props: { onClose: () => void; onAdded: () => void | Promise<void> }) {
   const [name, setName] = createSignal("");
   const [keywords, setKeywords] = createSignal("");
   const [tags, setTags] = createSignal("");
@@ -6832,7 +6944,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
         deliver_to: deliverTo().trim() || undefined,
       });
       pushToast("info", `Alert "${name()}" created`);
-      props.onAdded();
+      await props.onAdded();
     } catch (e) {
       pushToast("alert", `Could not create alert: ${e}`);
     }
@@ -6865,8 +6977,8 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
         </select>
       </div>
       <div style={{ display: "flex", gap: "8px", "margin-top": "8px" }}>
-        <button class="ghost" onClick={props.onClose}>Cancel</button>
-        <button onClick={submit} disabled={!canSubmit() || saving()}>{saving() ? "Saving…" : "Create alert"}</button>
+        <button type="button" class="ghost" onClick={props.onClose}>Cancel</button>
+        <button type="button" onClick={() => void submit()} disabled={!canSubmit() || saving()}>{saving() ? "Saving…" : "Create alert"}</button>
       </div>
     </div>
   );
@@ -6924,7 +7036,7 @@ function FeedReader() {
   );
 }
 
-function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
+function FeedWizard(props: { onClose: () => void; onAdded: () => void | Promise<void> }) {
   const [step, setStep] = createSignal(1);
   const [selectedType, setSelectedType] = createSignal<string | null>(null);
   const [name, setName] = createSignal("");
@@ -6972,7 +7084,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
     };
     try {
       await api.feedAddSource(source);
-      props.onAdded();
+      await props.onAdded();
       pushToast("info", `Source "${name()}" added`);
     } catch (e) {
       pushToast("alert", `Could not add the source: ${e}`);
@@ -7122,6 +7234,7 @@ export default function App() {
     const r = route().split("?", 1)[0] || "#/overview";
     if (r === "#/setup") return "#/setup";
     if (r.startsWith("#/sessions/")) return "transcript";
+    if (r === "#/feeds" || r.startsWith("#/feeds/") || r === "#/search" || r.startsWith("#/search/")) return r;
     // Operations owns a real subtree. Resolve it before the generic
     // top-level prefix matcher so nested routes never fall through to a
     // different screen when the hash carries a query or detail segment.
@@ -7140,6 +7253,12 @@ export default function App() {
     return "overview" as const;
   };
 
+  const navItemActive = (item: NavItem) => {
+    const current = currentRoute();
+    if (item.hash === "#/memory" && (current === "#/feeds" || current === "#/search")) return true;
+    return current === item.hash;
+  };
+
   return (
     <Switch>
       <Match when={authed() === null}>
@@ -7155,21 +7274,21 @@ export default function App() {
             <div class="sidebar-scope">
               <ScopeControl />
             </div>
-            <nav>
+            <nav aria-label="Primary">
               <For each={NAV}>
                 {(item, index) => (
                   <>
                     <Show when={index() === 0 || NAV[index() - 1].group !== item.group}>
                       <div class="nav-group-label">{item.group}</div>
                     </Show>
-                    <a href={navHref(item.hash)} classList={{ active: currentRoute() === item.hash }}>
+                    <a href={navHref(item.hash)} classList={{ active: navItemActive(item) }}>
                       <Icon d={item.icon} />
                       {item.label}
                       <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
                         <span class="nav-badge">{item.badge!()}</span>
                       </Show>
                     </a>
-                    <Show when={item.children && currentRoute() === item.hash}>
+                    <Show when={item.children && navItemActive(item)}>
                       <div class="nav-sub">
                         <For each={item.children ?? []}>
                           {(child) => (

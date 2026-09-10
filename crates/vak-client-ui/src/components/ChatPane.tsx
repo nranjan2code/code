@@ -1,11 +1,12 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationOf, toggleItemExpanded, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, presentationOf, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
 import * as api from "../api";
+import "../focusTrap";
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
 /// result carries structured envelope JSON the presentation timeline renders
@@ -34,13 +35,33 @@ function EmptyChat(props: { hasSession: boolean }) {
         <Icon name="chat" size={22} />
       </div>
       <h2 class="chat-empty-headline">
-        {props.hasSession ? "Nothing here yet" : "Start a task"}
+        {props.hasSession ? "Nothing here yet" : presentationMode() === "everyday" ? "What would you like to do?" : "Start a task"}
       </h2>
       <p class="chat-empty-hint">
         {props.hasSession
           ? "This task has no visible activity at the current transcript detail. Switch to \"balanced\" or \"audit\" in the composer to see more."
           : "Ask Vak to build, fix, explain, research, write, or analyze something — it starts a task with this workspace's files and history."}
       </p>
+      <Show when={!props.hasSession && presentationMode() === "everyday"}>
+        <div class="chat-empty-examples" aria-label="Things Vak can help with">
+          <For each={[
+            ["Research a question", "Research this question and summarize the important points."],
+            ["Write or rewrite", "Help me write or rewrite this clearly: "],
+            ["Analyze data", "Help me analyze this data and explain the key findings."],
+            ["Plan something", "Help me make a practical plan for: "],
+          ]}>
+            {([label, prompt]) => (
+              <button
+                type="button"
+                class="chat-empty-example"
+                onClick={() => window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: prompt } }))}
+              >
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 }
@@ -120,11 +141,18 @@ function RunControls(props: { sessionId: string }) {
   const [paused, setPaused] = createSignal(false);
   const [revision, setRevision] = createSignal(0);
   const [busy, setBusy] = createSignal(false);
+  const [controlError, setControlError] = createSignal("");
   const [changing, setChanging] = createSignal(false);
   const [changeText, setChangeText] = createSignal("");
   const [changeKind, setChangeKind] = createSignal("replan");
   const [changeResult, setChangeResult] = createSignal("");
-  const refresh = () => void api.controlState(props.sessionId).then((state) => { setPaused(state.paused); setRevision(state.revision); }).catch(() => {});
+  const refresh = () => void api.controlState(props.sessionId).then((state) => {
+    setPaused(state.paused);
+    setRevision(state.revision);
+    setControlError("");
+  }).catch((error) => {
+    setControlError(`Control state unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  });
   onMount(() => {
     refresh();
     const timer = window.setInterval(refresh, 2000);
@@ -136,7 +164,14 @@ function RunControls(props: { sessionId: string }) {
     try {
       if (paused()) await api.resumeRun(props.sessionId);
       else await api.pauseRun(props.sessionId);
-      setPaused(!paused());
+      // Read back the control state so the label reflects the server's
+      // revision rather than a local optimistic guess.
+      await api.controlState(props.sessionId).then((state) => {
+        setPaused(state.paused);
+        setRevision(state.revision);
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not ${paused() ? "resume" : "pause"} this task: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setBusy(false);
     }
@@ -168,12 +203,15 @@ function RunControls(props: { sessionId: string }) {
   };
   return <Show when={isRunning(props.sessionId)}>
     <div class="run-controls" aria-label="Live task controls">
-      <button class="run-control" disabled={busy()} onClick={() => void toggle()}>{paused() ? "Resume" : "Pause"}</button>
-      <button class="run-control danger" disabled={busy()} onClick={() => void api.cancelRun(props.sessionId)}>Cancel</button>
-      <button class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
+      <button type="button" class="run-control" disabled={busy()} onClick={() => void toggle()}>{paused() ? "Resume" : "Pause"}</button>
+      <button type="button" class="run-control danger" disabled={busy()} onClick={() => void api.cancelRun(props.sessionId).catch((error) => setNotice({ kind: "error", text: `Could not cancel this task: ${error instanceof Error ? error.message : String(error)}` }))}>Cancel</button>
+      <button type="button" class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
       <span class="run-revision" title="Active outcome plan revision">Plan v{revision()}</span>
       <Show when={paused()}><span class="run-paused" role="status">Paused at safe boundary</span></Show>
     </div>
+    <Show when={controlError()}>
+      <div class="inline-error" role="alert">{controlError()} Refreshing will retry; the server remains authoritative.</div>
+    </Show>
     <Show when={changing()}>
       <form class="plan-change" onSubmit={(event) => { event.preventDefault(); void submitChange(); }}>
         <select aria-label="Plan change type" value={changeKind()} onChange={(event) => setChangeKind(event.currentTarget.value)}>
@@ -252,7 +290,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
 
   return (
       <div class="tool" classList={{ err: props.item.isError, open: open(), running: !props.item.done, done: props.item.done }}>
-      <button class="tool-h" aria-expanded={open()} onClick={() => toggleItemExpanded(props.item.id)}>
+      <button type="button" class="tool-h" aria-expanded={open()} onClick={() => toggleItemExpanded(props.item.id)}>
         <span class="tool-dot" />
         <span class="tool-name">{toolLabel()}</span>
         <Show when={summary()}>{(value) => <span class="tool-summary">{value()}</span>}</Show>
@@ -268,7 +306,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
             {/* One action, routed for you: a changed file opens as a diff,
                 a new one opens in the editor. Inline dumps do not scale
                 past the first file. */}
-            <button class="tool-open" onClick={() => void openFileSmart(path())} title={path()}>
+            <button type="button" class="tool-open" onClick={() => void openFileSmart(path())} title={path()}>
               <Icon name="code" size={12} /> View file
             </button>
           </div>
@@ -300,13 +338,15 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
 
 function MessageActions(props: { text: string; role: "user" | "assistant" }) {
   const [copied, setCopied] = createSignal(false);
+  const [copyFailed, setCopyFailed] = createSignal(false);
   const copy = async () => {
+    setCopyFailed(false);
     try {
       await navigator.clipboard.writeText(props.text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {
-      // ignore
+      setCopyFailed(true);
     }
   };
   const editPrompt = () => {
@@ -316,18 +356,20 @@ function MessageActions(props: { text: string; role: "user" | "assistant" }) {
   return (
     <div class={`msg-actions msg-actions-${props.role}`} aria-label="Message actions">
       <button
+        type="button"
         class="msg-action-btn"
-        title={copied() ? "Copied" : "Copy text"}
-        aria-label={copied() ? "Copied" : "Copy text"}
+        title={copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy text"}
+        aria-label={copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy text"}
         onClick={copy}
       >
         <Show when={copied()} fallback={<Icon name="copy" size={11} />}>
           <Icon name="check" size={11} />
         </Show>
-        <span>{copied() ? "Copied" : "Copy"}</span>
+        <span>{copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy"}</span>
       </button>
       <Show when={props.role === "user"}>
         <button
+          type="button"
           class="msg-action-btn"
           title="Edit prompt in composer"
           aria-label="Edit prompt in composer"
@@ -399,13 +441,14 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       fallback={<div class="ap-done">{props.item.resolved}</div>}
     >
       <div class="ap-actions" aria-busy={isApprovalPending(props.item.id)}>
-        <button class="btn primary" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, true, props.sessionId)}>
+        <button type="button" class="btn primary" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, true, props.sessionId)}>
           {isApprovalPending(props.item.id) ? "Allowing…" : "Allow once"}
         </button>
         <div class="ap-rule-hint" role="note">
           Creates a persistent rule for this workspace. You can revoke it later in Settings → Permissions.
         </div>
         <button
+          type="button"
           class="btn"
           title="Create a persistent permission rule for this workspace"
           disabled={isApprovalPending(props.item.id)}
@@ -413,14 +456,14 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
         >
           Create rule…
         </button>
-        <button class="btn danger" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, false, props.sessionId)}>
+        <button type="button" class="btn danger" disabled={isApprovalPending(props.item.id)} onClick={() => void approve(props.item.id, false, props.sessionId)}>
           {isApprovalPending(props.item.id) ? "Resolving…" : "Deny"}
         </button>
       </div>
     </Show>
     <Show when={showRulePreview()}>
       <div class="modal-back" onClick={() => setShowRulePreview(false)}>
-        <div class="modal confirm-modal ap-rule-modal" role="dialog" aria-modal="true" aria-labelledby={`rule-title-${props.item.id}`} onClick={(e) => e.stopPropagation()}>
+        <div class="modal confirm-modal ap-rule-modal" role="dialog" aria-modal="true" aria-labelledby={`rule-title-${props.item.id}`} onClick={(e) => e.stopPropagation()} use:trapFocus>
           <h3 id={`rule-title-${props.item.id}`}>Create persistent rule?</h3>
           <p>This rule will apply automatically to matching requests in this workspace.</p>
           <dl class="ap-rule-preview">
@@ -430,8 +473,8 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
             <div><dt>Revoke</dt><dd>Settings → Permissions → Rules</dd></div>
           </dl>
           <div class="confirm-modal-actions">
-            <button class="btn-subtle" onClick={() => setShowRulePreview(false)}>Cancel</button>
-            <button class="btn-action" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Create rule</button>
+            <button type="button" class="btn-subtle" onClick={() => setShowRulePreview(false)}>Cancel</button>
+            <button type="button" class="btn-action" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Create rule</button>
           </div>
         </div>
       </div>
@@ -620,7 +663,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         </Show>
       </div>
       <Show when={!atBottom()}>
-        <button class="scroll-latest" onClick={() => scrollToBottom(true)}>
+        <button type="button" class="scroll-latest" onClick={() => scrollToBottom(true)}>
           <Icon name="chevron" size={13} /> Latest
         </button>
       </Show>

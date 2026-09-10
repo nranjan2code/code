@@ -115,7 +115,10 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
     let spec = PresentationSpec {
         schema_version: super::SPEC_SCHEMA_VERSION,
         id: format!("seed.{id}"),
-        revision: 1,
+        // Seed definitions are immutable revisions. Bump this whenever the
+        // declarative starter shape changes so an older persisted seed cannot
+        // collide with the new digest at the same (id, revision) key.
+        revision: 2,
         accepts: vec![accepts.into()],
         root: SpecNode {
             primitive: root_primitive,
@@ -150,7 +153,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
             scope: LibraryScope::Workspace,
             owner: "builtin".into(),
             plugin_id: None,
-            generation: Some("seed-1".into()),
+            generation: Some("seed-2".into()),
         },
         enabled: false,
     }
@@ -196,11 +199,8 @@ mod tests {
         // by the same generic compiler used for user and plugin definitions.
         // This intentionally does not assert a domain-specific renderer.
         for record in built_in_seed_pack() {
-            let semantic_type = record
-                .spec
-                .accepts
-                .first()
-                .expect("seed accepts one semantic type");
+            assert!(!record.spec.accepts.is_empty(), "seed accepts one semantic type");
+            let semantic_type = &record.spec.accepts[0];
             let result = compile(
                 &record.spec,
                 &CompileInput {

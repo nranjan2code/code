@@ -23,13 +23,17 @@ export interface ResearchData {
 export default function ResearchCards(props: { data: ResearchData }) {
   const [copied, setCopied] = createSignal(false);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const text = props.data.takeaways
       .map((t) => (typeof t === "string" ? t : t.text))
       .join("\n• ");
-    void navigator.clipboard.writeText(`• ${text}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    try {
+      await navigator.clipboard.writeText(`• ${text}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
   };
 
   return (
@@ -40,7 +44,7 @@ export default function ResearchCards(props: { data: ResearchData }) {
           <span class="card-subtitle">{props.data.sources.length} sources</span>
         </div>
         <div class="card-actions">
-          <button class="pill-action-btn" onClick={handleCopy}>
+          <button type="button" class="pill-action-btn" onClick={handleCopy}>
             {copied() ? "✓ Copied" : "Copy Synthesis"}
           </button>
         </div>

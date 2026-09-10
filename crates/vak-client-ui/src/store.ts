@@ -93,6 +93,7 @@ export async function switchModel(newModel: string) {
     if (cur) setHealth({ ...cur, model: newModel });
   } catch (err) {
     console.error("Failed to switch model", err);
+    setNotice({ kind: "error", text: `Could not switch model: ${err instanceof Error ? err.message : String(err)}` });
   }
 }
 
@@ -144,6 +145,7 @@ export interface WorkbenchExecution {
 }
 
 export const [workbenchExecutions, setWorkbenchExecutions] = createSignal<WorkbenchExecution[]>([]);
+export const [workbenchLoadError, setWorkbenchLoadError] = createSignal<string | null>(null);
 const [activeExecutionId, setActiveExecutionSignal] = createSignal<string | null>(localStorage.getItem("vak.activeExecutionId"));
 export { activeExecutionId };
 export function setActiveExecutionId(value: string | null) {
@@ -185,6 +187,7 @@ export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>
 /** A Workbench is scoped to the currently selected task, never global app history. */
 export function resetWorkbenchExecutions() {
   setWorkbenchExecutions([]);
+  setWorkbenchLoadError(null);
   setActiveExecutionId(null);
 }
 
@@ -527,6 +530,7 @@ const [expandedItems, setExpandedItems] = createStore<Record<string, boolean>>({
 const [runningMap, setRunningMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
 const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
+const [presentationErrors, setPresentationErrors] = createStore<Record<string, string | null>>({});
 
 // ---- selectors -------------------------------------------------------------
 
@@ -547,6 +551,10 @@ export function presentationOf(id: string | null): OutputTimeline | null {
   return id ? (presentationBySession[id] ?? null) : null;
 }
 
+export function presentationErrorOf(id: string | null): string | null {
+  return id ? (presentationErrors[id] ?? null) : null;
+}
+
 export function itemExpanded(id: string): boolean {
   return !!expandedItems[id];
 }
@@ -558,10 +566,15 @@ export function toggleItemExpanded(id: string) {
 export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
   if (timeline.schema_version !== 2 || timeline.session_id !== id) throw new Error("Unsupported presentation snapshot");
   setPresentationBySession(id, reconcile(timeline, { key: "id" }));
+  setPresentationErrors(id, null);
 }
 
 export function clearPresentation(id: string) {
   setPresentationBySession(id, null);
+}
+
+export function setPresentationError(id: string, error: string | null) {
+  setPresentationErrors(id, error);
 }
 
 export function applyPresentationEvent(id: string, event: PresentationStreamEvent) {
@@ -1067,4 +1080,5 @@ export function resetSessionView(id: string) {
     setRunningMap(key, false);
   }
   setPresentationBySession(id, { schema_version: 2, session_id: id, items: [], diagnostics: [], goal: null });
+  setPresentationErrors(id, null);
 }

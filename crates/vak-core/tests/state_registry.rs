@@ -83,7 +83,7 @@ async fn a_real_run_writes_only_declared_durable_state() {
 #[test]
 fn seeding_writes_only_declared_shared_state() {
     let home = vak_config::paths::isolate_home_for_tests();
-    vak_core::seed::seed_shared_capabilities();
+    let _ = vak_core::seed::seed_shared_capabilities();
 
     let shared = vak_config::paths::default_workspace();
     if !shared.exists() {

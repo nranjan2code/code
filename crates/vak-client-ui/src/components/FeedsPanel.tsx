@@ -85,8 +85,8 @@ export default function FeedsPanel() {
       </Show>
 
       <div style={{ padding: "8px 12px", display: "flex", gap: "4px", "border-bottom": "1px solid var(--border)" }}>
-        <button class={`btn sm ${view() === "search" ? "primary" : ""}`} onClick={() => setView("search")}>Search</button>
-        <button class={`btn sm ${view() === "browse" ? "primary" : ""}`} onClick={() => setView("browse")}>Browse</button>
+        <button type="button" class={`btn sm ${view() === "search" ? "primary" : ""}`} onClick={() => setView("search")}>Search</button>
+        <button type="button" class={`btn sm ${view() === "browse" ? "primary" : ""}`} onClick={() => setView("browse")}>Browse</button>
       </div>
 
       <Show when={view() === "search"}>

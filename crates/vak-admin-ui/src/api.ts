@@ -835,7 +835,9 @@ export const api = {
     }).then((r) => handle(r)),
 
   deleteBot: (id: string): Promise<void> =>
-    fetch(`/gateway/bots/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => undefined),
+    fetch(`/gateway/bots/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) =>
+      handle(r).then(() => undefined),
+    ),
 
   putBotIdToken: (
     id: string,

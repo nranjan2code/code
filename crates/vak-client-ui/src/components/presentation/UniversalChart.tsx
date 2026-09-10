@@ -45,6 +45,6 @@ export default function UniversalChart(props: { data: ChartData }) {
       <dl class="semantic-chart-values"><For each={props.data.series}>{(series) => <div><dt>{series.name}</dt><dd>{number(geometry().valueAt(series, key()))}</dd></div>}</For></dl>
     </Show>
     <details><summary>Data table</summary><div class="semantic-table-wrap"><table class="semantic-table"><thead><tr><th scope="col">{props.data.x_label ?? "X"}</th><For each={props.data.series}>{(series) => <th scope="col">{series.name}</th>}</For></tr></thead><tbody><For each={geometry().keys}>{(x) => <tr><th scope="row">{String(x)}</th><For each={props.data.series}>{(series) => <td>{number(geometry().valueAt(series, x))}</td>}</For></tr>}</For></tbody></table></div></details>
-    <button onClick={exportData}>Download CSV</button>
+    <button type="button" onClick={exportData}>Download CSV</button>
   </figure>;
 }

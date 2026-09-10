@@ -79,6 +79,7 @@ step "configure it, for real"
 # ledger. An empty home would let an update that destroys data pass.
 (
     cd "$WORKSPACE"
+    VAK_SETUP_PROVIDER=ollama VAK_SETUP_MODEL=llama3 \
     VAK_SETUP_POSTURE=workspace-write VAK_SETUP_SEED=1 \
         "$INSTALLED" setup --non-interactive </dev/null >/dev/null 2>&1 || true
 )

@@ -26,6 +26,7 @@ export default function DirectoryPicker(props: {
     <div class="dirpick">
       <div class="dirpick-bar">
         <button
+          type="button"
           class="settings-button"
           disabled={!listing()?.parent || listing.loading}
           title="Up one level"
@@ -37,7 +38,7 @@ export default function DirectoryPicker(props: {
         <code class="dirpick-path" title={listing()?.path ?? ""}>
           {listing()?.path ?? "…"}
         </code>
-        <button class="settings-button" disabled={listing.loading} onClick={() => void refetch()}>
+        <button type="button" class="settings-button" disabled={listing.loading} onClick={() => void refetch()}>
           Refresh
         </button>
       </div>
@@ -56,6 +57,7 @@ export default function DirectoryPicker(props: {
           {(entry) => (
             <div class="dirpick-row">
               <button
+                type="button"
                 class="dirpick-enter"
                 title={`Open ${entry.name}`}
                 onClick={() => setPath(entry.path)}
@@ -67,6 +69,7 @@ export default function DirectoryPicker(props: {
                 </Show>
               </button>
               <button
+                type="button"
                 class="btn sm"
                 disabled={props.disabled}
                 onClick={() => props.onPick(entry.path)}
@@ -81,6 +84,7 @@ export default function DirectoryPicker(props: {
       <Show when={listing()?.path}>
         {(here) => (
           <button
+            type="button"
             class="btn primary dirpick-here"
             disabled={props.disabled}
             onClick={() => props.onPick(here())}

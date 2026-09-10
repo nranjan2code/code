@@ -93,7 +93,7 @@ export default function SearchModal() {
           <div class="search-results">
             <For each={hits()} fallback={<Show when={searched() && !error()}><div class="dock-empty">No matches.</div></Show>}>
               {(hit) => (
-                <button class="search-hit" disabled={hit.role === "memory" || hit.role === "profile"} onClick={() => { setSearchOpen(false); if (hit.role !== "memory" && hit.role !== "profile") void activate(hit.session_id); }}>
+            <button type="button" class="search-hit" disabled={hit.role === "memory" || hit.role === "profile"} onClick={() => { setSearchOpen(false); if (hit.role !== "memory" && hit.role !== "profile") void activate(hit.session_id); }}>
                   <span class="badge">{hit.role}</span>
                   <span class="search-hit-body">
                     <span class="search-hit-snippet">{hit.snippet}</span>
@@ -116,7 +116,7 @@ export default function SearchModal() {
 
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">memory notes outrank transcript lines · global adds project chips</span>
-            <button class="btn primary" onClick={() => setSearchOpen(false)}>Close</button>
+            <button type="button" class="btn primary" onClick={() => setSearchOpen(false)}>Close</button>
           </div>
         </div>
       </div>

@@ -73,9 +73,12 @@ export default function DiffInspector(props: {
   });
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(activeFile()?.hunks ?? "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    void navigator.clipboard.writeText(activeFile()?.hunks ?? "")
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => setCopied(false));
   };
 
   const handleOpen = () => {
@@ -91,13 +94,13 @@ export default function DiffInspector(props: {
           <span class="card-subtitle">{activeFile()?.filename}</span>
         </div>
         <div class="card-actions">
-          <button class="pill-action-btn" onClick={() => setSplitMode(!splitMode())}>
+          <button type="button" class="pill-action-btn" onClick={() => setSplitMode(!splitMode())}>
             {splitMode() ? "Unified" : "Side-by-Side"}
           </button>
-          <button class="pill-action-btn" onClick={handleCopy}>
+          <button type="button" class="pill-action-btn" onClick={handleCopy}>
             {copied() ? "✓ Copied" : "Copy Diff"}
           </button>
-          <button class="pill-action-btn" onClick={handleOpen}>
+          <button type="button" class="pill-action-btn" onClick={handleOpen}>
             Open in Editor
           </button>
         </div>

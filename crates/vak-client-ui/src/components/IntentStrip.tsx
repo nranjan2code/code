@@ -56,6 +56,7 @@ export function IntentStrip(props: {
   disabled?: boolean;
 }) {
   const [intent, setIntent] = createSignal<IntentExplain | null>(null);
+  const [intentError, setIntentError] = createSignal("");
   const [open, setOpen] = createSignal(
     localStorage.getItem("vak.intent.hud_expanded") === "true",
   );
@@ -75,13 +76,18 @@ export function IntentStrip(props: {
     const prompt = props.prompt.trim();
     if (props.disabled || prompt.length < MIN_CHARS || dismissed()) {
       setIntent(null);
+      setIntentError("");
       return;
     }
+    setIntentError("");
     const controller = new AbortController();
     const timer = setTimeout(() => {
       void explainIntent(prompt, props.sessionId, controller.signal)
         .then(setIntent)
-        .catch(() => {});
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setIntentError(`Intent analysis unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        });
     }, DEBOUNCE_MS);
     onCleanup(() => {
       clearTimeout(timer);
@@ -97,7 +103,11 @@ export function IntentStrip(props: {
   });
 
   return (
-    <Show when={intent()}>
+    <>
+      <Show when={intentError()}>
+        <div class="intent-hud-error" role="status">{intentError()} You can still send the prompt.</div>
+      </Show>
+      <Show when={intent()}>
       {(current) => (
         <div
           class={`intent-hud intent-hud-${toneOf(current())}`}
@@ -227,6 +237,7 @@ export function IntentStrip(props: {
           </Show>
         </div>
       )}
-    </Show>
+      </Show>
+    </>
   );
 }

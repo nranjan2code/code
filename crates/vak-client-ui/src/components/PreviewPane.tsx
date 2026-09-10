@@ -98,7 +98,10 @@ export default function PreviewPane() {
     setError(null);
     try {
       const res = await api.startLaunch(id, name);
-      if (res.error) setError(res.error);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
       await refreshServers();
       const cfg = servers().find((s) => s.name === name);
       if (cfg?.port) {
@@ -116,20 +119,31 @@ export default function PreviewPane() {
   const stopServer = async (name: string) => {
     const id = sid();
     if (!id) return;
-    await api.stopLaunch(id, name).catch(() => {});
-    if (activeServer() === name) {
-      setActiveServer(null);
-      setUrl("");
+    try {
+      await api.stopLaunch(id, name);
+      if (activeServer() === name) {
+        setActiveServer(null);
+        setUrl("");
+      }
+      await refreshServers();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
-    await refreshServers();
   };
 
   const tailLogs = async () => {
     const id = sid();
     const name = activeServer();
     if (!id || !name || !showLogs()) return;
-    const res = await api.launchLogs(id, name).catch(() => null);
-    if (res) setLogs(res.lines ?? []);
+    try {
+      const res = await api.launchLogs(id, name);
+      setLogs(res.lines ?? []);
+      setError(null);
+    } catch (e) {
+      // Keep the last known log lines; an unavailable poll is not an empty
+      // log and must not erase evidence from the running preview.
+      setError(`Preview logs unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   createEffect(() => {
@@ -173,6 +187,7 @@ export default function PreviewPane() {
       <div class="dock-head" style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
         <div style="display: flex; align-items: center; gap: 6px;">
           <button
+            type="button"
             class="chip sm"
             classList={{ on: activeTab() === "component" }}
             onClick={() => setActiveTab("component")}
@@ -181,6 +196,7 @@ export default function PreviewPane() {
             Component
           </button>
           <button
+            type="button"
             class="chip sm"
             classList={{ on: activeTab() === "server" }}
             onClick={() => setActiveTab("server")}
@@ -210,7 +226,7 @@ export default function PreviewPane() {
           >
             logs
           </button>
-          <button class="chip sm" onClick={() => void refreshServers()}>
+          <button type="button" class="chip sm" onClick={() => void refreshServers()}>
             refresh
           </button>
         </Show>
@@ -218,6 +234,7 @@ export default function PreviewPane() {
         <Show when={activeTab() === "component"}>
           <div style="display: flex; gap: 4px; align-items: center;">
             <button
+              type="button"
               class="chip sm"
               disabled={!componentHtml()}
               onClick={reloadComponent}
@@ -226,6 +243,7 @@ export default function PreviewPane() {
               reload
             </button>
             <button
+              type="button"
               class="chip sm"
               disabled={!componentHtml()}
               onClick={popoutComponent}
@@ -235,6 +253,7 @@ export default function PreviewPane() {
             </button>
             <Show when={activeComponentPreview()}>
               <button
+                type="button"
                 class="chip sm"
                 onClick={clearComponentPreview}
                 title="Clear current component preview"

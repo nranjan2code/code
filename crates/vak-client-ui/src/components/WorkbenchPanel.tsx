@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
+  workbenchLoadError,
   activeExecutionId,
   setActiveExecutionId,
   setWorkbenchExecutions,
@@ -123,6 +124,7 @@ export default function WorkbenchPanel() {
   const [candidate, setCandidate] = createSignal<Awaited<ReturnType<typeof api.exportSandboxCandidate>> | null>(null);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
+  const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
 
   // A quiet interval is still meaningful feedback while the provider or a
@@ -189,12 +191,13 @@ export default function WorkbenchPanel() {
       await navigator.clipboard.writeText(cmd);
       setCopiedCmd(true);
       setTimeout(() => setCopiedCmd(false), 2000);
-    } catch {
-      // ignore
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
     }
   };
 
   const copyLog = async (exec: WorkbenchExecution) => {
+    setControlError(null);
     try {
       const fullLog = `${exec.stdout ? `[stdout]\n${exec.stdout}\n` : ""}${
         exec.stderr ? `[stderr]\n${exec.stderr}\n` : ""
@@ -202,8 +205,8 @@ export default function WorkbenchPanel() {
       await navigator.clipboard.writeText(fullLog);
       setCopiedLog(true);
       setTimeout(() => setCopiedLog(false), 2000);
-    } catch {
-      // ignore
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -211,10 +214,11 @@ export default function WorkbenchPanel() {
     const sid = activeId();
     if (!sid) return;
     setStopping(true);
+    setControlError(null);
     try {
       await api.cancelRun(sid);
-    } catch {
-      // ignore
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
     } finally {
       setTimeout(() => setStopping(false), 1000);
     }
@@ -303,6 +307,9 @@ export default function WorkbenchPanel() {
 
   return (
     <div class="workbench-panel">
+      <Show when={controlError()}>
+        <div class="inline-error" role="alert">Could not stop this execution: {controlError()}</div>
+      </Show>
       {/* Workbench Header */}
       <div class="workbench-header">
         <div class="workbench-header-left">
@@ -373,6 +380,9 @@ export default function WorkbenchPanel() {
       <Show when={executions().length === 0}>
         <div class="workbench-empty-state">
           <Icon name="terminal" size={32} />
+          <Show when={workbenchLoadError()}>
+            <p class="error-state" role="alert">Sandbox telemetry unavailable: {workbenchLoadError()}. Reopen this task to retry.</p>
+          </Show>
           <p class="empty-title">No Sandbox Executions Yet</p>
           <p class="empty-desc">
             When the agent runs bash commands, tests, scripts, or installs packages,

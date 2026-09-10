@@ -1440,11 +1440,12 @@ mod tests {
             .next()
             .expect("seed pack is non-empty");
         let id = seed.spec.id.clone();
+        let revision = seed.spec.revision;
         let accepts = seed.spec.accepts[0].clone();
         let mut library = PresentationLibrary::default();
         library.register(seed).expect("register seed");
         library
-            .activate(&id, 1, LibraryScope::Workspace, "a-workspace")
+            .activate(&id, revision, LibraryScope::Workspace, "a-workspace")
             .expect("activate built-in");
         assert!(
             library

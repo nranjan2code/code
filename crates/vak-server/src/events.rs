@@ -401,7 +401,7 @@ impl EventBus {
             None => Some(Vec::new()),
             // The oldest retained event is already past the client's
             // resume point, so whatever sits between them is unrecoverable.
-            Some(oldest) if oldest.seq > seq + 1 => None,
+            Some(oldest) if oldest.seq > seq.saturating_add(1) => None,
             _ => Some(ring.iter().filter(|e| e.seq > seq).cloned().collect()),
         }
     }
@@ -466,5 +466,12 @@ mod bus_tests {
     fn an_empty_bus_replays_nothing_rather_than_demanding_a_resync() {
         let bus = EventBus::new();
         assert_eq!(bus.replay_after(0).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_max_resume_cursor_cannot_overflow_the_ring_boundary_check() {
+        let bus = EventBus::new();
+        bus.send(note(1));
+        assert_eq!(bus.replay_after(u64::MAX).unwrap().len(), 0);
     }
 }

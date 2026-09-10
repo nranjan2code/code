@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, For } from "solid-js";
+import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
 import { host } from "./host";
 import {
   activeId,
@@ -24,8 +24,10 @@ import {
   hydrateFromTranscript,
   hydrateFromPresentation,
   hydrateWorkbenchExecutions,
+  setWorkbenchLoadError,
   resetWorkbenchExecutions,
   clearPresentation,
+  setPresentationError,
   dockTab,
   diffTarget,
   showShortcuts,
@@ -84,9 +86,9 @@ import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
 import StatusBar from "./components/StatusBar";
-import DiffPane from "./components/DiffPane";
-import TerminalPane from "./components/TerminalPane";
-import EditorPane from "./components/EditorPane";
+const DiffPane = lazy(() => import("./components/DiffPane"));
+const TerminalPane = lazy(() => import("./components/TerminalPane"));
+const EditorPane = lazy(() => import("./components/EditorPane"));
 import ShortcutsModal from "./components/ShortcutsModal";
 import SideChatPanel from "./components/SideChatPanel";
 import BestOfNDialog from "./components/BestOfNDialog";
@@ -95,19 +97,19 @@ import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
-import PreviewPane from "./components/PreviewPane";
-import WorkbenchPanel from "./components/WorkbenchPanel";
-import SubagentsPanel from "./components/SubagentsPanel";
-import CommitmentsPanel from "./components/CommitmentsPanel";
+const PreviewPane = lazy(() => import("./components/PreviewPane"));
+const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
+const SubagentsPanel = lazy(() => import("./components/SubagentsPanel"));
+const CommitmentsPanel = lazy(() => import("./components/CommitmentsPanel"));
 import WorkspaceGate from "./components/WorkspaceGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
 import ResizeHandle from "./components/ResizeHandle";
 import Toast from "./components/Toast";
-import Settings from "./components/Settings";
+const Settings = lazy(() => import("./components/Settings"));
 import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
-import FeedsPanel from "./components/FeedsPanel";
+const FeedsPanel = lazy(() => import("./components/FeedsPanel"));
 import FeedsModal from "./components/FeedsModal";
 import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
@@ -118,6 +120,8 @@ import EverydayContextRail from "./components/EverydayContextRail";
 const streams = new Map<string, EventSource>();
 const presentationStreams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
+const sideReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const lastEventIds = new Map<string, string>();
 
 export async function refreshSessions() {
   const source = api.backendUrl();
@@ -175,19 +179,29 @@ export async function refreshSessions() {
   }
 }
 
+export async function retryHydrate(id: string) {
+  await hydrate(id);
+}
+
 async function hydrate(id: string) {
   setHydratingId(id);
   try {
     const [t, presentation, sandbox] = await Promise.all([
       api.transcript(id),
-      api.presentation(id).catch(() => null),
-      api.sandboxExecutions(id).catch(() => ({ events: [], session_id: id })),
+      // A presentation snapshot is an optional projection. If it cannot be
+      // read, preserve the last known projection rather than treating a
+      // transient/permission error as an authoritative empty result.
+      api.presentation(id).catch((error) => {
+        setPresentationError(id, error instanceof Error ? error.message : String(error));
+        return undefined;
+      }),
+      api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
     ]);
     if (!isRunning(id)) {
       hydrateFromTranscript(id, t.messages);
       if (presentation) hydrateFromPresentation(id, presentation);
-      else clearPresentation(id);
       setUsageFor(id, t.usage);
+      setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
       hydrateWorkbenchExecutions(sandbox.events);
     }
   } catch (error) {
@@ -201,6 +215,7 @@ async function hydrate(id: string) {
 }
 
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const resyncingSessions = new Set<string>();
 
 /**
  * Disconnect streams for sessions that are no longer visible and not running.
@@ -234,6 +249,11 @@ function pruneStreams() {
     if (!visible.has(id)) {
       es.close();
       sideStreams.delete(id);
+      const timer = sideReconnectTimers.get(id);
+      if (timer) {
+        clearTimeout(timer);
+        sideReconnectTimers.delete(id);
+      }
     }
   }
 }
@@ -242,11 +262,13 @@ function openStream(id: string) {
   if (streams.has(id)) return;
   const es = api.openEventStream(
     id,
-    (ev) =>
+    (ev, lastEventId) => {
+      if (lastEventId) lastEventIds.set(id, lastEventId);
       applyEvent(id, ev, {
         onFinish: (s) => onFinished(id, s),
         onApproval: (requestId, tool) => onApprovalRequested(id, requestId, tool),
-      }),
+      });
+    },
     () => {
       // Any error means we are not currently receiving events, whether or
       // not the browser will recover on its own — say so rather than
@@ -281,10 +303,23 @@ function openStream(id: string) {
       // Resync: the gap was wider than the server's replay ring, so what
       // is on screen may be missing events it cannot know about. Rebuild
       // from the durable transcript, which is the only complete record.
+      resyncingSessions.add(id);
       setConnection("resyncing");
-      void hydrate(id).finally(() => setConnection("live"));
+      // A running turn cannot be hydrated safely: its durable transcript is
+      // intentionally incomplete until RunFinished. Keep the explicit
+      // resync state until that terminal event, then hydrate the durable
+      // record and only afterward report live again.
+      if (!isRunning(id)) {
+        void hydrate(id).finally(() => {
+          resyncingSessions.delete(id);
+          setConnection("live");
+        });
+      }
     },
-    () => setConnection("live"),
+    () => {
+      if (!resyncingSessions.has(id)) setConnection("live");
+    },
+    lastEventIds.get(id),
   );
   streams.set(id, es);
   if (!presentationStreams.has(id)) {
@@ -384,7 +419,9 @@ function onFinished(id: string, summary: string) {
   setHydratingId(id);
   markRunning(id, false);
   pruneStreams();
-  void Promise.all([refreshSessions(), hydrate(id)]);
+  void Promise.all([refreshSessions(), hydrate(id)]).finally(() => {
+    if (resyncingSessions.delete(id)) setConnection("live");
+  });
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
     void notify("Vak run finished", `${s?.title ?? "Session"} — ${summary}`);
@@ -578,7 +615,9 @@ export async function approve(
       setNotice({ kind: "error", text: `Allowed for this call; not remembered: ${result.learn_error}` });
     }
   } catch (e) {
-    appendSystem(id, `approval failed: ${e instanceof Error ? e.message : String(e)}`);
+    const message = `approval failed: ${e instanceof Error ? e.message : String(e)}`;
+    appendSystem(id, message);
+    setNotice({ kind: "error", text: `Could not record that approval: ${e instanceof Error ? e.message : String(e)}` });
   } finally {
     pendingApprovals.delete(requestId);
   }
@@ -586,7 +625,11 @@ export async function approve(
 
 export function stopRun() {
   const id = activeId();
-  if (id && isRunning(id)) void api.cancelRun(id);
+  if (id && isRunning(id)) {
+    void api.cancelRun(id).catch((err) => {
+      setNotice({ kind: "error", text: `Could not cancel this task: ${err instanceof Error ? err.message : String(err)}` });
+    });
+  }
 }
 
 export async function loadHealth() {
@@ -594,9 +637,16 @@ export async function loadHealth() {
   if (!source) return;
   try {
     const next = await api.health();
-    if (source === api.backendUrl()) setHealth(next);
+    if (source === api.backendUrl()) {
+      setHealth(next);
+      // With no session stream open, health is the authoritative transport
+      // signal for the idle/new-task surface. Active streams retain their
+      // more specific reconnect/resync state.
+      if (streams.size === 0) setConnection("live");
+    }
   } catch {
     setHealth(null);
+    if (streams.size === 0) setConnection("offline");
   }
 }
 
@@ -616,18 +666,35 @@ export async function sendSideQuestion(question: string) {
 
 export function stopSide() {
   const id = activeId();
-  if (id && isRunning(id, "side")) void api.cancelSide(id);
+  if (id && isRunning(id, "side")) {
+    void api.cancelSide(id).catch((err) => {
+      setNotice({ kind: "error", text: `Could not cancel the side question: ${err instanceof Error ? err.message : String(err)}` });
+    });
+  }
 }
 
 function closeAllSideStreams() {
   sideStreams.forEach((es) => es.close());
   sideStreams.clear();
+  sideReconnectTimers.forEach((timer) => clearTimeout(timer));
+  sideReconnectTimers.clear();
 }
 
 function ensureSideStream(id: string) {
   if (sideStreams.has(id)) return;
   const es = api.openSideStream(id, (ev) =>
     applyEvent(id, ev, { bucket: "side" }),
+    () => {
+      setNotice({ kind: "error", text: "Side chat lost its connection; the browser is trying to reconnect." });
+      if (es.readyState !== EventSource.CLOSED || sideStreams.get(id) !== es) return;
+      sideStreams.delete(id);
+      if (sideReconnectTimers.has(id)) return;
+      sideReconnectTimers.set(id, setTimeout(() => {
+        sideReconnectTimers.delete(id);
+        const visible = new Set([activeId(), splitId()].filter((value): value is string => !!value));
+        if (visible.has(id) || isRunning(id, "side")) ensureSideStream(id);
+      }, 2000));
+    },
   );
   sideStreams.set(id, es);
 }
@@ -815,6 +882,7 @@ function PaneBadge(props: { session: string | null; focused: boolean; onClose?: 
   return (
     <div class="pane-badge" classList={{ focused: props.focused }}>
       <button
+        type="button"
         class="pane-badge-main"
         disabled={!props.session || props.focused}
         title={props.focused ? "Focused — composer, stop, and dock act here" : "Click to focus this task"}
@@ -829,7 +897,7 @@ function PaneBadge(props: { session: string | null; focused: boolean; onClose?: 
         </Show>
       </button>
       <Show when={props.onClose}>
-        <button class="pane-badge-close" title="Close split view (⌘\)" aria-label="Close split view" onClick={props.onClose}>
+        <button type="button" class="pane-badge-close" title="Close split view (⌘\)" aria-label="Close split view" onClick={props.onClose}>
           <Icon name="close" size={12} />
         </button>
       </Show>
@@ -932,6 +1000,7 @@ export default function App() {
     const onHashChange = () => void applyRoute(window.location.hash);
     window.addEventListener("hashchange", onHashChange);
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
+    const healthRefresh = window.setInterval(() => void loadHealth(), 10_000);
 
     // The browser knows about the radio before any request times out, so
     // losing the network shows immediately rather than after a stalled
@@ -1023,6 +1092,7 @@ export default function App() {
       window.removeEventListener("online", goOnline);
       stopHostWatch();
       window.clearInterval(sessionRefresh);
+      window.clearInterval(healthRefresh);
       closeAllStreams();
       closeAllSideStreams();
     });
@@ -1123,13 +1193,19 @@ export default function App() {
             </Show>
           </div>
           <Show when={presentationMode() === "everyday" && everydayRailOpen() && !dockTab()}>
-            <EverydayContextRail />
+            <EverydayContextRail onRetry={(id) => void retryHydrate(id)} />
           </Show>
           <Show when={dockTab()}>
             {(tab) => (
               <>
               <ResizeHandle side="dock" />
-              <div class="dock" data-dock={tab()}>
+              <div
+                class="dock"
+                data-dock={tab()}
+                data-testid="advanced-workspace-dock"
+                role="complementary"
+                aria-label={`Advanced workspace: ${dockLabel(tab())}`}
+              >
                 <div class="dock-tabs">
                   <For each={[
                     ["workbench", "Activity", "pulse"],
@@ -1139,7 +1215,10 @@ export default function App() {
                     {([id, label, icon]) => (
                       <button
                         class="dock-tab"
+                        type="button"
+                        aria-label={label}
                         classList={{ on: tab() === id }}
+                        aria-pressed={tab() === id}
                         onClick={() => setDockTab(id)}
                       >
                         <Icon name={icon as IconName} />
@@ -1148,18 +1227,19 @@ export default function App() {
                     )}
                   </For>
                   <details class="dock-more">
-                    <summary class="dock-tab"><Icon name="tune" /><span>More</span></summary>
+                    <summary class="dock-tab" aria-label="More workspace views"><Icon name="tune" /><span>More</span></summary>
                     <div class="dock-more-menu">
                       <For each={[
                         ["preview", "Preview", "preview"], ["editor", "Editor", "file"],
                         ["pr", "Pull request", "git"], ["agents", "Subagents", "grid"],
                         ["feeds", "Feeds", "bell"], ["commitments", "Commitments", "shield"],
                       ] as const}>
-                        {([id, label, icon]) => <button class="dock-tab" onClick={() => setDockTab(id)}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                        {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
                     </div>
                   </details>
                   <button
+                    type="button"
                     class="dock-close"
                     title="Close pane"
                     aria-label="Close workspace pane"
@@ -1168,33 +1248,35 @@ export default function App() {
                     <Icon name="close" />
                   </button>
                 </div>
-                <Show when={tab() === "workbench"}>
-                  <WorkbenchPanel />
-                </Show>
-                <Show when={tab() === "diff"}>
-                  <DiffPane sessionId={diffTarget() ?? activeId()} />
-                </Show>
-                <Show when={tab() === "terminal"}>
-                  <TerminalPane sessionId={activeId()} />
-                </Show>
-                <Show when={tab() === "editor"}>
-                  <EditorPane />
-                </Show>
+                <Suspense fallback={<div class="pane-loading" role="status">Loading workspace tools…</div>}>
+                  <Show when={tab() === "workbench"}>
+                    <WorkbenchPanel />
+                  </Show>
+                  <Show when={tab() === "diff"}>
+                    <DiffPane sessionId={diffTarget() ?? activeId()} />
+                  </Show>
+                  <Show when={tab() === "terminal"}>
+                    <TerminalPane sessionId={activeId()} />
+                  </Show>
+                  <Show when={tab() === "editor"}>
+                    <EditorPane />
+                  </Show>
                 <Show when={tab() === "pr"}>
                   <PrPanel sessionId={activeId()} />
                 </Show>
-                <Show when={tab() === "preview"}>
-                  <PreviewPane />
-                </Show>
-                <Show when={tab() === "agents"}>
-                  <SubagentsPanel sessionId={activeId()} />
-                </Show>
-                <Show when={tab() === "feeds"}>
-                  <FeedsPanel />
-                </Show>
-                <Show when={tab() === "commitments"}>
-                  <CommitmentsPanel />
-                </Show>
+                  <Show when={tab() === "preview"}>
+                    <PreviewPane />
+                  </Show>
+                  <Show when={tab() === "agents"}>
+                    <SubagentsPanel sessionId={activeId()} />
+                  </Show>
+                  <Show when={tab() === "feeds"}>
+                    <FeedsPanel />
+                  </Show>
+                  <Show when={tab() === "commitments"}>
+                    <CommitmentsPanel />
+                  </Show>
+                </Suspense>
               </div>
               </>
             )}
@@ -1232,9 +1314,25 @@ export default function App() {
           <SearchModal />
           <FeedsModal />
           <WorkspacePickerModal />
-          <Show when={settingsOpen()}><Settings /></Show>
+          <Show when={settingsOpen()}>
+            <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>
+          </Show>
         </div>
       )}
     </Show>
   );
+}
+
+function dockLabel(tab: import("./store").DockTab): string {
+  return {
+    workbench: "Activity",
+    diff: "Changes",
+    terminal: "Terminal",
+    preview: "Preview",
+    editor: "Editor",
+    pr: "Pull request",
+    agents: "Subagents",
+    feeds: "Feeds",
+    commitments: "Commitments",
+  }[tab];
 }

@@ -80,7 +80,7 @@ export default function DataGrid(props: { data: DataGridData }) {
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
           />
-          <button class="pill-action-btn" onClick={handleExportCsv}>
+          <button type="button" class="pill-action-btn" onClick={handleExportCsv}>
             {copied() ? "Downloaded" : "Download CSV"}
           </button>
         </div>
@@ -97,7 +97,7 @@ export default function DataGrid(props: { data: DataGridData }) {
                     scope="col"
                     aria-sort={sortCol() === col.key ? (sortAsc() ? "ascending" : "descending") : "none"}
                   >
-                    <button onClick={() => handleSort(col.key)}>
+                    <button type="button" onClick={() => handleSort(col.key)}>
                     {col.label}{" "}
                     {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
                     </button>

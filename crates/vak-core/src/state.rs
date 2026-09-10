@@ -366,6 +366,16 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
+        path: ".vak/.seed-manifest.json",
+        root: Root::Shared,
+        owner: "vak-core",
+        schema: Some(1),
+        kind: Kind::Config,
+        on_update: OnUpdate::AdditiveOnly,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
         path: ".vak/plugins",
         root: Root::Shared,
         owner: "vak-plugin",

@@ -5337,30 +5337,63 @@ async fn flow_run_graph(
 ///
 /// Browsers resend it automatically on their own reconnect; the client also
 /// passes it explicitly when it reopens a stream it tore down itself.
-fn resume_from(headers: &axum::http::HeaderMap) -> Option<u64> {
+fn resume_from(headers: &axum::http::HeaderMap, uri: &axum::http::Uri) -> Option<u64> {
     headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<u64>().ok())
+        .or_else(|| {
+            uri.query()
+                .and_then(|query| {
+                    query.split('&').find_map(|part| {
+                        let (key, value) = part.split_once('=')?;
+                        (key == "last_event_id").then_some(value)
+                    })
+                })
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod resume_cursor_tests {
+    use super::resume_from;
+
+    #[test]
+    fn accepts_native_header_and_manual_reconnect_query_cursor() {
+        let mut headers = axum::http::HeaderMap::new();
+        let uri = "/sessions/s/events?last_event_id=17".parse().unwrap();
+        assert_eq!(resume_from(&headers, &uri), Some(17));
+
+        headers.insert("last-event-id", "23".parse().unwrap());
+        assert_eq!(resume_from(&headers, &uri), Some(23));
+    }
 }
 
 /// One SSE frame carrying its sequence number, so the client's next
 /// reconnect can name where it got to.
 fn seq_frame(framed: &events::SeqEvent) -> Event {
-    Event::default()
-        .id(framed.seq.to_string())
-        .data(serde_json::to_string(&framed.event).unwrap_or_default())
+    let data = match serde_json::to_string(&framed.event) {
+        Ok(data) => data,
+        Err(error) => serde_json::json!({
+            "error": "event serialization failed",
+            "detail": error.to_string(),
+        })
+        .to_string(),
+    };
+    Event::default().id(framed.seq.to_string()).data(data)
 }
 
 async fn events_sse(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::BroadcastStream;
 
-    let resume = resume_from(&headers);
+    let resume = resume_from(&headers, &uri);
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = match state.get(&id) {
@@ -5369,8 +5402,7 @@ async fn events_sse(
             // published between the two is received live rather than
             // falling into the gap between them. Duplicates are filtered
             // below by sequence number; a gap could not be recovered.
-            let mut rx = h.events_tx.subscribe();
-            let _ = rx.try_recv();
+            let rx = h.events_tx.subscribe();
 
             // What the client missed while it was away. `None` means the
             // ring no longer reaches back that far, and the client is told
@@ -5647,10 +5679,18 @@ async fn presentation_feedback(
 async fn presentation_events_sse(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::BroadcastStream;
 
+    // EventSource reconnects carry the last presentation sequence through
+    // the same header/query contract as the primary session stream. The
+    // presentation projection is snapshot-based here: the initial snapshot
+    // is authoritative, and its id establishes the new durable cursor. Do
+    // not manufacture delta replay from an unknown historical baseline.
+    let _resume = resume_from(&headers, &uri);
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = match state.get(&id) {
@@ -5692,9 +5732,15 @@ async fn presentation_events_sse(
                 delta: None,
                 snapshot: timeline.clone(),
             };
-            let initial = tokio_stream::once(Ok(
-                Event::default().data(serde_json::to_string(&initial).unwrap_or_default())
-            ));
+            let initial = tokio_stream::once(Ok(Event::default()
+                .id(last_sequence.to_string())
+                .data(serde_json::to_string(&initial).unwrap_or_else(|error| {
+                    serde_json::json!({
+                        "error": "presentation serialization failed",
+                        "detail": error.to_string(),
+                    })
+                    .to_string()
+                }))));
             handle.subscribed.notify_one();
             let live = BroadcastStream::new(rx).filter_map(move |event| match event {
                 Ok(framed) => {
@@ -5703,9 +5749,15 @@ async fn presentation_events_sse(
                     }
                     last_sequence = framed.seq;
                     crate::projection::project_frame(&mut timeline, framed).map(|frame| {
-                        Ok(Event::default()
-                            .id(last_sequence.to_string())
-                            .data(serde_json::to_string(&frame).unwrap_or_default()))
+                        Ok(Event::default().id(last_sequence.to_string()).data(
+                            serde_json::to_string(&frame).unwrap_or_else(|error| {
+                                serde_json::json!({
+                                    "error": "presentation serialization failed",
+                                    "detail": error.to_string(),
+                                })
+                                .to_string()
+                            }),
+                        ))
                     })
                 }
                 Err(_) => {
@@ -6019,20 +6071,26 @@ async fn onboarding_state(State(state): State<AppState>) -> axum::response::Resp
 
 /// `POST /onboarding/seed` — install the Shared starter capabilities.
 ///
-/// Idempotent, and it never overwrites an existing skill, plugin, or hook,
-/// so re-running after an upgrade adds what is new and leaves edited files
-/// alone. Explicit because seeding is a setup action, never an install
-/// side effect (doc 46 D6).
+/// Idempotent: new standard skills/plugins are added, untouched shipped
+/// content may advance on update, and edited or independently installed
+/// content is preserved. Hooks and network defaults are seeded only when
+/// their configuration layer is empty. Explicit because seeding is a setup
+/// action, never an install side effect (doc 46 D6).
 async fn onboarding_seed(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
     // Touches the filesystem and the plugin store; not an async handler's
     // work (invariant 26).
     let outcome = tokio::task::spawn_blocking(vak_core::seed::seed_shared_capabilities).await;
     match outcome {
-        Ok(()) => {
+        Ok(Ok(())) => {
             state.hub.emit_config_changed("capabilities_seeded", "");
             Json(serde_json::json!({ "ok": true })).into_response()
         }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("seeding did not complete: {e}") })),

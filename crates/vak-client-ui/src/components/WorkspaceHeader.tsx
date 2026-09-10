@@ -58,6 +58,11 @@ export default function WorkspaceHeader() {
   });
   const [exporting, setExporting] = createSignal(false);
 
+  const closeMoreMenu = (event: MouseEvent) => {
+    event.currentTarget instanceof HTMLElement
+      && event.currentTarget.closest("details")?.removeAttribute("open");
+  };
+
   // Unread badge shares the BudgetBanner's polling cadence; the inbox page
   // also publishes counts on its refreshes, so the two stay in sync.
   const pollUnread = async () => {
@@ -105,7 +110,7 @@ export default function WorkspaceHeader() {
     <header class="workspace-head">
       <div class="workspace-leading">
         <Show when={!sidebarOpen()}>
-          <button class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
+          <button type="button" class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
         </Show>
         <div class="workspace-title">
           <div class="workspace-title-row">
@@ -150,15 +155,15 @@ export default function WorkspaceHeader() {
           <summary class="icon-button has-tooltip" data-tooltip="More options" aria-label="More options"><Icon name="more" size={16} /></summary>
           <div class="workspace-more-menu" role="menu">
             <Show when={activeId()}>
-              <button role="menuitem" onClick={() => setSideOpen(!sideOpen())}><Icon name="chat" />Side question ⌘;</button>
-              <button role="menuitem" onClick={() => setBestOfOpen(true)}><Icon name="layers" />Compare approaches</button>
-              <button role="menuitem" onClick={() => void toggleSplit()}><Icon name="grid" />Split view ⌘\</button>
-              <button role="menuitem" onClick={() => setHistoryOpen(true)}><Icon name="history" />History</button>
-              <button role="menuitem" onClick={() => setReceiptsOpen(true)}><Icon name="receipt" />Dispatch forensics</button>
-              <button role="menuitem" onClick={() => setWorkOpen(true)}><span class="menu-letter">W</span>Managed work</button>
-              <button role="menuitem" onClick={() => void exportTranscript()} disabled={exporting()}><Icon name="download" />Download transcript</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Dispatch forensics</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Managed work</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>
-            <button role="menuitem" onClick={() => setSearchOpen(true)}><Icon name="search" />Search ⌘K</button>
+            <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSearchOpen(true); }}><Icon name="search" />Search ⌘K</button>
           </div>
         </details>
       </div>

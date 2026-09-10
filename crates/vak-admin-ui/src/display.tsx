@@ -18,7 +18,8 @@ import type { ChatSurface, OnboardingState, PermissionMode, SystemEvent } from "
 // (`vak_core::Core::SURFACES`), so adding a transport is one edit there and
 // no channel becomes the implicit default by being the one a UI hardcoded.
 const [chatSurfaces, setChatSurfaces] = createSignal<ChatSurface[]>([]);
-export { chatSurfaces, setChatSurfaces };
+const [chatSurfacesError, setChatSurfacesError] = createSignal<string | null>(null);
+export { chatSurfaces, chatSurfacesError, setChatSurfaces, setChatSurfacesError };
 export const surfaceIds = () => chatSurfaces().map((s) => s.id);
 export const surfaceLabel = (id: string) => chatSurfaces().find((s) => s.id === id)?.label ?? id;
 

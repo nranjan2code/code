@@ -204,7 +204,10 @@ fn render(state: &OnboardingState) {
 pub fn run_seed() -> i32 {
     let root = vak_config::paths::default_workspace();
     println!("seeding Shared capabilities into {}", root.display());
-    vak_core::seed::seed_shared_capabilities();
+    if let Err(error) = vak_core::seed::seed_shared_capabilities() {
+        eprintln!("error: {error}");
+        return 1;
+    }
     let skills = root.join(".vak/skills");
     let count = std::fs::read_dir(&skills)
         .map(|e| e.flatten().filter(|e| e.path().is_dir()).count())
@@ -560,7 +563,10 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
     let seed = answers.seed
         || matches!(ask("Install the starter skills? [Y/n] ").as_deref(), Some(a) if !a.eq_ignore_ascii_case("n"));
     if seed {
-        vak_core::seed::seed_shared_capabilities();
+        if let Err(error) = vak_core::seed::seed_shared_capabilities() {
+            eprintln!("error: {error}");
+            return 2;
+        }
         println!("  starter skills installed");
     }
 

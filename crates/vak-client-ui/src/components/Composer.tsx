@@ -8,6 +8,7 @@ import {
   itemsOf,
   promptHistory,
   recordPrompt,
+  setNotice,
   setArmedGoal,
   setDockTab,
   setShowShortcuts,
@@ -96,6 +97,7 @@ export default function Composer(props: { cwd: string }) {
   const [historyIdx, setHistoryIdx] = createSignal(-1);
   let draftText = "";
   const [modelList, setModelList] = createSignal<string[]>([]);
+  const [lookupError, setLookupError] = createSignal("");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
 
@@ -122,7 +124,13 @@ export default function Composer(props: { cwd: string }) {
   createEffect(() => {
     const p = health()?.provider;
     if (!p) return;
-    api.discoverModels(p).then((r) => setModelList(r.models)).catch(() => {});
+    api.discoverModels(p).then((r) => {
+      setModelList(r.models);
+      setLookupError("");
+    }).catch((error) => {
+      setModelList([]);
+      setLookupError(`Model discovery unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    });
   });
 
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -184,25 +192,26 @@ export default function Composer(props: { cwd: string }) {
       await api.setPermissionMode(mode);
       await loadHealth();
     } catch (e) {
-      console.error(e);
+      setNotice({ kind: "error", text: `Could not change permission mode: ${e instanceof Error ? e.message : String(e)}` });
     }
   };
 
   // project file cache for @mentions (refresh when cwd changes)
   createEffect(() => {
     void props.cwd;
+    setLookupError("");
     api
       .fsTree(600)
       .then((r) => setFiles(r.files))
-      .catch(() => setFiles([]));
+      .catch((error) => setLookupError(`Workspace suggestions unavailable: ${error instanceof Error ? error.message : String(error)}`));
     api
       .listSkills()
       .then((r) => setSkills(r.skills))
-      .catch(() => setSkills([]));
+      .catch((error) => setLookupError(`Skills unavailable: ${error instanceof Error ? error.message : String(error)}`));
     api
       .listCommands()
       .then((r) => setCommands(r.commands))
-      .catch(() => setCommands([]));
+      .catch((error) => setLookupError(`Commands unavailable: ${error instanceof Error ? error.message : String(error)}`));
   });
 
   const slashMatches = (): SlashOption[] => {
@@ -512,6 +521,9 @@ export default function Composer(props: { cwd: string }) {
           about to send, and putting it inside the field would make it look
           like part of the message. */}
       <IntentStrip prompt={text()} sessionId={activeId()} disabled={isRunning(activeId())} />
+      <Show when={lookupError()}>
+        <div class="composer-lookup-error" role="status">{lookupError()} Suggestions are unavailable; you can still type and send a prompt.</div>
+      </Show>
       <div
         class="composer-box"
         classList={{ running: isRunning(activeId()), "drag-over": dragOver() }}

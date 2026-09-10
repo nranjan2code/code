@@ -92,7 +92,7 @@ export default function FeedsModal() {
           </div>
 
           <div class="bo-foot" style={{ "margin-top": "10px" }}>
-            <button class="btn primary" onClick={() => setFeedsOpen(false)}>Close</button>
+            <button type="button" class="btn primary" onClick={() => setFeedsOpen(false)}>Close</button>
           </div>
         </div>
       </div>

@@ -61,7 +61,7 @@ export function renderMarkdown(src: string): string {
     else {
       const lang = parts[i - 1] || "";
       const code = parts[i].replace(/\n$/, "");
-      html += `<div class="cb"><div class="cb-h"><span>${esc(lang || "text")}</span><button class="cb-copy" data-copy="${esc(code)}">copy</button></div><pre><code>${esc(code)}</code></pre></div>`;
+      html += `<div class="cb"><div class="cb-h"><span>${esc(lang || "text")}</span><button type="button" class="cb-copy" data-copy="${esc(code)}">copy</button></div><pre><code>${esc(code)}</code></pre></div>`;
     }
   }
   return html;
