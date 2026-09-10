@@ -172,7 +172,7 @@ pub fn built_in_seed_pack() -> Vec<StoredPresentation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compile, CompileInput, CompiledPresentation};
+    use crate::{CompileInput, CompiledPresentation, compile};
 
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
@@ -199,7 +199,10 @@ mod tests {
         // by the same generic compiler used for user and plugin definitions.
         // This intentionally does not assert a domain-specific renderer.
         for record in built_in_seed_pack() {
-            assert!(!record.spec.accepts.is_empty(), "seed accepts one semantic type");
+            assert!(
+                !record.spec.accepts.is_empty(),
+                "seed accepts one semantic type"
+            );
             let semantic_type = &record.spec.accepts[0];
             let result = compile(
                 &record.spec,

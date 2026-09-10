@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.43 — 2026-09-10
+
+- Stabilize Everyday and Advanced UI flows, seed/update reconciliation, and
+  release verification with refreshed embedded frontend bundles.
+
 ## 3.0.42 — 2026-09-09
 
 - Expand fake-server MCP regression coverage for missing servers and malformed arguments.

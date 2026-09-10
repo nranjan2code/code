@@ -1500,7 +1500,8 @@ mod tests {
 
     #[test]
     fn every_supported_chat_surface_keeps_readable_output_and_fallback() {
-        let source = "# Plan\n\nA short answer with [a link](https://example.com).\n\n- One\n- Two\n";
+        let source =
+            "# Plan\n\nA short answer with [a link](https://example.com).\n\n- One\n- Two\n";
         for (surface, markup) in [
             ("telegram", Markup::TelegramHtml),
             ("slack", Markup::SlackMrkdwn),
@@ -1513,13 +1514,15 @@ mod tests {
             assert_eq!(packet.fallback_markdown, source);
             assert!(!packet.chunks.is_empty(), "{surface} emitted no chunks");
             assert!(
+                packet.chunks.iter().all(|chunk| !chunk.trim().is_empty()),
+                "{surface} emitted an empty chunk"
+            );
+            assert!(
                 packet
                     .chunks
                     .iter()
-                    .all(|chunk| !chunk.trim().is_empty()),
-                "{surface} emitted an empty chunk"
+                    .all(|chunk| chunk.chars().count() <= 256)
             );
-            assert!(packet.chunks.iter().all(|chunk| chunk.chars().count() <= 256));
         }
     }
 
