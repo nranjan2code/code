@@ -538,6 +538,10 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
+    // Some older projections carry lifecycle summaries as standalone
+    // fallback items. They remain in the ledger, but must not become visible
+    // assistant prose in a production conversation.
+    if (!showOperatorChrome() && /^(?:primary deliverable\s*:|completed$)/i.test(item.fallback_text.trim())) return null;
     return <div class="semantic-source">{item.fallback_text}</div>;
   };
   return (
