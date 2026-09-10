@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.46 — 2026-09-10
+
+- Wire strict WeatherAPI and Tavily result adapters into specialist
+  presentation rendering.
+
 ## 3.0.45 — 2026-09-10
 
 - Keep presentation envelopes and ledger provenance out of the user-facing

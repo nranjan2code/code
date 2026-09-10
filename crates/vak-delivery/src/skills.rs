@@ -407,6 +407,18 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal", "telegram"],
         ),
         (
+            "travel.itinerary",
+            vec!["travel"],
+            vec!["itinerary"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "news.synthesis",
+            vec!["news", "research"],
+            vec!["research.synthesis"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
             "coding.change_summary",
             vec!["files_changed"],
             vec!["outcome"],
@@ -536,6 +548,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "media.video",
             "media.audio",
             "research.synthesis",
+            "itinerary",
             "coding.diff",
             "test.report",
             "terminal.view",
@@ -590,6 +603,20 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ),
         ("temperature", &["temperature", "°c", "°f"][..]),
         ("forecast", &["forecast", "humidity", "wind speed"][..]),
+        (
+            "travel",
+            &["travel", "trip", "itinerary", "flight", "hotel", "vacation"][..],
+        ),
+        (
+            "news",
+            &[
+                "news",
+                "latest",
+                "headlines",
+                "what happened",
+                "current events",
+            ][..],
+        ),
         ("diff", &["diff --", "```diff", "@@ "][..]),
         (
             "files_changed",
@@ -1341,6 +1368,11 @@ fn validate_payload(
                             })
                     })
                 })
+        }),
+        "itinerary" => array(payload, "items").is_some_and(|items| {
+            items.iter().all(|item| {
+                strings(item, &["title"]) && item.get("detail").is_none_or(Value::is_string)
+            })
         }),
         "coding.diff" => array(payload, "files").is_some_and(|files| {
             files.iter().all(|file| {

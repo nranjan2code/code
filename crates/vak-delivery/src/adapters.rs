@@ -48,6 +48,68 @@ pub trait ResultAdapter: Send + Sync {
     fn adapt(&self, raw: &Value) -> Option<StructuredOutput>;
 }
 
+struct WeatherApiCurrentAdapter;
+
+impl ResultAdapter for WeatherApiCurrentAdapter {
+    fn id(&self) -> &'static str {
+        "weatherapi.current"
+    }
+
+    fn adapt(&self, raw: &Value) -> Option<StructuredOutput> {
+        let current = raw.get("current")?;
+        let temperature = current.get("temp_c")?.as_f64()?;
+        Some(StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1.0.0".into(),
+            payload: serde_json::json!({
+                "label": "Temperature",
+                "value": temperature,
+                "unit": "C",
+            }),
+        })
+    }
+}
+
+struct TavilySearchAdapter;
+
+impl ResultAdapter for TavilySearchAdapter {
+    fn id(&self) -> &'static str {
+        "tavily.search"
+    }
+
+    fn adapt(&self, raw: &Value) -> Option<StructuredOutput> {
+        let results = raw.get("results")?.as_array()?;
+        let mut sources = Vec::new();
+        let mut takeaways = Vec::new();
+        for (index, result) in results.iter().take(12).enumerate() {
+            let title = result.get("title")?.as_str()?.to_owned();
+            let url = result.get("url")?.as_str()?.to_owned();
+            let content = result
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_owned();
+            sources.push(serde_json::json!({"title": title, "url": url}));
+            if !content.is_empty() {
+                takeaways.push(serde_json::json!({
+                    "text": content,
+                    "citation_indices": [index + 1]
+                }));
+            }
+        }
+        (!sources.is_empty()).then(|| StructuredOutput {
+            semantic_type: "research.synthesis".into(),
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1.0.0".into(),
+            payload: serde_json::json!({"sources": sources, "takeaways": takeaways}),
+        })
+    }
+}
+
 /// An ordered, purely additive set of adapters. Order only matters as a
 /// tie-break when two adapters both recognize the same input, which a
 /// well-scoped adapter should make rare.
@@ -104,14 +166,11 @@ pub fn structured_outputs_from_tool_result(
     }
 }
 
-/// No real third-party provider is wired into this codebase yet. Shipping
-/// invented adapters for hypothetical providers would encode fake shapes
-/// nothing actually returns — the same fabrication problem as inventing
-/// evidence for a render. This stays empty until a real provider's actual
-/// response shape is available to adapt; the registry, trait, and call site
-/// are the finished, tested extension point for that moment.
 pub fn built_in_adapters() -> AdapterRegistry {
-    AdapterRegistry::default()
+    let mut registry = AdapterRegistry::default();
+    registry.register(Box::new(WeatherApiCurrentAdapter));
+    registry.register(Box::new(TavilySearchAdapter));
+    registry
 }
 
 #[cfg(test)]
@@ -178,8 +237,11 @@ mod tests {
     }
 
     #[test]
-    fn built_in_adapters_ships_empty_until_a_real_provider_is_wired() {
-        assert!(built_in_adapters().ids().is_empty());
+    fn built_in_adapters_register_real_provider_shapes() {
+        assert_eq!(
+            built_in_adapters().ids(),
+            vec!["weatherapi.current", "tavily.search"]
+        );
     }
 
     #[test]
@@ -218,5 +280,22 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].semantic_type, "metric");
         assert_eq!(outputs[0].payload["value"], 21.5);
+    }
+
+    #[test]
+    fn weatherapi_and_tavily_shapes_become_specialist_outputs() {
+        let adapters = built_in_adapters();
+        let weather = structured_outputs_from_tool_result(
+            r#"{"current":{"temp_c":31.5,"condition":{"text":"Sunny"}}}"#,
+            "desktop",
+            &adapters,
+        );
+        assert_eq!(weather[0].semantic_type, "metric");
+        let news = structured_outputs_from_tool_result(
+            r#"{"results":[{"title":"Headline","url":"https://example.com","content":"A verified update."}]}"#,
+            "desktop",
+            &adapters,
+        );
+        assert_eq!(news[0].semantic_type, "research.synthesis");
     }
 }
