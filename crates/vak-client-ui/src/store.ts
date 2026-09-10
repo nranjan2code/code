@@ -662,7 +662,7 @@ export function transcriptToItems(id: string, messages: Message[]): Item[] {
   let assistantSeq = 0;
 
   for (const m of messages) {
-    if (m.role === "User") {
+    if (m.role === "User" || m.role === "user" || (typeof m.role === "string" && m.role.toLowerCase() === "user")) {
       const texts = m.content
         .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
         .map((b) => b.text);

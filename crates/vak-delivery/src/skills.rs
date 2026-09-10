@@ -556,6 +556,53 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "recipe.card",
             "ui.preview",
             "plan.timeline",
+            "overview",
+            "checklist",
+            "schedule",
+            "comparison",
+            "decision",
+            "budget",
+            "collection",
+            "detail",
+            "steps",
+            "summary",
+            "notes",
+            "agenda",
+            "follow_up",
+            "reminder",
+            "comparison_table",
+            "pros_cons",
+            "scorecard",
+            "milestones",
+            "progress",
+            "status",
+            "inventory",
+            "shopping_list",
+            "meal_plan",
+            "lesson",
+            "reading_list",
+            "habit_plan",
+            "project_plan",
+            "meeting_notes",
+            "contact_log",
+            "finance_summary",
+            "invoice_summary",
+            "recipe_summary",
+            "travel_options",
+            "home_project",
+            "care_plan",
+            "event_plan",
+            "media_list",
+            "research_brief",
+            "faq",
+            "timeline",
+            "coding.deployment",
+            "coding.incident",
+            "coding.benchmark",
+            "coding.architecture",
+            "coding.dependencies",
+            "coding.release",
+            "coding.search",
         ]
         .into_iter()
         .map(String::from)
@@ -932,8 +979,23 @@ pub fn parse_fragment_with(
         semantic_type: String,
         payload: Value,
     }
-    let fragment: Fragment = serde_json::from_str(source)
-        .map_err(|error| SkillError::InvalidPayload(error.to_string()))?;
+    let fragment: Fragment = match serde_json::from_str(source) {
+        Ok(f) => f,
+        Err(err) => {
+            if let Ok(value) = toml::from_str::<serde_json::Value>(source) {
+                if let (Some(st), Some(p)) = (value.get("semantic_type"), value.get("payload")) {
+                    Fragment {
+                        semantic_type: st.as_str().unwrap_or("metric").to_string(),
+                        payload: p.clone(),
+                    }
+                } else {
+                    return Err(SkillError::InvalidPayload(err.to_string()));
+                }
+            } else {
+                return Err(SkillError::InvalidPayload(err.to_string()));
+            }
+        }
+    };
     // Resolve the owning skill by the semantic type it declares, rather than
     // assuming "core" — plugin-contributed types are registered under their
     // own skill id and must validate against their own manifest.
@@ -959,15 +1021,25 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
     let title = p["title"].as_str().unwrap_or(&output.semantic_type);
     let mut lines = vec![format!("### {title}")];
     match output.semantic_type.as_str() {
-        "metric" => lines.push(format!(
-            "{}: {} {}",
-            p["label"].as_str().unwrap_or_default(),
-            p["value"]
-                .as_str()
-                .map(String::from)
-                .unwrap_or_else(|| p["value"].to_string()),
-            p["unit"].as_str().unwrap_or_default()
-        )),
+        "metric" => {
+            if p.get("label").is_some() && p.get("value").is_some() {
+                lines.push(format!(
+                    "{}: {} {}",
+                    p["label"].as_str().unwrap_or_default(),
+                    p["value"]
+                        .as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| p["value"].to_string()),
+                    p["unit"].as_str().unwrap_or_default()
+                ));
+            } else if let Some(obj) = p.as_object() {
+                for (k, v) in obj {
+                    if k == "title" { continue; }
+                    let val_str = v.as_str().map(String::from).unwrap_or_else(|| v.to_string());
+                    lines.push(format!("{k}: {val_str}"));
+                }
+            }
+        }
         "link.preview" => lines.push(format!(
             "{}\n{}",
             title,
@@ -1325,9 +1397,8 @@ fn validate_payload(
     let valid = match semantic_type {
         "link.preview" => strings(payload, &["url", "title"]),
         "metric" => {
-            strings(payload, &["label"])
-                && object.contains_key("value")
-                && scalar(&payload["value"])
+            (strings(payload, &["label"]) && object.contains_key("value") && scalar(&payload["value"]))
+                || (object.len() >= 2 && object.values().any(scalar))
         }
         "media.image" | "media.video" | "media.audio" => {
             strings(payload, &["source", "media_type", "alt"])

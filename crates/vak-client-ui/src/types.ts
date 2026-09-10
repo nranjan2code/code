@@ -1,7 +1,7 @@
 // Mirrors the serde serialization of vak-agent's AgentEvent and vak-llm
 // types. Any drift here is a contract bug — the JSONL ledger is truth.
 
-export type Role = "User" | "Assistant";
+export type Role = "user" | "assistant" | "User" | "Assistant";
 
 export type ContentBlock =
   | { type: "text"; text: string }

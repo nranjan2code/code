@@ -425,6 +425,7 @@ type StructuredRendererComponent = (props: { data: any; output: import("../types
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "research.synthesis": ({ data }) => <ResearchCards data={data} />,
   research: ({ data }) => <ResearchCards data={data} />,
+  news: ({ data }) => <ResearchCards data={data} />,
   "coding.diff": ({ data }) => <DiffInspector data={data} />,
   diff: ({ data }) => <DiffInspector data={data} />,
   "test.report": ({ data }) => <TestMatrix data={data} />,
@@ -436,11 +437,15 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   comparison: ({ data }) => <DataGrid data={data} />,
   "recipe.card": ({ data }) => <RecipeCard data={data} />,
   recipe: ({ data }) => <RecipeCard data={data} />,
+  steps: ({ data }) => <RecipeCard data={data} />,
   "ui.preview": ({ data }) => <UIPreviewCard data={data} />,
   "plan.timeline": ({ data }) => <TimelineCard data={data} />,
   timeline: ({ data }) => <TimelineCard data={data} />,
   itinerary: ({ data }) => <TimelineCard data={data} />,
   checklist: ({ data }) => <TimelineCard data={data} />,
+  progress: ({ data }) => <TimelineCard data={data} />,
+  status: ({ data }) => <TimelineCard data={data} />,
+  overview: ({ data }) => <TimelineCard data={data} />,
   chart: ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
   "link.preview": ({ data }) => (
     <a class="rich-link-card" href={safeUrl(data.url) ? data.url : undefined} target="_blank" rel="noreferrer noopener">
@@ -448,9 +453,40 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
       <span><strong>{String(data.title ?? data.url)}</strong><small>{String(data.description ?? data.site_name ?? data.url)}</small></span>
     </a>
   ),
-  metric: ({ data }) => (
-    <div class="rich-metric"><small>{String(data.label ?? "Metric")}</small><strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong></div>
-  ),
+  weather: (props) => STRUCTURED_RENDERERS.metric(props),
+  metric: ({ data }) => {
+    if (typeof data.label === "string" || typeof data.value === "string" || typeof data.value === "number") {
+      return (
+        <div class="rich-metric">
+          <small>{String(data.label ?? "Metric")}</small>
+          <strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong>
+        </div>
+      );
+    }
+    const entries = Object.entries(data || {}).filter(([k]) => k !== "title" && k !== "semantic_type");
+    if (entries.length > 0) {
+      return (
+        <div class="canvas-card metric-grid-card">
+          <Show when={data.location || data.title || data.label}>
+            <div class="metric-grid-header">
+              {String(data.location ?? data.title ?? data.label)}
+            </div>
+          </Show>
+          <div class="metric-grid-container">
+            <For each={entries}>
+              {([key, val]) => (
+                <div class="metric-grid-item">
+                  <small class="metric-grid-label">{key.replace(/_/g, " ")}</small>
+                  <strong class="metric-grid-value">{typeof val === "object" ? JSON.stringify(val) : String(val)}</strong>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      );
+    }
+    return <div class="rich-metric"><small>{String(data.label ?? "Metric")}</small><strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong></div>;
+  },
 };
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {

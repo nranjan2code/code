@@ -474,7 +474,11 @@ impl Node {
 }
 
 pub fn compile_markdown(source: impl Into<String>) -> PresentationDocument {
-    let source_markdown = source.into();
+    let raw_source = source.into();
+    let source_markdown: String = raw_source
+        .chars()
+        .filter(|c| !('\u{E0000}'..='\u{E007F}').contains(c))
+        .collect();
     let mut stack = vec![Node::Root(Vec::new())];
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -735,12 +739,12 @@ fn nodes_to_blocks(
                                 output,
                                 fallback_markdown,
                             });
-                            continue;
                         }
                         Err(error) => {
-                            diagnostics.push(format!("Structured block preserved as code: {error}"))
+                            diagnostics.push(format!("Structured block parsing suppressed: {error}"));
                         }
                     }
+                    continue;
                 }
                 if language.as_deref() == Some("mermaid") {
                     blocks.push(DocumentBlock::Diagram {
