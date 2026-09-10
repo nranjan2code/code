@@ -207,7 +207,7 @@ export function PresentationDocumentView(props: { document: PresentationDocument
   };
   return (
     <div class="semantic-document">
-      <Show when={outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
+      <Show when={presentationMode() === "advanced" && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
@@ -317,7 +317,7 @@ function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
 
 function ResultOutcomeSummary(props: { item: OutputItem }) {
   const outcome = () => props.item.outcome;
-  return <Show when={outcome()}>{(value) => <div class={`result-outcome-summary ${value().status}`} role="status">
+  return <Show when={presentationMode() === "advanced" && outcome()}>{(value) => <div class={`result-outcome-summary ${value().status}`} role="status">
     <strong>{value().status === "partial" ? "Partial result" : `Result ${value().status}`}</strong>
     <Show when={value().completion}><span>Completion: {value().completion}</span></Show>
     <Show when={value().evidence_state}><span>Evidence: {value().evidence_state}</span></Show>

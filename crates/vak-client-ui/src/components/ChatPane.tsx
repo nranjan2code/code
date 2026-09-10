@@ -643,7 +643,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 emitted one.  The transcript remains mounted underneath so
                 streaming text, approvals, and tool progress never vanish
                 while the structured card is being reconciled. */}
-            <Show when={isRunning(sid()) && (presentationOf(sid())?.items.length ?? 0) > 0}>
+            {/* Everyday is the reader surface: provisional projections can
+                contain empty answer shells and tool diagnostics before the
+                final semantic result arrives. Keep that activity in Advanced. */}
+            <Show when={presentationMode() === "advanced" && isRunning(sid()) && (presentationOf(sid())?.items.length ?? 0) > 0}>
               <div class="presentation-live" aria-live="polite" aria-label="Live result preview">
                 <div class="presentation-live-label"><span class="dot run" /> Live result</div>
                 <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />

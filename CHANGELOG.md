@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.50 — 2026-09-10
+
+- Keep provisional streaming shells and tool diagnostics out of Everyday;
+  retain them for Advanced while the final rich result is being produced.
+- Remove outcome/evidence status chrome from Everyday so the answer card stays
+  the primary reader surface.
+
 ## 3.0.49 — 2026-09-10
 
 - Release the corrected integration-owned presentation adapter boundary and
