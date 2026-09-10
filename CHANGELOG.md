@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.52 — 2026-09-10
+
+- Keep outcome, review, provenance, and diagnostic chrome out of production
+  presentation surfaces; reserve it for development inspection.
+- Preserve clean user-facing responses when structured adapter payloads are
+  malformed instead of surfacing parser/debug residue.
+- Make subtle outcome feedback controls available without verbose review copy.
+
 ## 3.0.51 — 2026-09-10
 
 - Make Everyday the calm conversation surface and keep operator metadata out

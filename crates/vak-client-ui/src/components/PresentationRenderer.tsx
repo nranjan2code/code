@@ -22,6 +22,10 @@ import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
+
+// Advanced is still a user-facing presentation. Operator chrome is reserved
+// for development builds so production never becomes a ledger UI.
+const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
 import TimelineCard from "./presentation/TimelineCard";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
@@ -207,11 +211,13 @@ export function PresentationDocumentView(props: { document: PresentationDocument
   };
   return (
     <div class="semantic-document">
-      <Show when={presentationMode() === "advanced" && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
+      <Show when={showOperatorChrome() && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
-      <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
-      <Show when={presentationMode() === "advanced"}>
+      <Show when={showOperatorChrome()}>
+        <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
+      </Show>
+      <Show when={showOperatorChrome()}>
         <RenderAudit document={props.document} />
       </Show>
     </div>
@@ -312,14 +318,19 @@ function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
   return <Show when={props.item.actions.length > 0}>
     <div class="outcome-review-actions" aria-label="Outcome review">
       <Show when={error()}><div class="error-state" role="alert">{error()}</div></Show>
-      <For each={props.item.actions}>{(action) => <button type="button" class="settings-button" disabled={busy()} onClick={() => void review(action.data.verdict as "accepted" | "needs_work" | "rejected")}>{action.label}</button>}</For>
+      <For each={props.item.actions}>{(action) => {
+        const verdict = action.data.verdict as "accepted" | "needs_work" | "rejected";
+        const glyph = verdict === "accepted" ? "👍" : verdict === "rejected" ? "👎" : "↗";
+        const label = verdict === "accepted" ? "Helpful" : verdict === "rejected" ? "Not helpful" : "Needs another pass";
+        return <button type="button" class="outcome-review-button" aria-label={label} title={label} disabled={busy()} onClick={() => void review(verdict)}><span aria-hidden="true">{glyph}</span></button>;
+      }}</For>
     </div>
   </Show>;
 }
 
 function ResultOutcomeSummary(props: { item: OutputItem }) {
   const outcome = () => props.item.outcome;
-  return <Show when={presentationMode() === "advanced" && outcome()}>{(value) => <div class={`result-outcome-summary ${value().status}`} role="status">
+  return <Show when={showOperatorChrome() && outcome()}>{(value) => <div class={`result-outcome-summary ${value().status}`} role="status">
     <strong>{value().status === "partial" ? "Partial result" : `Result ${value().status}`}</strong>
     <Show when={value().completion}><span>Completion: {value().completion}</span></Show>
     <Show when={value().evidence_state}><span>Evidence: {value().evidence_state}</span></Show>
@@ -355,7 +366,7 @@ function AnswerCard(props: { item: OutputItem; document: PresentationDocument })
       <header class="semantic-answer-head">
         <span class="semantic-answer-mark"><Icon name="chat" size={14} /></span>
         <strong>Answer</strong>
-        <Show when={presentationMode() === "advanced" && props.item.provenance?.source}><small>{props.item.provenance?.source}</small></Show>
+        <Show when={showOperatorChrome() && props.item.provenance?.source}><small>{props.item.provenance?.source}</small></Show>
       </header>
       <PresentationDocumentView document={props.document} />
     </article>
@@ -516,12 +527,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
-    if (item.content.type === "document") return presentationMode() === "everyday"
-      ? <div class="semantic-assistant"><PresentationDocumentView document={item.content.document} /></div>
-      : <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>;
-    if (item.content.type === "outcome") return presentationMode() === "everyday"
-      ? <div class="semantic-assistant">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</div>
-      : <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
+    if (item.content.type === "document") return showOperatorChrome()
+      ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>
+      : <div class={item.role === "user" ? "semantic-user" : "semantic-assistant"}><PresentationDocumentView document={item.content.document} /></div>;
+    if (item.content.type === "outcome") return showOperatorChrome()
+      ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>
+      : <div class="semantic-assistant">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</div>;
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
@@ -634,7 +645,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
     return order.map((id) => ({ id, items: grouped.get(id)! }));
   });
   return <div class="semantic-timeline">
-    <Show when={presentationMode() === "advanced" && props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
+    <Show when={showOperatorChrome() && props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
       <summary><span class="goal-state-label">{goal().control === "active" ? "Follow-up goal" : "Goal record"}</span><span class={`goal-state-control ${goal().control}`}>{goal().control === "active" ? "available" : goal().control}</span><span class="goal-state-revision">rev {goal().revision}</span></summary>
       <p class="goal-state-objective">{goal().objective}</p>
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
