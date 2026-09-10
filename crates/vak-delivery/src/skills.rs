@@ -755,10 +755,15 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
 
 /// Match standalone lexical terms without allowing incidental substrings in
 /// ordinary prose. Compound phrases retain substring matching because their
-/// spaces provide the boundary. Presentation signals are hints only; typed
+/// spaces provide the boundary. Needles that themselves contain non-word
+/// boundary characters (e.g. `https://`, `source:`, `°c`) fall back to
+/// substring matching, since tokenization would strip those characters and
+/// make a match impossible. Presentation signals are hints only; typed
 /// result provenance remains the authority for specialized recipes.
 fn signal_text_hit(lower: &str, needle: &str) -> bool {
-    if needle.chars().any(char::is_whitespace) {
+    if needle.chars().any(char::is_whitespace)
+        || needle.chars().any(|c| !c.is_alphanumeric() && c != '_')
+    {
         return lower.contains(needle);
     }
     lower

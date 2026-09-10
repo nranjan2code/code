@@ -356,6 +356,12 @@ impl TemplateRegistry {
             .iter_mut()
             .find(|candidate| candidate.id == template.id && candidate.origin == template.origin)
         {
+            if template.revision < existing.revision {
+                return Err(DeliveryError::InvalidTemplate(format!(
+                    "template {} revision {} is older than stored revision {}",
+                    template.id, template.revision, existing.revision
+                )));
+            }
             *existing = template;
         } else {
             self.templates.push(template);

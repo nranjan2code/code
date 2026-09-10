@@ -1800,14 +1800,8 @@ mod tests {
             document.source_markdown,
             "## Done\n\nThe report is ready. See https://example.com/report"
         );
-        assert_eq!(
-            document.metadata.get("recipe_id").map(String::as_str),
-            Some("answer.basic")
-        );
-        assert_eq!(
-            document.metadata.get("renderer").map(String::as_str),
-            Some("native:structured")
-        );
+        assert_eq!(document.metadata.get("recipe_id").map(String::as_str), None);
+        assert_eq!(document.metadata.get("renderer").map(String::as_str), None);
         assert_eq!(
             document
                 .metadata

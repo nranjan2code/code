@@ -34,6 +34,17 @@ pub fn markdown_to_discord(markdown: &str) -> String {
             continue;
         }
 
+        if is_spoiler(trimmed) {
+            flush_table(&mut out, &mut table);
+            if blank_pending && !out.is_empty() {
+                out.push('\n');
+            }
+            blank_pending = false;
+            out.push_str(trimmed);
+            out.push('\n');
+            continue;
+        }
+
         if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1 {
             if blank_pending {
                 out.push('\n');
@@ -50,6 +61,40 @@ pub fn markdown_to_discord(markdown: &str) -> String {
             }
             blank_pending = false;
             out.push_str("──────────\n");
+            continue;
+        }
+
+        if let Some(rest) = strip_task_item(trimmed) {
+            if blank_pending && !out.is_empty() {
+                out.push('\n');
+            }
+            blank_pending = false;
+            out.push_str(&format!("{rest}\n"));
+            continue;
+        }
+
+        if let Some(after) = trimmed.strip_prefix('#')
+            && after.starts_with(' ')
+        {
+            let text = after.trim().trim_start_matches('#').trim();
+            if !text.is_empty() {
+                if blank_pending && !out.is_empty() {
+                    out.push('\n');
+                }
+                blank_pending = false;
+                out.push_str("<b>");
+                out.push_str(&replace_links(text));
+                out.push_str("</b>\n");
+                continue;
+            }
+        }
+
+        if let Some(rest) = strip_task_item(trimmed) {
+            if blank_pending && !out.is_empty() {
+                out.push('\n');
+            }
+            blank_pending = false;
+            out.push_str(&format!("{rest}\n"));
             continue;
         }
 
@@ -70,6 +115,10 @@ fn is_horizontal_rule(trimmed: &str) -> bool {
         && (compact.chars().all(|c| c == '-')
             || compact.chars().all(|c| c == '*')
             || compact.chars().all(|c| c == '_'))
+}
+
+fn is_spoiler(trimmed: &str) -> bool {
+    trimmed.starts_with("||") && trimmed.ends_with("||") && trimmed.len() > 4
 }
 
 /// Discord suppresses the hyperlink for a plain-message `[text](url)`; it
@@ -159,6 +208,17 @@ fn is_separator_row(row: &str) -> bool {
     row.replace(['|', '-', ' ', ':'], "").is_empty()
 }
 
+fn strip_task_item(trimmed: &str) -> Option<String> {
+    trimmed
+        .strip_prefix("- [ ] ")
+        .map(|rest| format!("☐ {}", rest))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("- [x] ")
+                .map(|rest| format!("☑ {}", rest))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,7 +236,8 @@ mod tests {
     #[test]
     fn preserves_headings_and_blockquotes_and_lists() {
         let out = markdown_to_discord("# Title\n\n> quoted\n- item\n1. first");
-        assert!(out.contains("# Title"));
+        assert!(out.contains("<b>"));
+        assert!(out.contains("Title"));
         assert!(out.contains("> quoted"));
         assert!(out.contains("- item"));
         assert!(out.contains("1. first"));

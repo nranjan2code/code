@@ -54,6 +54,19 @@ pub fn markdown_to_html(markdown: &str) -> String {
             continue;
         }
 
+        if is_spoiler(trimmed) {
+            flush_quote(&mut out, &mut quote);
+            flush_table(&mut out, &mut table);
+            if blank_pending && !out.is_empty() {
+                out.push('\n');
+            }
+            blank_pending = false;
+            out.push_str("<tg-spoiler>");
+            out.push_str(&inline_markdown(&escape_html(trimmed)));
+            out.push_str("</tg-spoiler>\n");
+            continue;
+        }
+
         if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1 {
             flush_quote(&mut out, &mut quote);
             if blank_pending {
@@ -116,6 +129,16 @@ pub fn markdown_to_html(markdown: &str) -> String {
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
 
+        if let Some(rest) = strip_task_item(trimmed) {
+            blank_pending = false;
+            out.push_str(&"  ".repeat(depth));
+            out.push_str(bullet_for_depth(depth));
+            out.push(' ');
+            out.push_str(&inline_markdown(&escape_html(&rest)));
+            out.push('\n');
+            continue;
+        }
+
         if let Some(item) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -172,6 +195,10 @@ fn is_horizontal_rule(trimmed: &str) -> bool {
             || compact.chars().all(|c| c == '_'))
 }
 
+fn is_spoiler(trimmed: &str) -> bool {
+    trimmed.starts_with("||") && trimmed.ends_with("||") && trimmed.len() > 4
+}
+
 fn split_ordered_item(trimmed: &str) -> Option<(String, &str)> {
     let digits_end = trimmed.find(|c: char| !c.is_ascii_digit())?;
     if digits_end == 0 {
@@ -190,6 +217,17 @@ fn bullet_for_depth(depth: usize) -> &'static str {
         1 => "◦",
         _ => "▪",
     }
+}
+
+fn strip_task_item(trimmed: &str) -> Option<String> {
+    trimmed
+        .strip_prefix("- [ ] ")
+        .map(|rest| format!("☐ {}", rest))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("- [x] ")
+                .map(|rest| format!("☑ {}", rest))
+        })
 }
 
 fn flush_quote(out: &mut String, lines: &mut Vec<String>) {
