@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 //! Deep audit harness for `vak-presentation`: 500+ scenarios covering spec
 //! validation, binding paths, compilation, the `PresentationLibrary`
 //! register/activate/select/revoke lifecycle, revision proposals, semantic
