@@ -374,8 +374,39 @@ function StructuredView(props: { output: import("../types").StructuredOutput; fa
   </ErrorBoundary>;
 }
 
+type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
+
+// Recipes advertise semantic types; aliases resolve through this registry so
+// adding a new server recipe does not require another conditional branch.
+const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
+  "research.synthesis": ({ data }) => <ResearchCards data={data} />,
+  research: ({ data }) => <ResearchCards data={data} />,
+  "coding.diff": ({ data }) => <DiffInspector data={data} />,
+  diff: ({ data }) => <DiffInspector data={data} />,
+  "test.report": ({ data }) => <TestMatrix data={data} />,
+  test: ({ data }) => <TestMatrix data={data} />,
+  "terminal.view": ({ data }) => <TerminalConsole data={data} />,
+  terminal: ({ data }) => <TerminalConsole data={data} />,
+  "data.grid": ({ data }) => <DataGrid data={data} />,
+  table: ({ data }) => <DataGrid data={data} />,
+  comparison: ({ data }) => <DataGrid data={data} />,
+  "recipe.card": ({ data }) => <RecipeCard data={data} />,
+  recipe: ({ data }) => <RecipeCard data={data} />,
+  "ui.preview": ({ data }) => <UIPreviewCard data={data} />,
+  "plan.timeline": ({ data }) => <TimelineCard data={data} />,
+  timeline: ({ data }) => <TimelineCard data={data} />,
+  itinerary: ({ data }) => <TimelineCard data={data} />,
+  checklist: ({ data }) => <TimelineCard data={data} />,
+  chart: ({ data }) => <UniversalChart data={data} />,
+};
+
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
+  const semanticType = props.output.semantic_type.toLowerCase();
+  const registered = STRUCTURED_RENDERERS[semanticType];
+  if (registered && (semanticType !== "chart" || Array.isArray(payload?.series))) {
+    return registered({ data: payload, output: props.output });
+  }
   // Everyday is a presentation density, not a capability filter. Technical
   // results remain available to everyone; the mode controls surrounding chrome
   // and copy, while the same renderer preserves parity with Advanced.

@@ -1,5 +1,5 @@
 import { For, Show, createMemo } from "solid-js";
-import { activeId, itemsOf, presentationOf, presentationMode, setEverydayRailOpen } from "../store";
+import { activeId, itemsOf, presentationOf, presentationMode, setDockTab, setEverydayRailOpen } from "../store";
 import Icon, { type IconName } from "./Icon";
 
 /**
@@ -9,8 +9,8 @@ import Icon, { type IconName } from "./Icon";
 export default function EverydayContextRail() {
   const task = createMemo(() => activeId());
   const timeline = createMemo(() => presentationOf(task()));
-  const files = createMemo(() => itemsOf(task()).filter((item) => item.kind === "tool").length);
-  const notes = createMemo(() => timeline()?.items.length ?? 0);
+  const files = createMemo(() => itemsOf(task()).filter((item) => item.kind === "tool" || item.kind === "assistant").length);
+  const notes = createMemo(() => timeline()?.items.filter((item) => item.kind === "outcome").length ?? 0);
   const nextSteps = createMemo(() => timeline()?.goal?.additions.length ?? 0);
 
   return (
@@ -49,9 +49,9 @@ export default function EverydayContextRail() {
           </Show>
 
           <div class="everyday-rail-sections">
-            <RailSection label="Files" count={files()} icon="file" />
-            <RailSection label="Notes" count={notes()} icon="receipt" />
-            <RailSection label="Next steps" count={nextSteps()} icon="spark" />
+            <RailSection label="Files" count={files()} icon="file" tab="editor" />
+            <RailSection label="Notes" count={notes()} icon="receipt" tab="workbench" />
+            <RailSection label="Next steps" count={nextSteps()} icon="spark" tab="commitments" />
           </div>
         </div>
       </aside>
@@ -59,9 +59,9 @@ export default function EverydayContextRail() {
   );
 }
 
-function RailSection(props: { label: string; count: number; icon: IconName }) {
+function RailSection(props: { label: string; count: number; icon: IconName; tab: "editor" | "workbench" | "commitments" }) {
   return (
-    <button class="everyday-rail-section" type="button" aria-label={`${props.label}, ${props.count}`}>
+    <button class="everyday-rail-section" type="button" aria-label={`Open ${props.label}, ${props.count}`} onClick={() => setDockTab(props.tab)}>
       <Icon name={props.icon} size={15} />
       <span>{props.label}</span>
       <span class="everyday-rail-count">{props.count}</span>
