@@ -741,7 +741,8 @@ fn nodes_to_blocks(
                             });
                         }
                         Err(error) => {
-                            diagnostics.push(format!("Structured block parsing suppressed: {error}"));
+                            diagnostics
+                                .push(format!("Structured block parsing suppressed: {error}"));
                         }
                     }
                     continue;

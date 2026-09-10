@@ -1034,8 +1034,13 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
                 ));
             } else if let Some(obj) = p.as_object() {
                 for (k, v) in obj {
-                    if k == "title" { continue; }
-                    let val_str = v.as_str().map(String::from).unwrap_or_else(|| v.to_string());
+                    if k == "title" {
+                        continue;
+                    }
+                    let val_str = v
+                        .as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| v.to_string());
                     lines.push(format!("{k}: {val_str}"));
                 }
             }
@@ -1397,7 +1402,9 @@ fn validate_payload(
     let valid = match semantic_type {
         "link.preview" => strings(payload, &["url", "title"]),
         "metric" => {
-            (strings(payload, &["label"]) && object.contains_key("value") && scalar(&payload["value"]))
+            (strings(payload, &["label"])
+                && object.contains_key("value")
+                && scalar(&payload["value"]))
                 || (object.len() >= 2 && object.values().any(scalar))
         }
         "media.image" | "media.video" | "media.audio" => {
