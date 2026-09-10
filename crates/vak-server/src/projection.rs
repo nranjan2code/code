@@ -386,6 +386,16 @@ fn snapshot_inner(
                             if assistant && is_presentation_envelope(text) {
                                 continue;
                             }
+                            let cleaned_text_storage;
+                            let text = if assistant {
+                                cleaned_text_storage = clean_scaffolding(text);
+                                if cleaned_text_storage.is_empty() {
+                                    continue;
+                                }
+                                &cleaned_text_storage
+                            } else {
+                                text
+                            };
                             let mut candidates = if assistant {
                                 structured_outputs_from_text(text)
                             } else {
@@ -939,15 +949,34 @@ fn media_type_for_path(path: &str) -> Option<String> {
     )
 }
 
+fn is_scaffolding_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Surface:")
+        || trimmed.starts_with("Outcome:")
+        || trimmed.starts_with("primary deliverable:")
+        || trimmed.eq_ignore_ascii_case("completed")
+        || trimmed.starts_with("contract_id:")
+}
+
+fn clean_scaffolding(text: &str) -> String {
+    let lines = text
+        .lines()
+        .filter(|line| !is_scaffolding_line(line))
+        .collect::<Vec<_>>();
+    lines.join("\n").trim().to_string()
+}
+
 fn is_presentation_envelope(text: &str) -> bool {
+    let cleaned = clean_scaffolding(text);
+    if cleaned.is_empty() {
+        return true;
+    }
     let lines = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    lines.len() <= 4
-        && lines.iter().any(|line| line.starts_with("Outcome:"))
-        && lines.iter().any(|line| line.starts_with("Surface:"))
+    lines.iter().any(|line| is_scaffolding_line(line)) && lines.len() <= 6
 }
 
 fn activity_item(

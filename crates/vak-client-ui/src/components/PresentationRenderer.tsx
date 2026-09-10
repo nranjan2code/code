@@ -510,7 +510,15 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       : <div class="semantic-assistant">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</div>;
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
-    if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
+    if (item.kind === "error") {
+      const isRawJson = item.fallback_text.trim().startsWith("{") || item.fallback_text.includes('"type":');
+      const text = !showOperatorChrome() && isRawJson
+        ? (item.fallback_text.includes("unknown_capability")
+            ? "The requested capability or web integration is currently unavailable for this query."
+            : "Tool execution required attention.")
+        : item.fallback_text;
+      return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{text}</p></div></section>;
+    }
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
     // Some older projections carry lifecycle summaries as standalone

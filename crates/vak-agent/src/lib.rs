@@ -3497,6 +3497,15 @@ async fn execute_one(
                     serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
                     serde_json::to_string(actual_skill).unwrap_or_else(|_| "\"invalid\"".into())
                 ))
+            } else if tools.iter().any(|t| t.name() == "mcp") {
+                ToolRunOutput::Err(format!(
+                    r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{},"recovery_advice":"Tool '{}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{}\", arguments: {{ ... }})"}}"#,
+                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+                    serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
+                        .unwrap_or_else(|_| "[]".into()),
+                    call.name,
+                    call.name
+                ))
             } else {
                 ToolRunOutput::Err(format!(
                     r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
