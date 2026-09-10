@@ -1,6 +1,6 @@
 # UI release resume guide
 
-Checkpoint: 2026-09-10, workspace version `3.0.42`.
+Checkpoint: 2026-09-10, workspace version `3.0.43`.
 
 This repository is intentionally paused at a reviewable checkpoint because the
 Codex weekly secondary quota is nearly exhausted and the base-model weekly
@@ -43,8 +43,8 @@ projection history; do not synthesize it from the live ring buffer.
 
 ## Release procedure after verification
 
-1. Decide the release scope and changelog entry. If a new patch is justified,
-   bump deliberately with `scripts/bump-version.sh <new-semver>`.
+1. Decide the release scope and changelog entry. For the next release, bump
+   deliberately with `scripts/bump-version.sh <new-semver>`.
 2. Run `scripts/check-version.sh`, all relevant tests, both platform checks,
    and the complete release script (`scripts/release.sh`) only after the
    version and evidence are consistent.
