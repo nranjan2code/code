@@ -121,13 +121,14 @@ export default function WorkspaceHeader() {
         </div>
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
-        <div class="presentation-mode-segmented" role="radiogroup" aria-label="Presentation mode">
+        <div class="presentation-mode-segmented" role="radiogroup" aria-label="Presentation mode" data-testid="presentation-mode">
           <button
             type="button"
             role="radio"
             class="mode-pill-btn"
             classList={{ active: presentationMode() === "everyday" }}
             aria-checked={presentationMode() === "everyday"}
+            data-testid="mode-everyday"
             onClick={() => setPresentationMode("everyday")}
           >
             Everyday
@@ -138,6 +139,7 @@ export default function WorkspaceHeader() {
             class="mode-pill-btn"
             classList={{ active: presentationMode() === "advanced" }}
             aria-checked={presentationMode() === "advanced"}
+            data-testid="mode-advanced"
             onClick={() => setPresentationMode("advanced")}
           >
             Advanced

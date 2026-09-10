@@ -15,7 +15,7 @@ export default function EverydayContextRail() {
 
   return (
     <Show when={presentationMode() === "everyday"}>
-      <aside class="everyday-rail" aria-label="Helpful details">
+      <aside class="everyday-rail" aria-label="Helpful details" data-testid="everyday-context-rail">
         <div class="everyday-rail-head">
           <h2>Helpful details</h2>
           <button
