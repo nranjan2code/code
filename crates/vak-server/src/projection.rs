@@ -6,7 +6,7 @@ use vak_delivery::{
     OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationPlanner,
     ResultOutcome, SignalContext, built_in_adapters, compile_markdown, link_previews_from_text,
     signals_from_context, structured_markdown, structured_outputs_from_text,
-    structured_outputs_from_tool_result,
+    structured_outputs_from_tool_result_with,
 };
 
 fn status_for_completion(completion: Option<&str>) -> OutputStatus {
@@ -762,10 +762,11 @@ fn snapshot_inner(
                                 for (structured_index, output) in detail
                                     .as_deref()
                                     .map(|text| {
-                                        structured_outputs_from_tool_result(
+                                        structured_outputs_from_tool_result_with(
                                             text,
                                             "desktop",
                                             &built_in_adapters(),
+                                            &planner.skills,
                                         )
                                     })
                                     .unwrap_or_default()

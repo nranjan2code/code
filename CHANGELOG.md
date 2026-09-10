@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.47 — 2026-09-10
+
+- Validate plugin-provided structured results through the merged presentation
+  skill registry during projection.
+
 ## 3.0.46 — 2026-09-10
 
 - Wire strict WeatherAPI and Tavily result adapters into specialist

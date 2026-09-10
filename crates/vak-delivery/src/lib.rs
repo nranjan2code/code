@@ -21,6 +21,7 @@ pub mod templates;
 
 pub use adapters::{
     AdapterRegistry, ResultAdapter, built_in_adapters, structured_outputs_from_tool_result,
+    structured_outputs_from_tool_result_with,
 };
 pub use adaptive::markdown as adaptive_presentation_markdown;
 pub use adaptive::project as project_adaptive_presentation;

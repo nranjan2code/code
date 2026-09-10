@@ -148,6 +148,20 @@ pub fn structured_outputs_from_tool_result(
     surface: &str,
     adapters: &AdapterRegistry,
 ) -> Vec<StructuredOutput> {
+    structured_outputs_from_tool_result_with(
+        text,
+        surface,
+        adapters,
+        &crate::skills::built_in_skill_registry(),
+    )
+}
+
+pub fn structured_outputs_from_tool_result_with(
+    text: &str,
+    surface: &str,
+    adapters: &AdapterRegistry,
+    skills: &crate::skills::SkillRegistry,
+) -> Vec<StructuredOutput> {
     let declared = crate::skills::structured_outputs_from_text(text);
     if !declared.is_empty() {
         return declared;
@@ -158,8 +172,7 @@ pub fn structured_outputs_from_tool_result(
     let Some(candidate) = adapters.try_adapt(&raw) else {
         return Vec::new();
     };
-    let registry = crate::skills::built_in_skill_registry();
-    if registry.validate(&candidate, surface, &[]).is_ok() {
+    if skills.validate(&candidate, surface, &[]).is_ok() {
         vec![candidate]
     } else {
         Vec::new()
