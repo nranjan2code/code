@@ -34,7 +34,7 @@ fn run(label: &str, scenarios: Vec<Scenario>) {
     let mut passed = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for (name, test) in scenarios {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| test())) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(test)) {
             Ok(()) => passed += 1,
             Err(_) => failures.push(name),
         }
@@ -395,10 +395,7 @@ fn audit_spec_validation() {
             for i in 0..target {
                 children.push(SpecNode {
                     primitive: Primitive::Text,
-                    props: BTreeMap::from([(
-                        "text".into(),
-                        SpecValue::Text(format!("n{i}").into()),
-                    )]),
+                    props: BTreeMap::from([("text".into(), SpecValue::Text(format!("n{i}")))]),
                     children: vec![],
                     each: None,
                     item: None,
