@@ -169,6 +169,7 @@ pub fn built_in_seed_pack() -> Vec<StoredPresentation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{compile, CompileInput, CompiledPresentation};
 
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
@@ -187,5 +188,38 @@ mod tests {
             }
         }
         assert!(primitives.len() >= 6);
+    }
+
+    #[test]
+    fn every_seed_compiles_with_minimal_generic_payload() {
+        // Keep the starter pack honest: a newly added seed must be consumable
+        // by the same generic compiler used for user and plugin definitions.
+        // This intentionally does not assert a domain-specific renderer.
+        for record in built_in_seed_pack() {
+            let semantic_type = record
+                .spec
+                .accepts
+                .first()
+                .expect("seed accepts one semantic type");
+            let result = compile(
+                &record.spec,
+                &CompileInput {
+                    semantic_type: semantic_type.clone(),
+                    payload: serde_json::json!({
+                        "title": "Example",
+                        "subtitle": "A reusable starter",
+                        "summary": "A concise example result",
+                        "items": ["One", "Two"],
+                    }),
+                    fallback_text: "Example result".into(),
+                },
+            );
+            assert!(
+                matches!(result, CompiledPresentation::Rich(_)),
+                "seed {} failed generic compilation: {:?}",
+                record.spec.id,
+                result
+            );
+        }
     }
 }
