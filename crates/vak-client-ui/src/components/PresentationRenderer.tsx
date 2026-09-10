@@ -353,7 +353,7 @@ function AnswerCard(props: { item: OutputItem; document: PresentationDocument })
       <header class="semantic-answer-head">
         <span class="semantic-answer-mark"><Icon name="chat" size={14} /></span>
         <strong>Answer</strong>
-        <Show when={props.item.provenance?.source}><small>{props.item.provenance?.source}</small></Show>
+        <Show when={presentationMode() === "advanced" && props.item.provenance?.source}><small>{props.item.provenance?.source}</small></Show>
       </header>
       <PresentationDocumentView document={props.document} />
     </article>

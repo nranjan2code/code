@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.45 — 2026-09-10
+
+- Keep presentation envelopes and ledger provenance out of the user-facing
+  Everyday answer surface, preventing duplicate rich cards and debug text.
+
 ## 3.0.44 — 2026-09-10
 
 - Make the rich presentation path universal for assistant answers, with a

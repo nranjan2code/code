@@ -381,6 +381,11 @@ fn snapshot_inner(
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
                             let assistant = record.message.role == Role::Assistant;
+                            // A short presentation envelope is ledger metadata, not prose.
+                            // Projecting it creates a duplicate, empty-looking Answer card.
+                            if assistant && is_presentation_envelope(text) {
+                                continue;
+                            }
                             let mut candidates = if assistant {
                                 structured_outputs_from_text(text)
                             } else {
@@ -931,6 +936,17 @@ fn media_type_for_path(path: &str) -> Option<String> {
         }
         .into(),
     )
+}
+
+fn is_presentation_envelope(text: &str) -> bool {
+    let lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    lines.len() <= 4
+        && lines.iter().any(|line| line.starts_with("Outcome:"))
+        && lines.iter().any(|line| line.starts_with("Surface:"))
 }
 
 fn activity_item(
@@ -1613,6 +1629,16 @@ mod tests {
     #[test]
     fn read_tools_do_not_claim_artifacts() {
         assert!(artifact_from_tool("read", &serde_json::json!({ "path": "a" })).is_none());
+    }
+
+    #[test]
+    fn presentation_envelope_is_not_an_answer() {
+        assert!(super::is_presentation_envelope(
+            "Outcome: produced\nSurface: desktop app."
+        ));
+        assert!(!super::is_presentation_envelope(
+            "Outcome: produced\n\nHere is the detailed answer."
+        ));
     }
 
     #[test]
