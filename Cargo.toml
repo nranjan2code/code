@@ -30,7 +30,7 @@ members = [
 ]
 
 [workspace.package]
-version = "3.0.53"
+version = "3.0.54"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/vak/vak"

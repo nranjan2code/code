@@ -967,16 +967,12 @@ fn clean_scaffolding(text: &str) -> String {
 }
 
 fn is_presentation_envelope(text: &str) -> bool {
-    let cleaned = clean_scaffolding(text);
-    if cleaned.is_empty() {
-        return true;
-    }
     let lines = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    lines.iter().any(|line| is_scaffolding_line(line)) && lines.len() <= 6
+    !lines.is_empty() && lines.iter().all(|line| is_scaffolding_line(line))
 }
 
 fn activity_item(

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.54 — 2026-09-10
+
+- Implement systemic prompt scaffolding scrubbing (`Surface:`, `Outcome:`,
+  `primary deliverable:`, `completed`) in projection.
+- Partition Everyday vs Advanced mode error card presentation, suppressing raw
+  protocol JSON tracebacks in Everyday conversation bubbles.
+- Enhance MCP tool error formatting with actionable model self-repair guidance.
+
 ## 3.0.53 — 2026-09-10
 
 - Ship Modern Presentation System 2026 update with dual-density Everyday vs
