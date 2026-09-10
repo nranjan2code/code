@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.49 — 2026-09-10
+
+- Release the corrected integration-owned presentation adapter boundary and
+  refreshed local desktop/web bundles.
+
 ## 3.0.48 — 2026-09-10
 
 - Remove the hard-coded Tavily adapter; MCP integrations own their result
