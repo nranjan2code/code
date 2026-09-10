@@ -21,6 +21,20 @@ function stripVakFence(text: string): string {
   return rest || "Structured output rendered in the presentation timeline.";
 }
 
+// Prompt metadata is model-visible context, not user-facing answer prose.
+// Keep it in the append-only transcript for auditability, but remove only
+// exact generated metadata lines from the ordinary conversation surface.
+function cleanAssistantText(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
+    .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed)\s*$/i.test(line))
+    .filter((line) => !/^\s*completed\s*$/i.test(line))
+    .join("\n")
+    .replace(/^\s*\n|\n\s*$/g, "")
+    .trim();
+}
+
 /**
  * A new task's chat pane before anything has happened, and an existing
  * task with nothing rendered at the current density. Previously both
@@ -512,16 +526,17 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   if (item.kind === "assistant") {
+    const displayText = cleanAssistantText(item.text);
     return (
       <div class="msg assistant">
-        <Show when={item.text} fallback={<span class="caret" />}>
-          <Markdown text={item.text} streaming={item.streaming} />
+        <Show when={displayText} fallback={<span class="caret" />}>
+          <Markdown text={displayText} streaming={item.streaming} />
           <Show when={item.streaming}>
             <span class="caret" />
           </Show>
         </Show>
-        <Show when={!item.streaming && item.text}>
-          <MessageActions text={item.text} role="assistant" />
+        <Show when={!item.streaming && displayText}>
+          <MessageActions text={displayText} role="assistant" />
         </Show>
       </div>
     );
