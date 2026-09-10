@@ -16,7 +16,6 @@ import {
   setNotice,
   setReceiptsOpen,
   setWorkOpen,
-  setSearchOpen,
   setSideOpen,
   setSidebarOpen,
   sideOpen,
@@ -163,7 +162,6 @@ export default function WorkspaceHeader() {
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Managed work</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>
-            <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSearchOpen(true); }}><Icon name="search" />Search ⌘K</button>
           </div>
         </details>
       </div>

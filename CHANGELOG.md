@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.51 — 2026-09-10
+
+- Make Everyday the calm conversation surface and keep operator metadata out
+  of the reader flow.
+- Keep the helpful-details rail closed on launch and remove duplicate header
+  search in favour of the sidebar conversation search.
+- Hide model, sandbox, warning, and transcript-density diagnostics from
+  Everyday while retaining them in Advanced.
+
 ## 3.0.50 — 2026-09-10
 
 - Keep provisional streaming shells and tool diagnostics out of Everyday;

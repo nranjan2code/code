@@ -1,5 +1,5 @@
 import { createMemo, Show } from "solid-js";
-import { connection, density, health, setDensity, type Connection, type Density } from "../store";
+import { connection, density, health, presentationMode, setDensity, type Connection, type Density } from "../store";
 
 /** What each connection state means to a reader, in words rather than hue.
  *
@@ -43,17 +43,20 @@ export default function StatusBar() {
           <span class="visually-hidden">Connection: </span>
           {conn().label}
         </span>
-        <span class="st-item st-model" classList={{ offline: !h() }} title={`provider: ${h()?.provider ?? "unavailable"}`}>
-          {h()?.model ?? "Model unavailable"}
-        </span>
-        <span class="st-item st-sandbox" title="sandbox backend">{h()?.sandbox}</span>
-        <Show when={(h()?.warnings?.length ?? 0) > 0}>
-          <span class="st-item warn" title={JSON.stringify(h()?.warnings)}>
-            ⚠ {h()?.warnings?.length} warning(s)
+        <Show when={presentationMode() === "advanced"}>
+          <span class="st-item st-model" classList={{ offline: !h() }} title={`provider: ${h()?.provider ?? "unavailable"}`}>
+            {h()?.model ?? "Model unavailable"}
           </span>
+          <span class="st-item st-sandbox" title="sandbox backend">{h()?.sandbox}</span>
+          <Show when={(h()?.warnings?.length ?? 0) > 0}>
+            <span class="st-item warn" title={JSON.stringify(h()?.warnings)}>
+              ⚠ {h()?.warnings?.length} warning(s)
+            </span>
+          </Show>
         </Show>
       </div>
       <div class="st-right">
+        <Show when={presentationMode() === "advanced"}>
         <select
           class="st-density"
           value={density()}
@@ -65,6 +68,7 @@ export default function StatusBar() {
           <option value="balanced">Balanced detail</option>
           <option value="audit">Audit detail</option>
         </select>
+        </Show>
         <Show when={h()?.provider}>
           <span class="st-item" title="active provider">{h()?.provider}</span>
         </Show>

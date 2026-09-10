@@ -211,7 +211,9 @@ export function PresentationDocumentView(props: { document: PresentationDocument
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
-      <RenderAudit document={props.document} />
+      <Show when={presentationMode() === "advanced"}>
+        <RenderAudit document={props.document} />
+      </Show>
     </div>
   );
 }
@@ -514,8 +516,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
-    if (item.content.type === "document") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>;
-    if (item.content.type === "outcome") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
+    if (item.content.type === "document") return presentationMode() === "everyday"
+      ? <div class="semantic-assistant"><PresentationDocumentView document={item.content.document} /></div>
+      : <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>;
+    if (item.content.type === "outcome") return presentationMode() === "everyday"
+      ? <div class="semantic-assistant">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</div>
+      : <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
@@ -628,7 +634,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
     return order.map((id) => ({ id, items: grouped.get(id)! }));
   });
   return <div class="semantic-timeline">
-    <Show when={props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
+    <Show when={presentationMode() === "advanced" && props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
       <summary><span class="goal-state-label">{goal().control === "active" ? "Follow-up goal" : "Goal record"}</span><span class={`goal-state-control ${goal().control}`}>{goal().control === "active" ? "available" : goal().control}</span><span class="goal-state-revision">rev {goal().revision}</span></summary>
       <p class="goal-state-objective">{goal().objective}</p>
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>

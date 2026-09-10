@@ -449,7 +449,7 @@ export default function Sidebar() {
                                 <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
                                   role="img"
                                   aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
-                                {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
+                                {session.running || isRunning(session.session_id) ? "Working" : "Conversation"}
                               </Show>
                             </span>
                           </span>

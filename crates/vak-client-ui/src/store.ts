@@ -243,7 +243,10 @@ const storedPresentationMode = localStorage.getItem("vak.presentationMode");
 export const [presentationMode, setPresentationModeSignal] = createSignal<PresentationMode>(
   storedPresentationMode === "advanced" ? "advanced" : "everyday",
 );
-export const [everydayRailOpen, setEverydayRailOpen] = createSignal(true);
+// Keep the conversation canvas primary on launch. The companion rail is
+// useful when it has context, but an empty rail makes a new conversation
+// feel split before the user has asked for anything.
+export const [everydayRailOpen, setEverydayRailOpen] = createSignal(false);
 export function setPresentationMode(mode: PresentationMode) {
   setPresentationModeSignal(mode);
   localStorage.setItem("vak.presentationMode", mode);
