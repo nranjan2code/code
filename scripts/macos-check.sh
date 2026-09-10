@@ -339,6 +339,24 @@ codesign --force --deep --sign - "$CHECK_DIR/Vak.app" 2>/dev/null || true
     || fail "the app bundle does not verify"
 ok "bundle structure, architecture, dylibs, and seal verify"
 
+# The bundle check above validates packaging, but it must also prove that the
+# executable inside the app is the same release binary that was exercised by
+# the isolated gateway.  This catches stale-app launches (a surprisingly easy
+# failure when a developer has several Vak.app copies installed).  The MCP
+# registration is persisted in the isolated home; assert that the bundle
+# executable can read the same state rather than merely checking the HTTP PUT.
+BUNDLE_BIN="$CHECK_DIR/Vak.app/Contents/MacOS/vak"
+[[ -x "$BUNDLE_BIN" ]] || fail "bundle has no executable at Contents/MacOS/vak"
+BUNDLE_VERSION="$(VAK_HOME="$VAK_HOME" "$BUNDLE_BIN" --version)"
+BUILT_VERSION="$(VAK_HOME="$VAK_HOME" "$BUILT" --version)"
+[[ "$BUNDLE_VERSION" == "$BUILT_VERSION" ]] \
+    || fail "bundle version differs from built binary ($BUNDLE_VERSION vs $BUILT_VERSION)"
+MCP_CONFIG="$WORKSPACE/.vak/config.toml"
+[[ -f "$MCP_CONFIG" ]] || fail "bundle home has no persisted MCP configuration"
+grep -q '^\[mcp\.servers\.fake\]' "$MCP_CONFIG" \
+    || fail "persisted bundle configuration lost the fake MCP server"
+ok "bundle executable matches the release binary and retains MCP configuration"
+
 if command -v hdiutil >/dev/null; then
     DMG_ROOT="$CHECK_DIR/dmgroot"
     mkdir -p "$DMG_ROOT"
