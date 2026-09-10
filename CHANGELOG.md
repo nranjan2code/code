@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.44 — 2026-09-10
+
+- Make the rich presentation path universal for assistant answers, with a
+  consistent Answer card in Everyday and Advanced modes.
+- Keep specialist renderers and the original document content available.
+
 ## 3.0.43 — 2026-09-10
 
 - Stabilize Everyday and Advanced UI flows, seed/update reconciliation, and

@@ -555,6 +555,11 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .semantic-user { display: flex; justify-content: flex-end; margin-bottom: 18px; }
 .semantic-user .semantic-document { max-width: min(78%, 650px); padding: 9px 13px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
 .semantic-outcome { color: var(--text-soft); }
+.semantic-answer-card { max-width: min(92%, 760px); margin: 12px 0 16px; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.semantic-answer-head { display: flex; align-items: center; gap: 7px; min-height: 24px; margin-bottom: 8px; color: var(--text); font-size: 12px; }
+.semantic-answer-head small { margin-left: auto; color: var(--faint); font-size: 10px; }
+.semantic-answer-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--accent-bright); background: var(--accent-wash); }
+.semantic-answer-card .semantic-document { padding: 0; }
 .outcome-review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-soft); }
 .semantic-document { min-width: 0; overflow-wrap: anywhere; }
 .semantic-paragraph { margin: .45em 0; }
@@ -1531,7 +1536,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .dock-resizer { right: calc(var(--dock-width, 520px) - 4px); }
 body.is-resizing { cursor: col-resize; user-select: none; }
 body.is-resizing iframe { pointer-events: none; }
-.dock-tabs { display: flex; align-items: center; gap: 2px; min-height: 42px; padding: 5px 7px; overflow-x: auto; border-bottom: 1px solid var(--border-soft); background: var(--sidebar); }
+.dock-tabs { display: flex; align-items: center; gap: 2px; min-height: 42px; padding: 5px 7px; overflow: visible; flex-wrap: wrap; border-bottom: 1px solid var(--border-soft); background: var(--sidebar); }
 .dock-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 29px; padding: 4px 8px; border-radius: 7px; color: var(--muted); white-space: nowrap; font-size: 11px; }
 .dock-tab:hover { color: var(--text-soft); background: var(--surface-hover); }
 .dock-tab.on { color: var(--text); background: var(--surface-active); }

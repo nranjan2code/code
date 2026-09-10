@@ -341,6 +341,25 @@ function ActivityRow(props: { item: OutputItem }) {
   return <div class={`semantic-activity ${props.item.status}`} title={evidence || undefined}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status} · {new Date(props.item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div>;
 }
 
+/**
+ * Every assistant result gets the same rich answer surface, even when the
+ * server did not classify it as research, a diff, a chart, or another
+ * specialist semantic type. Specialist renderers can still add their own
+ * cards; this is the universal replacement for the old unframed transcript.
+ */
+function AnswerCard(props: { item: OutputItem; document: PresentationDocument }) {
+  return (
+    <article class="semantic-answer-card">
+      <header class="semantic-answer-head">
+        <span class="semantic-answer-mark"><Icon name="chat" size={14} /></span>
+        <strong>Answer</strong>
+        <Show when={props.item.provenance?.source}><small>{props.item.provenance?.source}</small></Show>
+      </header>
+      <PresentationDocumentView document={props.document} />
+    </article>
+  );
+}
+
 function PresentationFeedback(props: { sessionId: string; semanticType: string }) {
   const [status, setStatus] = createSignal("");
   const [expanded, setExpanded] = createSignal(false);
@@ -489,13 +508,13 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 }
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
-  const ordered = () => props.items.filter((item) => density() !== "outcome" || !["progress", "retry", "information"].includes(item.kind));
+  const ordered = () => props.items.filter((item) => (presentationMode() === "everyday" ? "outcome" : density()) !== "outcome" || !["progress", "retry", "information"].includes(item.kind));
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {
       return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
-    if (item.content.type === "document") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><PresentationDocumentView document={item.content.document} /></article>;
+    if (item.content.type === "document") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>;
     if (item.content.type === "outcome") return <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>;
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;

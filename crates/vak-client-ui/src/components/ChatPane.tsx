@@ -110,7 +110,11 @@ function TranscriptSkeleton() {
 }
 
 function visibleItems(list: Item[]): Item[] {
-  const d = density();
+  // Everyday is the calm product surface: it never exposes the verbose
+  // activity ledger, even when a previous Advanced session left Audit
+  // selected in local storage. Advanced remains the operator surface where
+  // the stored transcript detail preference is honored.
+  const d = presentationMode() === "everyday" ? "outcome" : density();
   if (d === "outcome") {
     // "Outcome" hides the working (thinking, tool-call) detail once it's
     // done — but a run in progress must still show *something* live, or
