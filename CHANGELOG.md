@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.48 — 2026-09-10
+
+- Remove the hard-coded Tavily adapter; MCP integrations own their result
+  contracts and may self-declare or provide their own presentation adapter.
+
 ## 3.0.47 — 2026-09-10
 
 - Validate plugin-provided structured results through the merged presentation

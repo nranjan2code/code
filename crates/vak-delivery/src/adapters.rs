@@ -72,44 +72,6 @@ impl ResultAdapter for WeatherApiCurrentAdapter {
     }
 }
 
-struct TavilySearchAdapter;
-
-impl ResultAdapter for TavilySearchAdapter {
-    fn id(&self) -> &'static str {
-        "tavily.search"
-    }
-
-    fn adapt(&self, raw: &Value) -> Option<StructuredOutput> {
-        let results = raw.get("results")?.as_array()?;
-        let mut sources = Vec::new();
-        let mut takeaways = Vec::new();
-        for (index, result) in results.iter().take(12).enumerate() {
-            let title = result.get("title")?.as_str()?.to_owned();
-            let url = result.get("url")?.as_str()?.to_owned();
-            let content = result
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_owned();
-            sources.push(serde_json::json!({"title": title, "url": url}));
-            if !content.is_empty() {
-                takeaways.push(serde_json::json!({
-                    "text": content,
-                    "citation_indices": [index + 1]
-                }));
-            }
-        }
-        (!sources.is_empty()).then(|| StructuredOutput {
-            semantic_type: "research.synthesis".into(),
-            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1.0.0".into(),
-            payload: serde_json::json!({"sources": sources, "takeaways": takeaways}),
-        })
-    }
-}
-
 /// An ordered, purely additive set of adapters. Order only matters as a
 /// tie-break when two adapters both recognize the same input, which a
 /// well-scoped adapter should make rare.
@@ -182,7 +144,6 @@ pub fn structured_outputs_from_tool_result_with(
 pub fn built_in_adapters() -> AdapterRegistry {
     let mut registry = AdapterRegistry::default();
     registry.register(Box::new(WeatherApiCurrentAdapter));
-    registry.register(Box::new(TavilySearchAdapter));
     registry
 }
 
@@ -251,10 +212,7 @@ mod tests {
 
     #[test]
     fn built_in_adapters_register_real_provider_shapes() {
-        assert_eq!(
-            built_in_adapters().ids(),
-            vec!["weatherapi.current", "tavily.search"]
-        );
+        assert_eq!(built_in_adapters().ids(), vec!["weatherapi.current"]);
     }
 
     #[test]
@@ -296,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn weatherapi_and_tavily_shapes_become_specialist_outputs() {
+    fn weatherapi_shape_becomes_specialist_output() {
         let adapters = built_in_adapters();
         let weather = structured_outputs_from_tool_result(
             r#"{"current":{"temp_c":31.5,"condition":{"text":"Sunny"}}}"#,
@@ -304,11 +262,5 @@ mod tests {
             &adapters,
         );
         assert_eq!(weather[0].semantic_type, "metric");
-        let news = structured_outputs_from_tool_result(
-            r#"{"results":[{"title":"Headline","url":"https://example.com","content":"A verified update."}]}"#,
-            "desktop",
-            &adapters,
-        );
-        assert_eq!(news[0].semantic_type, "research.synthesis");
     }
 }
