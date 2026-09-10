@@ -30,12 +30,23 @@ export default function EverydayContextRail() {
         </div>
 
         <div class="everyday-rail-body">
-          <div class="everyday-rail-empty">
-            <div class="everyday-rail-empty-icon">
-              <Icon name="file" size={26} />
+          <Show when={(timeline()?.items.length ?? 0) === 0} fallback={
+            <div class="everyday-rail-preview" aria-label="Conversation highlights">
+              <For each={timeline()?.items.slice(0, 4) ?? []}>
+                {(item) => <div class="everyday-rail-preview-row">
+                  <span class="dot" classList={{ run: item.status === "running" }} />
+                  <span>{item.fallback_text || (item.kind === "outcome" ? "Result" : "Conversation update")}</span>
+                </div>}
+              </For>
             </div>
-            <p class="everyday-rail-empty-text">Things related to your conversation will appear here.</p>
-          </div>
+          }>
+            <div class="everyday-rail-empty">
+              <div class="everyday-rail-empty-icon">
+                <Icon name="file" size={26} />
+              </div>
+              <p class="everyday-rail-empty-text">Things related to your conversation will appear here.</p>
+            </div>
+          </Show>
 
           <div class="everyday-rail-sections">
             <RailSection label="Files" count={files()} icon="file" />

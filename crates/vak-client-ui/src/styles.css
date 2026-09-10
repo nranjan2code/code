@@ -2397,6 +2397,12 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .everyday-rail-section > span:nth-child(2) { flex: 1; font-size: 12px; }
 .everyday-rail-count { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .everyday-rail-section > .icon:last-child { color: var(--faint); }
+.everyday-rail-preview { display: grid; gap: 2px; padding: 12px; border-bottom: 1px solid var(--border-soft); }
+.everyday-rail-preview-row { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--text-soft); font-size: 11px; line-height: 1.35; }
+.everyday-rail-preview-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presentation-live { margin: 14px auto 8px; width: min(760px, calc(100% - 32px)); border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); }
+.presentation-live-label { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; }
+.presentation-live > .presentation-timeline { padding: 10px 12px; }
 .dock-tabs { min-height: 48px; padding: 7px 10px; gap: 4px; }
 .dock-tab { min-height: 32px; padding-inline: 10px; border-radius: 9px; }
 .main-stack.split { display: grid; grid-template-columns: minmax(0, var(--split-left, 50%)) 1px minmax(0, 1fr); }

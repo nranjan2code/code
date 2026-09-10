@@ -592,6 +592,16 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
+            {/* Keep a live projection visible as soon as the runtime has
+                emitted one.  The transcript remains mounted underneath so
+                streaming text, approvals, and tool progress never vanish
+                while the structured card is being reconciled. */}
+            <Show when={isRunning(sid()) && (presentationOf(sid())?.items.length ?? 0) > 0}>
+              <div class="presentation-live" aria-live="polite" aria-label="Live result preview">
+                <div class="presentation-live-label"><span class="dot run" /> Live result</div>
+                <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />
+              </div>
+            </Show>
             {/* Keep the transcript mounted for the whole live turn. The
                 presentation projection is a settled view; switching to it
                 while the stream is still committing causes the visible
