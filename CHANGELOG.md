@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.53 — 2026-09-10
+
+- Ship Modern Presentation System 2026 update with dual-density Everyday vs
+  Advanced modes and tactile sliding segmented control.
+- Introduce elevated user message bubbles, Vak brand pulse header, clean prose
+  scaffolding scrubbing, and collapsible reasoning traces.
+- Implement uniform outcome card architecture across coding diffs, research
+  synthesis, telemetry charts, terminal sessions, and lifestyle recipes.
+- Refresh committed web/desktop UI bundles and document specification in
+  docs/design/60-modern-presentation-system-2026.md.
+
 ## 3.0.52 — 2026-09-10
 
 - Keep outcome, review, provenance, and diagnostic chrome out of production
