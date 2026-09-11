@@ -2813,6 +2813,7 @@ impl Core {
         let runtime = prompts::RuntimeSections {
             capability_contract,
             surface: self.surface.prompt_section(),
+            runtime: vak_tools::bash::runtime_capability_summary(),
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,

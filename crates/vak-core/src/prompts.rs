@@ -316,6 +316,8 @@ pub struct RuntimeSections {
     /// can name the gap instead of discovering it one denied call at a
     /// time; never a grant.
     pub standing: String,
+    /// Live, code-owned inventory of the sandbox runtime.
+    pub runtime: String,
 }
 
 /// The assembled prompt plus a record of who contributed each part.
@@ -512,7 +514,13 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     }
 
     let mut text = text;
-    for section in [&surface, &runtime.skills, &runtime.mcp, &runtime.standing] {
+    for section in [
+        &surface,
+        &runtime.runtime,
+        &runtime.skills,
+        &runtime.mcp,
+        &runtime.standing,
+    ] {
         if !section.trim().is_empty() {
             if !section.starts_with('\n') {
                 text.push('\n');

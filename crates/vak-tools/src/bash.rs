@@ -11,6 +11,31 @@ const MAX_CAPTURE: usize = 1 << 20;
 
 pub struct BashTool;
 
+/// A factual, lightweight inventory for the model prompt. This intentionally
+/// describes commands, not languages: `bash` remains the one universal
+/// execution interface and the inventory reflects the current host/image.
+pub fn runtime_capability_summary() -> String {
+    let commands = [
+        "bash", "python3", "node", "npm", "go", "rustc", "cargo", "git", "curl", "jq", "make",
+    ];
+    let available = commands
+        .into_iter()
+        .filter(|command| {
+            std::env::var_os("PATH").is_some_and(|path| {
+                std::env::split_paths(&path).any(|dir| dir.join(command).is_file())
+            })
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "\nSandbox runtime (observed now): universal `bash` execution is available. Commands currently discoverable: {}. You may install additional tools and packages through `bash` in quarantined `.vak/scratch/` when network/package installation is permitted; do not claim a tool was run without a successful execution receipt.\n",
+        if available.is_empty() {
+            "none".into()
+        } else {
+            available.join(", ")
+        }
+    )
+}
+
 #[async_trait]
 impl Tool for BashTool {
     fn name(&self) -> &str {
@@ -314,6 +339,30 @@ pub(crate) fn scrub_environment(cmd: &mut tokio::process::Command) {
         .collect();
     cmd.env_clear();
     cmd.envs(inherited);
+    // GUI-launched macOS applications do not receive the shell PATH. Keep the
+    // sandbox language/toolchain-neutral, but make the normal user-installed
+    // tool locations reachable by every command executed through `bash`.
+    // This is deliberately a PATH repair, not a Python/Node/etc. special case.
+    #[cfg(target_os = "macos")]
+    {
+        let mut path = std::env::var_os("PATH").unwrap_or_default();
+        for candidate in [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/opt/local/bin",
+        ] {
+            let candidate = std::path::Path::new(candidate);
+            if candidate.is_dir() {
+                let mut repaired = candidate.as_os_str().to_os_string();
+                repaired.push(":");
+                repaired.push(&path);
+                path = repaired;
+            }
+        }
+        cmd.env("PATH", path);
+    }
 }
 
 pub fn isolate_process_group(cmd: &mut tokio::process::Command) {

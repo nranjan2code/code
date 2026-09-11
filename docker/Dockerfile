@@ -48,9 +48,11 @@ FROM debian:bookworm-slim AS runtime
 
 # ca-certificates: provider APIs are HTTPS.
 # git:             worktrees and checkpoints are git operations, not optional.
-# bash:            the `bash` tool runs real commands.
+# bash:            the universal `bash` execution interface.
 # curl:            the healthcheck below, and nothing else.
-# python3:         execution runtime support.
+# Common toolchains: the baseline is intentionally broad; `bash` remains the
+# one language-neutral execution interface and additional packages may still
+# be installed in the quarantined scratch environment.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -60,6 +62,15 @@ RUN apt-get update \
         python3 \
         python3-venv \
         python3-pip \
+        nodejs \
+        npm \
+        golang-go \
+        rustc \
+        cargo \
+        build-essential \
+        jq \
+        unzip \
+        make \
     && rm -rf /var/lib/apt/lists/*
 
 # An agent that can run commands should not be running them as root.
