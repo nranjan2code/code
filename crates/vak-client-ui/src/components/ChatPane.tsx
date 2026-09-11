@@ -547,10 +547,14 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   if (item.kind === "assistant") {
-    // Live chat is deliberately text-only. Rich cards arrive through the
-    // typed OutputTimeline after the turn settles; parsing model prose here
-    // creates a second, heuristic presentation protocol.
-    const displayText = () => cleanAssistantText(item.text);
+    // Streaming stays immediate, but settled turns must use the same parser
+    // as the presentation timeline. Some providers return the typed payload
+    // inside the assistant transcript instead of emitting a separate timeline
+    // item; leaving that path text-only leaks raw `vak` JSON into the UI.
+    const extracted = () => item.streaming
+      ? { cards: [], displayText: cleanAssistantText(item.text), leadText: cleanAssistantText(item.text), followText: "" }
+      : extractAssistantStructuredCards(item.text);
+    const displayText = () => extracted().displayText;
 
     if (!item.streaming && !displayText().trim()) {
       return null;
@@ -570,11 +574,20 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           </Show>
         </div>
         <div class="assistant-turn-body">
-          <Show when={displayText()}>
-            <Markdown text={displayText()} streaming={item.streaming} />
+          <Show when={item.streaming || !extracted().cards.length}>
+            <Show when={displayText()}>
+              <Markdown text={displayText()} streaming={item.streaming} />
+            </Show>
           </Show>
           <Show when={item.streaming && !displayText()}>
             <span class="caret" />
+          </Show>
+          <Show when={!item.streaming && extracted().cards.length > 0}>
+            <Show when={extracted().leadText}><Markdown text={extracted().leadText} /></Show>
+            <div class="assistant-structured-cards">
+              <For each={extracted().cards}>{(card) => <StructuredView output={card} sessionId={props.sessionId ?? undefined} />}</For>
+            </div>
+            <Show when={extracted().followText}><Markdown text={extracted().followText} /></Show>
           </Show>
           <Show when={!item.streaming && displayText()}>
             <MessageActions text={displayText()} role="assistant" />
