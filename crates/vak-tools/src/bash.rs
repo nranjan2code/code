@@ -634,6 +634,7 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::{is_allowed_env_var, scrub_environment};
     use std::sync::Mutex;
