@@ -721,21 +721,25 @@ fn nodes_to_blocks(
                         }
                     }
                     let trimmed = text_buf.trim();
-                    let candidate = if let Some(rest) = trimmed.strip_prefix("vak\n").or_else(|| trimmed.strip_prefix("vak ")) {
+                    let candidate = if let Some(rest) = trimmed
+                        .strip_prefix("vak\n")
+                        .or_else(|| trimmed.strip_prefix("vak "))
+                    {
                         rest.trim()
                     } else {
                         trimmed
                     };
-                    if candidate.starts_with('{') && candidate.contains("\"semantic_type\"") {
-                        if let Ok(output) = crate::skills::parse_fragment(candidate) {
-                            let fallback_markdown = crate::skills::structured_markdown(&output);
-                            blocks.push(DocumentBlock::Structured {
-                                id: ids.next(),
-                                output,
-                                fallback_markdown,
-                            });
-                            continue;
-                        }
+                    if candidate.starts_with('{')
+                        && candidate.contains("\"semantic_type\"")
+                        && let Ok(output) = crate::skills::parse_fragment(candidate)
+                    {
+                        let fallback_markdown = crate::skills::structured_markdown(&output);
+                        blocks.push(DocumentBlock::Structured {
+                            id: ids.next(),
+                            output,
+                            fallback_markdown,
+                        });
+                        continue;
                     }
                     blocks.push(DocumentBlock::Paragraph {
                         id: ids.next(),
@@ -755,7 +759,10 @@ fn nodes_to_blocks(
             Node::CodeBlock(language, content) => {
                 if language.as_deref() == Some("vak") || content.contains("\"semantic_type\"") {
                     let trimmed = content.trim();
-                    let candidate = if let Some(rest) = trimmed.strip_prefix("vak\n").or_else(|| trimmed.strip_prefix("vak ")) {
+                    let candidate = if let Some(rest) = trimmed
+                        .strip_prefix("vak\n")
+                        .or_else(|| trimmed.strip_prefix("vak "))
+                    {
                         rest.trim()
                     } else {
                         trimmed

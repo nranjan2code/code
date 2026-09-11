@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.58 — 2026-09-11
+
+### Continuous Chat Canvas & Structured Card Pipeline Fortification
+
+- Unify continuous chat canvas and robustly parse structured cards without repaint or leakage.
+- Streamline inline presentation parsing in `vak-delivery` to extract structured cards directly from outcome blocks.
+- Clean up presentation renderer data normalization across timeline, grid, research, and recipe outcomes.
+- Fortify presentation pipeline formatting and clippy compliance.
+
 ## 3.0.57 — 2026-09-11
 
 ### Universal Outcome Card Architecture & Leakage Elimination
