@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.66 — 2026-09-11
+
+### Universal Sandbox Runtime Discovery and Environment Fortification
+
+- Improve universal sandbox runtime discovery and tool execution environment detection.
+- Expand proactive tool execution prompts and system runtime capability reporting.
+- Upgrade Docker sandbox environment with extended toolchain and package support.
+
 ## 3.0.65 — 2026-09-11
 
 ### Presentation Resiliency, Frontend Build Tooling Fortification, and macOS Release
