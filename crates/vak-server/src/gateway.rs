@@ -3418,7 +3418,10 @@ mod tests {
         std::fs::write(prompts_dir.join("guardrails.md"), "- never touch infra/\n").unwrap();
 
         let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
-        assert_eq!(fresh.id, old_id, "prompt layer change preserves session without forced rotation");
+        assert_eq!(
+            fresh.id, old_id,
+            "prompt layer change preserves session without forced rotation"
+        );
         let old_path =
             vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
         assert!(old_path.is_file(), "append-only ledger remains intact");
