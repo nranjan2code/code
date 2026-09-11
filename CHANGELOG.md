@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.57 — 2026-09-11
+
+### Universal Outcome Card Architecture & Leakage Elimination
+
+- Map all 62+ registered semantic outcome types directly in `STRUCTURED_RENDERERS`
+  within `PresentationRenderer.tsx`, including research synthesis, briefs,
+  diff inspectors, test matrices, terminal consoles, data grids, tabular comparisons,
+  interactive recipe cards, timeline plans, checklists, milestones, schedules,
+  scorecards, budgets, financial summaries, and interactive preview cards.
+- Add robust data normalizers (`normalizeRecipe`, `normalizeTimeline`, `normalizeDataGrid`,
+  `normalizeResearch`) with shape-based fallbacks for dynamic and plugin skills.
+- Fortify `RecipeCard` with dynamic servings scaling, flexible ingredient shapes,
+  and countdown cooking timers across minutes and seconds.
+- Eliminate backend scaffolding and diagnostic leakage (`Surface:`, `Outcome:`,
+  `primary deliverable:`, `completed`, `contract_id:`) across Everyday and Advanced modes.
+- Preserve consistent Vak avatar mark and header on settled assistant turns matching live streaming.
+
 ## 3.0.56 — 2026-09-10
 
 ### Presentation Delivery Test Suite Expansion
