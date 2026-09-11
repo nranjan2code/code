@@ -145,8 +145,6 @@ impl StopPolicy {
         None
     }
 
-
-
     /// True when the prompt itself asks for executed verification or sandbox execution.
     fn demands_verification(prompt: &str) -> bool {
         const DEMANDS: [&str; 12] = [
@@ -175,9 +173,11 @@ impl StopPolicy {
             return true;
         }
         p.contains("run ")
-            && ["test", "tests", "command", "script", "check", "app", "code", "it"]
-                .iter()
-                .any(|word| p.contains(word))
+            && [
+                "test", "tests", "command", "script", "check", "app", "code", "it",
+            ]
+            .iter()
+            .any(|word| p.contains(word))
     }
 
     /// Returns Some(reason) when completion should be blocked.
@@ -366,7 +366,8 @@ mod tests {
     #[test]
     fn test_sandbox_demands_verification() {
         let p = StopPolicy::default();
-        let prompt = "make in using react with beautifull design and run them in sandbox and show me";
+        let prompt =
+            "make in using react with beautifull design and run them in sandbox and show me";
         assert!(matches!(
             p.evaluate(prompt, "Here is the code in a block.", 0),
             Some(BlockReason::VerificationMissing)
