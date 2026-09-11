@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.61 — 2026-09-11
+
+### Unconstrained Sandbox Execution, Anti-Evasion Stop Guard, and Working Directory Control
+
+- Establish universal execution sandbox in system prompt (`bash`, `.vak/scratch/`, live Workbench preview) for anything and everything (web apps, pipelines, scripts, media/documents, tests, installations, system tools) without model hesitation or refusal.
+- Mandate proactive self-directed sandbox execution: the agent autonomously executes and verifies work without waiting for user commands.
+- Implement `is_substantive_command` in `stop_policy` to catch dummy `echo`/`printf`/`true`/`exit 0` evasions from satisfying verification obligations.
+- Expose `cwd` and `quarantine` in `BashTool::schema` and execution logic, allowing explicit execution in workspace root or subdirectories while preserving quarantined scratch prototyping.
+- Register `sandbox`, `sandbox_exec`, `terminal`, `shell`, `sh`, and `exec` as canonical aliases for `bash`, and support `code` and `input` tool call parameters.
+- Verify complete subagent sandbox continuity and parent Workbench streaming.
+
 ## 3.0.60 — 2026-09-11
 
 ### Presentation Layer Scaffolding & Leakage Elimination Across All Modes
