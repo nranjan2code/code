@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.67 — 2026-09-11
+
+### Dynamic Capability Refresh and Non-Rotating Gateway Turn Boundaries
+
+- Enable dynamic capability visibility resolution at turn boundaries without discarding session history.
+- Eliminate forced gateway session rotation upon live prompt layer or capability set updates.
+- Preserve immutable historical ledger contracts while seamlessly picking up runtime capability discoveries.
+
 ## 3.0.66 — 2026-09-11
 
 ### Universal Sandbox Runtime Discovery and Environment Fortification
