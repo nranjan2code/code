@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.63 — 2026-09-11
+
+### Full Release Consolidation, Quarantine Working Directory Control, and Anti-Evasion Verification
+
+- Consolidate unconstrained proactive execution across all local stacks in system prompt and tool schemas.
+- Enable explicit `cwd` navigation and `quarantine` override in `BashTool`, resolving workspace-root execution and scratch preview isolation.
+- Fortify stop guard substantive command detection against evasive echo assertions while maintaining shell probes.
+- Update compiled web and desktop distribution bundles.
+
 ## 3.0.62 — 2026-09-11
 
 ### Presentation Rails Modernization, Protocol-Driven Card Rendering, and Stop Policy Fortification
