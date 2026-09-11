@@ -22,9 +22,11 @@ export interface ResearchData {
 
 export default function ResearchCards(props: { data: ResearchData }) {
   const [copied, setCopied] = createSignal(false);
+  const takeaways = () => props.data?.takeaways || [];
+  const sources = () => props.data?.sources || [];
 
   const handleCopy = async () => {
-    const text = props.data.takeaways
+    const text = takeaways()
       .map((t) => (typeof t === "string" ? t : t.text))
       .join("\n• ");
     try {
@@ -40,8 +42,8 @@ export default function ResearchCards(props: { data: ResearchData }) {
     <div class="canvas-card research-card-wrap">
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">Research Synthesis</span>
-          <span class="card-subtitle">{props.data.sources.length} sources</span>
+          <span class="card-badge badge-indigo">{props.data?.title ?? "Research Synthesis"}</span>
+          <span class="card-subtitle">{sources().length} sources</span>
         </div>
         <div class="card-actions">
           <button type="button" class="pill-action-btn" onClick={handleCopy}>
@@ -52,7 +54,7 @@ export default function ResearchCards(props: { data: ResearchData }) {
       
       <div class="research-grid">
         <div class="takeaways-list">
-          <For each={props.data.takeaways}>
+          <For each={takeaways()}>
             {(item, idx) => {
               const text = typeof item === "string" ? item : item.text;
               const cites = typeof item === "object" ? item.citation_indices ?? [] : [];
@@ -63,7 +65,7 @@ export default function ResearchCards(props: { data: ResearchData }) {
                     <span>{text}</span>
                     <For each={cites}>
                       {(citeIdx) => {
-                        const source = props.data.sources[citeIdx - 1];
+                        const source = sources()[citeIdx - 1];
                         return (
                           <span class="inline-cite">
                             [{citeIdx}]
@@ -87,9 +89,9 @@ export default function ResearchCards(props: { data: ResearchData }) {
           </For>
         </div>
 
-        <Show when={props.data.sources.length > 0}>
+        <Show when={sources().length > 0}>
           <div class="source-shelf">
-            <For each={props.data.sources}>
+            <For each={sources()}>
               {(src) => (
                 <a
                   class="source-tile"

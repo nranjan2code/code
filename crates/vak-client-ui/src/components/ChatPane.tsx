@@ -3,8 +3,9 @@ import type { JSX } from "solid-js";
 import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, presentationOf, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
-import PresentationTimelineView from "./PresentationRenderer";
+import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
+import type { StructuredOutput } from "../types";
 import * as api from "../api";
 import "../focusTrap";
 
@@ -23,18 +24,91 @@ function stripVakFence(text: string): string {
 
 function cleanAssistantText(text: string): string {
   const normalized = text
-    .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/im, "")
-    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed)[\s\S]*$/i, "")
-    .replace(/(?:\r?\n)?\s*completed\s*$/i, "");
+    .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/gim, "")
+    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed)[\s\S]*$/gi, "")
+    .replace(/(?:\r?\n)?\s*completed\s*$/gi, "")
+    .replace(/^\s*Outcome:\s+[^\n]*(?:\n|$)/gim, "")
+    .replace(/^\s*contract_id:\s+[^\n]*(?:\n|$)/gim, "");
 
   return normalized
     .split("\n")
     .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
     .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed)\s*$/i.test(line))
     .filter((line) => !/^\s*completed\s*$/i.test(line))
+    .filter((line) => !/^\s*Outcome:\s+/i.test(line))
+    .filter((line) => !/^\s*contract_id:\s+/i.test(line))
     .join("\n")
     .replace(/^\s*\n+|\n+\s*$/g, "")
     .trim();
+}
+
+function parseVakFence(rawContent: string): StructuredOutput | null {
+  try {
+    const trimmed = rawContent.trim();
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+    const parsed = JSON.parse(trimmed);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.semantic_type === "string" &&
+      parsed.payload &&
+      typeof parsed.payload === "object"
+    ) {
+      return {
+        semantic_type: parsed.semantic_type,
+        schema_version: 2,
+        skill_id: typeof parsed.skill_id === "string" ? parsed.skill_id : "built-in",
+        skill_version: typeof parsed.skill_version === "string" ? parsed.skill_version : "1.0",
+        payload: parsed.payload as Record<string, unknown>,
+      };
+    }
+  } catch {
+    // Incomplete or invalid JSON
+  }
+  return null;
+}
+
+export function extractAssistantStructuredCards(text: string): { cards: StructuredOutput[]; displayText: string } {
+  const cards: StructuredOutput[] = [];
+
+  // 1. Extract closed ```vak ... ``` blocks
+  const closedRegex = /```(?:vak)?\s*(\{[\s\S]*?"semantic_type"[\s\S]*?\})\s*```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = closedRegex.exec(text)) !== null) {
+    const card = parseVakFence(match[1]);
+    if (card && !cards.some((c) => c.semantic_type === card.semantic_type && JSON.stringify(c.payload) === JSON.stringify(card.payload))) {
+      cards.push(card);
+    }
+  }
+
+  // 2. Also check any ```vak fence containing a valid JSON payload
+  const vakRegex = /```vak\s*([\s\S]*?)(?:```|$)/gi;
+  while ((match = vakRegex.exec(text)) !== null) {
+    const card = parseVakFence(match[1]);
+    if (card && !cards.some((c) => c.semantic_type === card.semantic_type && JSON.stringify(c.payload) === JSON.stringify(card.payload))) {
+      cards.push(card);
+    }
+  }
+
+  // 3. Strip all ```vak blocks (both closed and in-progress streaming) from display prose
+  let cleaned = text.replace(/```vak\s*[\s\S]*?(?:```|$)/gi, "");
+
+  // 4. Strip standalone code blocks wrapping {"semantic_type": ...}
+  cleaned = cleaned.replace(/```(?:json)?\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*```/gi, "");
+
+  // 5. Strip raw un-fenced {"semantic_type": ...} lines if emitted directly
+  cleaned = cleaned.replace(/^\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*$/gm, (raw) => {
+    const card = parseVakFence(raw);
+    if (card && !cards.some((c) => c.semantic_type === card.semantic_type)) {
+      cards.push(card);
+    }
+    return "";
+  });
+
+  // 6. Scrub remaining scaffolding and lifecycle metadata
+  cleaned = cleanAssistantText(cleaned);
+
+  return { cards, displayText: cleaned };
 }
 
 /**
@@ -531,7 +605,10 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   if (item.kind === "assistant") {
-    const displayText = cleanAssistantText(item.text);
+    const extracted = () => extractAssistantStructuredCards(item.text);
+    const displayText = () => extracted().displayText;
+    const cards = () => extracted().cards;
+
     return (
       <div class="msg assistant">
         <div class="assistant-turn-head">
@@ -546,14 +623,21 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           </Show>
         </div>
         <div class="assistant-turn-body">
-          <Show when={displayText} fallback={<span class="caret" />}>
-            <Markdown text={displayText} streaming={item.streaming} />
+          <For each={cards()}>
+            {(card) => (
+              <div class="assistant-structured-card">
+                <StructuredView output={card} sessionId={props.sessionId ?? undefined} />
+              </div>
+            )}
+          </For>
+          <Show when={displayText()} fallback={cards().length === 0 ? <span class="caret" /> : null}>
+            <Markdown text={displayText()} streaming={item.streaming} />
             <Show when={item.streaming}>
               <span class="caret" />
             </Show>
           </Show>
-          <Show when={!item.streaming && displayText}>
-            <MessageActions text={displayText} role="assistant" />
+          <Show when={!item.streaming && displayText()}>
+            <MessageActions text={displayText()} role="assistant" />
           </Show>
         </div>
       </div>

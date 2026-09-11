@@ -28,17 +28,20 @@ export default function DataGrid(props: { data: DataGridData }) {
     }
   };
 
+  const columns = () => props.data?.columns || [];
+  const rows = () => props.data?.rows || [];
+
   const filteredAndSortedRows = createMemo(() => {
-    let list = [...props.data.rows];
+    let list = [...rows()];
     const q = search().toLowerCase().trim();
     if (q) {
       list = list.filter((row) =>
-        Object.values(row).some((val) => String(val).toLowerCase().includes(q))
+        Object.values(row || {}).some((val) => String(val).toLowerCase().includes(q))
       );
     }
     const col = sortCol();
     if (col) {
-      const isNum = props.data.columns.find((c) => c.key === col)?.isNumeric;
+      const isNum = columns().find((c) => c.key === col)?.isNumeric;
       list.sort((a, b) => {
         const valA = a[col];
         const valB = b[col];
@@ -58,7 +61,7 @@ export default function DataGrid(props: { data: DataGridData }) {
   });
 
   const handleExportCsv = () => {
-    const cols = props.data.columns;
+    const cols = columns();
     downloadCsv("dataset.csv", [cols.map((c) => c.label), ...filteredAndSortedRows().map((row) => cols.map((c) => row[c.key]))]);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
@@ -69,7 +72,7 @@ export default function DataGrid(props: { data: DataGridData }) {
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">Data Grid</span>
-          <span class="card-subtitle">{props.data.title ?? "Dataset Records"}</span>
+          <span class="card-subtitle">{props.data?.title ?? "Dataset Records"}</span>
         </div>
         <div class="card-actions">
           <input
@@ -90,7 +93,7 @@ export default function DataGrid(props: { data: DataGridData }) {
         <table class="sleek-grid">
           <thead>
             <tr>
-              <For each={props.data.columns}>
+              <For each={columns()}>
                 {(col) => (
                   <th
                     class={col.isNumeric ? "cell-numeric" : ""}
@@ -110,7 +113,7 @@ export default function DataGrid(props: { data: DataGridData }) {
             <For each={filteredAndSortedRows()}>
               {(row) => (
                 <tr>
-                  <For each={props.data.columns}>
+                  <For each={columns()}>
                     {(col) => {
                       const val = String(row[col.key] ?? "");
                       const isStatus = col.key.toLowerCase().includes("status");

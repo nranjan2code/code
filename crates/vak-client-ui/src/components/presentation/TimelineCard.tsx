@@ -6,17 +6,19 @@ export interface TimelineData {
 }
 
 /** Generic, non-technical timeline for plans, itineraries, schedules, and lessons. */
-export default function TimelineCard(props: { data: TimelineData }) {
+export default function TimelineCard(props: { data: TimelineData; kicker?: string }) {
+  const items = () => props.data?.items || [];
+  const title = () => props.data?.title || "Overview";
   return (
-    <section class="adaptive-timeline" aria-label={props.data.title}>
+    <section class="adaptive-timeline" aria-label={title()}>
       <header class="adaptive-timeline-head">
-        <span class="adaptive-timeline-kicker">Plan</span>
-        <h3>{props.data.title}</h3>
+        <span class="adaptive-timeline-kicker">{props.kicker ?? "Plan"}</span>
+        <h3>{title()}</h3>
       </header>
       <ol>
-        <For each={props.data.items}>
+        <For each={items()}>
           {(item, index) => (
-            <li classList={{ complete: item.status === "complete" }}>
+            <li classList={{ complete: item.status === "complete" || item.status === "done" }}>
               <span class="adaptive-timeline-marker" aria-hidden="true">{index() + 1}</span>
               <div>
                 <strong>{item.label}</strong>

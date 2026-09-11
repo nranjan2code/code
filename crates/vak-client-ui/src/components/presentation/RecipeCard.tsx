@@ -101,7 +101,7 @@ export default function RecipeCard(props: { data: RecipeData }) {
       <div class="culinary-stage">
         <div class="ingredients-column">
           <span class="column-subhead">Ingredients</span>
-          <For each={props.data.ingredients}>
+          <For each={props.data?.ingredients || []}>
             {(item) => {
               if (typeof item === "string") {
                 return (
@@ -111,6 +111,7 @@ export default function RecipeCard(props: { data: RecipeData }) {
                   </label>
                 );
               }
+              const name = () => item.name || (item as any).item || (item as any).ingredient || "";
               const scaledAmount = () => item.amount === undefined ? null : Math.round(item.amount * scale() * 100) / 100;
               return (
                 <label class="ingredient-checkbox-row">
@@ -118,7 +119,7 @@ export default function RecipeCard(props: { data: RecipeData }) {
                   <span>
                     {scaledAmount() === null ? "" : `${scaledAmount()} `}
                     {item.unit ? `${item.unit} ` : ""}
-                    {item.name}
+                    {name()}
                   </span>
                 </label>
               );
@@ -128,9 +129,9 @@ export default function RecipeCard(props: { data: RecipeData }) {
 
         <div class="directions-column">
           <span class="column-subhead">Directions & Timers</span>
-          <For each={props.data.steps}>
+          <For each={props.data?.steps || []}>
             {(step, idx) => {
-              const text = typeof step === "string" ? step : step.text;
+              const text = typeof step === "string" ? step : (step.text || (step as any).step || (step as any).instruction || "");
               const timerSecs = typeof step === "object" ? step.timer_seconds : null;
               const isRunning = () => activeTimers()[idx()] !== undefined;
               return (

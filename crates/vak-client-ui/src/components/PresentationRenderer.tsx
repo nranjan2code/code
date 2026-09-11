@@ -13,20 +13,39 @@ import Icon from "./Icon";
 import { safeUrl } from "../safeUrl";
 import * as api from "../api";
 import { highlight, languageForFence } from "../highlight";
-import ResearchCards from "./presentation/ResearchCards";
+import ResearchCards, { type ResearchData } from "./presentation/ResearchCards";
 import DiffInspector from "./presentation/DiffInspector";
 import TestMatrix from "./presentation/TestMatrix";
 import UniversalChart from "./presentation/UniversalChart";
-import DataGrid from "./presentation/DataGrid";
+import DataGrid, { type DataGridData, type DataGridColumn } from "./presentation/DataGrid";
 import TerminalConsole from "./presentation/TerminalConsole";
-import RecipeCard from "./presentation/RecipeCard";
+import RecipeCard, { type RecipeData } from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
 
 // Advanced is still a user-facing presentation. Operator chrome is reserved
 // for development builds so production never becomes a ledger UI.
 const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
-import TimelineCard from "./presentation/TimelineCard";
+import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
+
+/** Wraps settled assistant content with the same Vak avatar + name header
+ *  that the streaming transcript uses, so completed turns don't lose their
+ *  visual identity when ChatPane switches to PresentationTimelineView. */
+function AssistantMessage(props: { children: JSX.Element }) {
+  return (
+    <div class="semantic-assistant">
+      <div class="assistant-turn-head">
+        <span class="assistant-avatar-mark">
+          <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
+        </span>
+        <span class="assistant-name">Vak</span>
+      </div>
+      <div class="assistant-turn-body">
+        {props.children}
+      </div>
+    </div>
+  );
+}
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -404,7 +423,7 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string }
   </section>;
 }
 
-function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => <div class="semantic-source">{props.fallback || JSON.stringify(props.output.payload, null, 2)}</div>;
   return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
@@ -419,43 +438,362 @@ function StructuredView(props: { output: import("../types").StructuredOutput; fa
 
 type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
 
-// Every named semantic type resolves through this single registry. Adding a
-// new server recipe or adapter only requires one entry here — never an
-// additional conditional branch in StructuredRenderer.
+function normalizeTimeline(data: any, defaultTitle = "Plan"): TimelineData {
+  if (!data || typeof data !== "object") {
+    return { title: defaultTitle, items: [] };
+  }
+  const title = String(data.title ?? data.label ?? data.name ?? defaultTitle);
+  let rawItems: any[] = [];
+  if (Array.isArray(data.items)) rawItems = data.items;
+  else if (Array.isArray(data.steps)) rawItems = data.steps;
+  else if (Array.isArray(data.milestones)) rawItems = data.milestones;
+  else if (Array.isArray(data.slots)) rawItems = data.slots;
+  else if (Array.isArray(data.agenda)) rawItems = data.agenda;
+  else if (Array.isArray(data.tasks)) rawItems = data.tasks;
+  else if (Array.isArray(data.choices)) rawItems = data.choices;
+  else if (Array.isArray(data.questions)) rawItems = data.questions;
+  else if (Array.isArray(data.qa)) rawItems = data.qa;
+  else if (Array.isArray(data.entries)) rawItems = data.entries;
+  else if (Array.isArray(data)) rawItems = data;
+  else {
+    const entries = Object.entries(data).filter(([k]) => !["title", "semantic_type", "label", "summary"].includes(k));
+    if (entries.length > 0) {
+      rawItems = entries.map(([k, v]) => ({
+        label: k.replace(/_/g, " "),
+        detail: typeof v === "object" ? JSON.stringify(v) : String(v ?? ""),
+      }));
+    }
+  }
+
+  const items = rawItems.map((it: any) => {
+    if (typeof it === "string" || typeof it === "number") {
+      return { label: String(it) };
+    }
+    if (it && typeof it === "object") {
+      const label = String(it.label ?? it.title ?? it.name ?? it.question ?? it.task ?? it.text ?? it.choice ?? it.activity ?? "Item");
+      const detail = it.detail ?? it.description ?? it.answer ?? it.notes ?? it.time ?? it.snippet ?? (it.reason ? String(it.reason) : undefined);
+      const status = it.status ?? (typeof it.done === "boolean" ? (it.done ? "complete" : "pending") : undefined);
+      return {
+        label,
+        detail: detail != null ? String(detail) : undefined,
+        status: status != null ? String(status) : undefined,
+      };
+    }
+    return { label: "Item" };
+  });
+
+  return { title, items };
+}
+
+function normalizeDataGrid(data: any, defaultTitle = "Dataset"): DataGridData {
+  if (!data || typeof data !== "object") {
+    return { title: defaultTitle, columns: [], rows: [] };
+  }
+  const title = String(data.title ?? data.label ?? data.name ?? defaultTitle);
+  
+  if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
+    const columns: DataGridColumn[] = data.columns.map((c: any) => ({
+      key: String(c.key ?? c.name ?? c.label),
+      label: String(c.label ?? c.name ?? c.key),
+      isNumeric: Boolean(c.isNumeric || c.is_numeric),
+    }));
+    return { title, columns, rows: data.rows };
+  }
+
+  if (Array.isArray(data.pros) || Array.isArray(data.cons)) {
+    const rows = [
+      ...(data.pros || []).map((p: any) => ({ type: "Pro", point: typeof p === "string" ? p : (p.text ?? p.point ?? JSON.stringify(p)) })),
+      ...(data.cons || []).map((c: any) => ({ type: "Con", point: typeof c === "string" ? c : (c.text ?? c.point ?? JSON.stringify(c)) })),
+    ];
+    return {
+      title,
+      columns: [
+        { key: "type", label: "Type" },
+        { key: "point", label: "Point" },
+      ],
+      rows,
+    };
+  }
+
+  if (data.left != null || data.right != null) {
+    const leftLabel = String(data.left_label ?? data.option_a ?? "Option A");
+    const rightLabel = String(data.right_label ?? data.option_b ?? "Option B");
+    const rows: Record<string, any>[] = [];
+    if (typeof data.left === "object" && typeof data.right === "object") {
+      const keys = Array.from(new Set([...Object.keys(data.left || {}), ...Object.keys(data.right || {})]));
+      for (const k of keys) {
+        rows.push({
+          aspect: k.replace(/_/g, " "),
+          left: typeof data.left[k] === "object" ? JSON.stringify(data.left[k]) : String(data.left[k] ?? "—"),
+          right: typeof data.right[k] === "object" ? JSON.stringify(data.right[k]) : String(data.right[k] ?? "—"),
+        });
+      }
+    } else {
+      rows.push({ aspect: "Value", left: String(data.left ?? "—"), right: String(data.right ?? "—") });
+    }
+    return {
+      title,
+      columns: [
+        { key: "aspect", label: "Aspect" },
+        { key: "left", label: leftLabel },
+        { key: "right", label: rightLabel },
+      ],
+      rows,
+    };
+  }
+
+  const rawRows: any[] = Array.isArray(data.rows) ? data.rows : Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
+  if (rawRows.length > 0 && typeof rawRows[0] === "object") {
+    const keys = Array.from(new Set(rawRows.flatMap((r) => Object.keys(r || {}))));
+    const columns: DataGridColumn[] = keys.map((k) => ({
+      key: k,
+      label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      isNumeric: rawRows.some((r) => typeof r[k] === "number"),
+    }));
+    return { title, columns, rows: rawRows };
+  }
+
+  const entries = Object.entries(data).filter(([k]) => !["title", "semantic_type", "label"].includes(k));
+  if (entries.length > 0) {
+    const rows = entries.map(([k, v]) => ({
+      metric: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      value: typeof v === "object" ? JSON.stringify(v) : v,
+    }));
+    return {
+      title,
+      columns: [
+        { key: "metric", label: "Metric / Item" },
+        { key: "value", label: "Value", isNumeric: entries.some(([, v]) => typeof v === "number") },
+      ],
+      rows,
+    };
+  }
+
+  return { title, columns: [], rows: [] };
+}
+
+function normalizeResearch(data: any): ResearchData {
+  if (!data || typeof data !== "object") {
+    return { takeaways: [], sources: [] };
+  }
+  const title = data.title != null ? String(data.title) : undefined;
+  const rawSources = Array.isArray(data.sources)
+    ? data.sources
+    : Array.isArray(data.references)
+    ? data.references
+    : Array.isArray(data.citations)
+    ? data.citations
+    : [];
+  const sources = rawSources.map((s: any) => {
+    if (typeof s === "string") return { title: s, url: s };
+    return {
+      title: String(s?.title ?? s?.name ?? s?.url ?? "Source"),
+      url: String(s?.url ?? ""),
+      snippet: s?.snippet != null ? String(s.snippet) : undefined,
+      source_name: s?.source_name != null ? String(s.source_name) : undefined,
+      published_at: s?.published_at != null ? String(s.published_at) : undefined,
+    };
+  });
+
+  const rawTakeaways = Array.isArray(data.takeaways)
+    ? data.takeaways
+    : Array.isArray(data.findings)
+    ? data.findings
+    : Array.isArray(data.points)
+    ? data.points
+    : Array.isArray(data.items)
+    ? data.items
+    : [];
+  const takeaways = rawTakeaways.map((t: any) => {
+    if (typeof t === "string") return t;
+    if (t && typeof t === "object") {
+      return {
+        text: String(t.text ?? t.point ?? t.claim ?? t.label ?? ""),
+        citation_indices: Array.isArray(t.citation_indices) ? t.citation_indices : undefined,
+      };
+    }
+    return String(t);
+  });
+
+  return { title, sources, takeaways };
+}
+
+function normalizeRecipe(data: any): RecipeData {
+  if (!data || typeof data !== "object") {
+    return { title: "Recipe", ingredients: [], steps: [] };
+  }
+  const rawIngredients = Array.isArray(data.ingredients)
+    ? data.ingredients
+    : Array.isArray(data.items)
+    ? data.items
+    : [];
+  const ingredients = rawIngredients.map((item: any) => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object") {
+      const name = String(item.name ?? item.item ?? item.ingredient ?? item.label ?? "");
+      const amount = typeof item.amount === "number" ? item.amount : typeof item.quantity === "number" ? item.quantity : undefined;
+      const unit = item.unit ?? item.measurement ?? (typeof item.quantity === "string" ? item.quantity : undefined);
+      return { name, amount, unit: unit != null ? String(unit) : undefined };
+    }
+    return String(item);
+  });
+
+  const rawSteps = Array.isArray(data.steps)
+    ? data.steps
+    : Array.isArray(data.instructions)
+    ? data.instructions
+    : Array.isArray(data.directions)
+    ? data.directions
+    : Array.isArray(data.method)
+    ? data.method
+    : [];
+  const steps = rawSteps.map((step: any) => {
+    if (typeof step === "string") return step;
+    if (step && typeof step === "object") {
+      const text = String(step.text ?? step.step ?? step.instruction ?? step.description ?? step.action ?? "");
+      let timer_seconds = typeof step.timer_seconds === "number" ? step.timer_seconds : undefined;
+      if (timer_seconds === undefined && typeof step.timer_minutes === "number") {
+        timer_seconds = step.timer_minutes * 60;
+      }
+      if (timer_seconds === undefined && typeof step.duration_minutes === "number") {
+        timer_seconds = step.duration_minutes * 60;
+      }
+      return { text, timer_seconds };
+    }
+    return String(step);
+  });
+
+  return {
+    title: String(data.title ?? data.name ?? "Recipe"),
+    servings: typeof data.servings === "number" ? data.servings : (typeof data.yield === "number" ? data.yield : undefined),
+    prep_time_minutes: typeof data.prep_time_minutes === "number" ? data.prep_time_minutes : (typeof data.prep_time === "number" ? data.prep_time : undefined),
+    cook_time_minutes: typeof data.cook_time_minutes === "number" ? data.cook_time_minutes : (typeof data.cook_time === "number" ? data.cook_time : undefined),
+    ingredients,
+    steps,
+  };
+}
+
+// Every named semantic type resolves through this single registry. All 62+
+// outcome types registered across core and plugin skills map directly here.
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
-  "research.synthesis": ({ data }) => <ResearchCards data={data} />,
-  research: ({ data }) => <ResearchCards data={data} />,
-  news: ({ data }) => <ResearchCards data={data} />,
+  // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
+  "research.synthesis": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
+  "research_brief": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
+  "research": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
+  "news": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
+
+  // 2. Code, Tests & Terminal (coding.diff, test.report, terminal.view, etc.)
   "coding.diff": ({ data }) => <DiffInspector data={data} />,
-  diff: ({ data }) => <DiffInspector data={data} />,
+  "diff": ({ data }) => <DiffInspector data={data} />,
   "test.report": ({ data }) => <TestMatrix data={data} />,
-  test: ({ data }) => <TestMatrix data={data} />,
+  "test": ({ data }) => <TestMatrix data={data} />,
+  "ci.test_matrix": ({ data }) => <TestMatrix data={data} />,
+  "test_matrix": ({ data }) => <TestMatrix data={data} />,
   "terminal.view": ({ data }) => <TerminalConsole data={data} />,
-  terminal: ({ data }) => <TerminalConsole data={data} />,
-  "data.grid": ({ data }) => <DataGrid data={data} />,
-  table: ({ data }) => <DataGrid data={data} />,
-  comparison: ({ data }) => <DataGrid data={data} />,
-  "recipe.card": ({ data }) => <RecipeCard data={data} />,
-  recipe: ({ data }) => <RecipeCard data={data} />,
-  steps: ({ data }) => <RecipeCard data={data} />,
+  "terminal": ({ data }) => <TerminalConsole data={data} />,
+  "terminal.session": ({ data }) => <TerminalConsole data={data} />,
+
+  // 3. Coding Specific Flows
+  "coding.benchmark": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Benchmark Results")} />,
+  "coding.dependencies": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Dependencies")} />,
+  "coding.deployment": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Deployment")} kicker="Deployment" />,
+  "coding.incident": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Incident Summary")} kicker="Incident" />,
+  "coding.architecture": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Architecture Decisions")} kicker="Architecture" />,
+  "coding.release": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Release Notes")} kicker="Release" />,
+  "coding.search": ({ data }) => (Array.isArray(data?.results) || Array.isArray(data?.rows)) ? <DataGrid data={normalizeDataGrid(data, "Search Results")} /> : <ResearchCards data={normalizeResearch(data)} />,
+
+  // 4. Data Grids, Tables & Comparisons
+  "data.grid": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Data Grid")} />,
+  "table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Table")} />,
+  "dataset": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Dataset")} />,
+  "comparison": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison")} />,
+  "comparison_table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison Table")} />,
+  "pros_cons": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Pros & Cons")} />,
+  "inventory": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Inventory")} />,
+  "scorecard": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Scorecard")} />,
+
+  // 5. Financial Summaries & Budgets
+  "budget": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Budget Breakdown")} />,
+  "finance_summary": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Financial Summary")} />,
+  "invoice_summary": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Invoice Summary")} />,
+
+  // 6. Culinary & Lifestyle
+  "recipe.card": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
+  "recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
+  "lifestyle.recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
+  "lifestyle.culinary_recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
+  "recipe_summary": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
+  "meal_plan": ({ data }) => Array.isArray(data?.steps) || Array.isArray(data?.ingredients) ? <RecipeCard data={normalizeRecipe(data)} /> : <TimelineCard data={normalizeTimeline(data, "Meal Plan")} kicker="Meal Plan" />,
+
+  // 7. Interactive Previews
   "ui.preview": ({ data }) => <UIPreviewCard data={data} />,
-  "plan.timeline": ({ data }) => <TimelineCard data={data} />,
-  timeline: ({ data }) => <TimelineCard data={data} />,
-  itinerary: ({ data }) => <TimelineCard data={data} />,
-  checklist: ({ data }) => <TimelineCard data={data} />,
-  progress: ({ data }) => <TimelineCard data={data} />,
-  status: ({ data }) => <TimelineCard data={data} />,
-  overview: ({ data }) => <TimelineCard data={data} />,
-  chart: ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "preview": ({ data }) => <UIPreviewCard data={data} />,
+
+  // 8. Timelines, Plans, Checklists, Schedules & Notes
+  "plan.timeline": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Plan Timeline")} kicker="Plan" />,
+  "timeline": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Timeline")} kicker="Timeline" />,
+  "itinerary": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Itinerary")} kicker="Itinerary" />,
+  "checklist": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Checklist")} kicker="Checklist" />,
+  "schedule": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Schedule")} kicker="Schedule" />,
+  "agenda": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Agenda")} kicker="Agenda" />,
+  "milestones": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Milestones")} kicker="Milestones" />,
+  "progress": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Progress Tracking")} kicker="Progress" />,
+  "status": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Status")} kicker="Status" />,
+  "steps": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Steps")} kicker="Steps" />,
+  "overview": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Overview")} kicker="Overview" />,
+  "summary": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Summary")} kicker="Summary" />,
+  "detail": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Details")} kicker="Detail" />,
+  "notes": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Notes")} kicker="Notes" />,
+  "follow_up": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Follow-Up Items")} kicker="Follow-Up" />,
+  "reminder": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Reminders")} kicker="Reminder" />,
+  "shopping_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Shopping List")} kicker="Shopping List" />,
+  "lesson": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Lesson Plan")} kicker="Lesson" />,
+  "reading_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Reading List")} kicker="Reading List" />,
+  "habit_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Habit Plan")} kicker="Habit" />,
+  "project_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Project Plan")} kicker="Project" />,
+  "meeting_notes": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Meeting Notes")} kicker="Meeting" />,
+  "contact_log": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Contact Log")} kicker="Contact" />,
+  "travel_options": ({ data }) => (Array.isArray(data?.rows) || Array.isArray(data?.columns)) ? <DataGrid data={normalizeDataGrid(data, "Travel Options")} /> : <TimelineCard data={normalizeTimeline(data, "Travel Options")} kicker="Travel" />,
+  "home_project": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Home Project")} kicker="Project" />,
+  "care_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Care Plan")} kicker="Care Plan" />,
+  "event_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Event Plan")} kicker="Event" />,
+  "media_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Media List")} kicker="Media" />,
+  "collection": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Collection")} kicker="Collection" />,
+  "faq": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Frequently Asked Questions")} kicker="FAQ" />,
+  "decision": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Decision Analysis")} kicker="Decision" />,
+
+  // 9. Visualizations & Charts
+  "chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "telemetry.chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+
+  // 10. Media & Links
   "link.preview": ({ data }) => (
     <a class="rich-link-card" href={safeUrl(data.url) ? data.url : undefined} target="_blank" rel="noreferrer noopener">
       <Show when={uiPreferences.externalMedia && typeof data.image_url === "string" && safeUrl(data.image_url, true)}><img src={data.image_url as string} alt="" loading="lazy" /></Show>
       <span><strong>{String(data.title ?? data.url)}</strong><small>{String(data.description ?? data.site_name ?? data.url)}</small></span>
     </a>
   ),
-  weather: (props) => STRUCTURED_RENDERERS.metric(props),
-  metric: ({ data }) => {
-    if (typeof data.label === "string" || typeof data.value === "string" || typeof data.value === "number") {
+  "media.image": ({ data }) => (
+    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
+      <figure class="rich-media"><img src={data.source} alt={String(data.alt ?? "")} /><Show when={data.alt}><figcaption>{String(data.alt)}</figcaption></Show></figure>
+    </Show>
+  ),
+  "media.video": ({ data }) => (
+    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
+      <video class="rich-video" src={data.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(data.alt ?? "Video")} />
+    </Show>
+  ),
+  "media.audio": ({ data }) => (
+    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
+      <audio class="rich-audio" src={data.source} controls preload="metadata" aria-label={String(data.alt ?? "Audio")} />
+    </Show>
+  ),
+
+  // 11. Metrics & Weather
+  "weather": (props) => STRUCTURED_RENDERERS.metric(props),
+  "telemetry.metric": (props) => STRUCTURED_RENDERERS.metric(props),
+  "metric": ({ data }) => {
+    if (typeof data?.label === "string" || typeof data?.value === "string" || typeof data?.value === "number") {
       return (
         <div class="rich-metric">
           <small>{String(data.label ?? "Metric")}</small>
@@ -485,7 +823,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
         </div>
       );
     }
-    return <div class="rich-metric"><small>{String(data.label ?? "Metric")}</small><strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong></div>;
+    return <div class="rich-metric"><small>{String(data?.label ?? "Metric")}</small><strong>{String(data?.value ?? "—")}{data?.unit ? ` ${String(data.unit)}` : ""}</strong></div>;
   },
 };
 
@@ -496,10 +834,9 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   if (registered) {
     return registered({ data: payload, output: props.output });
   }
-  // Pattern-based and shape-based fallbacks below — these cannot be exact-key
-  // registry entries because they match prefixes or payload shapes, not fixed
-  // semantic type strings.
-  if (semanticType.startsWith("media.") && uiPreferences.externalMedia && typeof payload.source === "string" && safeUrl(payload.source, true)) {
+  // Shape-based fallbacks: if an unmapped or custom semantic type arrives,
+  // match its payload shape to the best rich presentation component.
+  if (semanticType.startsWith("media.") && uiPreferences.externalMedia && typeof payload?.source === "string" && safeUrl(payload.source, true)) {
     return payload.media_type === "image" || String(payload.media_type).startsWith("image/")
       ? <figure class="rich-media"><img src={payload.source} alt={String(payload.alt ?? "")} /><Show when={payload.alt}><figcaption>{String(payload.alt)}</figcaption></Show></figure>
       : String(payload.media_type).startsWith("video/") ? <video class="rich-video" src={payload.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(payload.alt ?? "Video")} />
@@ -511,6 +848,19 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   if (payload && payload.root && typeof payload.root === "object" && typeof payload.root.primitive === "string") {
     return <AdaptiveTreeView tree={payload as any} fallback={JSON.stringify(payload, null, 2)} />;
   }
+  if (payload && (Array.isArray(payload.takeaways) || Array.isArray(payload.sources))) {
+    return <ResearchCards data={normalizeResearch(payload)} />;
+  }
+  if (payload && Array.isArray(payload.series)) {
+    return <UniversalChart data={payload} />;
+  }
+  if (payload && (Array.isArray(payload.columns) || (Array.isArray(payload.rows) && typeof payload.rows[0] === "object"))) {
+    return <DataGrid data={normalizeDataGrid(payload, props.output.semantic_type)} />;
+  }
+  if (payload && (Array.isArray(payload.items) || Array.isArray(payload.steps) || Array.isArray(payload.tasks) || Array.isArray(payload.milestones))) {
+    return <TimelineCard data={normalizeTimeline(payload, props.output.semantic_type)} kicker={props.output.semantic_type} />;
+  }
+
   return (
     <div class="rich-structured-card">
       <Show when={payload && typeof payload === "object" && payload.title}>
@@ -522,10 +872,16 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
       <Show when={payload && typeof payload === "object" && payload.summary}>
         <p class="rich-structured-summary">{String(payload.summary)}</p>
       </Show>
-      <details class="rich-structured-details">
-        <summary>Structured Data ({props.output.semantic_type})</summary>
-        <div class="semantic-source">{JSON.stringify(payload, null, 2)}</div>
-      </details>
+      <Show when={showOperatorChrome()} fallback={
+        <Show when={!payload?.title && !payload?.summary}>
+          <div class="rich-metric"><small>{props.output.semantic_type}</small><strong>Completed</strong></div>
+        </Show>
+      }>
+        <details class="rich-structured-details">
+          <summary>Structured Data ({props.output.semantic_type})</summary>
+          <div class="semantic-source">{JSON.stringify(payload, null, 2)}</div>
+        </details>
+      </Show>
     </div>
   );
 }
@@ -540,10 +896,21 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
     if (item.content.type === "document") return showOperatorChrome()
       ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>
-      : <div class={item.role === "user" ? "semantic-user" : "semantic-assistant"}><PresentationDocumentView document={item.content.document} /></div>;
-    if (item.content.type === "outcome") return showOperatorChrome()
-      ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} />{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}<OutcomeReviewActions item={item} sessionId={props.sessionId} /></article>
-      : <div class="semantic-assistant">{item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}</div>;
+      : item.role === "user" ? <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div> : <AssistantMessage><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+    if (item.content.type === "outcome") {
+      if (showOperatorChrome()) {
+        return (
+          <article class="semantic-outcome">
+            <ResultOutcomeSummary item={item} />
+            {item.content.document ? <PresentationDocumentView document={item.content.document} /> : <p>{item.content.summary}</p>}
+            <OutcomeReviewActions item={item} sessionId={props.sessionId} />
+          </article>
+        );
+      }
+      // Never leak internal lifecycle metadata (e.g. "primary deliverable: produced", "completed") as assistant prose
+      if (!item.content.document) return null;
+      return <AssistantMessage><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+    }
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") {
@@ -557,10 +924,19 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     }
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
-    // Some older projections carry lifecycle summaries as standalone
-    // fallback items. They remain in the ledger, but must not become visible
-    // assistant prose in a production conversation.
-    if (!showOperatorChrome() && /^(?:primary deliverable\s*:|completed$)/i.test(item.fallback_text.trim())) return null;
+    // Lifecycle summaries and scaffolding fallback items must not leak as assistant prose
+    if (!showOperatorChrome()) {
+      const trimmed = item.fallback_text.trim();
+      const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (
+        lines.length === 0 ||
+        lines.every((line) =>
+          /^(?:primary deliverable\s*:|completed$|Surface:\s+|Outcome:\s+|contract_id:)/i.test(line)
+        )
+      ) {
+        return null;
+      }
+    }
     return <div class="semantic-source">{item.fallback_text}</div>;
   };
   return (

@@ -828,6 +828,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-timeline p { margin: 3px 0 0; color: var(--text-soft); font-size: 12px; line-height: 1.45; }
 .adaptive-timeline small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 
+.assistant-structured-card {
+  margin: 12px 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 /* Next-Gen Presentation Canvas & Dedicated Renderers */
 .canvas-card {
   background: var(--canvas-bg);
@@ -2599,6 +2605,23 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 }
 
 .semantic-user { justify-content: flex-end; margin-bottom: 22px; }
+
+/* Settled assistant messages in the presentation timeline must match the
+   streaming transcript's Vak avatar + name + indented-body layout.
+   The inner elements (.assistant-turn-head, .assistant-avatar-mark,
+   .assistant-name, .assistant-turn-body) are the same classes the streaming
+   view uses, already styled above — so no duplication is needed for them. */
+.semantic-assistant {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 30px;
+}
+.semantic-assistant .semantic-document {
+  color: var(--text);
+  line-height: 1.62;
+}
+
 .semantic-outcome { padding-left: 32px; border-left: 1px solid var(--border-soft); }
 .semantic-turn { margin-bottom: 34px; }
 .semantic-outcome .outcome-review-actions { margin-left: -32px; padding-left: 32px; }
