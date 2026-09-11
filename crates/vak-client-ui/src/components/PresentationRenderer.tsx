@@ -27,7 +27,7 @@ import UIPreviewCard from "./presentation/UIPreviewCard";
 // for development builds so production never becomes a ledger UI.
 const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
-import { extractAssistantStructuredCards, stripControlScaffolding } from "../structured";
+import { stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -167,29 +167,8 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
         switch (block.type) {
           case "heading":
             return <Heading block={block} />;
-          case "paragraph": {
-            const rawText = block.content.map((n) => typeof n === "object" && "text" in n ? (n as any).text : "").join("");
-            if (rawText.includes('"semantic_type"')) {
-              const extracted = extractAssistantStructuredCards(rawText);
-              if (extracted.cards.length > 0) {
-                return (
-                  <>
-                    <For each={extracted.cards}>
-                      {(card) => (
-                        <div class="assistant-structured-card">
-                          <StructuredView output={card} />
-                        </div>
-                      )}
-                    </For>
-                    <Show when={extracted.displayText}>
-                      <p class="semantic-paragraph">{extracted.displayText}</p>
-                    </Show>
-                  </>
-                );
-              }
-            }
+          case "paragraph":
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
-          }
           case "list": {
             const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} /></li>}</For>;
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
@@ -207,25 +186,6 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
-            if (block.language === "vak" || block.content.includes('"semantic_type"')) {
-              const extracted = extractAssistantStructuredCards(block.content);
-              if (extracted.cards.length > 0) {
-                return (
-                  <>
-                    <For each={extracted.cards}>
-                      {(card) => (
-                        <div class="assistant-structured-card">
-                          <StructuredView output={card} />
-                        </div>
-                      )}
-                    </For>
-                    <Show when={extracted.displayText}>
-                      <p class="semantic-paragraph">{extracted.displayText}</p>
-                    </Show>
-                  </>
-                );
-              }
-            }
             if (block.language === "mermaid") {
               return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
             }
@@ -884,54 +844,14 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
   if (registered) {
     return registered({ data: payload, output: props.output });
   }
-  // Shape-based fallbacks: if an unmapped or custom semantic type arrives,
-  // match its payload shape to the best rich presentation component.
-  if (semanticType.startsWith("media.") && uiPreferences.externalMedia && typeof payload?.source === "string" && safeUrl(payload.source, true)) {
-    return payload.media_type === "image" || String(payload.media_type).startsWith("image/")
-      ? <figure class="rich-media"><img src={payload.source} alt={String(payload.alt ?? "")} /><Show when={payload.alt}><figcaption>{String(payload.alt)}</figcaption></Show></figure>
-      : String(payload.media_type).startsWith("video/") ? <video class="rich-video" src={payload.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(payload.alt ?? "Video")} />
-      : <a class="rich-media-link" href={payload.source} target="_blank" rel="noreferrer noopener">Open {String(payload.media_type ?? "media")}</a>;
-  }
-  if (semanticType === "document" || (payload && Array.isArray(payload.blocks))) {
-    return <PresentationDocumentView document={payload} />;
-  }
-  if (payload && payload.root && typeof payload.root === "object" && typeof payload.root.primitive === "string") {
-    return <AdaptiveTreeView tree={payload as any} fallback={JSON.stringify(payload, null, 2)} />;
-  }
-  if (payload && (Array.isArray(payload.takeaways) || Array.isArray(payload.sources))) {
-    return <ResearchCards data={normalizeResearch(payload)} />;
-  }
-  if (payload && Array.isArray(payload.series)) {
-    return <UniversalChart data={payload} />;
-  }
-  if (payload && (Array.isArray(payload.columns) || (Array.isArray(payload.rows) && typeof payload.rows[0] === "object"))) {
-    return <DataGrid data={normalizeDataGrid(payload, props.output.semantic_type)} />;
-  }
-  if (payload && (Array.isArray(payload.items) || Array.isArray(payload.steps) || Array.isArray(payload.tasks) || Array.isArray(payload.milestones))) {
-    return <TimelineCard data={normalizeTimeline(payload, props.output.semantic_type)} kicker={props.output.semantic_type} />;
-  }
-
+  // Rich rendering is protocol-driven. An unknown semantic type must not be
+  // guessed from payload shape: that lets a new contract silently take over
+  // an older card and makes regressions invisible.
   return (
     <div class="rich-structured-card">
-      <Show when={payload && typeof payload === "object" && payload.title}>
-        <div class="rich-structured-header">
-          <strong>{String(payload.title)}</strong>
-          <Show when={payload.subtitle}><small>{String(payload.subtitle)}</small></Show>
-        </div>
-      </Show>
-      <Show when={payload && typeof payload === "object" && payload.summary}>
-        <p class="rich-structured-summary">{String(payload.summary)}</p>
-      </Show>
-      <Show when={showOperatorChrome()} fallback={
-        <Show when={!payload?.title && !payload?.summary}>
-          <div class="rich-metric"><small>{props.output.semantic_type}</small><strong>Completed</strong></div>
-        </Show>
-      }>
-        <details class="rich-structured-details">
-          <summary>Structured Data ({props.output.semantic_type})</summary>
-          <div class="semantic-source">{JSON.stringify(payload, null, 2)}</div>
-        </details>
-      </Show>
+      <div class="rich-structured-header"><strong>Presentation unavailable</strong><small>{props.output.semantic_type}</small></div>
+      <p class="rich-structured-summary">No renderer is registered for this semantic type. The original result is preserved below.</p>
+      <div class="semantic-source">{JSON.stringify(payload, null, 2)}</div>
     </div>
   );
 }
@@ -987,25 +907,6 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         )
       ) {
         return null;
-      }
-    }
-    if (cleanFallback.includes('"semantic_type"')) {
-      const extracted = extractAssistantStructuredCards(cleanFallback);
-      if (extracted.cards.length > 0) {
-        return (
-          <div class="assistant-turn-body">
-            <For each={extracted.cards}>
-              {(card) => (
-                <div class="assistant-structured-card">
-                  <StructuredView output={card} sessionId={props.sessionId} />
-                </div>
-              )}
-            </For>
-            <Show when={extracted.displayText}>
-              <p class="semantic-paragraph">{extracted.displayText}</p>
-            </Show>
-          </div>
-        );
       }
     }
     return <div class="semantic-source">{cleanFallback}</div>;

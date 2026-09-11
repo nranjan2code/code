@@ -2635,6 +2635,52 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .semantic-turn { margin-bottom: 34px; }
 .semantic-outcome .outcome-review-actions { margin-left: -32px; padding-left: 32px; }
 
+/* Rich conversation surface: the result is the product, chrome is quiet. */
+.msg.user .md,
+.semantic-user .semantic-document {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border-soft));
+  border-radius: 16px 16px 5px 16px;
+  background: color-mix(in srgb, var(--surface-raised) 88%, var(--accent-wash));
+  box-shadow: none;
+}
+.msg.user:hover .md,
+.semantic-user:hover .semantic-document {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  box-shadow: none;
+}
+.semantic-assistant .semantic-document {
+  max-width: 760px;
+  padding: 0;
+}
+.semantic-assistant .semantic-document > .semantic-paragraph:first-child {
+  margin-top: 0;
+}
+.rich-structured-card,
+.rich-chart,
+.rich-link-card,
+.rich-media-link,
+.rich-unsupported {
+  border-color: var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.rich-structured-card {
+  max-width: 760px;
+  margin: 12px 0;
+  padding: 15px 16px;
+}
+.rich-structured-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+}
+.rich-structured-header small { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+.rich-structured-summary { margin: 8px 0 0; color: var(--muted); font-size: 11.5px; }
+.rich-structured-card .semantic-source { margin-top: 10px; white-space: pre-wrap; }
+
 /* Tool activity is subordinate evidence, not another message bubble. */
 .tool, .subagent {
   margin-bottom: 10px;

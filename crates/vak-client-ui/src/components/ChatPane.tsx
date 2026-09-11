@@ -122,7 +122,7 @@ function visibleItems(list: Item[]): Item[] {
     if (it.kind === "assistant") {
       if (it.streaming) return true;
       const scrubbed = cleanAssistantText(it.text);
-      if (!scrubbed.trim() && extractAssistantStructuredCards(it.text).cards.length === 0) {
+      if (!scrubbed.trim()) {
         return false;
       }
       return true;
@@ -162,7 +162,7 @@ function visibleItems(list: Item[]): Item[] {
       if (it.kind === "assistant") {
         if (it.streaming) return true;
         const scrubbed = cleanAssistantText(it.text);
-        return Boolean(scrubbed.trim() || extractAssistantStructuredCards(it.text).cards.length > 0);
+        return Boolean(scrubbed.trim());
       }
       if (it.kind === "tool" && !it.done && i === cleanList.length - 1) return true;
       return false;
@@ -547,13 +547,12 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   if (item.kind === "assistant") {
-    const extracted = () => extractAssistantStructuredCards(item.text);
-    const displayText = () => extracted().displayText;
-    const leadText = () => extracted().leadText;
-    const followText = () => extracted().followText;
-    const cards = () => extracted().cards;
+    // Live chat is deliberately text-only. Rich cards arrive through the
+    // typed OutputTimeline after the turn settles; parsing model prose here
+    // creates a second, heuristic presentation protocol.
+    const displayText = () => cleanAssistantText(item.text);
 
-    if (!item.streaming && cards().length === 0 && !displayText().trim()) {
+    if (!item.streaming && !displayText().trim()) {
       return null;
     }
 
@@ -571,20 +570,10 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           </Show>
         </div>
         <div class="assistant-turn-body">
-          <Show when={leadText()}>
-            <Markdown text={leadText()} streaming={item.streaming && cards().length === 0} />
+          <Show when={displayText()}>
+            <Markdown text={displayText()} streaming={item.streaming} />
           </Show>
-          <For each={cards()}>
-            {(card) => (
-              <div class="assistant-structured-card">
-                <StructuredView output={card} sessionId={props.sessionId ?? undefined} />
-              </div>
-            )}
-          </For>
-          <Show when={followText()}>
-            <Markdown text={followText()} streaming={item.streaming} />
-          </Show>
-          <Show when={item.streaming && !leadText() && !followText() && cards().length === 0}>
+          <Show when={item.streaming && !displayText()}>
             <span class="caret" />
           </Show>
           <Show when={!item.streaming && displayText()}>
