@@ -32,8 +32,8 @@ impl BlockReason {
                  Finish the work now; if you are actually done, say so plainly."
             ),
             BlockReason::VerificationMissing => String::from(
-                "the task asked you to run/verify something, but no commands were \
-                 executed this run. Call the `bash` tool to run the verification now; do not print the command as text.",
+                "the task asked for verification or sandbox execution, but no substantive commands were \
+                 executed this run. Call the `bash` tool to actually execute, build, or verify the work now; do not print commands or dummy echo statements.",
             ),
             BlockReason::VerificationStale => String::from(
                 "the task changed files after its last verification command. \
@@ -145,9 +145,11 @@ impl StopPolicy {
         None
     }
 
-    /// True when the prompt itself asks for executed verification.
+
+
+    /// True when the prompt itself asks for executed verification or sandbox execution.
     fn demands_verification(prompt: &str) -> bool {
-        const DEMANDS: [&str; 7] = [
+        const DEMANDS: [&str; 12] = [
             "must pass",
             "tests pass",
             "run it",
@@ -155,13 +157,27 @@ impl StopPolicy {
             "verify",
             "prove that",
             "prove it",
+            "in sandbox",
+            "in the sandbox",
+            "show in sandbox",
+            "run in sandbox",
+            "execute in sandbox",
         ];
         let p = prompt.to_ascii_lowercase();
-        DEMANDS.iter().any(|d| p.contains(d))
-            || (p.contains("run ")
-                && ["test", "tests", "command", "script", "check"]
-                    .iter()
-                    .any(|word| p.contains(word)))
+        if DEMANDS.iter().any(|d| p.contains(d)) {
+            return true;
+        }
+        if p.contains("sandbox")
+            && ["run", "show", "test", "build", "execute", "serve", "start"]
+                .iter()
+                .any(|action| p.contains(action))
+        {
+            return true;
+        }
+        p.contains("run ")
+            && ["test", "tests", "command", "script", "check", "app", "code", "it"]
+                .iter()
+                .any(|word| p.contains(word))
     }
 
     /// Returns Some(reason) when completion should be blocked.
@@ -200,6 +216,26 @@ impl StopPolicy {
         }
         None
     }
+}
+
+/// Checks if a shell command is substantive rather than a dummy echo/no-op evasion.
+pub fn is_substantive_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // If it writes to a file or pipes to another command, it has side effects or processing
+    if trimmed.contains('>') || trimmed.contains('|') {
+        return true;
+    }
+    // Check if the command line is just a bare echo/printf/noop
+    let first_word = trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("./");
+    let is_noop = matches!(first_word, "echo" | "printf" | "true" | ":" | "exit");
+    !is_noop
 }
 
 #[cfg(test)]
@@ -307,5 +343,33 @@ mod tests {
     fn empty_final_text_is_left_alone() {
         let p = StopPolicy::default();
         assert_eq!(p.evaluate("run the tests", "", 0), None);
+    }
+
+    #[test]
+    fn test_substantive_command_detection() {
+        assert!(!is_substantive_command("echo 'hello'"));
+        assert!(!is_substantive_command("echo \"Verification successful\""));
+        assert!(!is_substantive_command("printf 'done\\n'"));
+        assert!(!is_substantive_command("true"));
+        assert!(!is_substantive_command(":"));
+        assert!(!is_substantive_command("exit 0"));
+        assert!(!is_substantive_command(""));
+
+        assert!(is_substantive_command("echo 'hello' > index.html"));
+        assert!(is_substantive_command("echo 'hi' | wc -l"));
+        assert!(is_substantive_command("python3 -m unittest"));
+        assert!(is_substantive_command("cargo test"));
+        assert!(is_substantive_command("npm start"));
+        assert!(is_substantive_command("node server.js"));
+    }
+
+    #[test]
+    fn test_sandbox_demands_verification() {
+        let p = StopPolicy::default();
+        let prompt = "make in using react with beautifull design and run them in sandbox and show me";
+        assert!(matches!(
+            p.evaluate(prompt, "Here is the code in a block.", 0),
+            Some(BlockReason::VerificationMissing)
+        ));
     }
 }

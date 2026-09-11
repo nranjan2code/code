@@ -1334,7 +1334,17 @@ impl Agent {
                 return TurnOutcome::Completed { response };
             }
 
-            bash_calls_this_run += calls.iter().filter(|c| c.name == "bash").count() as u32;
+            bash_calls_this_run += calls
+                .iter()
+                .filter(|c| c.name == "bash")
+                .filter(|c| {
+                    c.input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .map(stop_policy::is_substantive_command)
+                        .unwrap_or(true)
+                })
+                .count() as u32;
             // Regression obligations (Phase H): commands proven GREEN this
             // run must stay green before any completion claim.
             let bash_pairs: Vec<(String, String)> = calls
@@ -3269,7 +3279,12 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
         && call.input.is_object()
         && let Some(obj) = call.input.as_object_mut()
         && !obj.contains_key("command")
-        && let Some(cmd) = obj.get("cmd").or_else(|| obj.get("script")).cloned()
+        && let Some(cmd) = obj
+            .get("cmd")
+            .or_else(|| obj.get("script"))
+            .or_else(|| obj.get("code"))
+            .or_else(|| obj.get("input"))
+            .cloned()
     {
         obj.insert("command".into(), cmd);
     }

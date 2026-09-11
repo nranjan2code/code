@@ -18,7 +18,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return combined stdout/stderr with the exit code. The process tree is killed on timeout or cancellation."
+        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`). Use this for anything and everything: run applications, serve web/UI previews, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Real-time stdout/stderr streams to the Workbench panel."
     }
 
     fn schema(&self) -> Value {
@@ -26,7 +26,9 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
-                "timeout_ms": {"type": "integer", "minimum": 1000, "description": "Timeout in milliseconds (default 120000)"}
+                "timeout_ms": {"type": "integer", "minimum": 1000, "description": "Timeout in milliseconds (default 120000)"},
+                "cwd": {"type": "string", "description": "Working directory relative to workspace root (e.g. '.' for workspace root, '.vak/scratch' for scratch)"},
+                "quarantine": {"type": "boolean", "description": "If true, execute in quarantined `.vak/scratch/` space. If false, execute in workspace root."}
             },
             "required": ["command"]
         })
@@ -60,17 +62,17 @@ impl Tool for BashTool {
             None => command.to_string(),
         };
 
-        let quarantine = ctx
-            .sandbox_sink
-            .as_ref()
-            .is_some_and(|s| s.is_quarantined())
-            || args
-                .get("quarantine")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+        let quarantine = args
+            .get("quarantine")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| {
+                ctx.sandbox_sink
+                    .as_ref()
+                    .is_some_and(|s| s.is_quarantined())
+            });
 
         let scratch_root = ctx.cwd.join(".vak").join("scratch");
-        let (execution_dir, scratch_dir) = if quarantine {
+        let (mut execution_dir, scratch_dir) = if quarantine {
             let exec_dir = ctx
                 .sandbox_sink
                 .as_ref()
@@ -82,6 +84,21 @@ impl Tool for BashTool {
             let _ = std::fs::create_dir_all(&scratch_root);
             (ctx.cwd.clone(), scratch_root)
         };
+
+        if let Some(custom_cwd) = args
+            .get("cwd")
+            .or_else(|| args.get("working_dir"))
+            .and_then(|v| v.as_str())
+        {
+            let target = if custom_cwd == "." || custom_cwd.is_empty() {
+                ctx.cwd.clone()
+            } else {
+                ctx.cwd.join(custom_cwd)
+            };
+            if target.starts_with(&ctx.cwd) && target.is_dir() {
+                execution_dir = target;
+            }
+        }
 
         let mut cmd = shell_command(&effective);
         cmd.current_dir(&execution_dir)
@@ -844,5 +861,57 @@ mod tests {
         assert!(super::references_control_file("cat .env"));
         assert!(super::references_control_file("cp result .vak/config.toml"));
         assert!(!super::references_control_file("echo ok > result.txt"));
+    }
+
+    #[tokio::test]
+    async fn explicit_quarantine_false_runs_in_workspace() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let test_file = workspace.path().join("marker.txt");
+        std::fs::write(&test_file, "workspace-marker").unwrap();
+
+        let (sink, _rx) = SandboxEventSink::new_with_id("test-quarantine-false".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+
+        // When quarantine: false is explicitly set, it should run in workspace root and find marker.txt
+        let tool = super::BashTool;
+        let out = tool
+            .execute(
+                &serde_json::json!({
+                    "command": "cat marker.txt",
+                    "quarantine": false
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("workspace-marker"));
+    }
+
+    #[tokio::test]
+    async fn custom_cwd_is_respected() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let sub = workspace.path().join("sub_module");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("sub.txt"), "in-sub").unwrap();
+
+        let (sink, _rx) = SandboxEventSink::new_with_id("test-custom-cwd".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+
+        let tool = super::BashTool;
+        let out = tool
+            .execute(
+                &serde_json::json!({
+                    "command": "cat sub.txt",
+                    "cwd": "sub_module"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("in-sub"));
     }
 }

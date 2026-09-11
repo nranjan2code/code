@@ -302,6 +302,15 @@ pub fn canonical_tool_name(name: &str) -> &str {
     if trimmed.eq_ignore_ascii_case("edit-file") || trimmed.eq_ignore_ascii_case("edit_file") {
         return "edit";
     }
+    if trimmed.eq_ignore_ascii_case("shell")
+        || trimmed.eq_ignore_ascii_case("sh")
+        || trimmed.eq_ignore_ascii_case("sandbox")
+        || trimmed.eq_ignore_ascii_case("sandbox_exec")
+        || trimmed.eq_ignore_ascii_case("terminal")
+        || trimmed.eq_ignore_ascii_case("exec")
+    {
+        return "bash";
+    }
     // Retired tool names: redirect to their replacement (currently `bash`).
     for tool in retired::RETIRED_TOOLS {
         if tool.name.eq_ignore_ascii_case(trimmed) {
