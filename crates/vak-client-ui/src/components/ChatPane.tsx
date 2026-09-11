@@ -540,7 +540,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           <div class="user-turn-head">
             <span class="turn-author-chip">You</span>
           </div>
-          <div class="md"><Markdown text={text} /></div>
+          <div class="msg-user-content"><Markdown text={text} /></div>
           <MessageActions text={text} role="user" />
         </div>
       </div>

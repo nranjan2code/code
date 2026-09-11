@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.64 — 2026-09-11
+
+### Universal Semantic Outcome Cards and Full macOS Release
+
+- Render fenced semantic outputs directly as interactive outcome cards across universal outcome types.
+- Update compiled client web and desktop UI distribution bundles with latest presentation components.
+- Prepare full production release artifacts and synchronize system service installation on macOS.
+
 ## 3.0.63 — 2026-09-11
 
 ### Full Release Consolidation, Quarantine Working Directory Control, and Anti-Evasion Verification
