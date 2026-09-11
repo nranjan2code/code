@@ -2428,14 +2428,9 @@ fn session_matches_route(
         header.cwd.as_path() == core.cwd().as_path()
             && header.contract.provider == provider
             && header.contract.model == model
-            && header.contract.capabilities == core.capability_descriptors()
-            // A prompt layer edited since this binding froze makes the
-            // session stale for the same reason a changed capability packet
-            // does: it would keep running instructions the operator has
-            // already replaced (docs/design/45-prompt-layers.md). A chat
-            // binding is implicit, so it rotates rather than failing —
-            // the old ledger is preserved either way.
-            && core.prompt_drift(&header.contract).is_none()
+        // Prompt layers and capabilities are live session state. They are
+        // refreshed at the next turn boundary; the ledger retains the
+        // immutable contract used by each historical turn.
     })
 }
 
