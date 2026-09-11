@@ -551,7 +551,10 @@ impl OutcomeSpec {
     pub fn requires_tool(&self) -> bool {
         self.requires_execution()
             || self.requires_inspection()
-            || self.requirements.iter().any(|r| r.kind == RequirementKind::Evidence)
+            || self
+                .requirements
+                .iter()
+                .any(|r| r.kind == RequirementKind::Evidence)
     }
 
     /// Extract the primary act description for logging and nudges.

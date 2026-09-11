@@ -333,18 +333,17 @@ async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard
             max_blocks: 1,
         }),
         vec![
-            ScriptedResponse::Message(text_msg("Here is your React animation in a markdown fence.")),
+            ScriptedResponse::Message(text_msg(
+                "Here is your React animation in a markdown fence.",
+            )),
             ScriptedResponse::Message(text_msg("Created files and verified in sandbox.")),
         ],
     );
 
     let mut reading = vak_intent::Reading::general();
     reading.act = vak_intent::Act::Author;
-    let spec = vak_intent::OutcomeSpec::from_reading(
-        "Build a react visualization component",
-        &reading,
-        1,
-    );
+    let spec =
+        vak_intent::OutcomeSpec::from_reading("Build a react visualization component", &reading, 1);
     h.agent.as_mut().expect("agent").config.outcome = Some(spec);
 
     let outcome = h
@@ -369,7 +368,11 @@ async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard
         })
         .collect();
     assert_eq!(guards.len(), 1);
-    assert!(guards[0].contains("author") || guards[0].contains("execution"), "reason: {}", guards[0]);
+    assert!(
+        guards[0].contains("author") || guards[0].contains("execution"),
+        "reason: {}",
+        guards[0]
+    );
 
     let messages = guard_messages(&mut h).await;
     assert!(

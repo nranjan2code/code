@@ -94,11 +94,30 @@ impl ReceiptSummary {
 
 fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    let err_first_line = error.lines().next().unwrap_or("").trim().to_ascii_lowercase();
+    let err_first_line = error
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     let keywords = [
-        "error", "failed", "failure", "failing", "blocked", "blocker",
-        "could not", "cannot", "can't", "unable to", "issue", "problem",
-        "exit code", "exception", "recover", "repaired", "unsupported",
+        "error",
+        "failed",
+        "failure",
+        "failing",
+        "blocked",
+        "blocker",
+        "could not",
+        "cannot",
+        "can't",
+        "unable to",
+        "issue",
+        "problem",
+        "exit code",
+        "exception",
+        "recover",
+        "repaired",
+        "unsupported",
     ];
     let mentions_keyword = keywords.iter().any(|k| lower.contains(k));
     let mentions_tool = lower.contains(&tool.to_ascii_lowercase());
@@ -274,24 +293,21 @@ impl StopPolicy {
         if let Some(spec) = outcome {
             if spec.requires_execution() {
                 if !receipts.has_execution_receipt() {
-                    let act = spec
-                        .deliverable_act()
-                        .unwrap_or("execution")
-                        .to_string();
+                    let act = spec.deliverable_act().unwrap_or("execution").to_string();
                     return Some(BlockReason::ExecutionReceiptMissing {
                         act,
                         hint: "run code, build, test, or modify files".into(),
                     });
                 }
-                if self.verify_gate && verification_stale && (spec.requires_execution() || Self::demands_verification(prompt)) {
+                if self.verify_gate
+                    && verification_stale
+                    && (spec.requires_execution() || Self::demands_verification(prompt))
+                {
                     return Some(BlockReason::VerificationStale);
                 }
             } else if spec.requires_inspection() {
                 if !receipts.has_inspection_receipt() {
-                    let act = spec
-                        .deliverable_act()
-                        .unwrap_or("inspection")
-                        .to_string();
+                    let act = spec.deliverable_act().unwrap_or("inspection").to_string();
                     return Some(BlockReason::ExecutionReceiptMissing {
                         act,
                         hint: "read, search, inspect files or data".into(),
@@ -309,7 +325,10 @@ impl StopPolicy {
         }
 
         // Fallback when no outcome spec is available (e.g. backward compatibility / intent disabled).
-        if self.verify_gate && receipts.substantive_bash_calls == 0 && Self::demands_verification(prompt) {
+        if self.verify_gate
+            && receipts.substantive_bash_calls == 0
+            && Self::demands_verification(prompt)
+        {
             return Some(BlockReason::VerificationMissing);
         }
         if self.verify_gate && verification_stale && Self::demands_verification(prompt) {
@@ -528,20 +547,47 @@ mod tests {
 
         // 0 receipts -> blocked
         let empty_receipts = ReceiptSummary::default();
-        let blocked = p.evaluate_receipts("create an svg animation", "Here is your svg:\n```xml\n<svg/>\n```", Some(&spec), &empty_receipts, false);
-        assert!(matches!(blocked, Some(BlockReason::ExecutionReceiptMissing { .. })));
+        let blocked = p.evaluate_receipts(
+            "create an svg animation",
+            "Here is your svg:\n```xml\n<svg/>\n```",
+            Some(&spec),
+            &empty_receipts,
+            false,
+        );
+        assert!(matches!(
+            blocked,
+            Some(BlockReason::ExecutionReceiptMissing { .. })
+        ));
 
         // with substantive bash receipt -> allowed
         let mut with_bash = ReceiptSummary::default();
         with_bash.substantive_bash_calls = 1;
         with_bash.successful_tool_calls = 1;
-        assert_eq!(p.evaluate_receipts("create an svg animation", "Created and verified.", Some(&spec), &with_bash, false), None);
+        assert_eq!(
+            p.evaluate_receipts(
+                "create an svg animation",
+                "Created and verified.",
+                Some(&spec),
+                &with_bash,
+                false
+            ),
+            None
+        );
 
         // with file write receipt -> allowed
         let mut with_file = ReceiptSummary::default();
         with_file.files_modified = 1;
         with_file.successful_tool_calls = 1;
-        assert_eq!(p.evaluate_receipts("create an svg animation", "Created file.", Some(&spec), &with_file, false), None);
+        assert_eq!(
+            p.evaluate_receipts(
+                "create an svg animation",
+                "Created file.",
+                Some(&spec),
+                &with_file,
+                false
+            ),
+            None
+        );
     }
 
     #[test]
@@ -554,7 +600,16 @@ mod tests {
         assert!(!spec.requires_tool());
 
         let receipts = ReceiptSummary::default();
-        assert_eq!(p.evaluate_receipts("what is rust?", "Rust is a systems programming language.", Some(&spec), &receipts, false), None);
+        assert_eq!(
+            p.evaluate_receipts(
+                "what is rust?",
+                "Rust is a systems programming language.",
+                Some(&spec),
+                &receipts,
+                false
+            ),
+            None
+        );
     }
 
     #[test]
@@ -566,8 +621,17 @@ mod tests {
         receipts.unresolved_error = Some(("bash".into(), "exit code 1: compile error".into()));
 
         // Model hallucinates success without reporting error -> blocked
-        let blocked = p.evaluate_receipts("build it", "All done! Everything succeeded.", None, &receipts, false);
-        assert!(matches!(blocked, Some(BlockReason::UnresolvedToolFailure { .. })));
+        let blocked = p.evaluate_receipts(
+            "build it",
+            "All done! Everything succeeded.",
+            None,
+            &receipts,
+            false,
+        );
+        assert!(matches!(
+            blocked,
+            Some(BlockReason::UnresolvedToolFailure { .. })
+        ));
 
         // Model reports the error/blocker -> allowed
         let reported = p.evaluate_receipts(
