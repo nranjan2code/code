@@ -77,7 +77,7 @@ fi
 # instruction to go run npm.
 if command -v npm >/dev/null; then
     printf '\n== admin frontend ==\n'
-    ( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm run build --silent >/dev/null )
+    ( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm rebuild --silent && npm run build --silent >/dev/null )
 else
     printf '\nnpm not found — leaving crates/vak-admin-ui/dist as committed\n' >&2
 fi
@@ -99,7 +99,7 @@ fi
 if [[ "$DESKTOP" == true ]]; then
     if command -v npm >/dev/null; then
         printf '\n== desktop frontend ==\n'
-        (cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm run build --silent)
+        (cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm rebuild --silent && npm run build --silent)
     else
         printf '\nnpm not found — skipping the desktop frontend\n' >&2
         DESKTOP=false

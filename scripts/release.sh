@@ -187,7 +187,7 @@ for manifest in \
 done
 
 printf '\n== frontends ==\n'
-( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm run build --silent >/dev/null )
+( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm rebuild --silent && npm run build --silent >/dev/null )
 if [[ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]]; then
     printf 'error: crates/vak-admin-ui/dist does not match crates/vak-admin-ui/src.\n' >&2
     printf 'Rebuild locally (npm run build in crates/vak-admin-ui), review the diff,\n' >&2
@@ -197,7 +197,7 @@ if [[ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]]; then
     exit 1
 fi
 printf '  ✓ %-44s matches source\n' "vak-admin-ui/dist"
-( cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm run build --silent >/dev/null )
+( cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm rebuild --silent && npm run build --silent >/dev/null )
 if [[ -n "$(git status --porcelain -- crates/vak-client-ui/dist-web)" ]]; then
     printf 'error: crates/vak-client-ui/dist-web does not match crates/vak-client-ui/src.\n' >&2
     printf 'Rebuild locally (npm run build in crates/vak-client-ui), review the diff,\n' >&2
