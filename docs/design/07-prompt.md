@@ -7,7 +7,19 @@ trust are specified in doc 45.
 Editable per layer; see doc 45. `.vak/SYSTEM.md` remains as a legacy
 project-layer `identity` override.
 
+The presentation contract is universal: the prompt may select semantic shapes
+such as maps, calendars, boards, entities, evidence, documents, graphs, forms,
+transactions, alerts, conversations, and simulations in addition to coding,
+research, data, and lifestyle results. The built-in seed pack currently ships
+70 disabled, revision-3 presentation definitions. New built-in definitions are
+reconciled additively at server startup; user presentations and activations are
+retained.
+
 ## Diff notes
+
+- 3.0.63: expanded the presentation vocabulary from the original 52 seeded
+  definitions to 70 universal definitions and documented startup
+  reconciliation. Prompt examples now explain domain-neutral composition.
 
 - v0.1.0: initial six-tool kernel prompt. Rules emphasize read-before-edit,
   small verifiable steps, error-driven fixing, workspace containment.

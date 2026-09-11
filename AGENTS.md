@@ -508,8 +508,11 @@ shipped behaviour rather than a proposal.
   Outcome cards follow a uniform contract: each specialized renderer consumes typed
   `props: { data: T }` through the single `STRUCTURED_RENDERERS` registry without
   duplicate fallback blocks or bespoke regex-scraping heuristics. Recipes,
-  research citations, charts, diffs, and sandboxed previews are first-class, fully
-  styled outcome components backed by real validated payloads.
+  research citations, charts, diffs, maps, calendars, boards, entities,
+  evidence, documents, graphs, forms, transactions, alerts, conversations,
+  and sandboxed previews are first-class outcome components backed by real
+  validated payloads. Universal semantic shapes compose across domains; they
+  are not a coding-only card taxonomy.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

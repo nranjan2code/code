@@ -2855,6 +2855,12 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     force_gateway: bool,
 ) -> std::io::Result<()> {
+    // Presentation seeds are versioned, additive previews. Reconcile them at
+    // process startup so a newly installed binary reaches existing workspaces
+    // even when the admin presentation list is never opened. User revisions
+    // and activations remain untouched by register().
+    reconcile_builtin_presentations(&core)
+        .map_err(|error| std::io::Error::other(format!("presentation seed failed: {error}")))?;
     // Local-only does not mean safe-by-default: any local process could
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process
@@ -2895,6 +2901,21 @@ pub async fn serve_with(
             eprintln!("\n[shutting down: draining connections]");
         })
         .await
+}
+
+fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
+    let store = vak_store::presentation::PresentationStore::new(
+        core.sessions_home().join("presentations.json"),
+    );
+    let mut library = store.load().map_err(|error| error.to_string())?;
+    let before = library.definitions().count();
+    for seed in vak_presentation::seeds::built_in_seed_pack() {
+        library.register(seed).map_err(|error| error.to_string())?;
+    }
+    if library.definitions().count() != before {
+        store.save(&library).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// Paths that must be reachable without a token: health probe, the SPA
@@ -7277,6 +7298,17 @@ async fn list_presentation_primitives() -> Json<Vec<vak_presentation::Primitive>
         vak_presentation::Primitive::Image,
         vak_presentation::Primitive::Divider,
         vak_presentation::Primitive::Artifact,
+        vak_presentation::Primitive::Map,
+        vak_presentation::Primitive::Calendar,
+        vak_presentation::Primitive::Board,
+        vak_presentation::Primitive::Graph,
+        vak_presentation::Primitive::Entity,
+        vak_presentation::Primitive::Evidence,
+        vak_presentation::Primitive::Form,
+        vak_presentation::Primitive::Transaction,
+        vak_presentation::Primitive::Alert,
+        vak_presentation::Primitive::Conversation,
+        vak_presentation::Primitive::Simulation,
     ])
 }
 

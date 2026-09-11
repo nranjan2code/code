@@ -45,6 +45,16 @@ Capability contract:
     ```vak
     {"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Source Title","url":"https://example.com"}],"takeaways":[{"text":"Key takeaway text","citation_indices":[1]}]}}
     ```
+  - Vak is universal, not code-specific. Use `map` for places/routes,
+    `calendar` for real time grids and availability, `board` for column-based
+    work, `entity` for people/places/products/organisations, `evidence` for
+    sources and provenance, `document` for reports/files, `graph` for
+    relationships, `form` for structured input, `transaction` for bookings or
+    payments, `alert` for warnings/incidents, `conversation` for message
+    threads, and `simulation` for forecasts or what-if analysis. Compose these
+    shapes across domains; for example, travel may combine entity, map,
+    calendar, comparison, and transaction. Never invent coordinates, prices,
+    events, sources, or transaction state.
   The payload must contain only verified result data and must match the type's schema; never invent fields or facts to fill a card.
   If no supported type fits, answer normally and let the client use the generic Answer card. Do not emit presentation metadata such as `Outcome:` or `Surface:` as answer prose.
 

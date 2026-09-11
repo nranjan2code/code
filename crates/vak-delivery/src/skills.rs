@@ -484,6 +484,78 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["plan.timeline"],
             vec!["desktop", "terminal", "telegram"],
         ),
+        (
+            "universal.map",
+            vec!["location", "coordinates", "route"],
+            vec!["map"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.calendar",
+            vec!["event", "meeting", "availability"],
+            vec!["calendar"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.board",
+            vec!["board", "kanban", "column"],
+            vec!["board"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "universal.entity",
+            vec!["person", "company", "place", "product"],
+            vec!["entity"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.evidence",
+            vec!["source", "citation", "provenance"],
+            vec!["evidence"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.document",
+            vec!["document", "pdf", "report"],
+            vec!["document"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.graph",
+            vec!["graph", "network", "dependency"],
+            vec!["graph"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "universal.form",
+            vec!["form", "input", "survey"],
+            vec!["form"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "universal.transaction",
+            vec!["invoice", "payment", "booking"],
+            vec!["transaction"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.alert",
+            vec!["alert", "warning", "incident"],
+            vec!["alert"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.conversation",
+            vec!["conversation", "thread", "message"],
+            vec!["conversation"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "universal.simulation",
+            vec!["forecast", "scenario", "what_if"],
+            vec!["simulation"],
+            vec!["desktop", "terminal"],
+        ),
     ] {
         let requires_typed_output = matches!(recipe.0, "coding.test_report" | "ui.preview");
         let typed_output_types: Vec<String> = match recipe.0 {
@@ -603,6 +675,24 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "coding.dependencies",
             "coding.release",
             "coding.search",
+            "map",
+            "route_map",
+            "calendar",
+            "availability",
+            "board",
+            "entity",
+            "search_results",
+            "evidence",
+            "decision_analysis",
+            "document",
+            "graph",
+            "form",
+            "action",
+            "transaction",
+            "alert",
+            "conversation",
+            "progress_dashboard",
+            "simulation",
         ]
         .into_iter()
         .map(String::from)

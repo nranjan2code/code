@@ -66,6 +66,27 @@ const CODING: &[(&str, &str)] = &[
     ("code-search", "coding.search"),
 ];
 
+const UNIVERSAL: &[(&str, &str)] = &[
+    ("map", "map"),
+    ("route-map", "route_map"),
+    ("calendar", "calendar"),
+    ("availability", "availability"),
+    ("board", "board"),
+    ("entity", "entity"),
+    ("search-results", "search_results"),
+    ("evidence", "evidence"),
+    ("decision-analysis", "decision_analysis"),
+    ("document", "document"),
+    ("graph", "graph"),
+    ("form", "form"),
+    ("action", "action"),
+    ("transaction", "transaction"),
+    ("alert", "alert"),
+    ("conversation", "conversation"),
+    ("progress-dashboard", "progress_dashboard"),
+    ("simulation", "simulation"),
+];
+
 fn binding(path: &str) -> SpecValue {
     SpecValue::Binding(Binding {
         path: path.into(),
@@ -80,6 +101,18 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "itinerary" | "schedule" | "timeline" | "milestones" | "incident-timeline" => {
             Primitive::Timeline
         }
+        "map" | "route_map" => Primitive::Map,
+        "calendar" | "availability" => Primitive::Calendar,
+        "board" => Primitive::Board,
+        "entity" => Primitive::Entity,
+        "evidence" => Primitive::Evidence,
+        "graph" => Primitive::Graph,
+        "form" => Primitive::Form,
+        "action" => Primitive::Row,
+        "transaction" => Primitive::Table,
+        "alert" => Primitive::Alert,
+        "conversation" => Primitive::Stack,
+        "simulation" => Primitive::Chart,
         "checklist" | "shopping_list" | "reading_list" | "habit_plan" => Primitive::Checklist,
         "comparison" | "comparison_table" | "pros_cons" | "scorecard" => Primitive::Comparison,
         "budget" | "finance_summary" | "invoice_summary" | "inventory" => Primitive::Table,
@@ -118,7 +151,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         // Seed definitions are immutable revisions. Bump this whenever the
         // declarative starter shape changes so an older persisted seed cannot
         // collide with the new digest at the same (id, revision) key.
-        revision: 2,
+        revision: 3,
         accepts: vec![accepts.into()],
         root: SpecNode {
             primitive: root_primitive,
@@ -153,18 +186,20 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
             scope: LibraryScope::Workspace,
             owner: "builtin".into(),
             plugin_id: None,
-            generation: Some("seed-2".into()),
+            generation: Some("seed-3-universal".into()),
         },
         enabled: false,
     }
 }
 
-/// The built-in starter pack: 42 everyday definitions plus 10 coding-flow
-/// definitions. They are disabled previews and may be activated explicitly.
+/// The built-in starter pack contains domain experiences plus universal
+/// interaction shapes. They are disabled previews and may be activated
+/// explicitly.
 pub fn built_in_seed_pack() -> Vec<StoredPresentation> {
     EVERYDAY
         .iter()
         .chain(CODING.iter())
+        .chain(UNIVERSAL.iter())
         .map(|(id, accepts)| seed(id, accepts))
         .collect()
 }
@@ -177,7 +212,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 52);
+        assert_eq!(pack.len(), 70);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()

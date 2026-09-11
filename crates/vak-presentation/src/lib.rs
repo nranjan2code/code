@@ -153,6 +153,17 @@ pub enum Primitive {
     Error,
     Unavailable,
     Stale,
+    Map,
+    Calendar,
+    Board,
+    Graph,
+    Entity,
+    Evidence,
+    Form,
+    Transaction,
+    Alert,
+    Conversation,
+    Simulation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

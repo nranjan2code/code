@@ -81,7 +81,18 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
         | Primitive::Partial
         | Primitive::Error
         | Primitive::Unavailable
-        | Primitive::Stale => {
+        | Primitive::Stale
+        | Primitive::Map
+        | Primitive::Calendar
+        | Primitive::Board
+        | Primitive::Graph
+        | Primitive::Entity
+        | Primitive::Evidence
+        | Primitive::Form
+        | Primitive::Transaction
+        | Primitive::Alert
+        | Primitive::Conversation
+        | Primitive::Simulation => {
             let value = text("text");
             if !value.is_empty() {
                 out.push_str(&format!("{}{}\n", indent, value));

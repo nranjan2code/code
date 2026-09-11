@@ -87,7 +87,9 @@
 
 ## 3.0.55 — 2026-09-10
 
-- Support universal presentation card pipeline across all 52 seeded Everyday & Coding definitions.
+- Support the universal presentation card pipeline across the initial seeded
+  presentation definitions; the current pack is 70 definitions spanning
+  universal, everyday, coding, research, data, and lifestyle experiences.
 - Expand `SkillRegistry` provides whitelist and add TOML/lenient fragment deserialization in `vak-delivery`.
 - Update model system prompt with concrete payload examples for weather, metrics, timelines, checklists, and research synthesis.
 - Add frontend semantic type aliases in `PresentationRenderer.tsx` for seamless outcome card rendering.

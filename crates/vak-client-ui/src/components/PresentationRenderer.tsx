@@ -22,6 +22,7 @@ import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard, { type RecipeData } from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
+import UniversalCard from "./presentation/UniversalCard";
 
 // Advanced is still a user-facing presentation. Operator chrome is reserved
 // for development builds so production never becomes a ledger UI.
@@ -686,6 +687,26 @@ function normalizeRecipe(data: any): RecipeData {
 // Every named semantic type resolves through this single registry. All 62+
 // outcome types registered across core and plugin skills map directly here.
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
+  // Universal semantic shapes share a safe, lossless baseline renderer until
+  // a richer domain-neutral interaction is available.
+  "map": ({ data }) => <UniversalCard data={data} kind="Map" />,
+  "route_map": ({ data }) => <UniversalCard data={data} kind="Route map" />,
+  "calendar": ({ data }) => <UniversalCard data={data} kind="Calendar" />,
+  "availability": ({ data }) => <UniversalCard data={data} kind="Availability" />,
+  "board": ({ data }) => <UniversalCard data={data} kind="Board" />,
+  "entity": ({ data }) => <UniversalCard data={data} kind="Entity" />,
+  "search_results": ({ data }) => <UniversalCard data={data} kind="Search results" />,
+  "evidence": ({ data }) => <UniversalCard data={data} kind="Evidence" />,
+  "decision_analysis": ({ data }) => <UniversalCard data={data} kind="Decision" />,
+  "document": ({ data }) => <UniversalCard data={data} kind="Document" />,
+  "graph": ({ data }) => <UniversalCard data={data} kind="Graph" />,
+  "form": ({ data }) => <UniversalCard data={data} kind="Form" />,
+  "action": ({ data }) => <UniversalCard data={data} kind="Action" />,
+  "transaction": ({ data }) => <UniversalCard data={data} kind="Transaction" />,
+  "alert": ({ data }) => <UniversalCard data={data} kind="Alert" />,
+  "conversation": ({ data }) => <UniversalCard data={data} kind="Conversation" />,
+  "progress_dashboard": ({ data }) => <UniversalCard data={data} kind="Progress dashboard" />,
+  "simulation": ({ data }) => <UniversalCard data={data} kind="Simulation" />,
   // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
   "research.synthesis": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
   "research_brief": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
