@@ -333,7 +333,7 @@ export interface UiPreferences {
   /** "system" follows the OS/browser, which is the only sane default for
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
-  theme: "system" | "light" | "warm" | "dark" | "contrast" | "sage" | "paper";
+  theme: "system" | "light" | "warm" | "dark" | "contrast" | "sage" | "paper" | "mist" | "dawn";
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;

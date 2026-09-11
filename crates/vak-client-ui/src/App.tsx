@@ -1140,12 +1140,13 @@ export default function App() {
           : "light"
         : uiPreferences.theme;
     document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.presentationMode = presentationMode();
     // Tells the browser which way to paint its own chrome: form controls,
     // scrollbars, and the space behind the page during load.
     // Keep native controls and scrollbars aligned with every light palette.
     // Sage and paper are everyday light themes too; treating them as dark
     // makes the browser render a dark control chrome over a light canvas.
-    document.documentElement.style.colorScheme = ["light", "sage", "paper"].includes(theme) ? "light" : "dark";
+    document.documentElement.style.colorScheme = ["light", "sage", "paper", "mist", "dawn"].includes(theme) ? "light" : "dark";
     document.documentElement.dataset.compactSidebar = String(uiPreferences.compactSidebar);
     document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
     document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));

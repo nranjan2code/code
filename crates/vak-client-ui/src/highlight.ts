@@ -139,7 +139,7 @@ export function languageFor(path: string): string | null {
 export function currentShikiTheme(): "vitesse-light" | "vitesse-dark" | "vitesse-black" {
   if (typeof document === "undefined") return "vitesse-dark";
   const theme = document.documentElement.dataset.theme;
-  if (theme === "light" || theme === "sage" || theme === "paper") return "vitesse-light";
+  if (theme === "light" || theme === "sage" || theme === "paper" || theme === "mist" || theme === "dawn") return "vitesse-light";
   if (theme === "contrast") return "vitesse-black";
   return "vitesse-dark";
 }

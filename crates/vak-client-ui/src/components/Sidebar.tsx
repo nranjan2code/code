@@ -359,6 +359,13 @@ export default function Sidebar() {
                     <span class="sb-title">{session.title || "Untitled conversation"}</span>
                   </span>
                 </button>
+                <button type="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled conversation"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                  <Icon name="history" size={13} />
+                </button>
+                <button type="button" class="sb-archive has-tooltip" data-tooltip="Archive conversation" aria-label="Archive conversation" onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, true); }}>
+                  <Icon name="archive" size={13} />
+                </button>
+                <span class="sb-time">{relTime(session.updated_at)}</span>
               </div>
             )}
           </For>
@@ -382,6 +389,13 @@ export default function Sidebar() {
                       <span class="sb-title">{session.title || "Untitled conversation"}</span>
                     </span>
                   </button>
+                  <button type="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled conversation"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                    <Icon name="history" size={13} />
+                  </button>
+                  <button type="button" class="sb-archive has-tooltip" data-tooltip="Archive conversation" aria-label="Archive conversation" onClick={(e) => { e.stopPropagation(); void requestToggleArchive(session, true); }}>
+                    <Icon name="archive" size={13} />
+                  </button>
+                  <span class="sb-time">{relTime(session.updated_at)}</span>
                 </div>
               )}
             </For>
