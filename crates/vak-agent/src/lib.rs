@@ -16,7 +16,7 @@ pub mod workspace;
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
-pub use stop_policy::{BlockReason, StopPolicy};
+pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 pub use workspace::WorkspaceDelta;
 
@@ -637,7 +637,7 @@ impl Agent {
             }
         };
         let prompt_owned = prompt.text_content();
-        let mut bash_calls_this_run: u32 = 0;
+        let mut receipts = stop_policy::ReceiptSummary::default();
         let mut verification_stale = false;
         let mut user_completion_released = false;
         self.obligations.clear();
@@ -1304,7 +1304,7 @@ impl Agent {
                     .stop_gate(
                         &prompt_owned,
                         &response,
-                        bash_calls_this_run,
+                        &receipts,
                         verification_stale,
                         &mut stop_blocks_left,
                         user_completion_released,
@@ -1334,17 +1334,27 @@ impl Agent {
                 return TurnOutcome::Completed { response };
             }
 
-            bash_calls_this_run += calls
-                .iter()
-                .filter(|c| c.name == "bash")
-                .filter(|c| {
-                    c.input
+            for call in &calls {
+                receipts.total_tool_calls += 1;
+                if call.name == "bash" {
+                    let is_subst = call
+                        .input
                         .get("command")
                         .and_then(|v| v.as_str())
                         .map(stop_policy::is_substantive_command)
-                        .unwrap_or(true)
-                })
-                .count() as u32;
+                        .unwrap_or(true);
+                    if is_subst {
+                        receipts.substantive_bash_calls += 1;
+                    }
+                } else if matches!(call.name.as_str(), "write" | "edit" | "patch") {
+                    receipts.files_modified += 1;
+                } else if matches!(
+                    call.name.as_str(),
+                    "read" | "read_file" | "glob" | "grep" | "inspect" | "browse" | "webfetch"
+                ) {
+                    receipts.read_or_inspected += 1;
+                }
+            }
             // Regression obligations (Phase H): commands proven GREEN this
             // run must stay green before any completion claim.
             let bash_pairs: Vec<(String, String)> = calls
@@ -1402,16 +1412,25 @@ impl Agent {
                 })
                 .collect();
             for (id, out) in &results {
-                if matches!(out, ToolRunOutput::Ok(_)) {
-                    if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
-                        verification_stale = false;
-                    } else if mutation_ids.iter().any(|mutation_id| mutation_id == id) {
-                        verification_stale = true;
+                let call_name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
+                match out {
+                    ToolRunOutput::Ok(_) => {
+                        receipts.successful_tool_calls += 1;
+                        receipts.unresolved_error = None;
+                        if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
+                            verification_stale = false;
+                        } else if mutation_ids.iter().any(|mutation_id| mutation_id == id) {
+                            verification_stale = true;
+                        }
+                        if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
+                            && !self.obligations.iter().any(|o| o == cmd)
+                        {
+                            self.obligations.push(cmd.clone());
+                        }
                     }
-                    if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
-                        && !self.obligations.iter().any(|o| o == cmd)
-                    {
-                        self.obligations.push(cmd.clone());
+                    ToolRunOutput::Err(err) => {
+                        receipts.failed_tool_calls += 1;
+                        receipts.unresolved_error = Some((call_name.to_string(), err.clone()));
                     }
                 }
             }
@@ -2369,7 +2388,7 @@ impl Agent {
         &self,
         prompt: &str,
         response: &AssistantMessage,
-        bash_calls_this_run: u32,
+        receipts: &stop_policy::ReceiptSummary,
         verification_stale: bool,
         blocks_left: &mut u32,
         user_completion_released: bool,
@@ -2378,10 +2397,11 @@ impl Agent {
         if user_completion_released {
             return None;
         }
-        let reason = policy.evaluate_with_state(
+        let reason = policy.evaluate_receipts(
             prompt,
             &response.text_content(),
-            bash_calls_this_run,
+            self.config.outcome.as_ref(),
+            receipts,
             verification_stale,
         )?;
         if !matches!(reason, BlockReason::UserCompletionRequired) && *blocks_left == 0 {

@@ -323,3 +323,57 @@ async fn disabled_policy_never_blocks() {
             .any(|u| u.starts_with("[stop-guard]:"))
     );
 }
+
+#[tokio::test]
+async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard_nudge() {
+    let mut h = harness(
+        Some(StopPolicy {
+            marker_gate: false,
+            verify_gate: true,
+            max_blocks: 1,
+        }),
+        vec![
+            ScriptedResponse::Message(text_msg("Here is your React animation in a markdown fence.")),
+            ScriptedResponse::Message(text_msg("Created files and verified in sandbox.")),
+        ],
+    );
+
+    let mut reading = vak_intent::Reading::general();
+    reading.act = vak_intent::Act::Author;
+    let spec = vak_intent::OutcomeSpec::from_reading(
+        "Build a react visualization component",
+        &reading,
+        1,
+    );
+    h.agent.as_mut().expect("agent").config.outcome = Some(spec);
+
+    let outcome = h
+        .agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "Build a react visualization component",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    assert_eq!(h.requests.lock().unwrap().len(), 2);
+
+    let guards: Vec<String> = drain_events(&mut h)
+        .into_iter()
+        .filter_map(|e| match e {
+            AgentEvent::StopHookContinuation { reason } => Some(reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(guards.len(), 1);
+    assert!(guards[0].contains("author") || guards[0].contains("execution"), "reason: {}", guards[0]);
+
+    let messages = guard_messages(&mut h).await;
+    assert!(
+        messages.iter().any(|u| u.starts_with("[stop-guard]:")),
+        "ledger must record model-visible stop-guard nudge: {messages:?}"
+    );
+}

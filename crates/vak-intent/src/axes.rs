@@ -96,6 +96,25 @@ impl Act {
     pub fn is_effectful(self) -> bool {
         matches!(self, Act::Modify | Act::Operate | Act::Govern)
     }
+
+    /// Whether this act requires execution, authoring, modification, testing/verification,
+    /// or operation (e.g. running code, touching files, starting services).
+    pub fn requires_execution(self) -> bool {
+        matches!(
+            self,
+            Act::Author | Act::Modify | Act::Operate | Act::Verify | Act::Govern | Act::Orchestrate
+        )
+    }
+
+    /// Whether this act requires inspection, search, or enumeration tools.
+    pub fn requires_inspection(self) -> bool {
+        matches!(self, Act::Locate | Act::Analyze)
+    }
+
+    /// Whether this act requires any tool invocation (execution, modification, or inspection).
+    pub fn requires_tool(self) -> bool {
+        self.requires_execution() || self.requires_inspection()
+    }
 }
 
 /// How long the work lives. Promotion to a durable commitment happens at

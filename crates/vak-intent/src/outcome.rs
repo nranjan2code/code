@@ -526,6 +526,52 @@ impl OutcomeSpec {
         }
     }
 
+    /// Whether this outcome requires execution or file modifications.
+    pub fn requires_execution(&self) -> bool {
+        self.requirements.iter().any(|r| {
+            r.kind == RequirementKind::Deliverable
+                && (r.description.contains("author")
+                    || r.description.contains("modify")
+                    || r.description.contains("operate")
+                    || r.description.contains("verify")
+                    || r.description.contains("govern")
+                    || r.description.contains("orchestrate"))
+        })
+    }
+
+    /// Whether this outcome requires inspection, search, or enumeration.
+    pub fn requires_inspection(&self) -> bool {
+        self.requirements.iter().any(|r| {
+            r.kind == RequirementKind::Deliverable
+                && (r.description.contains("locate") || r.description.contains("analyze"))
+        })
+    }
+
+    /// Whether this outcome requires real tool execution or evidence receipts.
+    pub fn requires_tool(&self) -> bool {
+        self.requires_execution()
+            || self.requires_inspection()
+            || self.requirements.iter().any(|r| r.kind == RequirementKind::Evidence)
+    }
+
+    /// Extract the primary act description for logging and nudges.
+    pub fn deliverable_act(&self) -> Option<&str> {
+        self.requirements.iter().find_map(|r| {
+            if r.kind == RequirementKind::Deliverable {
+                let prefix = "produce an ";
+                let suffix = " result";
+                if let Some(rest) = r.description.strip_prefix(prefix) {
+                    if let Some(act) = rest.strip_suffix(suffix) {
+                        return Some(act);
+                    }
+                }
+                Some(r.description.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
     /// Merge an extension-provided requirement without allowing it to alter
     /// authority. Invalid declarations are rejected at the contract boundary.
     pub fn merge_declared_requirement(

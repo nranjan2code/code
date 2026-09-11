@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.68 — 2026-09-11
+
+### Intent-Driven and Receipt-Gated Execution Runtime
+
+- Replace brittle verification regex checks with intent kernel and runtime receipt gates.
+- Require substantive tool execution receipts for requests classified as requiring authoring, modification, verification, or operation.
+- Implement automatic stop-guard continuation nudges when model attempts completion prematurely without tool receipts.
+- Guard against unaddressed tool failures by enforcing either concrete error reporting or corrective tool invocation before completion.
+- Render assistant cards exclusively from validated runtime event payloads, eliminating synthetic card scraping from raw prose.
+
 ## 3.0.67 — 2026-09-11
 
 ### Dynamic Capability Refresh and Non-Rotating Gateway Turn Boundaries

@@ -22,6 +22,10 @@ pub enum BlockReason {
     /// The user explicitly asked the agent to continue until a later user
     /// message authorizes completion.
     UserCompletionRequired,
+    /// The request requires execution or tool receipts, but none were produced.
+    ExecutionReceiptMissing { act: String, hint: String },
+    /// A tool failed with an error and the model neither repaired it nor reported the blocker.
+    UnresolvedToolFailure { tool: String, error: String },
 }
 
 impl BlockReason {
@@ -43,8 +47,63 @@ impl BlockReason {
                 "the user asked you to keep working until they say done. Continue making \
                  useful progress; do not declare completion yet.",
             ),
+            BlockReason::ExecutionReceiptMissing { act, hint } => format!(
+                "the request requires {act} ({hint}), but no execution or modification receipts were produced. \
+                 Execute the necessary commands or file edits now using the available tools; do not just describe the work in prose.",
+            ),
+            BlockReason::UnresolvedToolFailure { tool, error } => format!(
+                "the `{tool}` tool failed with an error: {error}. \
+                 Repair the failure using the appropriate tools, or clearly report the concrete blocker to the user.",
+            ),
         }
     }
+}
+
+/// Summary of tool execution receipts produced during a run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReceiptSummary {
+    /// Total tool invocations attempted.
+    pub total_tool_calls: u32,
+    /// Number of tool calls that completed with ToolRunOutput::Ok.
+    pub successful_tool_calls: u32,
+    /// Number of tool calls that completed with ToolRunOutput::Err.
+    pub failed_tool_calls: u32,
+    /// Number of substantive bash invocations.
+    pub substantive_bash_calls: u32,
+    /// Number of files modified/written (via edit, write, etc.).
+    pub files_modified: u32,
+    /// Number of inspection/read tool calls (read_file, glob, grep, etc.).
+    pub read_or_inspected: u32,
+    /// Most recent unresolved tool failure, if any.
+    pub unresolved_error: Option<(String, String)>,
+}
+
+impl ReceiptSummary {
+    pub fn has_execution_receipt(&self) -> bool {
+        self.substantive_bash_calls > 0 || self.files_modified > 0
+    }
+
+    pub fn has_inspection_receipt(&self) -> bool {
+        self.read_or_inspected > 0 || self.has_execution_receipt()
+    }
+
+    pub fn has_any_receipt(&self) -> bool {
+        self.successful_tool_calls > 0
+    }
+}
+
+fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let err_first_line = error.lines().next().unwrap_or("").trim().to_ascii_lowercase();
+    let keywords = [
+        "error", "failed", "failure", "failing", "blocked", "blocker",
+        "could not", "cannot", "can't", "unable to", "issue", "problem",
+        "exit code", "exception",
+    ];
+    let mentions_keyword = keywords.iter().any(|k| lower.contains(k));
+    let mentions_tool = lower.contains(&tool.to_ascii_lowercase());
+    let mentions_snippet = !err_first_line.is_empty() && lower.contains(&err_first_line);
+    mentions_keyword && (mentions_tool || mentions_snippet || lower.len() > 60)
 }
 
 #[derive(Debug, Clone)]
@@ -180,21 +239,13 @@ impl StopPolicy {
             .any(|word| p.contains(word))
     }
 
-    /// Returns Some(reason) when completion should be blocked.
-    pub fn evaluate(
+    /// Intent- and receipt-driven evaluation of completion validity.
+    pub fn evaluate_receipts(
         &self,
         prompt: &str,
         final_text: &str,
-        bash_calls_this_run: u32,
-    ) -> Option<BlockReason> {
-        self.evaluate_with_state(prompt, final_text, bash_calls_this_run, false)
-    }
-
-    pub fn evaluate_with_state(
-        &self,
-        prompt: &str,
-        final_text: &str,
-        bash_calls_this_run: u32,
+        outcome: Option<&vak_intent::OutcomeSpec>,
+        receipts: &ReceiptSummary,
         verification_stale: bool,
     ) -> Option<BlockReason> {
         if final_text.trim().is_empty() {
@@ -208,13 +259,93 @@ impl StopPolicy {
         {
             return Some(r);
         }
-        if self.verify_gate && bash_calls_this_run == 0 && Self::demands_verification(prompt) {
+
+        // If a tool failed and hasn't been repaired or reported in text, block.
+        if let Some((tool, err)) = &receipts.unresolved_error {
+            if !reports_blocker(final_text, tool, err) {
+                return Some(BlockReason::UnresolvedToolFailure {
+                    tool: tool.clone(),
+                    error: err.clone(),
+                });
+            }
+        }
+
+        // Intent-driven gate: when outcome specification is available.
+        if let Some(spec) = outcome {
+            if spec.requires_execution() {
+                if !receipts.has_execution_receipt() {
+                    let act = spec
+                        .deliverable_act()
+                        .unwrap_or("execution")
+                        .to_string();
+                    return Some(BlockReason::ExecutionReceiptMissing {
+                        act,
+                        hint: "run code, build, test, or modify files".into(),
+                    });
+                }
+                if self.verify_gate && verification_stale && (spec.requires_execution() || Self::demands_verification(prompt)) {
+                    return Some(BlockReason::VerificationStale);
+                }
+            } else if spec.requires_inspection() {
+                if !receipts.has_inspection_receipt() {
+                    let act = spec
+                        .deliverable_act()
+                        .unwrap_or("inspection")
+                        .to_string();
+                    return Some(BlockReason::ExecutionReceiptMissing {
+                        act,
+                        hint: "read, search, inspect files or data".into(),
+                    });
+                }
+            } else if spec.requires_tool() {
+                if !receipts.has_any_receipt() {
+                    return Some(BlockReason::ExecutionReceiptMissing {
+                        act: "tool execution".into(),
+                        hint: "execute relevant tools".into(),
+                    });
+                }
+            }
+            return None;
+        }
+
+        // Fallback when no outcome spec is available (e.g. backward compatibility / intent disabled).
+        if self.verify_gate && receipts.substantive_bash_calls == 0 && Self::demands_verification(prompt) {
             return Some(BlockReason::VerificationMissing);
         }
         if self.verify_gate && verification_stale && Self::demands_verification(prompt) {
             return Some(BlockReason::VerificationStale);
         }
         None
+    }
+
+    /// Returns Some(reason) when completion should be blocked.
+    pub fn evaluate(
+        &self,
+        prompt: &str,
+        final_text: &str,
+        bash_calls_this_run: u32,
+    ) -> Option<BlockReason> {
+        let mut receipts = ReceiptSummary::default();
+        receipts.substantive_bash_calls = bash_calls_this_run;
+        if bash_calls_this_run > 0 {
+            receipts.successful_tool_calls = bash_calls_this_run;
+        }
+        self.evaluate_receipts(prompt, final_text, None, &receipts, false)
+    }
+
+    pub fn evaluate_with_state(
+        &self,
+        prompt: &str,
+        final_text: &str,
+        bash_calls_this_run: u32,
+        verification_stale: bool,
+    ) -> Option<BlockReason> {
+        let mut receipts = ReceiptSummary::default();
+        receipts.substantive_bash_calls = bash_calls_this_run;
+        if bash_calls_this_run > 0 {
+            receipts.successful_tool_calls = bash_calls_this_run;
+        }
+        self.evaluate_receipts(prompt, final_text, None, &receipts, verification_stale)
     }
 }
 
@@ -385,5 +516,67 @@ mod tests {
             p.evaluate(prompt, "Here is the code in a block.", 0),
             Some(BlockReason::VerificationMissing)
         ));
+    }
+
+    #[test]
+    fn test_outcome_intent_requires_execution_receipt() {
+        let p = StopPolicy::default();
+        let mut reading = vak_intent::Reading::general();
+        reading.act = vak_intent::Act::Author;
+        let spec = vak_intent::OutcomeSpec::from_reading("create an svg animation", &reading, 1);
+        assert!(spec.requires_execution());
+
+        // 0 receipts -> blocked
+        let empty_receipts = ReceiptSummary::default();
+        let blocked = p.evaluate_receipts("create an svg animation", "Here is your svg:\n```xml\n<svg/>\n```", Some(&spec), &empty_receipts, false);
+        assert!(matches!(blocked, Some(BlockReason::ExecutionReceiptMissing { .. })));
+
+        // with substantive bash receipt -> allowed
+        let mut with_bash = ReceiptSummary::default();
+        with_bash.substantive_bash_calls = 1;
+        with_bash.successful_tool_calls = 1;
+        assert_eq!(p.evaluate_receipts("create an svg animation", "Created and verified.", Some(&spec), &with_bash, false), None);
+
+        // with file write receipt -> allowed
+        let mut with_file = ReceiptSummary::default();
+        with_file.files_modified = 1;
+        with_file.successful_tool_calls = 1;
+        assert_eq!(p.evaluate_receipts("create an svg animation", "Created file.", Some(&spec), &with_file, false), None);
+    }
+
+    #[test]
+    fn test_outcome_conversational_allows_prose_completion() {
+        let p = StopPolicy::default();
+        let mut reading = vak_intent::Reading::general();
+        reading.act = vak_intent::Act::Answer;
+        let spec = vak_intent::OutcomeSpec::from_reading("what is rust?", &reading, 1);
+        assert!(!spec.requires_execution());
+        assert!(!spec.requires_tool());
+
+        let receipts = ReceiptSummary::default();
+        assert_eq!(p.evaluate_receipts("what is rust?", "Rust is a systems programming language.", Some(&spec), &receipts, false), None);
+    }
+
+    #[test]
+    fn test_unresolved_tool_failure_blocks_unless_reported() {
+        let p = StopPolicy::default();
+        let mut receipts = ReceiptSummary::default();
+        receipts.total_tool_calls = 1;
+        receipts.failed_tool_calls = 1;
+        receipts.unresolved_error = Some(("bash".into(), "exit code 1: compile error".into()));
+
+        // Model hallucinates success without reporting error -> blocked
+        let blocked = p.evaluate_receipts("build it", "All done! Everything succeeded.", None, &receipts, false);
+        assert!(matches!(blocked, Some(BlockReason::UnresolvedToolFailure { .. })));
+
+        // Model reports the error/blocker -> allowed
+        let reported = p.evaluate_receipts(
+            "build it",
+            "The build failed with exit code 1: compile error. Cannot proceed without missing dependency.",
+            None,
+            &receipts,
+            false,
+        );
+        assert_eq!(reported, None);
     }
 }

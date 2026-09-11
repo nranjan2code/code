@@ -3,13 +3,13 @@ import type { JSX } from "solid-js";
 import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, presentationOf, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
-import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
+import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
 import type { StructuredOutput } from "../types";
 import * as api from "../api";
 import "../focusTrap";
-import { cleanAssistantText, extractAssistantStructuredCards, parseVakFence, stripControlScaffolding } from "../structured";
-export { extractAssistantStructuredCards, parseVakFence, stripControlScaffolding };
+import { cleanAssistantText, parseVakFence, stripControlScaffolding } from "../structured";
+export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
 function stripVakFence(text: string): string {
@@ -547,14 +547,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   if (item.kind === "assistant") {
-    // Streaming stays immediate, but settled turns must use the same parser
-    // as the presentation timeline. Some providers return the typed payload
-    // inside the assistant transcript instead of emitting a separate timeline
-    // item; leaving that path text-only leaks raw `vak` JSON into the UI.
-    const extracted = () => item.streaming
-      ? { cards: [], displayText: cleanAssistantText(item.text), leadText: cleanAssistantText(item.text), followText: "" }
-      : extractAssistantStructuredCards(item.text);
-    const displayText = () => extracted().displayText;
+    const displayText = () => cleanAssistantText(item.text);
 
     if (!item.streaming && !displayText().trim()) {
       return null;
@@ -574,20 +567,11 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           </Show>
         </div>
         <div class="assistant-turn-body">
-          <Show when={item.streaming || !extracted().cards.length}>
-            <Show when={displayText()}>
-              <Markdown text={displayText()} streaming={item.streaming} />
-            </Show>
+          <Show when={displayText()}>
+            <Markdown text={displayText()} streaming={item.streaming} />
           </Show>
           <Show when={item.streaming && !displayText()}>
             <span class="caret" />
-          </Show>
-          <Show when={!item.streaming && extracted().cards.length > 0}>
-            <Show when={extracted().leadText}><Markdown text={extracted().leadText} /></Show>
-            <div class="assistant-structured-cards">
-              <For each={extracted().cards}>{(card) => <StructuredView output={card} sessionId={props.sessionId ?? undefined} />}</For>
-            </div>
-            <Show when={extracted().followText}><Markdown text={extracted().followText} /></Show>
           </Show>
           <Show when={!item.streaming && displayText()}>
             <MessageActions text={displayText()} role="assistant" />
