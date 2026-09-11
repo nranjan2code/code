@@ -191,10 +191,16 @@ fn passes_channel_reach_contract(
     if blocked.contains(id) || probe.revoked_ids.contains(id) {
         return false;
     }
-    // Stage 3 used to reject capabilities absent from the session-creation
-    // snapshot. That made long-lived sessions permanently stale. The session
-    // contract remains the audit record for historical turns; live capability
-    // visibility is intentionally resolved from the current registry here.
+    // Stage 3: frozen contract (enforced for initial epoch; relaxed on dynamic refresh)
+    if let Some(contract) = probe.session_contract {
+        let in_contract = contract
+            .capabilities
+            .iter()
+            .any(|c| c.kind == id.kind && c.name == id.name);
+        if !in_contract && probe.capability_epoch <= 1 {
+            return false;
+        }
+    }
     true
 }
 
