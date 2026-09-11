@@ -28,7 +28,7 @@ import UniversalCard from "./presentation/UniversalCard";
 // for development builds so production never becomes a ledger UI.
 const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
-import { stripControlScaffolding } from "../structured";
+import { parseVakFence, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -187,6 +187,10 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
+            if (block.language === "vak" || block.language === "json") {
+              const structured = parseVakFence(block.content);
+              if (structured) return <StructuredView output={structured} fallback={block.content} />;
+            }
             if (block.language === "mermaid") {
               return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
             }
