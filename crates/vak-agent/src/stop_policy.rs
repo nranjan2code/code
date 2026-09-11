@@ -228,13 +228,22 @@ pub fn is_substantive_command(command: &str) -> bool {
     if trimmed.contains('>') || trimmed.contains('|') {
         return true;
     }
-    // Check if the command line is just a bare echo/printf/noop
+    // Check if the command line is an explicit evasion claiming verification without doing work
+    let lower = trimmed.to_ascii_lowercase();
+    if (lower.starts_with("echo ") || lower.starts_with("printf "))
+        && (lower.contains("verification")
+            || lower.contains("shell execution path is functional")
+            || lower.contains("verified")
+            || lower.contains("dummy"))
+    {
+        return false;
+    }
     let first_word = trimmed
         .split_whitespace()
         .next()
         .unwrap_or("")
         .trim_start_matches("./");
-    let is_noop = matches!(first_word, "echo" | "printf" | "true" | ":" | "exit");
+    let is_noop = matches!(first_word, ":" | "true" | "false" | "exit");
     !is_noop
 }
 
@@ -347,14 +356,18 @@ mod tests {
 
     #[test]
     fn test_substantive_command_detection() {
-        assert!(!is_substantive_command("echo 'hello'"));
-        assert!(!is_substantive_command("echo \"Verification successful\""));
-        assert!(!is_substantive_command("printf 'done\\n'"));
+        assert!(!is_substantive_command(
+            "echo \"Verification successful: Shell execution path is functional.\""
+        ));
+        assert!(!is_substantive_command("echo 'verification passed'"));
+        assert!(!is_substantive_command("printf 'verified\\n'"));
         assert!(!is_substantive_command("true"));
         assert!(!is_substantive_command(":"));
         assert!(!is_substantive_command("exit 0"));
         assert!(!is_substantive_command(""));
 
+        assert!(is_substantive_command("echo ran"));
+        assert!(is_substantive_command("echo 'hello'"));
         assert!(is_substantive_command("echo 'hello' > index.html"));
         assert!(is_substantive_command("echo 'hi' | wc -l"));
         assert!(is_substantive_command("python3 -m unittest"));
