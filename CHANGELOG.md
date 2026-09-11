@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.62 — 2026-09-11
+
+### Presentation Rails Modernization, Protocol-Driven Card Rendering, and Stop Policy Fortification
+
+- Modernize presentation rails and everyday actions across the client UI, keeping chrome minimal and outcome-focused.
+- Streamline rich presentation card rendering to protocol-driven registration with clean fallback preservation.
+- Fortify stop policy substantive command detection against evasive echo assertions while maintaining seamless shell probes.
+- Update compiled client web and desktop UI distribution bundles.
+
 ## 3.0.61 — 2026-09-11
 
 ### Unconstrained Sandbox Execution, Anti-Evasion Stop Guard, and Working Directory Control
