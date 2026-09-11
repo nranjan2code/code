@@ -119,6 +119,14 @@ function visibleItems(list: Item[]): Item[] {
     if (it.kind === "user") {
       return stripControlScaffolding(it.text).length > 0;
     }
+    if (it.kind === "assistant") {
+      if (it.streaming) return true;
+      const scrubbed = cleanAssistantText(it.text);
+      if (!scrubbed.trim() && extractAssistantStructuredCards(it.text).cards.length === 0) {
+        return false;
+      }
+      return true;
+    }
     return true;
   });
 
@@ -151,7 +159,11 @@ function visibleItems(list: Item[]): Item[] {
         return true;
       }
       if (it.kind === "approval" && !it.resolved) return true;
-      if (it.kind === "assistant" && it.text) return true;
+      if (it.kind === "assistant") {
+        if (it.streaming) return true;
+        const scrubbed = cleanAssistantText(it.text);
+        return Boolean(scrubbed.trim() || extractAssistantStructuredCards(it.text).cards.length > 0);
+      }
       if (it.kind === "tool" && !it.done && i === cleanList.length - 1) return true;
       return false;
     });
@@ -537,7 +549,13 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
   if (item.kind === "assistant") {
     const extracted = () => extractAssistantStructuredCards(item.text);
     const displayText = () => extracted().displayText;
+    const leadText = () => extracted().leadText;
+    const followText = () => extracted().followText;
     const cards = () => extracted().cards;
+
+    if (!item.streaming && cards().length === 0 && !displayText().trim()) {
+      return null;
+    }
 
     return (
       <div class="msg assistant">
@@ -553,6 +571,9 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
           </Show>
         </div>
         <div class="assistant-turn-body">
+          <Show when={leadText()}>
+            <Markdown text={leadText()} streaming={item.streaming && cards().length === 0} />
+          </Show>
           <For each={cards()}>
             {(card) => (
               <div class="assistant-structured-card">
@@ -560,11 +581,11 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
               </div>
             )}
           </For>
-          <Show when={displayText()} fallback={cards().length === 0 ? <span class="caret" /> : null}>
-            <Markdown text={displayText()} streaming={item.streaming} />
-            <Show when={item.streaming}>
-              <span class="caret" />
-            </Show>
+          <Show when={followText()}>
+            <Markdown text={followText()} streaming={item.streaming} />
+          </Show>
+          <Show when={item.streaming && !leadText() && !followText() && cards().length === 0}>
+            <span class="caret" />
           </Show>
           <Show when={!item.streaming && displayText()}>
             <MessageActions text={displayText()} role="assistant" />

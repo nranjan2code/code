@@ -469,10 +469,19 @@ export function StructuredView(props: { output: import("../types").StructuredOut
   const fallback = () => <div class="semantic-source">{props.fallback || JSON.stringify(props.output.payload, null, 2)}</div>;
   return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
-      <Show when={showOriginal()} fallback={<><StructuredRenderer output={props.output} /><Show when={props.sessionId}><PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} /></Show></>}>
+      <Show when={showOriginal() && showOperatorChrome()} fallback={
+        <>
+          <StructuredRenderer output={props.output} />
+          <Show when={showOperatorChrome() && props.sessionId}>
+            <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} />
+          </Show>
+        </>
+      }>
         <section class="presentation-original" aria-label="Original result"><p role="status">Original result</p>{fallback()}</section>
       </Show>
-      <button type="button" class="presentation-original-toggle" onClick={() => setShowOriginal(!showOriginal())}>{showOriginal() ? "Show presentation" : "Show original"}</button>
+      <Show when={showOperatorChrome()}>
+        <button type="button" class="presentation-original-toggle" onClick={() => setShowOriginal(!showOriginal())}>{showOriginal() ? "Show presentation" : "Show original"}</button>
+      </Show>
     </Show>
   </ErrorBoundary>;
 }

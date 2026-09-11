@@ -178,7 +178,7 @@ code, pre, kbd { font-family: var(--mono); }
      exactly its own height instead of floating over the composer. A fixed
      banner cannot reserve space, which is why guessing a padding for it
      failed at the first width where the text wrapped. */
-  grid-template-rows: minmax(0, 1fr) auto 30px;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   grid-template-areas: "sidebar main dock" "banner banner banner" "status status status";
   height: 100%;
   background: var(--bg);
@@ -764,7 +764,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
   gap: 10px;
 }
 .metric-grid-item {
-  padding: 10px 12px;
+  padding: 8px 12px;
   background: color-mix(in srgb, var(--bg) 85%, var(--surface) 15%);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm, 8px);
@@ -777,12 +777,19 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 }
 .metric-grid-item:first-child {
   grid-column: 1 / -1;
-  background: color-mix(in srgb, var(--surface) 70%, var(--accent-bright) 30%);
-  border-color: color-mix(in srgb, var(--border) 40%, var(--accent-bright) 60%);
-  padding: 12px 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  background: color-mix(in srgb, var(--surface) 75%, var(--accent-bright) 25%);
+  border-color: color-mix(in srgb, var(--border) 45%, var(--accent-bright) 55%);
+  padding: 8px 14px;
+}
+.metric-grid-item:first-child .metric-grid-label {
+  margin-bottom: 0;
+  font-size: 11px;
 }
 .metric-grid-item:first-child .metric-grid-value {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--accent-bright);
 }
@@ -1712,12 +1719,14 @@ body.is-resizing iframe { pointer-events: none; }
 .sidechat-input textarea:focus { border-color: var(--border-strong); }
 
 /* Status */
-.statusbar { grid-area: status; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 0 10px 0 12px; border-top: 1px solid var(--border-soft); color: var(--faint); background: var(--sidebar); font-size: 10.5px; }
+.statusbar { grid-area: status; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; height: 30px; padding: 0 10px 0 12px; border-top: 1px solid var(--border-soft); color: var(--faint); background: var(--sidebar); font-size: 10.5px; }
+.statusbar.statusbar-alert { background: color-mix(in srgb, var(--yellow) 10%, var(--surface)); color: var(--text-soft); }
 .st-left, .st-right { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .st-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-model { color: var(--text-soft); }
 .st-model.offline { color: var(--yellow); }
 .st-sandbox { padding-left: 9px; border-left: 1px solid var(--border); }
+.st-sandbox.dim { opacity: 0.6; }
 .st-item.warn { color: var(--yellow); }
 .st-density { display: inline-flex; align-items: center; height: 20px; line-height: 18px; padding: 0 4px; outline: none; border: 1px solid transparent; border-radius: 4px; color: var(--faint); background: transparent; font-size: 10.5px; cursor: pointer; }
 .st-density:hover { color: var(--muted); background: var(--surface-hover); }

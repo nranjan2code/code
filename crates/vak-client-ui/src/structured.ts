@@ -95,7 +95,7 @@ export function parseVakFence(rawContent: string): StructuredOutput | null {
  * un-fenced vak\n{"semantic_type": ...}), scrubs the JSON and scaffolding completely,
  * and returns the parsed cards along with clean user-facing prose.
  */
-export function extractAssistantStructuredCards(text: string): { cards: StructuredOutput[]; displayText: string } {
+export function extractAssistantStructuredCards(text: string): { cards: StructuredOutput[]; displayText: string; leadText: string; followText: string } {
   const cards: StructuredOutput[] = [];
   let cleaned = text;
 
@@ -185,7 +185,40 @@ export function extractAssistantStructuredCards(text: string): { cards: Structur
   }
 
   // 3. Scrub remaining scaffolding and lifecycle metadata
-  cleaned = cleanAssistantText(cleaned);
+  const isScaffoldingLeadIn = (str: string) => {
+    const t = str.trim();
+    if (!t) return false;
+    if (t.endsWith(":") && t.length < 90) return true;
+    if (/^(?:the|here\s+is|here\s+are|current|weather|result|details|summary|overview|breakdown|recipe|timeline)\b.*:?$/i.test(t) && t.length < 80) return true;
+    return false;
+  };
 
-  return { cards, displayText: cleaned };
+  let leadText = "";
+  let followText = "";
+
+  if (cards.length > 0) {
+    const doubleNewline = cleaned.indexOf("\n\n");
+    if (doubleNewline !== -1) {
+      const firstPart = cleanAssistantText(cleaned.slice(0, doubleNewline));
+      const secondPart = cleanAssistantText(cleaned.slice(doubleNewline + 2));
+      leadText = isScaffoldingLeadIn(firstPart) ? "" : firstPart;
+      followText = isScaffoldingLeadIn(secondPart) ? "" : secondPart;
+    } else {
+      const single = cleanAssistantText(cleaned);
+      if (isScaffoldingLeadIn(single)) {
+        leadText = "";
+        followText = "";
+      } else {
+        leadText = single;
+        followText = "";
+      }
+    }
+    cleaned = [leadText, followText].filter(Boolean).join("\n\n").trim();
+  } else {
+    cleaned = cleanAssistantText(cleaned);
+    leadText = cleaned;
+    followText = "";
+  }
+
+  return { cards, displayText: cleaned, leadText, followText };
 }

@@ -617,14 +617,16 @@ export default function Composer(props: { cwd: string }) {
                 </select>
               </Show>
             </Show>
-            <button class="composer-context" title="Mention file (@)" onClick={beginMention}>
-              <span class="composer-at">@</span>
-              <span>files</span>
-            </button>
-            <button class="composer-context" title="Commands & skills (/)" onClick={beginSlash}>
-              <span class="composer-at">/</span>
-              <span>skills</span>
-            </button>
+            <Show when={presentationMode() === "advanced"}>
+              <button class="composer-context" title="Mention file (@)" onClick={beginMention}>
+                <span class="composer-at">@</span>
+                <span>files</span>
+              </button>
+              <button class="composer-context" title="Commands & skills (/)" onClick={beginSlash}>
+                <span class="composer-at">/</span>
+                <span>skills</span>
+              </button>
+            </Show>
             <VoiceControl sessionId={activeId() ?? undefined} onFinal={(value) => { void sendPrompt(value, undefined, undefined, activeId()); }} />
             <input
               ref={fileInput}
@@ -707,7 +709,11 @@ export default function Composer(props: { cwd: string }) {
       <Show when={composerError()}>
         <div class="composer-error" role="alert">{composerError()}</div>
       </Show>
-      <div class="composer-note">Vak can make mistakes. Review changes before you keep them.</div>
+      <div class="composer-note">
+        {presentationMode() === "everyday"
+          ? "Vak can make mistakes. Check important info."
+          : "Vak can make mistakes. Review changes before you keep them."}
+      </div>
     </div>
   );
 }
