@@ -4593,7 +4593,15 @@ impl Core {
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
         let channel_policy = self.channel_policy().unwrap_or_default();
-        let mcp_inventory = self.cached_mcp_inventory();
+        let mut mcp_inv = cap_set.mcp_inventory();
+        if let Some(cached) = self.cached_mcp_inventory() {
+            for (server, tools) in cached {
+                if !mcp_inv.iter().any(|(s, _)| s == &server) {
+                    mcp_inv.push((server, tools));
+                }
+            }
+        }
+        let mcp_inventory = (!mcp_inv.is_empty()).then_some(mcp_inv);
         let mut turn_capabilities = capability::TurnCapabilities::build(&capability::TurnProbe {
             capabilities: cap_set.as_ref(),
             capability_epoch: cap_set.epoch,

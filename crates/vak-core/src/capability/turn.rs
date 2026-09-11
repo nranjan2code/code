@@ -348,13 +348,51 @@ impl TurnCapabilities {
 
         let mcp_server_names = mcp_servers_admitted.iter().cloned().collect::<Vec<_>>();
 
-        let mcp_aliases = probe
+        // MCP aliases are derived from inventory. We check probe.mcp_inventory
+        // first, but also extract tools from any surviving McpServer capabilities
+        // whose configuration carries a catalog. This ensures aliases and prompt
+        // descriptors never disagree even if the probe inventory was missing or partial.
+        let mut inventory: Vec<(String, Vec<vak_mcp::McpToolInfo>)> = probe
             .mcp_inventory
-            .map(|inv| {
-                let builtins: BTreeSet<String> = probe.builtin_names.iter().cloned().collect();
-                mcp_aliases_from_inventory(inv, &mcp_servers_admitted, &builtins)
-            })
+            .map(|inv| inv.to_vec())
             .unwrap_or_default();
+
+        for c in &surviving {
+            if c.id.kind != CapabilityKind::McpServer {
+                continue;
+            }
+            if inventory.iter().any(|(name, _)| name == &c.id.name) {
+                continue;
+            }
+            if let Some(tools_arr) = c.configuration.get("tools").and_then(|t| t.as_array()) {
+                let mut tools = Vec::new();
+                for t in tools_arr {
+                    let Some(name) = t.get("name").and_then(|n| n.as_str()) else {
+                        continue;
+                    };
+                    let description = t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let input_schema = t
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    tools.push(vak_mcp::McpToolInfo {
+                        name: name.to_string(),
+                        description,
+                        input_schema,
+                    });
+                }
+                if !tools.is_empty() {
+                    inventory.push((c.id.name.clone(), tools));
+                }
+            }
+        }
+
+        let builtins: BTreeSet<String> = probe.builtin_names.iter().cloned().collect();
+        let mcp_aliases = mcp_aliases_from_inventory(&inventory, &mcp_servers_admitted, &builtins);
 
         // ---- Hooks (stages 1-3; domain slice is a no-op for hooks) --------
         // Hooks are never sliced by domain — they are event-driven,
@@ -1150,5 +1188,45 @@ mod tests {
                 .and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn mcp_aliases_extracted_from_capability_configuration_when_inventory_none() {
+        let mut cap = make_cap(
+            "tavily",
+            CapabilityKind::McpServer,
+            Serves::declared([Domain::Web]),
+        );
+        cap.configuration = serde_json::json!({
+            "tools": [
+                {
+                    "name": "tavily_search",
+                    "description": "Search the web using Tavily",
+                    "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } } }
+                }
+            ]
+        });
+        let set = CapabilitySet::new(1, vec![cap]);
+        let inv = set.mcp_inventory();
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv[0].0, "tavily");
+        assert_eq!(inv[0].1.len(), 1);
+        assert_eq!(inv[0].1[0].name, "tavily_search");
+
+        // When TurnProbe is created with NO inventory (inventory = None),
+        // aliases should still be derived from the capability configuration!
+        let policy = empty_policy();
+        let required = BTreeSet::from([Domain::Web]);
+        let probe = make_probe(&set, None, &policy, &[], &required, None);
+        let tc = TurnCapabilities::build(&probe);
+
+        assert!(
+            tc.mcp_aliases.contains_key("tavily_search"),
+            "mcp_aliases must be populated from capability configuration even when probe.mcp_inventory is None"
+        );
+        let alias = tc.mcp_aliases.get("tavily_search").unwrap();
+        assert_eq!(alias.server, "tavily");
+        assert_eq!(alias.tool, "tavily_search");
+        assert_eq!(alias.description, "Search the web using Tavily");
     }
 }

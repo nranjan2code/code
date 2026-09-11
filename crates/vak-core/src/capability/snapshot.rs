@@ -25,6 +25,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use vak_session::types::{CapabilityDescriptor, CapabilityKind};
 
+use super::McpInventory;
 use super::domain::{Domain, Serves};
 use super::resolution::Resolution;
 
@@ -233,6 +234,45 @@ impl CapabilitySet {
     /// The descriptor vector the session header and prompt speak.
     pub fn descriptors(&self) -> Vec<CapabilityDescriptor> {
         self.usable().map(|c| c.to_descriptor()).collect()
+    }
+
+    /// The MCP tool inventory (server names and discovered tools) extracted
+    /// from usable `McpServer` capabilities in this set.
+    ///
+    /// This is the canonical source of truth for MCP tools: the registry
+    /// reconciles `configuration.tools` and retains last-known-good tools across
+    /// transient probe failures.
+    pub fn mcp_inventory(&self) -> McpInventory {
+        let mut inventory = Vec::new();
+        for cap in self.of_kind(CapabilityKind::McpServer) {
+            let Some(tools_val) = cap.configuration.get("tools").and_then(|t| t.as_array()) else {
+                continue;
+            };
+            let mut tools = Vec::new();
+            for t in tools_val {
+                let Some(name) = t.get("name").and_then(|n| n.as_str()) else {
+                    continue;
+                };
+                let description = t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let input_schema = t
+                    .get("inputSchema")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                tools.push(vak_mcp::McpToolInfo {
+                    name: name.to_string(),
+                    description,
+                    input_schema,
+                });
+            }
+            if !tools.is_empty() {
+                inventory.push((cap.id.name.clone(), tools));
+            }
+        }
+        inventory
     }
 
     /// Narrow to the capabilities serving at least one required domain.

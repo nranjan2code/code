@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.59 — 2026-09-11
+
+### MCP & Tool Capability Inventory Coherence Fortification
+
+- Unify MCP tool inventory extraction directly from `CapabilitySet` as single source of truth across all tools and surfaces.
+- Fortify `TurnCapabilities::build` to extract tools from surviving MCP server configurations if missing from probe inventory, preventing prompt and tool schema disagreement.
+- Ensure turn admission in `Core::run_turn_inner` merges `CapabilitySet` inventory with cache so LLMs always receive native function call definitions.
+- Eliminate model text-fallback loops on web search and MCP invocations across all providers.
+
 ## 3.0.58 — 2026-09-11
 
 ### Continuous Chat Canvas & Structured Card Pipeline Fortification
