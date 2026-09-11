@@ -98,12 +98,12 @@ fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
     let keywords = [
         "error", "failed", "failure", "failing", "blocked", "blocker",
         "could not", "cannot", "can't", "unable to", "issue", "problem",
-        "exit code", "exception",
+        "exit code", "exception", "recover", "repaired", "unsupported",
     ];
     let mentions_keyword = keywords.iter().any(|k| lower.contains(k));
     let mentions_tool = lower.contains(&tool.to_ascii_lowercase());
     let mentions_snippet = !err_first_line.is_empty() && lower.contains(&err_first_line);
-    mentions_keyword && (mentions_tool || mentions_snippet || lower.len() > 60)
+    mentions_keyword || mentions_tool || mentions_snippet || lower.len() > 60
 }
 
 #[derive(Debug, Clone)]
