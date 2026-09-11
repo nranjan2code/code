@@ -8,6 +8,8 @@ import MarkdownView from "./MarkdownView";
 import type { StructuredOutput } from "../types";
 import * as api from "../api";
 import "../focusTrap";
+import { cleanAssistantText, extractAssistantStructuredCards, parseVakFence } from "../structured";
+export { extractAssistantStructuredCards, parseVakFence };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
 /// result carries structured envelope JSON the presentation timeline renders
@@ -22,94 +24,6 @@ function stripVakFence(text: string): string {
   return rest || "Structured output rendered in the presentation timeline.";
 }
 
-function cleanAssistantText(text: string): string {
-  const normalized = text
-    .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/gim, "")
-    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed)[\s\S]*$/gi, "")
-    .replace(/(?:\r?\n)?\s*completed\s*$/gi, "")
-    .replace(/^\s*Outcome:\s+[^\n]*(?:\n|$)/gim, "")
-    .replace(/^\s*contract_id:\s+[^\n]*(?:\n|$)/gim, "");
-
-  return normalized
-    .split("\n")
-    .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
-    .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed)\s*$/i.test(line))
-    .filter((line) => !/^\s*completed\s*$/i.test(line))
-    .filter((line) => !/^\s*Outcome:\s+/i.test(line))
-    .filter((line) => !/^\s*contract_id:\s+/i.test(line))
-    .join("\n")
-    .replace(/^\s*\n+|\n+\s*$/g, "")
-    .trim();
-}
-
-function parseVakFence(rawContent: string): StructuredOutput | null {
-  try {
-    const trimmed = rawContent.trim();
-    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-    const parsed = JSON.parse(trimmed);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof parsed.semantic_type === "string" &&
-      parsed.payload &&
-      typeof parsed.payload === "object"
-    ) {
-      return {
-        semantic_type: parsed.semantic_type,
-        schema_version: 2,
-        skill_id: typeof parsed.skill_id === "string" ? parsed.skill_id : "built-in",
-        skill_version: typeof parsed.skill_version === "string" ? parsed.skill_version : "1.0",
-        payload: parsed.payload as Record<string, unknown>,
-      };
-    }
-  } catch {
-    // Incomplete or invalid JSON
-  }
-  return null;
-}
-
-export function extractAssistantStructuredCards(text: string): { cards: StructuredOutput[]; displayText: string } {
-  const cards: StructuredOutput[] = [];
-
-  // 1. Extract closed ```vak ... ``` blocks
-  const closedRegex = /```(?:vak)?\s*(\{[\s\S]*?"semantic_type"[\s\S]*?\})\s*```/gi;
-  let match: RegExpExecArray | null;
-  while ((match = closedRegex.exec(text)) !== null) {
-    const card = parseVakFence(match[1]);
-    if (card && !cards.some((c) => c.semantic_type === card.semantic_type && JSON.stringify(c.payload) === JSON.stringify(card.payload))) {
-      cards.push(card);
-    }
-  }
-
-  // 2. Also check any ```vak fence containing a valid JSON payload
-  const vakRegex = /```vak\s*([\s\S]*?)(?:```|$)/gi;
-  while ((match = vakRegex.exec(text)) !== null) {
-    const card = parseVakFence(match[1]);
-    if (card && !cards.some((c) => c.semantic_type === card.semantic_type && JSON.stringify(c.payload) === JSON.stringify(card.payload))) {
-      cards.push(card);
-    }
-  }
-
-  // 3. Strip all ```vak blocks (both closed and in-progress streaming) from display prose
-  let cleaned = text.replace(/```vak\s*[\s\S]*?(?:```|$)/gi, "");
-
-  // 4. Strip standalone code blocks wrapping {"semantic_type": ...}
-  cleaned = cleaned.replace(/```(?:json)?\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*```/gi, "");
-
-  // 5. Strip raw un-fenced {"semantic_type": ...} lines if emitted directly
-  cleaned = cleaned.replace(/^\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*$/gm, (raw) => {
-    const card = parseVakFence(raw);
-    if (card && !cards.some((c) => c.semantic_type === card.semantic_type)) {
-      cards.push(card);
-    }
-    return "";
-  });
-
-  // 6. Scrub remaining scaffolding and lifecycle metadata
-  cleaned = cleanAssistantText(cleaned);
-
-  return { cards, displayText: cleaned };
-}
 
 /**
  * A new task's chat pane before anything has happened, and an existing
@@ -223,12 +137,6 @@ function visibleItems(list: Item[]): Item[] {
     });
   }
   return list;
-}
-
-function hasSettledOutcome(id: string | null): boolean {
-  return !!presentationOf(id)?.items.some(
-    (item) => item.kind === "outcome" && item.status !== "running" && item.content.type === "document",
-  );
 }
 
 function RunControls(props: { sessionId: string }) {
@@ -772,19 +680,14 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />
               </div>
             </Show>
-            {/* Keep the transcript mounted for the whole live turn. The
-                presentation projection is a settled view; switching to it
-                while the stream is still committing causes the visible
-                conversation to blink out and reappear in a different shape. */}
-            <Show when={!isRunning(sid()) && hasSettledOutcome(sid())} fallback={
-              <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
-                <For each={visibleItems(itemsOf(sid()))}>
-                  {(it) => <ItemView item={it} sessionId={sid()} />}
-                </For>
-                <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
-              </Show>
-            }>
-              <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />
+            {/* Unified continuous chat canvas: The transcript stays permanently mounted
+                across live and settled states so streaming cards, settled cards, approvals,
+                and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
+            <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
+              <For each={visibleItems(itemsOf(sid()))}>
+                {(it) => <ItemView item={it} sessionId={sid()} />}
+              </For>
+              <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
             </Show>
           </Show>
         </Show>

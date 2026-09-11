@@ -714,6 +714,29 @@ fn nodes_to_blocks(
             Node::Paragraph(children) => {
                 let content = nodes_to_inline(children);
                 if !content.is_empty() {
+                    let mut text_buf = String::new();
+                    for node in &content {
+                        if let InlineNode::Text { text } = node {
+                            text_buf.push_str(text);
+                        }
+                    }
+                    let trimmed = text_buf.trim();
+                    let candidate = if let Some(rest) = trimmed.strip_prefix("vak\n").or_else(|| trimmed.strip_prefix("vak ")) {
+                        rest.trim()
+                    } else {
+                        trimmed
+                    };
+                    if candidate.starts_with('{') && candidate.contains("\"semantic_type\"") {
+                        if let Ok(output) = crate::skills::parse_fragment(candidate) {
+                            let fallback_markdown = crate::skills::structured_markdown(&output);
+                            blocks.push(DocumentBlock::Structured {
+                                id: ids.next(),
+                                output,
+                                fallback_markdown,
+                            });
+                            continue;
+                        }
+                    }
                     blocks.push(DocumentBlock::Paragraph {
                         id: ids.next(),
                         content,
@@ -730,8 +753,14 @@ fn nodes_to_blocks(
                 blocks: nodes_to_blocks(children, ids, diagnostics),
             }),
             Node::CodeBlock(language, content) => {
-                if language.as_deref() == Some("vak") {
-                    match crate::skills::parse_fragment(&content) {
+                if language.as_deref() == Some("vak") || content.contains("\"semantic_type\"") {
+                    let trimmed = content.trim();
+                    let candidate = if let Some(rest) = trimmed.strip_prefix("vak\n").or_else(|| trimmed.strip_prefix("vak ")) {
+                        rest.trim()
+                    } else {
+                        trimmed
+                    };
+                    match crate::skills::parse_fragment(candidate) {
                         Ok(output) => {
                             let fallback_markdown = crate::skills::structured_markdown(&output);
                             blocks.push(DocumentBlock::Structured {
@@ -739,13 +768,16 @@ fn nodes_to_blocks(
                                 output,
                                 fallback_markdown,
                             });
+                            continue;
                         }
                         Err(error) => {
-                            diagnostics
-                                .push(format!("Structured block parsing suppressed: {error}"));
+                            if language.as_deref() == Some("vak") {
+                                diagnostics
+                                    .push(format!("Structured block parsing suppressed: {error}"));
+                                continue;
+                            }
                         }
                     }
-                    continue;
                 }
                 if language.as_deref() == Some("mermaid") {
                     blocks.push(DocumentBlock::Diagram {

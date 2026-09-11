@@ -27,6 +27,7 @@ import UIPreviewCard from "./presentation/UIPreviewCard";
 // for development builds so production never becomes a ledger UI.
 const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
+import { extractAssistantStructuredCards } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -166,8 +167,29 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
         switch (block.type) {
           case "heading":
             return <Heading block={block} />;
-          case "paragraph":
+          case "paragraph": {
+            const rawText = block.content.map((n) => typeof n === "object" && "text" in n ? (n as any).text : "").join("");
+            if (rawText.includes('"semantic_type"')) {
+              const extracted = extractAssistantStructuredCards(rawText);
+              if (extracted.cards.length > 0) {
+                return (
+                  <>
+                    <For each={extracted.cards}>
+                      {(card) => (
+                        <div class="assistant-structured-card">
+                          <StructuredView output={card} />
+                        </div>
+                      )}
+                    </For>
+                    <Show when={extracted.displayText}>
+                      <p class="semantic-paragraph">{extracted.displayText}</p>
+                    </Show>
+                  </>
+                );
+              }
+            }
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
+          }
           case "list": {
             const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} /></li>}</For>;
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
@@ -185,6 +207,25 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
+            if (block.language === "vak" || block.content.includes('"semantic_type"')) {
+              const extracted = extractAssistantStructuredCards(block.content);
+              if (extracted.cards.length > 0) {
+                return (
+                  <>
+                    <For each={extracted.cards}>
+                      {(card) => (
+                        <div class="assistant-structured-card">
+                          <StructuredView output={card} />
+                        </div>
+                      )}
+                    </For>
+                    <Show when={extracted.displayText}>
+                      <p class="semantic-paragraph">{extracted.displayText}</p>
+                    </Show>
+                  </>
+                );
+              }
+            }
             if (block.language === "mermaid") {
               return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
             }
@@ -935,6 +976,25 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         )
       ) {
         return null;
+      }
+    }
+    if (item.fallback_text.includes('"semantic_type"')) {
+      const extracted = extractAssistantStructuredCards(item.fallback_text);
+      if (extracted.cards.length > 0) {
+        return (
+          <div class="assistant-turn-body">
+            <For each={extracted.cards}>
+              {(card) => (
+                <div class="assistant-structured-card">
+                  <StructuredView output={card} sessionId={props.sessionId} />
+                </div>
+              )}
+            </For>
+            <Show when={extracted.displayText}>
+              <p class="semantic-paragraph">{extracted.displayText}</p>
+            </Show>
+          </div>
+        );
       }
     }
     return <div class="semantic-source">{item.fallback_text}</div>;
