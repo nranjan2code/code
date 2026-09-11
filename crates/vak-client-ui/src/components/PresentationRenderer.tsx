@@ -130,7 +130,11 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
     pre.textContent = content;
     pre.classList.remove("shiki");
     if (!language || props.diff) return;
-    void highlight(content, languageForFence(language)).then((html) => {
+    void highlight(content, languageForFence(language)).then(async (html) => {
+      if (!html) {
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        html = await highlight(content, languageForFence(language));
+      }
       if (!html || seq !== renderSeq || !pre.isConnected) return;
       const template = document.createElement("template");
       template.innerHTML = html;

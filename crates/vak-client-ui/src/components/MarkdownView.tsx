@@ -23,7 +23,13 @@ async function colorizeCodeBlocks(root: HTMLElement) {
     if (!code) continue;
     const lang = languageForFence(cb.querySelector(".cb-h span")?.textContent ?? "");
     if (!lang) continue;
-    const out = await highlight(code.textContent ?? "", lang);
+    // Grammar and the WASM engine are lazy-loaded. A transient import/WASM
+    // delay must not permanently strand a code block in monochrome fallback.
+    let out = await highlight(code.textContent ?? "", lang);
+    if (!out) {
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      out = await highlight(code.textContent ?? "", lang);
+    }
     if (!out || !cb.isConnected) continue;
     const pre = cb.querySelector("pre");
     if (!pre) continue;
