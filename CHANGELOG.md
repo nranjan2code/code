@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.65 — 2026-09-11
+
+### Presentation Resiliency, Frontend Build Tooling Fortification, and macOS Release
+
+- Ensure npm rebuild runs during frontend builds to link CLI binaries reliably across environments.
+- Fortify syntax highlighting against lazy-load race conditions.
+- Polish universal outcome cards and user message presentation.
+- Refresh compiled client web and desktop distribution bundles.
+
 ## 3.0.64 — 2026-09-11
 
 ### Universal Semantic Outcome Cards and Full macOS Release
