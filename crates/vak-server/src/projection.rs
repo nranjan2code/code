@@ -386,16 +386,11 @@ fn snapshot_inner(
                             if assistant && is_presentation_envelope(text) {
                                 continue;
                             }
-                            let cleaned_text_storage;
-                            let text = if assistant {
-                                cleaned_text_storage = clean_scaffolding(text);
-                                if cleaned_text_storage.is_empty() {
-                                    continue;
-                                }
-                                &cleaned_text_storage
-                            } else {
-                                text
-                            };
+                            let cleaned_text_storage = clean_scaffolding(text);
+                            if cleaned_text_storage.is_empty() {
+                                continue;
+                            }
+                            let text = &cleaned_text_storage;
                             let mut candidates = if assistant {
                                 structured_outputs_from_text(text)
                             } else {
@@ -958,8 +953,38 @@ fn is_scaffolding_line(line: &str) -> bool {
         || trimmed.starts_with("contract_id:")
 }
 
+fn strip_control_blocks(text: &str) -> String {
+    let mut out = text.to_string();
+    let tags = [
+        "conversation_thread",
+        "context_summary",
+        "intent",
+        "work_contract",
+        "managed_work",
+        "context_packet",
+        "system_reminder",
+        "runtime_guidance",
+        "scratchpad",
+    ];
+    for tag in tags {
+        let open_pattern = format!("<{tag}");
+        let close_pattern = format!("</{tag}>");
+        while let Some(start) = out.find(&open_pattern) {
+            if let Some(end_offset) = out[start..].find(&close_pattern) {
+                let end = start + end_offset + close_pattern.len();
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+    out
+}
+
 fn clean_scaffolding(text: &str) -> String {
-    let lines = text
+    let stripped = strip_control_blocks(text);
+    let lines = stripped
         .lines()
         .filter(|line| !is_scaffolding_line(line))
         .collect::<Vec<_>>();

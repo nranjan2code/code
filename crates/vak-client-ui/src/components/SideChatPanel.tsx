@@ -1,7 +1,8 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeId, isRunning, itemsOf, setSideOpen } from "../store";
 import { stopSide, sendSideQuestion } from "../App";
-import { Markdown, ToolCard } from "./ChatPane";
+import { Markdown, ToolCard, stripControlScaffolding } from "./ChatPane";
+import { cleanAssistantText } from "../structured";
 import Icon from "./Icon";
 
 /** `/btw` — ask with session context; never touches the main thread. */
@@ -58,10 +59,10 @@ export default function SideChatPanel() {
           <For each={items()}>
             {(it) => (
               <>
-                {(it.kind === "user" && <div class="msg user"><Markdown text={it.text} /></div>) ||
+                {(it.kind === "user" && stripControlScaffolding(it.text) && <div class="msg user"><Markdown text={stripControlScaffolding(it.text)} /></div>) ||
                   (it.kind === "assistant" && (
                     <div class="msg assistant">
-                      <Markdown text={it.text} streaming={it.streaming} />
+                      <Markdown text={cleanAssistantText(it.text)} streaming={it.streaming} />
                     </div>
                   )) ||
                   (it.kind === "thinking" && (
@@ -71,7 +72,7 @@ export default function SideChatPanel() {
                     </details>
                   )) ||
                   (it.kind === "tool" && <ToolCard item={it} />) ||
-                  (it.kind === "system" && <div class="sysnote">{it.text}</div>) ||
+                  (it.kind === "system" && <div class="sysnote">{stripControlScaffolding(it.text)}</div>) ||
                   <></>}
               </>
             )}

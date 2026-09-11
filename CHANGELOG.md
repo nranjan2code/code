@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.60 — 2026-09-11
+
+### Presentation Layer Scaffolding & Leakage Elimination Across All Modes
+
+- Eliminate prompt scaffolding and internal control blocks (`<conversation_thread>`, `<context_summary>`, `<intent>`, `<work_contract>`, `<context_packet>`) across both Everyday and Advanced presentation modes.
+- Filter internal engine telemetry notes (context compaction, route fallbacks, and stop gates) from Everyday mode while preserving actionable errors.
+- Sanitize tool previews in `ToolCard` to scrub code fences, card JSON, and scaffolding from in-flight and historical tool cards.
+- Scrub control blocks from backend presentation timeline projection and sanitize assistant text in `SideChatPanel`.
+- Prevent un-fenced or malformed semantic card JSON from leaking into assistant prose.
+
 ## 3.0.59 — 2026-09-11
 
 ### MCP & Tool Capability Inventory Coherence Fortification

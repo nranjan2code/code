@@ -8,20 +8,19 @@ import MarkdownView from "./MarkdownView";
 import type { StructuredOutput } from "../types";
 import * as api from "../api";
 import "../focusTrap";
-import { cleanAssistantText, extractAssistantStructuredCards, parseVakFence } from "../structured";
-export { extractAssistantStructuredCards, parseVakFence };
+import { cleanAssistantText, extractAssistantStructuredCards, parseVakFence, stripControlScaffolding } from "../structured";
+export { extractAssistantStructuredCards, parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
-/// result carries structured envelope JSON the presentation timeline renders
-/// as a card. The legacy tool row strips it so the same call is not shown
-/// twice (raw JSON here, card above) — the pre-fence human summary stays.
 function stripVakFence(text: string): string {
-  const fence = text.indexOf("```vak");
-  if (fence < 0) return text;
-  const end = text.indexOf("```", fence + 6);
-  if (end < 0) return text.slice(0, fence).trim();
-  const rest = `${text.slice(0, fence)}${text.slice(end + 3)}`.trim();
-  return rest || "Structured output rendered in the presentation timeline.";
+  let cleaned = stripControlScaffolding(text);
+  cleaned = cleaned.replace(/```(?:vak|json)?\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*```/gi, "");
+  cleaned = cleaned.replace(/```vak\s*[\s\S]*?(?:```|$)/gi, "");
+  const trimmed = cleaned.trim();
+  if (!trimmed && text.includes('"semantic_type"')) {
+    return "Structured output rendered in the presentation timeline.";
+  }
+  return trimmed || text;
 }
 
 
@@ -114,6 +113,15 @@ function TranscriptSkeleton() {
 }
 
 function visibleItems(list: Item[]): Item[] {
+  // Filter out any control scaffolding messages (e.g. <conversation_thread>,
+  // <context_summary>, <intent>, <work_contract>) so they never leak into the chat canvas.
+  const cleanList = list.filter((it) => {
+    if (it.kind === "user") {
+      return stripControlScaffolding(it.text).length > 0;
+    }
+    return true;
+  });
+
   // Everyday is the calm product surface: it never exposes the verbose
   // activity ledger, even when a previous Advanced session left Audit
   // selected in local storage. Advanced remains the operator surface where
@@ -128,15 +136,27 @@ function visibleItems(list: Item[]): Item[] {
     // call are the two forms "current activity" can take here; both
     // disappear from this density the moment they settle, exactly as
     // before.
-    return list.filter((it, i) => {
-      if (it.kind === "user" || it.kind === "system") return true;
+    return cleanList.filter((it, i) => {
+      if (it.kind === "user") return true;
+      if (it.kind === "system") {
+        const t = it.text.toLowerCase();
+        if (
+          t.includes("compacting context") ||
+          t.includes("context compacted") ||
+          t.includes("route fallback") ||
+          t.includes("stop gate:")
+        ) {
+          return false;
+        }
+        return true;
+      }
       if (it.kind === "approval" && !it.resolved) return true;
       if (it.kind === "assistant" && it.text) return true;
-      if (it.kind === "tool" && !it.done && i === list.length - 1) return true;
+      if (it.kind === "tool" && !it.done && i === cleanList.length - 1) return true;
       return false;
     });
   }
-  return list;
+  return cleanList;
 }
 
 function RunControls(props: { sessionId: string }) {
@@ -500,14 +520,16 @@ export const Markdown = MarkdownView;
 export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element => {
   const item = props.item;
   if (item.kind === "user") {
+    const text = stripControlScaffolding(item.text);
+    if (!text) return null;
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
           <div class="user-turn-head">
             <span class="turn-author-chip">You</span>
           </div>
-          <div class="md"><Markdown text={item.text} /></div>
-          <MessageActions text={item.text} role="user" />
+          <div class="md"><Markdown text={text} /></div>
+          <MessageActions text={text} role="user" />
         </div>
       </div>
     );

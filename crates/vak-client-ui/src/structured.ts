@@ -1,12 +1,32 @@
 import type { StructuredOutput } from "./types";
 
 /**
+ * Strips prompt-scaffolding control blocks injected into the model-visible
+ * context (e.g. <conversation_thread>, <context_summary>, <intent>,
+ * <work_contract>, <managed_work>, <context_packet>) so they never leak into user or assistant views.
+ */
+export function stripControlScaffolding(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/<conversation_thread[\s\S]*?(?:<\/conversation_thread>|$)/gi, "")
+    .replace(/<context_summary[\s\S]*?(?:<\/context_summary>|$)/gi, "")
+    .replace(/<intent[\s\S]*?(?:<\/intent>|$)/gi, "")
+    .replace(/<work_contract[\s\S]*?(?:<\/work_contract>|$)/gi, "")
+    .replace(/<managed_work[\s\S]*?(?:<\/managed_work>|$)/gi, "")
+    .replace(/<context_packet[\s\S]*?(?:<\/context_packet>|$)/gi, "")
+    .replace(/<system_reminder[\s\S]*?(?:<\/system_reminder>|$)/gi, "")
+    .replace(/<runtime_guidance[\s\S]*?(?:<\/runtime_guidance>|$)/gi, "")
+    .replace(/<scratchpad[\s\S]*?(?:<\/scratchpad>|$)/gi, "")
+    .trim();
+}
+
+/**
  * Strips internal scaffolding, prompt leaking, and lifecycle metadata from assistant prose.
  */
 export function cleanAssistantText(text: string): string {
-  const normalized = text
+  const normalized = stripControlScaffolding(text)
     .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/gim, "")
-    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed)[\s\S]*$/gi, "")
+    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed|done)[\s\S]*$/gi, "")
     .replace(/(?:\r?\n)?\s*completed\s*$/gi, "")
     .replace(/^\s*Outcome:\s+[^\n]*(?:\n|$)/gim, "")
     .replace(/^\s*contract_id:\s+[^\n]*(?:\n|$)/gim, "")
@@ -15,7 +35,7 @@ export function cleanAssistantText(text: string): string {
   return normalized
     .split("\n")
     .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
-    .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed)\s*$/i.test(line))
+    .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed|done)\s*$/i.test(line))
     .filter((line) => !/^\s*completed\s*$/i.test(line))
     .filter((line) => !/^\s*Outcome:\s+/i.test(line))
     .filter((line) => !/^\s*contract_id:\s+/i.test(line))

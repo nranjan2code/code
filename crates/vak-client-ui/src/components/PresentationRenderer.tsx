@@ -27,7 +27,7 @@ import UIPreviewCard from "./presentation/UIPreviewCard";
 // for development builds so production never becomes a ledger UI.
 const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
-import { extractAssistantStructuredCards } from "../structured";
+import { extractAssistantStructuredCards, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -966,9 +966,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
     // Lifecycle summaries and scaffolding fallback items must not leak as assistant prose
+    const cleanFallback = stripControlScaffolding(item.fallback_text).trim();
+    if (!cleanFallback) return null;
+
     if (!showOperatorChrome()) {
-      const trimmed = item.fallback_text.trim();
-      const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+      const lines = cleanFallback.split("\n").map((l) => l.trim()).filter(Boolean);
       if (
         lines.length === 0 ||
         lines.every((line) =>
@@ -978,8 +980,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         return null;
       }
     }
-    if (item.fallback_text.includes('"semantic_type"')) {
-      const extracted = extractAssistantStructuredCards(item.fallback_text);
+    if (cleanFallback.includes('"semantic_type"')) {
+      const extracted = extractAssistantStructuredCards(cleanFallback);
       if (extracted.cards.length > 0) {
         return (
           <div class="assistant-turn-body">
@@ -997,7 +999,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         );
       }
     }
-    return <div class="semantic-source">{item.fallback_text}</div>;
+    return <div class="semantic-source">{cleanFallback}</div>;
   };
   return (
     <section class="semantic-turn" data-turn={props.id}>

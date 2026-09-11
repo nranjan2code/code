@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
+export { stripControlScaffolding } from "./structured";
+import { stripControlScaffolding } from "./structured";
 import type {
   AgentEvent,
   AssistantMessage,
@@ -680,7 +682,7 @@ export function transcriptToItems(id: string, messages: Message[]): Item[] {
           }
         }
       }
-      const joined = texts.join("\n").trim();
+      const joined = stripControlScaffolding(texts.join("\n"));
       if (joined) next.push({ kind: "user", text: joined });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
