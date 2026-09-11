@@ -563,10 +563,12 @@ impl OutcomeSpec {
             if r.kind == RequirementKind::Deliverable {
                 let prefix = "produce an ";
                 let suffix = " result";
-                if let Some(rest) = r.description.strip_prefix(prefix) {
-                    if let Some(act) = rest.strip_suffix(suffix) {
-                        return Some(act);
-                    }
+                if let Some(act) = r
+                    .description
+                    .strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_suffix(suffix))
+                {
+                    return Some(act);
                 }
                 Some(r.description.as_str())
             } else {

@@ -280,13 +280,13 @@ impl StopPolicy {
         }
 
         // If a tool failed and hasn't been repaired or reported in text, block.
-        if let Some((tool, err)) = &receipts.unresolved_error {
-            if !reports_blocker(final_text, tool, err) {
-                return Some(BlockReason::UnresolvedToolFailure {
-                    tool: tool.clone(),
-                    error: err.clone(),
-                });
-            }
+        if let Some((tool, err)) = &receipts.unresolved_error
+            && !reports_blocker(final_text, tool, err)
+        {
+            return Some(BlockReason::UnresolvedToolFailure {
+                tool: tool.clone(),
+                error: err.clone(),
+            });
         }
 
         // Intent-driven gate: when outcome specification is available.
@@ -313,13 +313,11 @@ impl StopPolicy {
                         hint: "read, search, inspect files or data".into(),
                     });
                 }
-            } else if spec.requires_tool() {
-                if !receipts.has_any_receipt() {
-                    return Some(BlockReason::ExecutionReceiptMissing {
-                        act: "tool execution".into(),
-                        hint: "execute relevant tools".into(),
-                    });
-                }
+            } else if spec.requires_tool() && !receipts.has_any_receipt() {
+                return Some(BlockReason::ExecutionReceiptMissing {
+                    act: "tool execution".into(),
+                    hint: "execute relevant tools".into(),
+                });
             }
             return None;
         }
@@ -344,11 +342,15 @@ impl StopPolicy {
         final_text: &str,
         bash_calls_this_run: u32,
     ) -> Option<BlockReason> {
-        let mut receipts = ReceiptSummary::default();
-        receipts.substantive_bash_calls = bash_calls_this_run;
-        if bash_calls_this_run > 0 {
-            receipts.successful_tool_calls = bash_calls_this_run;
-        }
+        let receipts = ReceiptSummary {
+            substantive_bash_calls: bash_calls_this_run,
+            successful_tool_calls: if bash_calls_this_run > 0 {
+                bash_calls_this_run
+            } else {
+                0
+            },
+            ..Default::default()
+        };
         self.evaluate_receipts(prompt, final_text, None, &receipts, false)
     }
 
@@ -359,11 +361,15 @@ impl StopPolicy {
         bash_calls_this_run: u32,
         verification_stale: bool,
     ) -> Option<BlockReason> {
-        let mut receipts = ReceiptSummary::default();
-        receipts.substantive_bash_calls = bash_calls_this_run;
-        if bash_calls_this_run > 0 {
-            receipts.successful_tool_calls = bash_calls_this_run;
-        }
+        let receipts = ReceiptSummary {
+            substantive_bash_calls: bash_calls_this_run,
+            successful_tool_calls: if bash_calls_this_run > 0 {
+                bash_calls_this_run
+            } else {
+                0
+            },
+            ..Default::default()
+        };
         self.evaluate_receipts(prompt, final_text, None, &receipts, verification_stale)
     }
 }
@@ -560,9 +566,11 @@ mod tests {
         ));
 
         // with substantive bash receipt -> allowed
-        let mut with_bash = ReceiptSummary::default();
-        with_bash.substantive_bash_calls = 1;
-        with_bash.successful_tool_calls = 1;
+        let with_bash = ReceiptSummary {
+            substantive_bash_calls: 1,
+            successful_tool_calls: 1,
+            ..Default::default()
+        };
         assert_eq!(
             p.evaluate_receipts(
                 "create an svg animation",
@@ -575,9 +583,11 @@ mod tests {
         );
 
         // with file write receipt -> allowed
-        let mut with_file = ReceiptSummary::default();
-        with_file.files_modified = 1;
-        with_file.successful_tool_calls = 1;
+        let with_file = ReceiptSummary {
+            files_modified: 1,
+            successful_tool_calls: 1,
+            ..Default::default()
+        };
         assert_eq!(
             p.evaluate_receipts(
                 "create an svg animation",
@@ -615,10 +625,12 @@ mod tests {
     #[test]
     fn test_unresolved_tool_failure_blocks_unless_reported() {
         let p = StopPolicy::default();
-        let mut receipts = ReceiptSummary::default();
-        receipts.total_tool_calls = 1;
-        receipts.failed_tool_calls = 1;
-        receipts.unresolved_error = Some(("bash".into(), "exit code 1: compile error".into()));
+        let receipts = ReceiptSummary {
+            total_tool_calls: 1,
+            failed_tool_calls: 1,
+            unresolved_error: Some(("bash".into(), "exit code 1: compile error".into())),
+            ..Default::default()
+        };
 
         // Model hallucinates success without reporting error -> blocked
         let blocked = p.evaluate_receipts(
