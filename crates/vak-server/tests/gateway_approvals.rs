@@ -92,6 +92,9 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
     let home = dir.path().join("home");
     core.set_sessions_home(home.clone());
     core.set_provider_instance(provider);
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -285,7 +288,7 @@ async fn unanswered_gate_times_out_and_fails_closed() {
                     "bash",
                     serde_json::json!({"command": "echo never-runs"}),
                 ),
-                text("moving on without it"),
+                text("bash denied: moving on without it"),
             ])),
         }),
         &config("approvals = \"forward\"\napprover = \"log:ops\"\napproval_timeout_secs = 5\n"),
