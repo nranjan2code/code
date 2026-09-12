@@ -127,13 +127,17 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
     let cwd = dir.path().to_path_buf();
     let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(project.join("config.toml"), gateway_toml).unwrap();
+    let full_toml = format!("permission_mode = \"full-access\"\n{gateway_toml}");
+    std::fs::write(project.join("config.toml"), full_toml).unwrap();
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(provider);
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -172,7 +176,7 @@ async fn run_nightly(gw: &Gateway) -> () {
         .post(format!("{}/tasks", gw.base))
         .json(&serde_json::json!({
             "name": "nightly",
-            "prompt": "check the build",
+            "prompt": "what is the nightly status?",
             "interval_secs": 3600,
             "deliver_to": "webhook:ci"
         }))
