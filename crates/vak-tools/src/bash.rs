@@ -103,30 +103,31 @@ impl Tool for BashTool {
             (ctx.cwd.clone(), scratch_root)
         };
 
-        if let Some(custom_cwd) = args.get("cwd").and_then(|v| v.as_str()) {
-            if custom_cwd != "." && !custom_cwd.is_empty() {
-                let workspace = match ctx.cwd.canonicalize() {
-                    Ok(path) => path,
-                    Err(_) => return ToolOutput::error("working directory is unavailable"),
-                };
-                let target = match workspace.join(custom_cwd).canonicalize() {
-                    Ok(path) => path,
-                    Err(_) => return ToolOutput::error("working directory does not exist"),
-                };
-                let allowed_root = if quarantine {
-                    scratch_dir
-                        .canonicalize()
-                        .unwrap_or_else(|_| scratch_dir.clone())
-                } else {
-                    workspace.clone()
-                };
-                if !target.starts_with(&allowed_root) || !target.is_dir() {
-                    return ToolOutput::error(
-                        "working directory must remain inside the active execution root",
-                    );
-                }
-                execution_dir = target;
+        if let Some(custom_cwd) = args.get("cwd").and_then(|v| v.as_str())
+            && custom_cwd != "."
+            && !custom_cwd.is_empty()
+        {
+            let workspace = match ctx.cwd.canonicalize() {
+                Ok(path) => path,
+                Err(_) => return ToolOutput::error("working directory is unavailable"),
+            };
+            let target = match workspace.join(custom_cwd).canonicalize() {
+                Ok(path) => path,
+                Err(_) => return ToolOutput::error("working directory does not exist"),
+            };
+            let allowed_root = if quarantine {
+                scratch_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| scratch_dir.clone())
+            } else {
+                workspace.clone()
+            };
+            if !target.starts_with(&allowed_root) || !target.is_dir() {
+                return ToolOutput::error(
+                    "working directory must remain inside the active execution root",
+                );
             }
+            execution_dir = target;
         }
 
         // Command-scoped backends do not inherit the host process directory.
