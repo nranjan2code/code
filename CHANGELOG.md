@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.75 — 2026-09-12
+
+- Fix chat presentation and sandbox terminal continuity across Everyday and Advanced modes.
+- Preserve deliverable artifact inventory across long-running bash operations and timeouts.
+- Robust watchdog script stdout extraction across execution directory headers.
+- Add comprehensive presentation test suite and artifact preview verification.
+- Rebuild client bundles and embed synchronized frontend assets.
+
 ## 3.0.74 — 2026-09-12
 
 - Emit a first-class artifact event whenever write, edit, or an MCP result creates a file.

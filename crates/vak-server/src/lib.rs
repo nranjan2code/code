@@ -12798,12 +12798,14 @@ pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vak";
 /// inside the script's own stdout ends the section early — watchdogs that
 /// print the marker get truncated delivery, never a misparse of stderr.
 fn stdout_section(content: &str) -> &str {
-    match content.strip_prefix("[stdout]\n") {
-        Some(rest) => match rest.find("\n[stderr]") {
-            Some(end) => &rest[..end],
-            None => rest,
-        },
-        None => "",
+    let stdout_part = if let Some(idx) = content.find("[stdout]\n") {
+        &content[idx + "[stdout]\n".len()..]
+    } else {
+        return "";
+    };
+    match stdout_part.find("\n[stderr]") {
+        Some(end) => &stdout_part[..end],
+        None => stdout_part,
     }
 }
 
@@ -13556,6 +13558,12 @@ mod scheduler_pure_tests {
     fn stdout_section_extracts_only_stdout() {
         assert_eq!(
             stdout_section("[stdout]\nhello\nworld\n\n[stderr]\noops\n"),
+            "hello\nworld\n"
+        );
+        assert_eq!(
+            stdout_section(
+                "[working directory: /tmp]\n[file: /tmp/res.html]\n[stdout]\nhello\nworld\n\n[stderr]\noops\n"
+            ),
             "hello\nworld\n"
         );
         assert_eq!(stdout_section("(no output)"), "");
