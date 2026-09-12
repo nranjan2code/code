@@ -261,6 +261,16 @@ export default function WorkbenchPanel() {
     }
   };
 
+  // A produced file is the outcome of the turn, not an implementation detail.
+  // Open the newest outcome automatically when the panel has no selection;
+  // users can still switch to activity when they want the mechanics.
+  createEffect(() => {
+    const artifacts = allArtifacts();
+    if (artifacts.length > 0 && selectedArtifact() === null) {
+      void inspectArtifact(artifacts[artifacts.length - 1].path);
+    }
+  });
+
   const isHtmlArtifact = (path: string) =>
     path.endsWith(".html") || path.endsWith(".htm");
 
@@ -314,7 +324,7 @@ export default function WorkbenchPanel() {
       <div class="workbench-header">
         <div class="workbench-header-left">
           <Icon name="terminal" size={16} />
-          <span class="workbench-title">Workbench Sandbox</span>
+          <span class="workbench-title">Your result</span>
           <Show when={isAnyRunning()}>
             <span class="workbench-status-badge running">
               <span class="pulse-dot" /> Running
@@ -338,7 +348,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
             >
-              Live Execution
+              Build activity
             </button>
             <button
               class="workbench-nav-btn"
@@ -350,7 +360,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "artifacts" }}
               onClick={() => setTab("artifacts")}
             >
-              Artifacts ({allArtifacts().length})
+              Result ({allArtifacts().length})
             </button>
           </div>
           <Show when={executions().length > 0}>
@@ -648,10 +658,18 @@ export default function WorkbenchPanel() {
         {/* Artifacts Tab */}
         <Show when={tab() === "artifacts"}>
           <div id="workbench-panel-artifacts" role="tabpanel" aria-labelledby="workbench-tab-artifacts" class="workbench-artifacts-tab">
-            <div class="artifacts-list-sidebar">
+            <div class="result-intro">
+              <div class="result-intro-icon"><Icon name="preview" size={18} /></div>
+              <div>
+                <h2>What Vak made</h2>
+                <p>Open a live preview, review the file, or continue refining it in chat.</p>
+              </div>
+            </div>
+            <div class="result-workspace">
+              <div class="artifacts-list-sidebar">
               <Show
                 when={allArtifacts().length > 0}
-                fallback={<div class="empty-list">No artifacts generated in this session.</div>}
+                  fallback={<div class="empty-list">Your finished files will appear here.</div>}
               >
                 <For each={allArtifacts()}>
                   {(art) => {
@@ -676,15 +694,15 @@ export default function WorkbenchPanel() {
                   }}
                 </For>
               </Show>
-            </div>
+              </div>
 
-            {/* Artifact Preview Viewer */}
-            <div class="artifact-viewer">
+              {/* Artifact Preview Viewer */}
+              <div class="artifact-viewer">
               <Show
                 when={selectedArtifact()}
                 fallback={
                   <div class="viewer-placeholder">
-                    Select an artifact from the list to preview.
+                  Select a result to open its preview.
                   </div>
                 }
               >
@@ -760,6 +778,7 @@ export default function WorkbenchPanel() {
                   </Show>
                 </div>
               </Show>
+              </div>
             </div>
           </div>
         </Show>

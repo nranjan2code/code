@@ -71,8 +71,8 @@ export default function EverydayContextRail(props: { onRetry?: (id: string) => v
           </Show>
 
           <div class="everyday-rail-sections">
-            <RailSection label="Files" count={files()} icon="file" tab="editor" />
-            <RailSection label="Notes" count={notes()} icon="receipt" tab="workbench" />
+            <RailSection label="Results" count={files()} icon="preview" tab="workbench" />
+            <RailSection label="What happened" count={notes()} icon="receipt" tab="workbench" />
             <RailSection label="Next steps" count={nextSteps()} icon="spark" tab="commitments" />
           </div>
         </div>

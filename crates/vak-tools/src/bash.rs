@@ -160,7 +160,15 @@ impl Tool for BashTool {
         // captured pipes open until the original command exits.
         isolate_process_group(&mut cmd);
 
-        let before_scratch = collect_candidate_files(&scratch_dir);
+        let before_scratch = collect_candidate_files(&scratch_dir, false);
+        // Full-access runs write directly to the workspace. Track a bounded
+        // baseline there too so a deliverable is still promoted to the
+        // Workbench even when the model did not use quarantine explicitly.
+        let before_workspace = if !quarantine {
+            collect_candidate_files(&ctx.cwd, true)
+        } else {
+            std::collections::HashMap::new()
+        };
 
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
@@ -236,7 +244,7 @@ impl Tool for BashTool {
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 let mut paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
                     for (rel_path, mime, size) in artifacts {
                         sink.emit_artifact(&rel_path, &mime, size);
                         paths.push(rel_path);
@@ -273,7 +281,7 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
                     let mut paths = Vec::new();
                     for (rel_path, mime, size) in artifacts {
                         sink.emit_artifact(&rel_path, &mime, size);
@@ -300,7 +308,7 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
 
-                let new_artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
+                let new_artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
                 let mut artifact_paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
                     for (rel_path, mime, size) in &new_artifacts {
@@ -521,23 +529,28 @@ fn probe_process_memory(pid: Option<u32>) -> u64 {
 
 fn collect_candidate_files(
     scratch_dir: &std::path::Path,
+    workspace_scan: bool,
 ) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
     let mut map = std::collections::HashMap::new();
     fn scan(
         dir: &std::path::Path,
         map: &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+        workspace_scan: bool,
     ) {
         if !dir.exists() {
             return;
         }
-        for entry in walkdir::WalkDir::new(dir)
+        let walker = walkdir::WalkDir::new(dir)
             .follow_links(false)
+            .max_depth(if workspace_scan { 4 } else { usize::MAX })
             .into_iter()
+            .filter_entry(|entry| !workspace_scan || !skip_workspace_dir(entry.path()))
             .filter_map(Result::ok)
-            .take(MAX_SCAN_ENTRIES)
-        {
+            .take(MAX_SCAN_ENTRIES);
+        for entry in walker {
             let path = entry.path().to_path_buf();
             if path.is_file()
+                && (!workspace_scan || is_user_visible_artifact(&path))
                 && let Ok(meta) = path.metadata()
             {
                 let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -545,14 +558,16 @@ fn collect_candidate_files(
             }
         }
     }
-    scan(scratch_dir, &mut map);
+    scan(scratch_dir, &mut map, workspace_scan);
     map
 }
 
 fn scan_new_candidate_artifacts(
     scratch_dir: &std::path::Path,
     before: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+    before_workspace: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
     cwd: &std::path::Path,
+    scan_workspace: bool,
 ) -> Vec<(String, String, u64)> {
     let mut artifacts = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -562,7 +577,12 @@ fn scan_new_candidate_artifacts(
             && let Ok(meta) = path.metadata()
         {
             let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let is_new = match before.get(&path) {
+            let baseline = if path.starts_with(cwd) && scan_workspace {
+                before_workspace.get(&path)
+            } else {
+                before.get(&path)
+            };
+            let is_new = match baseline {
                 None => true,
                 Some(&prev) => mtime > prev,
             };
@@ -573,7 +593,9 @@ fn scan_new_candidate_artifacts(
                     .display()
                     .to_string();
                 let mime = guess_mime_type(&path);
-                artifacts.push((rel, mime, meta.len()));
+                if !scan_workspace || is_user_visible_artifact(&path) {
+                    artifacts.push((rel, mime, meta.len()));
+                }
             }
         }
     };
@@ -588,7 +610,65 @@ fn scan_new_candidate_artifacts(
             check_entry(entry.path().to_path_buf());
         }
     }
+    if scan_workspace {
+        for entry in walkdir::WalkDir::new(cwd)
+            .follow_links(false)
+            .max_depth(4)
+            .into_iter()
+            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
+            .filter_map(Result::ok)
+            .take(MAX_SCAN_ENTRIES)
+        {
+            check_entry(entry.path().to_path_buf());
+        }
+    }
     artifacts
+}
+
+fn skip_workspace_dir(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, ".git" | "target" | "node_modules" | ".vak-home"))
+}
+
+fn is_user_visible_artifact(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "html"
+            | "htm"
+            | "css"
+            | "js"
+            | "mjs"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "json"
+            | "csv"
+            | "tsv"
+            | "md"
+            | "txt"
+            | "log"
+            | "pdf"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "svg"
+            | "webp"
+            | "mp3"
+            | "wav"
+            | "ogg"
+            | "m4a"
+            | "aac"
+            | "mp4"
+            | "webm"
+            | "mov"
+            | "m4v"
+    )
 }
 
 fn guess_mime_type(path: &std::path::Path) -> String {
@@ -1030,5 +1110,36 @@ mod tests {
             }
         }
         assert!(saw_artifact, "artifact event should have been emitted");
+    }
+
+    #[tokio::test]
+    async fn workspace_command_promotes_user_visible_result() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, mut events) = SandboxEventSink::new_with_id("test-workspace-result".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+
+        let out = super::BashTool
+            .execute(
+                &serde_json::json!({
+                    "command": "printf '<h1>India market</h1>\\n' > index.html",
+                    "quarantine": false
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "stdout/stderr: {}", out.content);
+        assert!(workspace.path().join("index.html").is_file());
+        let mut saw_result = false;
+        while let Ok(event) = events.try_recv() {
+            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
+                saw_result |= path == "index.html";
+            }
+        }
+        assert!(
+            saw_result,
+            "workspace result should be emitted as an artifact"
+        );
     }
 }

@@ -1205,13 +1205,13 @@ export default function App() {
                 data-dock={tab()}
                 data-testid="advanced-workspace-dock"
                 role="complementary"
-                aria-label={`Advanced workspace: ${dockLabel(tab())}`}
+                aria-label={`Task details: ${dockLabel(tab())}`}
               >
                 <div class="dock-tabs">
                   <For each={[
-                    ["workbench", "Activity", "pulse"],
-                    ["diff", "Changes", "diff"],
-                    ["terminal", "Terminal", "code"],
+                    ["workbench", "Result", "preview"],
+                    ["diff", "Review", "diff"],
+                    ["terminal", "Activity", "pulse"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -1231,9 +1231,9 @@ export default function App() {
                     <summary class="dock-tab" aria-label="More workspace views"><Icon name="tune" /><span>More</span></summary>
                     <div class="dock-more-menu">
                       <For each={[
-                        ["preview", "Preview", "preview"], ["editor", "Editor", "file"],
-                        ["pr", "Pull request", "git"], ["agents", "Subagents", "grid"],
-                        ["feeds", "Feeds", "bell"], ["commitments", "Commitments", "shield"],
+                        ["preview", "Live preview", "preview"], ["editor", "Files", "file"],
+                        ["pr", "Pull request", "git"], ["agents", "Parallel work", "grid"],
+                        ["feeds", "Sources", "bell"], ["commitments", "Open promises", "shield"],
                       ] as const}>
                         {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
@@ -1326,11 +1326,11 @@ export default function App() {
 
 function dockLabel(tab: import("./store").DockTab): string {
   return {
-    workbench: "Activity",
-    diff: "Changes",
-    terminal: "Terminal",
-    preview: "Preview",
-    editor: "Editor",
+    workbench: "Result",
+    diff: "Review",
+    terminal: "Activity",
+    preview: "Live preview",
+    editor: "Files",
     pr: "Pull request",
     agents: "Subagents",
     feeds: "Feeds",

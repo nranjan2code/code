@@ -1022,6 +1022,9 @@ export function applyEvent(
     } else if (sb.kind === "ArtifactGenerated") {
       const execId = sb.execution_id;
       if (execId) {
+        // A deliverable is the primary outcome of execution. Surface the
+        // result pane as soon as one exists; activity remains one click away.
+        setDockTab("workbench");
         setWorkbenchExecutions((prev) =>
           prev.map((e) =>
             e.id === execId
