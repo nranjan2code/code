@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
 
-use crate::{Tool, ToolContext, ToolOutput};
+use crate::{Tool, ToolContext, ToolOutput, artifact::guess_mime_type};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_CAPTURE: usize = 1 << 20;
@@ -669,33 +669,6 @@ fn is_user_visible_artifact(path: &std::path::Path) -> bool {
             | "mov"
             | "m4v"
     )
-}
-
-fn guess_mime_type(path: &std::path::Path) -> String {
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "svg" => "image/svg+xml",
-        "webp" => "image/webp",
-        "html" | "htm" => "text/html",
-        "css" => "text/css",
-        "js" | "mjs" => "application/javascript",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        "tsv" => "text/tab-separated-values",
-        "md" => "text/markdown",
-        "txt" | "log" => "text/plain",
-        "pdf" => "application/pdf",
-        "zip" | "tar" | "gz" => "application/zip",
-        _ => "application/octet-stream",
-    }
-    .to_string()
 }
 
 fn interrupted_output(stdout: &str, stderr: &str, reason: &str) -> String {

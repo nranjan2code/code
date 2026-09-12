@@ -3,6 +3,7 @@
 //! Contract: tools never panic and never return Err; failures are
 //! ToolOutput::error values fed back to the model for self-correction.
 
+pub mod artifact;
 pub mod bash;
 pub mod broker;
 pub mod context;

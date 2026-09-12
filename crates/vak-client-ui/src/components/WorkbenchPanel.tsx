@@ -776,6 +776,24 @@ export default function WorkbenchPanel() {
                   >
                     <pre class="code-preview"><code>{artifactContent()}</code></pre>
                   </Show>
+
+                  <Show
+                    when={
+                      artifactDataUrl() !== null &&
+                      !isHtmlArtifact(selectedArtifact()!) &&
+                      !isImageArtifact(selectedArtifact()!) &&
+                      !isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
+                      !isAudioArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
+                      !isVideoArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType)
+                    }
+                  >
+                    <div class="artifact-fallback">
+                      <Icon name="file" size={24} />
+                      <strong>This file is ready</strong>
+                      <span>This format cannot be previewed here yet.</span>
+                      <a class="btn primary sm" href={artifactDataUrl()!} download={selectedArtifact()!.split("/").pop()}>Download file</a>
+                    </div>
+                  </Show>
                 </div>
               </Show>
               </div>

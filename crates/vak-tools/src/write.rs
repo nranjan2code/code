@@ -71,12 +71,48 @@ impl Tool for WriteTool {
             Err(e) => Err(e),
         };
         match rename_res {
-            Ok(()) => ToolOutput::ok(format!(
-                "wrote {} bytes to {}",
-                content.len(),
-                path.display()
-            )),
+            Ok(()) => {
+                crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);
+                ToolOutput::ok(format!(
+                    "wrote {} bytes to {}",
+                    content.len(),
+                    path.display()
+                ))
+            }
             Err(e) => ToolOutput::error(format!("cannot write {}: {e}", path.display())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::{SandboxEvent, SandboxEventSink};
+
+    #[tokio::test]
+    async fn write_reports_any_file_as_an_artifact() {
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, mut events) = SandboxEventSink::new_with_id("write-artifact".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
+
+        let output = WriteTool
+            .execute(
+                &serde_json::json!({
+                    "path": "reports/market-dashboard.html",
+                    "content": "<!doctype html><title>Market week</title>"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!output.is_error, "{}", output.content);
+        let event = events.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            SandboxEvent::ArtifactGenerated { path, mime_type, .. }
+                if path == "reports/market-dashboard.html" && mime_type == "text/html"
+        ));
     }
 }

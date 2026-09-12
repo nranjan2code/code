@@ -149,6 +149,7 @@ impl Tool for EditTool {
         if let Err(e) = rename_res {
             return ToolOutput::error(format!("cannot write {}: {e}", path.display()));
         }
+        crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);
 
         let diff = TextDiff::from_lines(&raw, &buf);
         let mut out = format!("edited {}", path.display());

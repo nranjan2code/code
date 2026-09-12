@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.74 — 2026-09-12
+
+- Emit a first-class artifact event whenever write, edit, or an MCP result creates a file.
+- Show every artifact type in Workbench, with a clear download fallback for formats without an inline preview.
+- Add regression coverage for generated HTML results.
+
 ## 3.0.73 — 2026-09-12
 
 - Made generated results first-class in the workspace UI with automatic result presentation.

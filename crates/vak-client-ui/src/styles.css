@@ -4857,6 +4857,9 @@ body.is-resizing .split-divider {
   color: var(--text);
   white-space: pre-wrap;
 }
+.artifact-fallback { display: grid; place-items: center; gap: 8px; min-height: 220px; color: var(--muted); text-align: center; }
+.artifact-fallback strong { color: var(--text); font-size: 14px; }
+.artifact-fallback span { font-size: 12px; }
 
 /* Workbench follows the shared Auditor's Desk tokens instead of introducing a
    separate blue/slate product palette. */

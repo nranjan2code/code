@@ -220,10 +220,17 @@ impl McpTool {
                     }
                     let artifact = self.manager.store_artifact(server, tool, &redacted);
                     match artifact {
-                        Some(path) => ToolOutput::ok(ctx.truncate_output(format!(
-                            "[full MCP result stored at {}. Use the read tool with this path and offset/limit for exact retrieval.]\n{redacted}",
-                            path.display()
-                        ))),
+                        Some(path) => {
+                            vak_tools::artifact::emit_file(
+                                ctx.sandbox_sink.as_ref(),
+                                &path,
+                                &ctx.cwd,
+                            );
+                            ToolOutput::ok(ctx.truncate_output(format!(
+                                "[full MCP result stored at {}. Use the read tool with this path and offset/limit for exact retrieval.]\n{redacted}",
+                                path.display()
+                            )))
+                        }
                         None => ToolOutput::ok(preview),
                     }
                 }
