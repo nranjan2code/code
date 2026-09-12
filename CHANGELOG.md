@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.73 — 2026-09-12
+
+- Made generated results first-class in the workspace UI with automatic result presentation.
+- Reframed the right panel around Result, Review, and Activity, with clearer specialist tools.
+- Promoted bounded workspace outputs to artifact events and added regression coverage.
+
 ## 3.0.72 — 2026-09-12
 
 ### Clean-Room Release Assembly and Execution Reliability
