@@ -82,7 +82,7 @@ async fn spawn_gateway(
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
@@ -122,7 +122,7 @@ async fn spawn_gateway_bare(
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
@@ -620,7 +620,7 @@ async fn cron_task_delivers_summary_to_log_surface() {
         .post(format!("{base}/tasks"))
         .json(&serde_json::json!({
             "name": "nightly",
-            "prompt": "check the build",
+            "prompt": "what is the nightly status?",
             "interval_secs": 3600,
             "deliver_to": "log:ops"
         }))
