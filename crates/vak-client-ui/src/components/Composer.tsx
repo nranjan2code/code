@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show } from "solid-js";
-import type { JSX } from "solid-js";
 import {
   activeId,
   armedGoal,
@@ -13,9 +12,7 @@ import {
   setDockTab,
   setShowShortcuts,
   switchModel,
-  usageOf,
   workspaceSwitching,
-  presentationMode,
 } from "../store";
 import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -23,35 +20,6 @@ import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import { IntentStrip } from "./IntentStrip";
 import VoiceControl from "./VoiceControl";
-
-/** Context-window gauge; sits with the run controls in the composer. */
-function Ring(props: { pct: number; label: string }): JSX.Element {
-  const r = 8;
-  const c = 2 * Math.PI * r;
-  const clamped = () => Math.max(0, Math.min(1, props.pct));
-  // Fixed status colors (never the accent) so the ring's meaning — normal,
-  // approaching the limit, over it — reads the same in every theme,
-  // instead of pinning to warm terracotta regardless of the active accent.
-  const color = () => (clamped() > 0.85 ? "var(--red)" : clamped() > 0.6 ? "var(--yellow)" : "var(--accent)");
-  return (
-    <div class="ring" title={props.label}>
-      <svg width="20" height="20" viewBox="0 0 20 20">
-        <circle cx="10" cy="10" r={r} fill="none" stroke="var(--border)" stroke-width="2.5" />
-        <circle
-          cx="10"
-          cy="10"
-          r={r}
-          fill="none"
-          stroke={color()}
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-dasharray={`${clamped() * c} ${c}`}
-          transform="rotate(-90 10 10)"
-        />
-      </svg>
-    </div>
-  );
-}
 
 interface Mention {
   start: number; // index of '@'
@@ -179,14 +147,6 @@ export default function Composer(props: { cwd: string }) {
     }
   };
 
-
-  const usage = createMemo(() => usageOf(activeId()));
-  const ctxPct = createMemo(() => {
-    const w = health()?.context_window ?? 0;
-    return w > 0 ? (usage().input_tokens ?? 0) / w : 0;
-  });
-  const inTok = createMemo(() => (usage().input_tokens ?? 0).toLocaleString());
-  const outTok = createMemo(() => (usage().output_tokens ?? 0).toLocaleString());
 
   const changeMode = async (mode: string) => {
     try {
@@ -584,49 +544,31 @@ export default function Composer(props: { cwd: string }) {
         />
         <div class="composer-toolbar">
           <div class="composer-lead">
-            <Show when={presentationMode() === "advanced"}>
-              <button
-                class="composer-project"
-                title={`${props.cwd} — click to switch workspace`}
-                onClick={() => void switchWorkspace()}
-              >
-                <Icon name="folder" size={14} />
-                <span>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</span>
-                <Icon name="chevron" size={12} />
-              </button>
-              <select
-                class="composer-mode"
-                value={health()?.permission_mode ?? ""}
-                onChange={(e) => void changeMode(e.currentTarget.value)}
-                title="Permission mode — applies to new tool calls immediately"
-              >
-                <option value="ReadOnly">Read only</option>
-                <option value="WorkspaceWrite">Workspace write</option>
-                <option value="FullAccess">Full access</option>
-              </select>
-              <Show when={modelList().length > 0}>
+            <details class="composer-more">
+              <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
+              <div class="composer-more-menu">
+                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Workspace: ${props.cwd.split("/").pop()}`}</span></button>
+                <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
+                <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
                 <select
                   class="composer-mode composer-model-select"
+                  aria-label="Model"
                   value={health()?.model ?? ""}
                   onChange={(e) => void switchModel(e.currentTarget.value)}
-                  title={`Active model: ${health()?.model ?? ""} — click to switch`}
+                  disabled={modelList().length === 0}
                 >
+                  <Show when={modelList().length === 0}><option>Model unavailable</option></Show>
                   <For each={modelList()}>
                     {(m) => <option value={m}>{m}</option>}
                   </For>
                 </select>
-              </Show>
-            </Show>
-            <Show when={presentationMode() === "advanced"}>
-              <button class="composer-context" title="Mention file (@)" onClick={beginMention}>
-                <span class="composer-at">@</span>
-                <span>files</span>
-              </button>
-              <button class="composer-context" title="Commands & skills (/)" onClick={beginSlash}>
-                <span class="composer-at">/</span>
-                <span>skills</span>
-              </button>
-            </Show>
+                <select class="composer-mode" aria-label="Permission mode" value={health()?.permission_mode ?? ""} onChange={(e) => void changeMode(e.currentTarget.value)}>
+                  <option value="ReadOnly">Read only</option>
+                  <option value="WorkspaceWrite">Workspace write</option>
+                  <option value="FullAccess">Full access</option>
+                </select>
+              </div>
+            </details>
             <VoiceControl sessionId={activeId() ?? undefined} onFinal={(value) => { void sendPrompt(value, undefined, undefined, activeId()); }} />
             <input
               ref={fileInput}
@@ -666,20 +608,6 @@ export default function Composer(props: { cwd: string }) {
             </div>
           </Show>
           <div class="composer-actions">
-            <Show when={presentationMode() === "advanced"}>
-              <div
-                class="composer-tokens-pill"
-                title={`Input ${inTok()} tokens · output ${outTok()} tokens · context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
-              >
-                <Ring
-                  pct={ctxPct()}
-                  label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
-                />
-                <span class="composer-tokens">
-                  {inTok()} in · {outTok()} out
-                </span>
-              </div>
-            </Show>
             <Show
               when={isRunning(activeId())}
               fallback={
@@ -710,9 +638,7 @@ export default function Composer(props: { cwd: string }) {
         <div class="composer-error" role="alert">{composerError()}</div>
       </Show>
       <div class="composer-note">
-        {presentationMode() === "everyday"
-          ? "Vak can make mistakes. Check important info."
-          : "Vak can make mistakes. Review changes before you keep them."}
+        Vak can make mistakes. Check important information and review consequential actions.
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, presentationMode, setNotice, toggleItemExpanded, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
@@ -39,14 +39,14 @@ function EmptyChat(props: { hasSession: boolean }) {
         <Icon name="chat" size={22} />
       </div>
       <h2 class="chat-empty-headline">
-        {props.hasSession ? "Nothing here yet" : presentationMode() === "everyday" ? "What would you like to do?" : "Start a task"}
+        {props.hasSession ? "Nothing here yet" : "What would you like to do?"}
       </h2>
       <p class="chat-empty-hint">
         {props.hasSession
-          ? "This task has no visible activity at the current transcript detail. Switch to \"balanced\" or \"audit\" in the composer to see more."
-          : "Ask Vak to build, fix, explain, research, write, or analyze something — it starts a task with this workspace's files and history."}
+          ? "This conversation is ready when you are. Ask a follow-up or open its details to inspect prior work."
+          : "Ask a question or hand over something to plan, find, create, remember, schedule, or complete."}
       </p>
-      <Show when={!props.hasSession && presentationMode() === "everyday"}>
+      <Show when={!props.hasSession}>
         <div class="chat-empty-examples" aria-label="Things Vak can help with">
           <For each={[
             ["Research a question", "Research this question and summarize the important points."],
@@ -131,11 +131,9 @@ function visibleItems(list: Item[]): Item[] {
     return true;
   });
 
-  // Everyday is the calm product surface: it never exposes the verbose
-  // activity ledger, even when a previous Advanced session left Audit
-  // selected in local storage. Advanced remains the operator surface where
-  // the stored transcript detail preference is honored.
-  const d = presentationMode() === "everyday" ? "outcome" : density();
+  // The conversation stays outcome-first. Detailed activity remains available
+  // through the task-scoped Details surface instead of changing the transcript.
+  const d = "outcome";
   if (d === "outcome") {
     // "Outcome" hides the working (thinking, tool-call) detail once it's
     // done — but a run in progress must still show *something* live, or

@@ -1,6 +1,6 @@
 # 60 — Modern Presentation System 2026
 
-Status: **shipped in client presentation layer (desktop & web)**
+Status: **superseded by the adaptive assistant experience in design 61**
 
 ## 1. Overview & Vision
 
@@ -150,4 +150,3 @@ All components, styles, and schemas are 100% concrete, typed, and operational:
 - **Rust Test Suites**:
   - `cargo test -p vak-presentation`: 22 passed, 0 failed.
   - `cargo test -p vak-delivery`: 88 passed, 0 failed.
-

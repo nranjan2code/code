@@ -274,19 +274,6 @@ export function goalAppliesTo(id: string | null): ArmedGoal | null {
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [workspacePickerOpen, setWorkspacePickerOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
-export type PresentationMode = "everyday" | "advanced";
-const storedPresentationMode = localStorage.getItem("vak.presentationMode");
-export const [presentationMode, setPresentationModeSignal] = createSignal<PresentationMode>(
-  storedPresentationMode === "advanced" ? "advanced" : "everyday",
-);
-// Keep the conversation canvas primary on launch. The companion rail is
-// useful when it has context, but an empty rail makes a new conversation
-// feel split before the user has asked for anything.
-export const [everydayRailOpen, setEverydayRailOpen] = createSignal(false);
-export function setPresentationMode(mode: PresentationMode) {
-  setPresentationModeSignal(mode);
-  localStorage.setItem("vak.presentationMode", mode);
-}
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
 export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspace">("user");

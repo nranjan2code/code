@@ -72,11 +72,10 @@ badges, one-click process termination, quarantined scratch isolation in `.vak/sc
 with live sandboxed iframe/image/code artifact preview, and package installation tracking),
 the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
 NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues),
-and the modern presentation system 2026 (`docs/design/60-modern-presentation-system-2026.md`:
-dual-density Everyday vs Advanced mode with sliding segmented control, elevated user bubbles and Vak
-brand mark with live generator pulse, clean prose with prompt scaffolding scrubbing, collapsible
-thinking sparkles, theme packs across Dark Obsidian, Quiet Sage, Soft Paper, High Contrast, and Light,
-uniform outcome card architecture without regex heuristics, and sandboxed preview card styling).
+and the adaptive assistant experience (`docs/design/61-adaptive-assistant-experience.md`:
+one calm conversation with contextual task details, unified navigation, clean prose with prompt
+scaffolding scrubbing, typed work objects, theme packs across Dark Obsidian, Quiet Sage, Soft Paper,
+High Contrast, and Light, and sandboxed artifact inspection that opens only when relevant or requested).
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 

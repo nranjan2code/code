@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount, Show, For } from "solid-js";
-import { backend, presentationMode, setPresentationMode } from "../store";
+import { backend } from "../store";
 import { refreshBackend } from "../App";
 import { host } from "../host";
 import type { WorkspaceReview } from "../types";
@@ -183,16 +183,6 @@ export default function WorkspaceGate() {
               <>
                 <h1>Meet your everyday agent</h1>
                 <p class="gate-lead">A calm place to ask, plan, create, and get things done.</p>
-                <div class="gate-mode-choice" role="radiogroup" aria-label="Choose how Vak presents work">
-                  <button type="button" role="radio" classList={{ active: presentationMode() === "everyday" }} onClick={() => setPresentationMode("everyday")} aria-checked={presentationMode() === "everyday"}>
-                    <span class="gate-mode-icon"><Icon name="spark" size={15} /></span>
-                    <span><strong>Everyday</strong><small>Clear, friendly results</small></span>
-                  </button>
-                  <button type="button" role="radio" classList={{ active: presentationMode() === "advanced" }} onClick={() => setPresentationMode("advanced")} aria-checked={presentationMode() === "advanced"}>
-                    <span class="gate-mode-icon"><Icon name="code" size={15} /></span>
-                    <span><strong>Advanced</strong><small>More technical detail</small></span>
-                  </button>
-                </div>
                 <div class="gate-sample" aria-label="Sample everyday result">
                   <div class="gate-sample-head"><span>Weekend plan</span><span class="gate-sample-badge">Ready</span></div>
                   <p>Three simple steps, with the important details kept together.</p>

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { host } from "../host";
 import {
   activeId,
@@ -22,8 +22,6 @@ import {
   sidebarOpen,
   splitId,
   itemsOf,
-  presentationMode,
-  setPresentationMode,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -42,8 +40,6 @@ const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "p
   { id: "editor", label: "Editor", icon: "file" },
   { id: "pr", label: "Pull request", icon: "git" },
 ];
-const primaryTools = tools.filter((tool) => ["workbench", "diff", "terminal"].includes(tool.id));
-const secondaryTools = tools.filter((tool) => !["workbench", "diff", "terminal"].includes(tool.id));
 
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
@@ -114,7 +110,7 @@ export default function WorkspaceHeader() {
         <div class="workspace-title">
           <div class="workspace-title-row">
             <h1>{title()}</h1>
-            <Show when={presentationMode() === "advanced" && activeId()}>
+            <Show when={activeId()}>
               <span class="run-state" classList={{ active: isRunning(activeId()) }}>
                 <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
                   aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
@@ -125,35 +121,26 @@ export default function WorkspaceHeader() {
         </div>
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
-        <div class="presentation-mode-segmented" role="radiogroup" aria-label="Presentation mode" data-testid="presentation-mode">
+        <Show when={activeId()}>
           <button
             type="button"
-            role="radio"
-            class="mode-pill-btn"
-            classList={{ active: presentationMode() === "everyday" }}
-            aria-checked={presentationMode() === "everyday"}
-            data-testid="mode-everyday"
-            onClick={() => setPresentationMode("everyday")}
+            class="workspace-details-button"
+            classList={{ active: Boolean(dockTab()) }}
+            aria-expanded={Boolean(dockTab())}
+            onClick={() => setDockTab(dockTab() ? null : "workbench")}
           >
-            Everyday
+            <Icon name="tune" size={14} />
+            <span>Details</span>
           </button>
-          <button
-            type="button"
-            role="radio"
-            class="mode-pill-btn"
-            classList={{ active: presentationMode() === "advanced" }}
-            aria-checked={presentationMode() === "advanced"}
-            data-testid="mode-advanced"
-            onClick={() => setPresentationMode("advanced")}
-          >
-            Advanced
-          </button>
-        </div>
+        </Show>
 
         <details class="workspace-more">
           <summary class="icon-button has-tooltip" data-tooltip="More options" aria-label="More options"><Icon name="more" size={16} /></summary>
           <div class="workspace-more-menu" role="menu">
             <Show when={activeId()}>
+              <For each={tools}>
+                {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
+              </For>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>

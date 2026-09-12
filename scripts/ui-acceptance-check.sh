@@ -9,12 +9,11 @@ UI="$ROOT_DIR/crates/vak-client-ui"
 ADMIN="$ROOT_DIR/crates/vak-admin-ui"
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
 require() { rg -q --fixed-strings "$1" "$2" || fail "missing $1 in $2"; }
+reject() { ! rg -q --fixed-strings "$1" "$2" || fail "unexpected $1 in $2"; }
 
-require 'data-testid="presentation-mode"' "$UI/src/components/WorkspaceHeader.tsx"
-require 'data-testid="mode-everyday"' "$UI/src/components/WorkspaceHeader.tsx"
-require 'data-testid="mode-advanced"' "$UI/src/components/WorkspaceHeader.tsx"
-require 'data-testid="everyday-context-rail"' "$UI/src/components/EverydayContextRail.tsx"
-require 'Retry details' "$UI/src/components/EverydayContextRail.tsx"
+require 'class="workspace-details-button"' "$UI/src/components/WorkspaceHeader.tsx"
+require 'aria-label="More ways to work"' "$UI/src/components/Composer.tsx"
+reject 'Presentation mode' "$UI/src/components/WorkspaceHeader.tsx"
 require 'id="voice-provider"' "$ADMIN/src/App.tsx"
 require 'for="voice-provider"' "$ADMIN/src/App.tsx"
 require 'id="voice-transcription-model"' "$ADMIN/src/App.tsx"
@@ -23,19 +22,13 @@ require 'id="voice-synthesis-model"' "$ADMIN/src/App.tsx"
 require 'for="voice-synthesis-model"' "$ADMIN/src/App.tsx"
 require 'id="voice-realtime-model"' "$ADMIN/src/App.tsx"
 require 'for="voice-realtime-model"' "$ADMIN/src/App.tsx"
-require 'aria-label="Helpful details"' "$UI/src/components/EverydayContextRail.tsx"
-require 'label="Files"' "$UI/src/components/EverydayContextRail.tsx"
-require 'label="Next steps"' "$UI/src/components/EverydayContextRail.tsx"
-require 'onClick={() => setDockTab(props.tab)}' "$UI/src/components/EverydayContextRail.tsx"
-require 'My tasks' "$UI/src/components/Sidebar.tsx"
+require 'Conversations' "$UI/src/components/Sidebar.tsx"
 require 'aria-label={label}' "$UI/src/App.tsx"
 require 'aria-label={label} aria-pressed' "$UI/src/App.tsx"
 require 'role="complementary"' "$UI/src/App.tsx"
 require 'Task details:' "$UI/src/App.tsx"
 require 'data-testid="advanced-workspace-dock"' "$UI/src/App.tsx"
 require 'aria-label="More workspace views"' "$UI/src/App.tsx"
-require 'Everyday' "$UI/src/components/PresentationRenderer.tsx"
-require 'Advanced' "$UI/src/components/PresentationRenderer.tsx"
 require 'aria-live={pending() ? "assertive" : "polite"}' "$UI/src/components/PresentationRenderer.tsx"
 require 'Research a question' "$UI/src/components/ChatPane.tsx"
 require 'Write or rewrite' "$UI/src/components/ChatPane.tsx"
@@ -64,10 +57,10 @@ require 'use:trapFocus' "$ROOT_DIR/crates/vak-admin-ui/src/OperationsCenter.tsx"
 # The desktop and embedded web hosts ship generated bundles. Keep this gate
 # honest about that boundary: a source-only pass must not hide a stale bundle.
 if ! rg -q --fixed-strings 'advanced-workspace-dock' "$UI/dist/assets"/*.js; then
-  fail 'Tauri bundle is missing the Advanced dock test hook; rebuild crates/vak-client-ui'
+  fail 'Tauri bundle is missing the task details dock hook; rebuild crates/vak-client-ui'
 fi
 if ! rg -q --fixed-strings 'advanced-workspace-dock' "$UI/dist-web/assets"/*.js; then
-  fail 'web bundle is missing the Advanced dock test hook; rebuild crates/vak-client-ui'
+  fail 'web bundle is missing the task details dock hook; rebuild crates/vak-client-ui'
 fi
 
-printf '✓ UI acceptance hooks present (Everyday/Advanced, guidance, rail, renderer, admin IA)\n'
+printf '✓ UI acceptance hooks present (adaptive conversation, contextual details, renderer, admin IA)\n'

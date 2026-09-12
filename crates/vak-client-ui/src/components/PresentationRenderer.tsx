@@ -7,7 +7,7 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { density, openInEditor, openWorkbenchArtifact, presentationMode, uiPreferences } from "../store";
+import { openInEditor, openWorkbenchArtifact, uiPreferences } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
@@ -24,10 +24,9 @@ import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard, { type RecipeData } from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
-import UniversalCard from "./presentation/UniversalCard";
+import UniversalCard, { PresentationValue } from "./presentation/UniversalCard";
 
-// Everyday and Advanced are user-facing surfaces, including in development.
-// Runtime diagnostics belong in the explicit transcript/receipts views.
+// Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
 import { parseVakFence, stripControlScaffolding } from "../structured";
@@ -719,8 +718,9 @@ function normalizeRecipe(data: any): RecipeData {
   };
 }
 
-// Every named semantic type resolves through this single registry. All 62+
-// outcome types registered across core and plugin skills map directly here.
+// Every named semantic type resolves through this single registry. Tests derive
+// their coverage from this registry so newly registered types cannot bypass the
+// completed-turn rendering contract.
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // Universal semantic shapes share a safe, lossless baseline renderer until
   // a richer domain-neutral interaction is available.
@@ -881,7 +881,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
               {([key, val]) => (
                 <div class="metric-grid-item">
                   <small class="metric-grid-label">{key.replace(/_/g, " ")}</small>
-                  <strong class="metric-grid-value">{typeof val === "object" ? JSON.stringify(val) : String(val)}</strong>
+                  <strong class="metric-grid-value"><PresentationValue value={val} /></strong>
                 </div>
               )}
             </For>
@@ -892,6 +892,8 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
     return <div class="rich-metric"><small>{String(data?.label ?? "Metric")}</small><strong>{String(data?.value ?? "—")}{data?.unit ? ` ${String(data.unit)}` : ""}</strong></div>;
   },
 };
+
+export const structuredRendererTypes = Object.freeze(Object.keys(STRUCTURED_RENDERERS));
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
   const payload = props.output.payload as any;
@@ -914,7 +916,7 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
-  const ordered = () => props.items.filter((item) => (presentationMode() === "everyday" ? "outcome" : density()) !== "outcome" || !["progress", "retry", "information"].includes(item.kind));
+  const ordered = () => props.items.filter((item) => !["progress", "retry", "information"].includes(item.kind));
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {
       return <UserMessage document={item.content.document} text={item.fallback_text} />;

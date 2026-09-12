@@ -11,8 +11,8 @@ agent-browser --session vak-render-check eval 'window.runChecks()'
 
 The browser returns the passed assertions, or rejects on the first failure.
 The fixture covers saved/live/durable cards, transport fences, completion refresh,
-mode switches, stable message nodes, scroll position, background task isolation,
-and authenticated relative-asset loading. The sandbox check executes a script
+contextual task details, stable message nodes, scroll position, background task
+isolation, and authenticated relative-asset loading. The sandbox check executes a script
 inside an opaque-origin iframe and verifies its stylesheet using a test-only
 postMessage receipt. `window.showArtifact()` opens the Workbench fixture.
 

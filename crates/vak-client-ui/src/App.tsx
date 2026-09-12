@@ -77,8 +77,6 @@ import {
   setConnection,
   setArmedGoal,
   goalAppliesTo,
-  presentationMode,
-  everydayRailOpen,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -115,7 +113,6 @@ import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 import WorkspacePickerModal from "./components/WorkspacePickerModal";
-import EverydayContextRail from "./components/EverydayContextRail";
 
 const streams = new Map<string, EventSource>();
 const presentationStreams = new Map<string, EventSource>();
@@ -1141,7 +1138,6 @@ export default function App() {
           : "light"
         : uiPreferences.theme;
     document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.presentationMode = presentationMode();
     // Tells the browser which way to paint its own chrome: form controls,
     // scrollbars, and the space behind the page during load.
     // Keep native controls and scrollbars aligned with every light palette.
@@ -1194,9 +1190,6 @@ export default function App() {
               <InboxPage />
             </Show>
           </div>
-          <Show when={presentationMode() === "everyday" && everydayRailOpen() && !dockTab()}>
-            <EverydayContextRail onRetry={(id) => void retryHydrate(id)} />
-          </Show>
           <Show when={dockTab()}>
             {(tab) => (
               <>
