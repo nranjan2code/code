@@ -100,6 +100,7 @@ fn multi_setup(
     cfg.tools = vec![Arc::new(BashTool)];
     cfg.permission = engine.map(Arc::new);
     cfg.approver = approver;
+    cfg.stop_policy = None;
     std::mem::forget(dir);
     let provider = MultiScripted {
         msgs: std::sync::Mutex::new(responses.into_iter().collect()),

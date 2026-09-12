@@ -118,6 +118,12 @@ fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
         "recover",
         "repaired",
         "unsupported",
+        "guard",
+        "denied",
+        "denial",
+        "rejected",
+        "rejection",
+        "repeated",
     ];
     let mentions_keyword = keywords.iter().any(|k| lower.contains(k));
     let mentions_tool = lower.contains(&tool.to_ascii_lowercase());

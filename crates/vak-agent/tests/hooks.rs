@@ -98,6 +98,7 @@ fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent
     cfg.tools = vec![Arc::new(BashTool)];
     cfg.mode = vak_permission::Mode::FullAccess;
     cfg.hooks = hooks.map(Arc::new);
+    cfg.stop_policy = None;
     std::mem::forget(dir);
     Agent::new(
         Arc::new(Scripted {
