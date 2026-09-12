@@ -266,6 +266,38 @@ impl StopPolicy {
             .any(|word| p.contains(word))
     }
 
+    /// True when the assistant response claims execution or emits shell scripts without tool calls having run.
+    pub fn claims_execution_unexecuted(final_text: &str) -> bool {
+        let lower = final_text.to_ascii_lowercase();
+        let markers = [
+            "use the bash tool",
+            "use the `bash` tool",
+            "using the bash tool",
+            "using the `bash` tool",
+            "run the python script",
+            "running the python script",
+            "execute the python script",
+            "executing the python script",
+            "execute in the sandbox",
+            "running in the sandbox",
+            "run in the sandbox",
+            "execute in sandbox",
+            "running in sandbox",
+        ];
+        if markers.iter().any(|m| lower.contains(m)) {
+            return true;
+        }
+        if (lower.contains("```bash") || lower.contains("```sh"))
+            && (lower.contains(".vak/scratch")
+                || lower.contains("python3 ")
+                || lower.contains("node ")
+                || lower.contains("cargo "))
+        {
+            return true;
+        }
+        false
+    }
+
     /// Intent- and receipt-driven evaluation of completion validity.
     pub fn evaluate_receipts(
         &self,
@@ -327,18 +359,19 @@ impl StopPolicy {
                     hint: "execute relevant tools".into(),
                 });
             }
-            return None;
         }
 
-        // Fallback when no outcome spec is available (e.g. backward compatibility / intent disabled).
-        if self.verify_gate
-            && receipts.substantive_bash_calls == 0
-            && Self::demands_verification(prompt)
-        {
-            return Some(BlockReason::VerificationMissing);
-        }
-        if self.verify_gate && verification_stale && Self::demands_verification(prompt) {
-            return Some(BlockReason::VerificationStale);
+        // Verification and execution gate: runs whenever verify_gate is enabled.
+        if self.verify_gate {
+            if receipts.substantive_bash_calls == 0
+                && (Self::demands_verification(prompt)
+                    || Self::claims_execution_unexecuted(final_text))
+            {
+                return Some(BlockReason::VerificationMissing);
+            }
+            if verification_stale && Self::demands_verification(prompt) {
+                return Some(BlockReason::VerificationStale);
+            }
         }
         None
     }
@@ -628,6 +661,23 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn test_claims_execution_unexecuted_blocks_even_with_outcome_spec() {
+        let p = StopPolicy::default();
+        let reading = vak_intent::Reading::general();
+        let spec = vak_intent::OutcomeSpec::from_reading("can you run it and show", &reading, 1);
+        let receipts = ReceiptSummary::default();
+
+        let blocked = p.evaluate_receipts(
+            "can you run it and show",
+            "I will use the bash tool to execute a Python script:\n```bash\npython3 script.py\n```",
+            Some(&spec),
+            &receipts,
+            false,
+        );
+        assert_eq!(blocked, Some(BlockReason::VerificationMissing));
     }
 
     #[test]

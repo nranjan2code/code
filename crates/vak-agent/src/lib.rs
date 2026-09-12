@@ -4334,6 +4334,40 @@ fn parse_bash_call_from_text(text: &str) -> Option<PendingToolCall> {
             });
         }
     }
+    // Fenced shell code blocks: ```bash ... ``` or ```sh ... ```
+    for tag in [
+        "```bash\n",
+        "```sh\n",
+        "```shell\n",
+        "```zsh\n",
+        "```bash\r\n",
+        "```sh\r\n",
+    ] {
+        if let Some(idx) = text.find(tag) {
+            let start = idx + tag.len();
+            let rest = &text[start..];
+            let end_idx = rest
+                .find("\n```")
+                .or_else(|| rest.find("\r\n```"))
+                .or_else(|| rest.find("```"));
+            let raw_cmd = match end_idx {
+                Some(e) => &rest[..e],
+                None => rest,
+            }
+            .trim();
+            if !raw_cmd.is_empty()
+                && !raw_cmd.starts_with("write(")
+                && !raw_cmd.starts_with("write ")
+                && !raw_cmd.starts_with("write\t")
+            {
+                return Some(PendingToolCall {
+                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": raw_cmd}),
+                });
+            }
+        }
+    }
     None
 }
 
@@ -4767,5 +4801,28 @@ write content=.vak/scratch/react_app.html \
                 .unwrap_or_default()
                 .contains("React App")
         );
+    }
+
+    #[test]
+    fn parses_fenced_bash_script() {
+        let text = r#"I will run the Python script to generate the dashboard:
+
+```bash
+mkdir -p .vak/scratch
+cat <<EOF > .vak/scratch/markov_dashboard.py
+import numpy as np
+print("Markov Chain Dashboard")
+EOF
+
+python3 .vak/scratch/markov_dashboard.py
+```
+
+Execution finished."#;
+        let calls = parse_text_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+        let cmd = calls[0].input["command"].as_str().unwrap_or_default();
+        assert!(cmd.contains("mkdir -p .vak/scratch"));
+        assert!(cmd.contains("python3 .vak/scratch/markov_dashboard.py"));
     }
 }

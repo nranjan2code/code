@@ -43,7 +43,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`). Use this for anything and everything: run applications, serve web/UI previews, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Real-time stdout/stderr streams to the Workbench panel."
+        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`). Use this for anything and everything: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. HTML/SVG/image files written to `.vak/scratch/` are automatically previewed live in the Workbench — do not start blocking foreground HTTP servers for static file preview. Real-time stdout/stderr streams to the Workbench panel."
     }
 
     fn schema(&self) -> Value {
@@ -211,18 +211,34 @@ impl Tool for BashTool {
                 let out = out_fut.await.unwrap_or_default();
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
+                let mut paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
                     let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &ctx.cwd);
-                    let mut paths = Vec::new();
                     for (rel_path, mime, size) in artifacts {
                         sink.emit_artifact(&rel_path, &mime, size);
                         paths.push(rel_path);
                     }
-                    sink.emit_finished(-1, duration_ms, paths);
+                    sink.emit_finished(-1, duration_ms, paths.clone());
+                }
+                // When a command times out but produced artifacts (e.g. wrote
+                // an HTML file then launched a blocking foreground server), the
+                // deliverable succeeded — the timeout was caused by a dangling
+                // process, not a failure to produce the result. Tell the model
+                // what was created so it does not apologize and dump code into
+                // chat text.
+                let has_artifacts = !paths.is_empty();
+                let mut reason = format!("command timed out after {timeout_ms}ms");
+                if has_artifacts {
+                    reason.push_str(&format!(
+                        ". However, {} artifact(s) were successfully created before timeout: {}. \
+                         These are rendered live in the Workbench preview.",
+                        paths.len(),
+                        paths.join(", ")
+                    ));
                 }
                 return ToolOutput {
-                    content: interrupted_output(&out, &err, &format!("command timed out after {timeout_ms}ms")),
-                    is_error: true,
+                    content: interrupted_output(&out, &err, &reason),
+                    is_error: !has_artifacts,
                 };
             }
             _ = cancelled => {

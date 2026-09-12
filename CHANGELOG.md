@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.70 — 2026-09-12
+
+### Universal Sandbox Execution Lifecycle, Artifact-Aware Timeout, and Fenced Bash Parser
+
+- Universal sandbox execution contract in system prompt and Bash tool description, keeping sandbox general-purpose while explicitly prohibiting blocking foreground preview servers.
+- Artifact-aware timeout handling in `BashTool`: when deliverables are produced before a timeout, return `is_error: false` with the inventory of created artifacts.
+- Support parsing fenced bash/sh scripts in text tool call fallback.
+- Enforce execution receipt gate when model response claims execution or emits shell scripts without tool calls having run.
+
 ## 3.0.69 — 2026-09-12
 
 ### Stop Policy Refinement, Error Acknowledgment Reporting, and Full Release Consolidation
