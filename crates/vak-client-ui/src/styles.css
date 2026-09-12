@@ -731,6 +731,9 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 
 .semantic-recovery { display: flex; gap: 10px; margin: 16px 0; padding: 11px 12px; border: 1px solid var(--red); border-radius: var(--radius); color: var(--red); background: var(--surface); }
 .semantic-recovery p { margin: 3px 0 0; color: var(--text-soft); }
+.semantic-recovery-details { margin-top: 8px; color: var(--text-muted); font-size: 11px; }
+.semantic-recovery-details summary { cursor: pointer; user-select: none; }
+.semantic-recovery-details pre { max-height: 180px; overflow: auto; margin: 7px 0 0; padding: 8px; border-radius: var(--radius-sm); background: var(--surface-subtle); color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 .semantic-audit { margin-top: 16px; border-top: 1px solid var(--border-soft); color: var(--muted); }
 .semantic-audit > summary { padding: 9px 2px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .semantic-audit > summary span { margin-left: 5px; color: var(--faint); font-weight: 500; }

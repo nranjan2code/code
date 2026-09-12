@@ -305,14 +305,29 @@ function Artifact(props: { item: OutputItem }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const path = () => artifact.path ?? null;
-  if (path() && /\.html?$/i.test(path()!)) return <UIPreviewCard data={{ title: artifact.name, artifact_path: path()! }} />;
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
-      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => openWorkbenchArtifact(value())}>Open</button>}</Show>
+      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => openWorkbenchArtifact(value())}>{/\.html?$/i.test(value()) ? "Open preview" : "Open"}</button>}</Show>
     </article>
   );
+}
+
+function compactFailure(text: string): { summary: string; details: string } {
+  const details = text.trim();
+  const cleaned = stripControlScaffolding(details)
+    .replace(/\[working directory:[^\]]*\]\s*/gi, "")
+    .replace(/\[file:[^\]]*\]\s*/gi, "")
+    .replace(/\[(?:stdout|stderr)\]\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const packageError = cleaned.match(/(?:Error:\s*)?Cannot find package ['\"]([^'\"]+)['\"]/i);
+  if (packageError) return { summary: `Cannot find package “${packageError[1]}”.`, details };
+  const first = (cleaned.split(/(?:\s+at\s+|\s+\[exit code|\s+exit code:)/i)[0] ?? cleaned)
+    .replace(/^Error:\s*/i, "")
+    .trim();
+  return { summary: first ? `${first.slice(0, 220)}${first.length > 220 ? "…" : ""}` : "The sandbox step failed.", details };
 }
 
 function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
@@ -932,8 +947,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         ? (item.fallback_text.includes("unknown_capability")
             ? "The requested capability or web integration is currently unavailable for this query."
             : "Tool execution required attention.")
-        : item.fallback_text;
-      return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{text}</p></div></section>;
+        : compactFailure(item.fallback_text).summary;
+      const details = isRawJson ? item.fallback_text : compactFailure(item.fallback_text).details;
+      return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{text}</p><details class="semantic-recovery-details"><summary>View details</summary><pre>{details}</pre></details></div></section>;
     }
     if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;

@@ -676,11 +676,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     if (index === turns().length - 1 && isRunning(sid())) return null;
     return { ...timeline, items };
   };
-  const artifacts = () => {
-    const timeline = presentationOf(sid());
-    if (!timeline) return null;
-    return { ...timeline, items: timeline.items.filter((item) => item.turn_id.startsWith("sandbox-") || (item.turn_id.startsWith("live-") && item.kind === "artifact")) };
-  };
   return (
     <div class="chat-shell">
       <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
@@ -697,7 +692,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                   {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}
                 </Show>
               }</Index>
-              <Show when={artifacts()}>{(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}</Show>
               <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
             </Show>
           </Show>
