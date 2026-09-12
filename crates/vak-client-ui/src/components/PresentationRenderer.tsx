@@ -7,7 +7,9 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { density, openInEditor, presentationMode, uiPreferences } from "../store";
+import { density, openInEditor, openWorkbenchArtifact, presentationMode, uiPreferences } from "../store";
+import MarkdownView from "./MarkdownView";
+import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import { safeUrl } from "../safeUrl";
@@ -24,16 +26,16 @@ import MermaidViewer from "./presentation/MermaidViewer";
 import UIPreviewCard from "./presentation/UIPreviewCard";
 import UniversalCard from "./presentation/UniversalCard";
 
-// Advanced is still a user-facing presentation. Operator chrome is reserved
-// for development builds so production never becomes a ledger UI.
-const showOperatorChrome = () => import.meta.env.DEV && presentationMode() === "advanced";
+// Everyday and Advanced are user-facing surfaces, including in development.
+// Runtime diagnostics belong in the explicit transcript/receipts views.
+const showOperatorChrome = () => false;
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
 import { parseVakFence, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
  *  visual identity when ChatPane switches to PresentationTimelineView. */
-function AssistantMessage(props: { children: JSX.Element }) {
+function AssistantMessage(props: { children: JSX.Element; text?: string }) {
   return (
     <div class="semantic-assistant">
       <div class="assistant-turn-head">
@@ -44,9 +46,18 @@ function AssistantMessage(props: { children: JSX.Element }) {
       </div>
       <div class="assistant-turn-body">
         {props.children}
+        <Show when={props.text}><MessageActions text={props.text!} role="assistant" /></Show>
       </div>
     </div>
   );
+}
+
+function UserMessage(props: { document: PresentationDocument; text: string }) {
+  return <div class="msg user"><div class="msg-bubble-wrap">
+    <div class="user-turn-head"><span class="turn-author-chip">You</span></div>
+    <div class="msg-user-content"><PresentationDocumentView document={props.document} /></div>
+    <MessageActions text={props.text} role="user" />
+  </div></div>;
 }
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
@@ -294,11 +305,12 @@ function Artifact(props: { item: OutputItem }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const path = () => artifact.path ?? null;
+  if (path() && /\.html?$/i.test(path()!)) return <UIPreviewCard data={{ title: artifact.name, artifact_path: path()! }} />;
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
-      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => void openFileSmart(value())}>Open</button>}</Show>
+      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => openWorkbenchArtifact(value())}>Open</button>}</Show>
     </article>
   );
 }
@@ -435,7 +447,9 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string }
 
 export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
-  const fallback = () => <div class="semantic-source">{props.fallback || JSON.stringify(props.output.payload, null, 2)}</div>;
+  const fallback = () => props.fallback && !parseVakFence(props.fallback)
+    ? <MarkdownView text={props.fallback} />
+    : <details class="tool-details"><summary>View original result</summary><pre>{props.fallback || JSON.stringify(props.output.payload, null, 2)}</pre></details>;
   return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
       <Show when={showOriginal() && showOperatorChrome()} fallback={
@@ -880,7 +894,7 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
     <div class="rich-structured-card">
       <div class="rich-structured-header"><strong>Presentation unavailable</strong><small>{props.output.semantic_type}</small></div>
       <p class="rich-structured-summary">No renderer is registered for this semantic type. The original result is preserved below.</p>
-      <div class="semantic-source">{JSON.stringify(payload, null, 2)}</div>
+      <details class="tool-details"><summary>View original result</summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
     </div>
   );
 }
@@ -890,12 +904,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const ordered = () => props.items.filter((item) => (presentationMode() === "everyday" ? "outcome" : density()) !== "outcome" || !["progress", "retry", "information"].includes(item.kind));
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {
-      return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
+      return <UserMessage document={item.content.document} text={item.fallback_text} />;
     }
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
     if (item.content.type === "document") return showOperatorChrome()
       ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>
-      : item.role === "user" ? <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div> : <AssistantMessage><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      : item.role === "user" ? <UserMessage document={item.content.document} text={item.fallback_text} /> : <AssistantMessage text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     if (item.content.type === "outcome") {
       if (showOperatorChrome()) {
         return (
@@ -908,7 +922,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       }
       // Never leak internal lifecycle metadata (e.g. "primary deliverable: produced", "completed") as assistant prose
       if (!item.content.document) return null;
-      return <AssistantMessage><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      return <AssistantMessage text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     }
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
@@ -1042,7 +1056,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       }
       grouped.get(item.turn_id)!.push(item);
     }
-    return order.map((id) => ({ id, items: grouped.get(id)! }));
+    return order;
   });
   return <div class="semantic-timeline">
     <Show when={showOperatorChrome() && props.timeline.goal}>{(goal) => <details class="goal-state" open={goal().control !== "active"}>
@@ -1051,6 +1065,6 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
     </details>}</Show>
-    <For each={turns()}>{(turn) => <Turn id={turn.id} items={turn.items} sessionId={props.sessionId} />}</For>
+    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id)} sessionId={props.sessionId} />}</For>
   </div>;
 }

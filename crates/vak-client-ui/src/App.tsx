@@ -201,12 +201,13 @@ async function hydrate(id: string) {
       hydrateFromTranscript(id, t.messages);
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
+    }
+    if (activeId() === id) {
       setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
-      hydrateWorkbenchExecutions(sandbox.events);
+      hydrateWorkbenchExecutions(sandbox.events, isRunning(id));
     }
   } catch (error) {
     if (!isRunning(id)) {
-      clearPresentation(id);
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
@@ -1209,9 +1210,9 @@ export default function App() {
               >
                 <div class="dock-tabs">
                   <For each={[
-                    ["workbench", "Result", "preview"],
-                    ["diff", "Review", "diff"],
-                    ["terminal", "Activity", "pulse"],
+                    ["workbench", "Files", "preview"],
+                    ["diff", "Changes", "diff"],
+                    ["terminal", "Terminal", "terminal"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button

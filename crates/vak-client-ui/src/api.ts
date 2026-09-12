@@ -807,11 +807,6 @@ export async function readFileRaw(path: string): Promise<string> {
   return URL.createObjectURL(await response.blob());
 }
 
-/** Same-origin preview URL for compound artifacts with relative assets. */
-export function previewFileUrl(path: string): string {
-  return `/fs/preview/${path.split("/").map(encodeURIComponent).join("/")}`;
-}
-
 export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
 }

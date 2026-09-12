@@ -142,7 +142,7 @@ export interface WorkbenchExecution {
   memoryBytes?: number;
   cpuPercent?: number;
   packages: string[];
-  artifacts: Array<{ path: string; mimeType: string; sizeBytes: number }>;
+  artifacts: Array<{ path: string; mimeType: string; sizeBytes: number; revision?: number }>;
   timestamp: string;
 }
 
@@ -163,7 +163,13 @@ export function openWorkbenchExecution(execId?: string) {
   setDockTab("workbench");
 }
 
-export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>>) {
+export const [requestedArtifact, setRequestedArtifact] = createSignal<string | null>(null);
+export function openWorkbenchArtifact(path: string) {
+  setRequestedArtifact(path);
+  setDockTab("workbench");
+}
+
+export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>>, preferLive = false) {
   const rebuilt = new Map<string, WorkbenchExecution>();
   for (const raw of events) {
     const kind = raw.kind as string | undefined;
@@ -203,13 +209,13 @@ export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>
       }
     }
     else if (kind === "ArtifactGenerated") {
-      const artifact = { path: String(raw.path ?? ""), mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) };
-      if (!current.artifacts.some((item) => item.path === artifact.path)) current.artifacts.push(artifact);
+      const artifact = { path: String(raw.path ?? ""), revision: (current.artifacts.find((item) => item.path === raw.path)?.revision ?? 0) + 1, mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) };
+      current.artifacts = [...current.artifacts.filter((item) => item.path !== artifact.path), artifact];
     }
     else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
     else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
   }
-  if (rebuilt.size) setWorkbenchExecutions((prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) merged.set(id, item); return [...merged.values()]; });
+  if (rebuilt.size) setWorkbenchExecutions((prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
 }
 
 /** A Workbench is scoped to the currently selected task, never global app history. */
@@ -217,6 +223,8 @@ export function resetWorkbenchExecutions() {
   setWorkbenchExecutions([]);
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
+  setRequestedArtifact(null);
+  setActiveComponentPreview(null);
 }
 
 export interface ActiveComponentPreview {
@@ -278,11 +286,6 @@ export const [everydayRailOpen, setEverydayRailOpen] = createSignal(false);
 export function setPresentationMode(mode: PresentationMode) {
   setPresentationModeSignal(mode);
   localStorage.setItem("vak.presentationMode", mode);
-  if (mode === "advanced" && !dockTab()) {
-    setDockTab("workbench");
-  } else if (mode === "everyday" && dockTab() === "workbench") {
-    setDockTab(null);
-  }
 }
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
@@ -962,6 +965,7 @@ export function applyEvent(
     cueTurnFinish(ev.RunFinished.is_error);
     opts.onFinish?.(ev.RunFinished.summary);
   } else if ("Sandbox" in ev) {
+    if (id !== activeId()) return;
     const sb = ev.Sandbox;
     if (sb.kind === "ExecutionStarted") {
       const execId = sb.execution_id;
@@ -1024,15 +1028,15 @@ export function applyEvent(
       if (execId) {
         // A deliverable is the primary outcome of execution. Surface the
         // result pane as soon as one exists; activity remains one click away.
-        setDockTab("workbench");
         setWorkbenchExecutions((prev) =>
           prev.map((e) =>
             e.id === execId
               ? {
                   ...e,
-                  artifacts: e.artifacts.some((artifact) => artifact.path === sb.path)
-                    ? e.artifacts
-                    : [...e.artifacts, { path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes }],
+                  artifacts: [...e.artifacts.filter((artifact) => artifact.path !== sb.path), {
+                    path: sb.path, mimeType: sb.mime_type, sizeBytes: sb.size_bytes,
+                    revision: (e.artifacts.find((artifact) => artifact.path === sb.path)?.revision ?? 0) + 1,
+                  }],
                 }
               : e
           )

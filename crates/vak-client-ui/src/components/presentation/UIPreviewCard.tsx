@@ -1,8 +1,9 @@
-import { createEffect, createSignal, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import Icon from "../Icon";
 import { openComponentPreview } from "../../store";
 import * as api from "../../api";
 import { sandboxedSrcdoc } from "../../safeUrl";
+import { artifactPreviewHtml } from "../../artifactPreview";
 
 export interface UIPreviewData {
   status?: string;
@@ -19,37 +20,31 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
   const [htmlContent, setHtmlContent] = createSignal<string>(props.data.html ?? "");
   const [loading, setLoading] = createSignal(!props.data.html);
   const [error, setError] = createSignal<string | null>(null);
-  const [reloadKey, setReloadKey] = createSignal(0);
+  const [previewHtml, setPreviewHtml] = createSignal("");
+  let request = 0;
+  onCleanup(() => { request += 1; });
   const [copied, setCopied] = createSignal(false);
   const [copyFailed, setCopyFailed] = createSignal(false);
 
   const path = () => props.data.artifact_path ?? "";
 
   const loadContent = async () => {
-    if (props.data.html) {
-      setHtmlContent(props.data.html);
-      setLoading(false);
-      return;
-    }
+    const generation = ++request;
     const p = path();
-    if (!p) {
-      setError("No artifact path or HTML content provided.");
-      setLoading(false);
-      return;
-    }
+    const inline = props.data.html;
     setLoading(true);
     setError(null);
     try {
-      const res = await api.readFile(p);
-      if (res.content !== undefined) {
-        setHtmlContent(res.content);
-      } else {
-        setError("Unable to read preview artifact content.");
-      }
+      const html = inline ?? (p ? (await api.readFile(p)).content : undefined);
+      if (html === undefined) throw new Error("Preview file is unavailable. Reload to try again.");
+      const prepared = p ? await artifactPreviewHtml(p, html) : sandboxedSrcdoc(html);
+      if (generation !== request) return;
+      setHtmlContent(html);
+      setPreviewHtml(prepared);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (generation === request) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (generation === request) setLoading(false);
     }
   };
 
@@ -59,7 +54,6 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
   });
 
   const reloadPreview = () => {
-    setReloadKey((k) => k + 1);
     void loadContent();
   };
 
@@ -76,14 +70,6 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
     });
   };
 
-  const openInNewWindow = () => {
-    const html = htmlContent();
-    if (!html) return;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
   const handleCopySource = async () => {
     setCopyFailed(false);
     try {
@@ -97,7 +83,6 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
   };
 
   const title = () => props.data.title || "Interactive Component Preview";
-  const connectStatus = () => props.data.connect_src ?? "blocked";
 
   return (
     <div class="canvas-card ui-preview-card">
@@ -105,17 +90,7 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
         <div class="card-title-group">
           <span class="card-badge badge-indigo">UI Preview</span>
           <strong style="font-size: 12.5px; color: var(--text);">{title()}</strong>
-          <span class="card-subtitle">
-            <Show when={props.data.preview_id}>
-              <code>{props.data.preview_id}</code> ·{" "}
-            </Show>
-            <span
-              style="font-size: 10.5px; opacity: 0.85;"
-              title={`Network connect-src is ${connectStatus()}`}
-            >
-              net: {connectStatus()}
-            </span>
-          </span>
+
         </div>
         <div class="card-actions" style="display: flex; gap: 6px; align-items: center;">
           <button
@@ -135,18 +110,11 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
           </button>
           <button
             class="pill-action-btn"
-            onClick={openInNewWindow}
-            title="Open preview in a standalone window"
-          >
-            Popout
-          </button>
-          <button
-            class="pill-action-btn"
             style="background: color-mix(in srgb, var(--accent-bright) 16%, transparent); color: var(--accent-bright); border-color: color-mix(in srgb, var(--accent-bright) 30%, transparent);"
             onClick={openInDock}
-            title="Open in Right Bar Preview Pane"
+            title="Open larger preview"
           >
-            <Icon name="preview" size={12} /> Right Bar
+            <Icon name="preview" size={12} /> Expand
           </button>
         </div>
       </div>
@@ -167,10 +135,10 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
         <Show when={viewMode() === "preview"}>
           <div
             class="ui-preview-stage"
-            style="position: relative; width: 100%; height: 390px; background: #0b0d13; overflow: hidden; border-top: 1px solid var(--border-soft);"
+            style="position: relative; width: 100%; height: 390px; background: var(--surface); overflow: hidden; border-top: 1px solid var(--border-soft);"
           >
             <iframe
-              srcdoc={sandboxedSrcdoc(htmlContent(), connectStatus())}
+              srcdoc={previewHtml()}
               title={title()}
               sandbox="allow-scripts"
               style="width: 100%; height: 100%; border: 0; display: block;"

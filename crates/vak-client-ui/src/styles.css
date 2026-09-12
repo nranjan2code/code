@@ -578,7 +578,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .goal-state-objective { margin: 8px 0 4px; color: var(--text-primary); }
 .goal-state ul { margin: 6px 0 0 18px; color: var(--text-secondary); }
 .goal-state small { color: var(--text-tertiary); }
-.semantic-turn { margin-bottom: 30px; content-visibility: auto; contain-intrinsic-size: 240px; }
+.semantic-turn { margin-bottom: 30px; }
 .semantic-user { display: flex; justify-content: flex-end; margin-bottom: 18px; }
 .semantic-user .semantic-document { max-width: min(78%, 650px); padding: 9px 13px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
 .semantic-outcome { color: var(--text-soft); }
@@ -4925,3 +4925,5 @@ body.is-resizing .split-divider {
   .workbench-run-detail, .artifact-viewer { padding: 8px; }
   .workbench-panel button { min-height: 36px; }
 }
+
+.msg-user-content .semantic-document { padding: 12px 18px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface-raised); overflow-wrap: anywhere; }

@@ -1,6 +1,21 @@
 import { For, Show, createMemo } from "solid-js";
 import { activeId, hydratingId, presentationErrorOf, presentationOf, presentationMode, setDockTab, setEverydayRailOpen, workbenchExecutions } from "../store";
 import Icon, { type IconName } from "./Icon";
+import { assistantParts } from "../structured";
+import type { OutputItem } from "../types";
+
+function resultLabel(item: OutputItem): string {
+  if (item.content.type === "artifact") return item.content.artifact.name;
+  if (item.content.type === "structured") {
+    const label = item.content.output.payload.title ?? item.content.output.payload.label;
+    return typeof label === "string" ? label : "Result";
+  }
+  if (item.content.type === "document") {
+    const prose = assistantParts(item.content.document.source_markdown).find((part) => part.type === "text");
+    return prose?.type === "text" ? prose.text : "Result";
+  }
+  return "Result";
+}
 
 /**
  * The Everyday companion rail provides a stable, clean place for useful context:
@@ -17,7 +32,6 @@ export default function EverydayContextRail(props: { onRetry?: (id: string) => v
   const files = createMemo(() => workbenchExecutions()
     .filter((execution) => !execution.ownerSessionId || execution.ownerSessionId === task())
     .reduce((count, execution) => count + execution.artifacts.length, 0));
-  const notes = createMemo(() => timeline()?.items.filter((item) => item.kind === "outcome").length ?? 0);
   const nextSteps = createMemo(() => timeline()?.goal?.additions.length ?? 0);
 
   return (
@@ -54,10 +68,10 @@ export default function EverydayContextRail(props: { onRetry?: (id: string) => v
           </Show>
           <Show when={!loading() && !presentationError() && (timeline()?.items.length ?? 0) === 0} fallback={
             <div class="everyday-rail-preview" aria-label="Conversation highlights">
-              <For each={timeline()?.items.slice(0, 4) ?? []}>
+              <For each={timeline()?.items.filter((item) => item.role !== "user" && ["document", "structured", "artifact"].includes(item.content.type)).slice(-3) ?? []}>
                 {(item) => <div class="everyday-rail-preview-row">
                   <span class="dot" classList={{ run: item.status === "running" }} />
-                  <span>{item.fallback_text || (item.kind === "outcome" ? "Result" : "Conversation update")}</span>
+                  <span>{resultLabel(item)}</span>
                 </div>}
               </For>
             </div>
@@ -71,8 +85,7 @@ export default function EverydayContextRail(props: { onRetry?: (id: string) => v
           </Show>
 
           <div class="everyday-rail-sections">
-            <RailSection label="Results" count={files()} icon="preview" tab="workbench" />
-            <RailSection label="What happened" count={notes()} icon="receipt" tab="workbench" />
+            <RailSection label="Files" count={files()} icon="preview" tab="workbench" />
             <RailSection label="Next steps" count={nextSteps()} icon="spark" tab="commitments" />
           </div>
         </div>

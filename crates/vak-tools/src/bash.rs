@@ -251,25 +251,18 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths.clone());
                 }
-                // When a command times out but produced artifacts (e.g. wrote
-                // an HTML file then launched a blocking foreground server), the
-                // deliverable succeeded — the timeout was caused by a dangling
-                // process, not a failure to produce the result. Tell the model
-                // what was created so it does not apologize and dump code into
-                // chat text.
-                let has_artifacts = !paths.is_empty();
                 let mut reason = format!("command timed out after {timeout_ms}ms");
-                if has_artifacts {
+                if !paths.is_empty() {
                     reason.push_str(&format!(
-                        ". However, {} artifact(s) were successfully created before timeout: {}. \
-                         These are rendered live in the Workbench preview.",
+                        ". {} file(s) were preserved before timeout: {}. \
+                         Read and verify them before claiming completion; any foreground server was stopped.",
                         paths.len(),
                         paths.join(", ")
                     ));
                 }
                 return ToolOutput {
                     content: interrupted_output(&out, &err, &reason),
-                    is_error: !has_artifacts,
+                    is_error: true,
                 };
             }
             _ = cancelled => {
@@ -324,6 +317,12 @@ impl Tool for BashTool {
                 }
 
                 let mut text = String::new();
+                if quarantine || !new_artifacts.is_empty() {
+                    text.push_str(&format!("[working directory: {}]\n", execution_dir.display()));
+                    for (path, _, _) in &new_artifacts {
+                        text.push_str(&format!("[file: {}]\n", ctx.cwd.join(path).display()));
+                    }
+                }
                 if !out.is_empty() {
                     text.push_str("[stdout]\n");
                     text.push_str(&out);
@@ -544,7 +543,7 @@ fn collect_candidate_files(
             .follow_links(false)
             .max_depth(if workspace_scan { 4 } else { usize::MAX })
             .into_iter()
-            .filter_entry(|entry| !workspace_scan || !skip_workspace_dir(entry.path()))
+            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
             .filter_map(Result::ok)
             .take(MAX_SCAN_ENTRIES);
         for entry in walker {
@@ -604,6 +603,7 @@ fn scan_new_candidate_artifacts(
         for entry in walkdir::WalkDir::new(scratch_dir)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
             .filter_map(Result::ok)
             .take(MAX_SCAN_ENTRIES)
         {
@@ -628,7 +628,19 @@ fn scan_new_candidate_artifacts(
 fn skip_workspace_dir(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | "target" | "node_modules" | ".vak-home"))
+        .is_some_and(|name| {
+            matches!(
+                name,
+                ".git"
+                    | "target"
+                    | "node_modules"
+                    | ".vak-home"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | ".cache"
+            )
+        })
 }
 
 fn is_user_visible_artifact(path: &std::path::Path) -> bool {
@@ -1055,6 +1067,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn timeout_preserves_files_without_claiming_success() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, mut events) = SandboxEventSink::new_with_id("timeout-file".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+        let out = super::BashTool.execute(
+            &serde_json::json!({"command": "printf partial > result.html; sleep 3", "timeout_ms": 1000}),
+            &ctx,
+        ).await;
+        assert!(
+            out.is_error,
+            "A file cannot prove a timed-out command succeeded"
+        );
+        assert!(out.content.contains("result.html"));
+        assert!(
+            workspace
+                .path()
+                .join(".vak/scratch/timeout-file/result.html")
+                .is_file()
+        );
+        let mut artifact = false;
+        while let Ok(event) = events.try_recv() {
+            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
+                artifact |= path.ends_with("result.html");
+            }
+        }
+        assert!(artifact);
+    }
+
+    #[tokio::test]
     async fn quarantined_command_can_write_to_dot_vak_scratch() {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
@@ -1076,6 +1119,7 @@ mod tests {
             .path()
             .join(".vak/scratch/test-scratch-write/quick_react_dashboard.html");
         assert!(created.is_file(), "file should exist at {:?}", created);
+        assert!(out.content.contains(&created.display().to_string()));
         let mut saw_artifact = false;
         while let Ok(event) = events.try_recv() {
             if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {

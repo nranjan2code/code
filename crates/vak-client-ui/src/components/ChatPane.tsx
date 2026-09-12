@@ -1,13 +1,15 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, setNotice, toggleItemExpanded, type Item } from "../store";
+import { createStore, reconcile } from "solid-js/store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, presentationMode, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
-import type { StructuredOutput } from "../types";
+import MessageActions from "./MessageActions";
+import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
 import * as api from "../api";
 import "../focusTrap";
-import { cleanAssistantText, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, cleanAssistantText, parseVakFence, stripControlScaffolding } from "../structured";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -369,53 +371,6 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   );
 };
 
-function MessageActions(props: { text: string; role: "user" | "assistant" }) {
-  const [copied, setCopied] = createSignal(false);
-  const [copyFailed, setCopyFailed] = createSignal(false);
-  const copy = async () => {
-    setCopyFailed(false);
-    try {
-      await navigator.clipboard.writeText(props.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      setCopyFailed(true);
-    }
-  };
-  const editPrompt = () => {
-    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: props.text } }));
-  };
-
-  return (
-    <div class={`msg-actions msg-actions-${props.role}`} aria-label="Message actions">
-      <button
-        type="button"
-        class="msg-action-btn"
-        title={copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy text"}
-        aria-label={copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy text"}
-        onClick={copy}
-      >
-        <Show when={copied()} fallback={<Icon name="copy" size={11} />}>
-          <Icon name="check" size={11} />
-        </Show>
-        <span>{copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy"}</span>
-      </button>
-      <Show when={props.role === "user"}>
-        <button
-          type="button"
-          class="msg-action-btn"
-          title="Edit prompt in composer"
-          aria-label="Edit prompt in composer"
-          onClick={editPrompt}
-        >
-          <Icon name="code" size={11} />
-          <span>Edit</span>
-        </button>
-      </Show>
-    </div>
-  );
-}
-
 /** Arg keys that name the subject of a webfetch-style tool call. */
 const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
 
@@ -545,43 +500,10 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
       </div>
     );
   }
-  if (item.kind === "assistant") {
-    const displayText = () => cleanAssistantText(item.text);
-
-    if (!item.streaming && !displayText().trim()) {
-      return null;
-    }
-
-    return (
-      <div class="msg assistant">
-        <div class="assistant-turn-head">
-          <span class="assistant-avatar-mark">
-            <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
-          </span>
-          <span class="assistant-name">Vak</span>
-          <Show when={item.streaming}>
-            <span class="assistant-live-pulse" title="Generating">
-              <span class="dot run" />
-            </span>
-          </Show>
-        </div>
-        <div class="assistant-turn-body">
-          <Show when={displayText()}>
-            <Markdown text={displayText()} streaming={item.streaming} />
-          </Show>
-          <Show when={item.streaming && !displayText()}>
-            <span class="caret" />
-          </Show>
-          <Show when={!item.streaming && displayText()}>
-            <MessageActions text={displayText()} role="assistant" />
-          </Show>
-        </div>
-      </div>
-    );
-  }
+  if (item.kind === "assistant") return <AssistantItem item={item} sessionId={props.sessionId} />;
   if (item.kind === "thinking") {
     return (
-      <details class="thinking" open={!item.done}>
+      <details class="thinking">
         <summary class="thinking-summary">
           <span class="thinking-sparkle"><Icon name="spark" size={13} /></span>
           <span>{item.done ? "Thought process" : "Thinking…"}</span>
@@ -610,11 +532,47 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
   return <div class="sysnote">{item.text}</div>;
 };
 
+function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sessionId?: string | null }) {
+    const [content, setContent] = createStore<{ parts: ReturnType<typeof assistantParts> }>({ parts: [] });
+    createEffect(() => setContent("parts", reconcile(assistantParts(props.item.text, props.item.streaming), { key: null })));
+    const parts = () => content.parts;
+    const displayText = () => parts().filter((part) => part.type === "text").map((part) => part.text).join("\n\n");
+
+
+    return (
+      <div class="msg assistant">
+        <div class="assistant-turn-head">
+          <span class="assistant-avatar-mark">
+            <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
+          </span>
+          <span class="assistant-name">Vak</span>
+          <Show when={props.item.streaming}>
+            <span class="assistant-live-pulse" title="Generating">
+              <span class="dot run" />
+            </span>
+          </Show>
+        </div>
+        <div class="assistant-turn-body">
+          <For each={parts()}>{(part) => part.type === "text"
+            ? <Markdown text={part.text} streaming={props.item.streaming} />
+            : <StructuredView output={part.output} fallback={part.source} sessionId={props.sessionId ?? undefined} />}</For>
+          <Show when={props.item.streaming && !displayText()}>
+            <span class="caret" />
+          </Show>
+          <Show when={!props.item.streaming && displayText()}>
+            <MessageActions text={displayText()} role="assistant" />
+          </Show>
+        </div>
+      </div>
+    );
+}
+
 export default function ChatPane(props: { sessionId?: string | null }) {
   // In split view each pane renders ITS OWN session; without the prop the
   // pane follows the global focus (previous behavior, unchanged).
   const sid = () => props.sessionId ?? activeId();
   let scroller!: HTMLDivElement;
+  let content!: HTMLDivElement;
   let pinned = true;
   let scrollFrame: number | null = null;
   let smoothScrolling = false;
@@ -622,6 +580,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const [atBottom, setAtBottom] = createSignal(true);
 
   const onScroll = () => {
+    if (smoothScrolling) return;
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
     setAtBottom(pinned);
   };
@@ -630,7 +589,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       smoothScrolling = true;
       if (smoothTimer !== null) clearTimeout(smoothTimer);
       smoothTimer = window.setTimeout(() => { smoothScrolling = false; }, 400);
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: uiPreferences.reduceMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
       pinned = true;
       setAtBottom(true);
       return;
@@ -660,7 +619,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     void id;
     pinned = true;
     setAtBottom(true);
-    queueMicrotask(() => scheduleScroll(true));
+    queueMicrotask(() => scheduleScroll());
   });
 
   createEffect(() => {
@@ -690,32 +649,60 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       }
     });
     observer.observe(scroller, { childList: true, subtree: true, characterData: true });
-    onCleanup(() => observer.disconnect());
+    const resize = new ResizeObserver(() => { if (pinned) scheduleScroll(); });
+    resize.observe(content);
+    onCleanup(() => { observer.disconnect(); resize.disconnect(); });
   });
 
   onCleanup(() => {
     if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
     if (smoothTimer !== null) clearTimeout(smoothTimer);
   });
-
-
+  const turns = createMemo(() => {
+    const grouped: Item[][] = [[]];
+    for (const item of itemsOf(sid())) {
+      if (item.kind === "user") grouped.push([]);
+      grouped[grouped.length - 1].push(item);
+    }
+    return grouped;
+  });
+  const projectedTurn = (index: number) => {
+    const timeline = presentationOf(sid());
+    if (!timeline) return null;
+    const items = timeline.items.filter((item) => item.turn_id === `turn-${index}`);
+    // Live frames have separate IDs. A durable turn replaces its transcript
+    // only when its assistant output is available, never at RunFinished alone.
+    if (!items.some((item) => item.role === "assistant" && ["document", "structured", "adaptive"].includes(item.content.type))) return null;
+    if (index === turns().length - 1 && isRunning(sid())) return null;
+    return { ...timeline, items };
+  };
+  const artifacts = () => {
+    const timeline = presentationOf(sid());
+    if (!timeline) return null;
+    return { ...timeline, items: timeline.items.filter((item) => item.turn_id.startsWith("sandbox-") || (item.turn_id.startsWith("live-") && item.kind === "artifact")) };
+  };
   return (
     <div class="chat-shell">
       <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
       <div class="chat" ref={scroller} onScroll={onScroll}>
+        <div ref={content}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
-          <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
+          <Show when={hydratingId() !== sid() || itemsOf(sid()).length > 0} fallback={<TranscriptSkeleton />}>
             {/* Unified continuous chat canvas: The transcript stays permanently mounted
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
-              <For each={visibleItems(itemsOf(sid()))}>
-                {(it) => <ItemView item={it} sessionId={sid()} />}
-              </For>
+              <Index each={turns()}>{(turn, index) =>
+                <Show when={projectedTurn(index)} fallback={<Index each={visibleItems(turn())}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
+                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}
+                </Show>
+              }</Index>
+              <Show when={artifacts()}>{(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}</Show>
               <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
             </Show>
           </Show>
         </Show>
+        </div>
       </div>
       <Show when={!atBottom()}>
         <button type="button" class="scroll-latest" onClick={() => scrollToBottom(true)}>

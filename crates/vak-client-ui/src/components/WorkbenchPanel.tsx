@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   workbenchLoadError,
@@ -7,10 +7,12 @@ import {
   setWorkbenchExecutions,
   type WorkbenchExecution,
   activeId,
+  requestedArtifact,
+  setRequestedArtifact,
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
-import { sandboxedSrcdoc } from "../safeUrl";
+import { artifactPreviewHtml } from "../artifactPreview";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -114,6 +116,7 @@ function renderAnsiToHtml(rawText: string): string {
 export default function WorkbenchPanel() {
   const [tab, setTab] = createSignal<"execution" | "artifacts">("execution");
   const [selectedArtifact, setSelectedArtifact] = createSignal<string | null>(null);
+  const [artifactPreview, setArtifactPreview] = createSignal("");
   const [artifactContent, setArtifactContent] = createSignal<string | null>(null);
   const [artifactDataUrl, setArtifactDataUrl] = createSignal<string | null>(null);
   const [loadingArtifact, setLoadingArtifact] = createSignal(false);
@@ -133,12 +136,23 @@ export default function WorkbenchPanel() {
   const pulseTimer = window.setInterval(() => setPulse((value) => value + 1), 1000);
   onCleanup(() => window.clearInterval(pulseTimer));
   onCleanup(() => {
+    artifactRequest += 1;
     const url = artifactDataUrl();
     if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
   });
 
   let terminalRef: HTMLDivElement | undefined;
   let artifactRequest = 0;
+
+  createEffect(() => {
+    void activeId();
+    artifactRequest += 1;
+    setSelectedArtifact(null);
+    setArtifactContent(null);
+    setArtifactError(null);
+    setCandidate(null);
+    setPromotionMessage(null);
+  });
 
   const executions = () => workbenchExecutions();
   const currentExec = () => {
@@ -164,6 +178,7 @@ export default function WorkbenchPanel() {
       sizeBytes: number;
       execCommand: string;
       timestamp: string;
+      revision?: number;
     }> = [];
     for (const e of executions()) {
       for (const a of e.artifacts) {
@@ -174,7 +189,7 @@ export default function WorkbenchPanel() {
         });
       }
     }
-    return list;
+    return [...new Map(list.map((artifact) => [artifact.path, artifact])).values()];
   };
 
   const isAnyRunning = () => executions().some((e) => e.status === "running");
@@ -242,7 +257,10 @@ export default function WorkbenchPanel() {
       if (res.data_url) {
         setArtifactDataUrl(res.data_url);
       } else if (res.content !== undefined) {
+        const preview = /\.html?$/i.test(path) ? await artifactPreviewHtml(path, res.content) : "";
+        if (request !== artifactRequest) return;
         setArtifactContent(res.content);
+        setArtifactPreview(preview);
       } else {
         // Large/opaque formats use the authenticated raw endpoint instead of
         // forcing every renderer through a base64 JSON response.
@@ -261,6 +279,20 @@ export default function WorkbenchPanel() {
     }
   };
 
+  createEffect(() => {
+    const path = requestedArtifact();
+    if (path) { void inspectArtifact(path); setRequestedArtifact(null); }
+  });
+
+  const artifactVersion = createMemo(() => allArtifacts().find((artifact) => artifact.path === selectedArtifact())?.revision ?? 0);
+  let shownVersion = 0;
+  createEffect(() => {
+    const version = artifactVersion();
+    const path = selectedArtifact();
+    if (path && version > shownVersion) void inspectArtifact(path);
+    shownVersion = version;
+  });
+
   // A produced file is the outcome of the turn, not an implementation detail.
   // Open the newest outcome automatically when the panel has no selection;
   // users can still switch to activity when they want the mechanics.
@@ -272,7 +304,7 @@ export default function WorkbenchPanel() {
   });
 
   const isHtmlArtifact = (path: string) =>
-    path.endsWith(".html") || path.endsWith(".htm");
+    /\.html?$/i.test(path);
 
   const isImageArtifact = (path: string, mime?: string) =>
     mime?.startsWith("image/") ||
@@ -360,7 +392,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "artifacts" }}
               onClick={() => setTab("artifacts")}
             >
-              Result ({allArtifacts().length})
+              Files<Show when={allArtifacts().length > 0}> ({allArtifacts().length})</Show>
             </button>
           </div>
           <Show when={executions().length > 0}>
@@ -387,22 +419,20 @@ export default function WorkbenchPanel() {
       </Show>
 
       {/* Main Content */}
-      <Show when={executions().length === 0}>
+      <Show when={executions().length === 0 && !selectedArtifact()}>
         <div class="workbench-empty-state">
           <Icon name="terminal" size={32} />
           <Show when={workbenchLoadError()}>
             <p class="error-state" role="alert">Sandbox telemetry unavailable: {workbenchLoadError()}. Reopen this task to retry.</p>
           </Show>
-          <p class="empty-title">No Sandbox Executions Yet</p>
+          <p class="empty-title">No activity yet</p>
           <p class="empty-desc">
-            When the agent runs bash commands, tests, scripts, or installs packages,
-            live stdout/stderr streams with ANSI styling, duration metrics, and scratch
-            artifacts appear here in real time.
+            Files and execution details will appear here as Vak works.
           </p>
         </div>
       </Show>
 
-      <Show when={executions().length > 0}>
+      <Show when={executions().length > 0 || selectedArtifact()}>
         <Show when={tab() === "execution"}>
           <div id="workbench-panel-execution" role="tabpanel" aria-labelledby="workbench-tab-execution" class="workbench-body">
             {/* Left list of runs */}
@@ -666,7 +696,7 @@ export default function WorkbenchPanel() {
               </div>
             </div>
             <div class="result-workspace">
-              <div class="artifacts-list-sidebar">
+              <Show when={allArtifacts().length > 0}><div class="artifacts-list-sidebar">
               <Show
                 when={allArtifacts().length > 0}
                   fallback={<div class="empty-list">Your finished files will appear here.</div>}
@@ -697,7 +727,7 @@ export default function WorkbenchPanel() {
               </div>
 
               {/* Artifact Preview Viewer */}
-              <div class="artifact-viewer">
+              </Show><div class="artifact-viewer">
               <Show
                 when={selectedArtifact()}
                 fallback={
@@ -721,7 +751,7 @@ export default function WorkbenchPanel() {
                   <Show when={isHtmlArtifact(selectedArtifact()!) && artifactContent() !== null}>
                     <div style={{ width: "100%", height: "100%", "min-height": "400px" }}>
                       <iframe
-                        srcdoc={sandboxedSrcdoc(artifactContent()!)}
+                        srcdoc={artifactPreview()}
                         sandbox="allow-scripts"
                         style={{
                           width: "100%",
