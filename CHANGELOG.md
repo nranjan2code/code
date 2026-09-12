@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.71 — 2026-09-12
+
+### Advanced Chat Duplication Fixes, Quarantined Scratch Resolution, and Multi-Workspace File Access
+
+- Eliminate duplicate event timeline rendering and duplicate avatar badges in Advanced chat mode.
+- Add dynamic scroll height observer in client UI to synchronize code blocks and live assistant outputs seamlessly.
+- Automatically provision relative `.vak/scratch -> ..` symlink within quarantined execution directory, allowing commands targeting `.vak/scratch/...` or `./...` to write deliverables reliably without path errors.
+- Resolve multi-workspace file operations in `vak-server` (`read_file`, `preview_file`, `write_file`) against the active session's authentic workspace rather than falling back only to the server's default root.
+- Bind re-attached sessions to their canonical workspace directory and pooled `Core` instance.
+
 ## 3.0.70 — 2026-09-12
 
 ### Universal Sandbox Execution Lifecycle, Artifact-Aware Timeout, and Fenced Bash Parser

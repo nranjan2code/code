@@ -104,6 +104,21 @@ impl Tool for BashTool {
                 .map(|sink| scratch_root.join(sink.execution_id()))
                 .unwrap_or_else(|| scratch_root.clone());
             let _ = std::fs::create_dir_all(&exec_dir);
+            let dot_vak = exec_dir.join(".vak");
+            let _ = std::fs::create_dir_all(&dot_vak);
+            let dot_scratch = dot_vak.join("scratch");
+            if !dot_scratch.exists() && !dot_scratch.is_symlink() {
+                #[cfg(unix)]
+                {
+                    if std::os::unix::fs::symlink("..", &dot_scratch).is_err() {
+                        let _ = std::fs::create_dir_all(&dot_scratch);
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = std::fs::create_dir_all(&dot_scratch);
+                }
+            }
             (exec_dir.clone(), exec_dir)
         } else {
             let _ = std::fs::create_dir_all(&scratch_root);
@@ -979,5 +994,36 @@ mod tests {
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("in-sub"));
+    }
+
+    #[tokio::test]
+    async fn quarantined_command_can_write_to_dot_vak_scratch() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, mut events) = SandboxEventSink::new_with_id("test-scratch-write".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+
+        let tool = super::BashTool;
+        let out = tool
+            .execute(
+                &serde_json::json!({
+                    "command": "cat > .vak/scratch/quick_react_dashboard.html <<'EOF'\n<h1>React Dashboard</h1>\nEOF"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "stdout/stderr: {}", out.content);
+        let created = workspace
+            .path()
+            .join(".vak/scratch/test-scratch-write/quick_react_dashboard.html");
+        assert!(created.is_file(), "file should exist at {:?}", created);
+        let mut saw_artifact = false;
+        while let Ok(event) = events.try_recv() {
+            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
+                saw_artifact |= path.contains("quick_react_dashboard.html");
+            }
+        }
+        assert!(saw_artifact, "artifact event should have been emitted");
     }
 }

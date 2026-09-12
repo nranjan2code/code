@@ -1,9 +1,8 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, presentationOf, setNotice, toggleItemExpanded, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openComponentPreview, openWorkbenchExecution, openInEditor, presentationMode, setNotice, toggleItemExpanded, type Item } from "../store";
 import { approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
-import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
 import type { StructuredOutput } from "../types";
 import * as api from "../api";
@@ -678,12 +677,22 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
 
   createEffect(() => {
-    // Projection changes alter transcript height even when item data does
-    // not. Reconcile the pinned state on the next paint.
+    // Density changes alter transcript layout. Reconcile the pinned state on next paint.
     void density();
-    void presentationOf(sid());
     scheduleScroll();
   });
+
+  onMount(() => {
+    // Keep scroller pinned when async markdown/code block syntax highlighting updates the DOM
+    const observer = new MutationObserver(() => {
+      if (pinned) {
+        scheduleScroll();
+      }
+    });
+    observer.observe(scroller, { childList: true, subtree: true, characterData: true });
+    onCleanup(() => observer.disconnect());
+  });
+
   onCleanup(() => {
     if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
     if (smoothTimer !== null) clearTimeout(smoothTimer);
@@ -696,19 +705,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
-            {/* Keep a live projection visible as soon as the runtime has
-                emitted one.  The transcript remains mounted underneath so
-                streaming text, approvals, and tool progress never vanish
-                while the structured card is being reconciled. */}
-            {/* Everyday is the reader surface: provisional projections can
-                contain empty answer shells and tool diagnostics before the
-                final semantic result arrives. Keep that activity in Advanced. */}
-            <Show when={presentationMode() === "advanced" && isRunning(sid()) && (presentationOf(sid())?.items.length ?? 0) > 0}>
-              <div class="presentation-live" aria-live="polite" aria-label="Live result preview">
-                <div class="presentation-live-label"><span class="dot run" /> Live result</div>
-                <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />
-              </div>
-            </Show>
             {/* Unified continuous chat canvas: The transcript stays permanently mounted
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}

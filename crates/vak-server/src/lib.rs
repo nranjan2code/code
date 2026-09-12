@@ -3555,22 +3555,60 @@ async fn attach_session(
         )
             .into_response();
     }
-    match state.core.open_session(&body.session_id).await {
+    let session = if let Ok(s) = state.active_core().open_session(&body.session_id).await {
+        Ok(s)
+    } else if let Ok(s) = state.core.open_session(&body.session_id).await {
+        Ok(s)
+    } else {
+        let home = state.core.sessions_home();
+        let sessions_dir = home.join("sessions");
+        let mut found = None;
+        if let Ok(entries) = std::fs::read_dir(sessions_dir) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(format!("{}.jsonl", body.session_id));
+                if let Ok(s) = vak_session::SessionLog::open(candidate) {
+                    found = Some(s);
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| {
+            vak_core::CoreError::Session(vak_session::SessionError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("session not found: {}", body.session_id),
+            )))
+        })
+    };
+    match session {
         Ok(session) => {
             let id = session
                 .header()
                 .map(|h| h.session_id.clone())
                 .unwrap_or_else(|| body.session_id.clone());
+            let session_cwd = session
+                .header()
+                .map(|h| h.cwd.clone())
+                .unwrap_or_else(|| state.core.cwd().clone());
+            let active = state.active_core();
+            let handle_core = if session_cwd == *active.cwd() {
+                active
+            } else if session_cwd == *state.core.cwd() {
+                state.core.clone()
+            } else if let Ok(c) =
+                state
+                    .gateway
+                    .core_pool
+                    .resolve_at(&session_cwd, None, std::time::Instant::now())
+            {
+                c
+            } else {
+                vak_core::Core::new_with_trust(session_cwd.clone(), true)
+                    .unwrap_or_else(|_| state.core.clone())
+            };
             // The header id can differ from the requested one; if that handle
             // is already live, keep it rather than replacing it.
             if state.get(&id).is_none() {
-                register_handle(
-                    &state,
-                    id.clone(),
-                    session,
-                    state.core.cwd().clone(),
-                    state.core.clone(),
-                );
+                register_handle(&state, id.clone(), session, session_cwd, handle_core);
             }
             (
                 StatusCode::OK,
@@ -7952,12 +7990,17 @@ fn confined_path(cwd: &std::path::Path, input: &str) -> Option<std::path::PathBu
     }
 }
 
+fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::PathBuf> {
+    let active = state.active_core();
+    confined_path(active.cwd(), input).or_else(|| confined_path(state.core.cwd(), input))
+}
+
 async fn read_file(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<FileQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let Some(path) = confined_path(state.core.cwd(), &q.path) else {
+    let Some(path) = resolve_confined_file(&state, &q.path) else {
         return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
     };
     match tokio::fs::read(&path).await {
@@ -8042,7 +8085,7 @@ async fn read_file_raw(
 ) -> axum::response::Response {
     use axum::body::Body;
     use axum::response::IntoResponse;
-    let Some(path) = confined_path(state.core.cwd(), &q.path) else {
+    let Some(path) = resolve_confined_file(&state, &q.path) else {
         return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
     };
     let bytes = match tokio::fs::read(&path).await {
@@ -8095,7 +8138,7 @@ async fn preview_file(
 ) -> axum::response::Response {
     use axum::body::Body;
     use axum::response::IntoResponse;
-    let Some(path) = confined_path(state.core.cwd(), &path) else {
+    let Some(path) = resolve_confined_file(&state, &path) else {
         return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
     };
     let bytes = match tokio::fs::read(&path).await {
@@ -8149,7 +8192,7 @@ struct WriteBody {
 }
 
 async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) -> StatusCode {
-    let Some(path) = confined_path(state.core.cwd(), &body.path) else {
+    let Some(path) = resolve_confined_file(&state, &body.path) else {
         return StatusCode::FORBIDDEN;
     };
     // Refuse to overwrite a file this endpoint could never have rendered
