@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.69 — 2026-09-12
+
+### Stop Policy Refinement, Error Acknowledgment Reporting, and Full Release Consolidation
+
+- Refine execution stop policy and outcome guard with idiomatic Rust cleanups.
+- Recognize error recovery and explicit error acknowledgment in blocker reporting when tool failures occur.
+- Verify frontend client, admin console, and site bundles against source manifests with no staleness.
+- Full release distribution assembly, checksum provenance validation, and synchronized macOS local component update.
+
 ## 3.0.68 — 2026-09-11
 
 ### Intent-Driven and Receipt-Gated Execution Runtime
