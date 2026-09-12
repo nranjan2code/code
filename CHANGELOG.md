@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.77 — 2026-09-12
+
+- Remove the legacy AWS Hyper/Rustls client path so the dependency audit is clear of blocking vulnerabilities.
+- Verify the complete renderer, sandbox, scenario, Docker, and macOS install pipeline before release.
+
 ## 3.0.76 — 2026-09-12
 
 - Isolate sandbox artifacts cleanly from chat turn presentation.
