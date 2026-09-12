@@ -89,6 +89,9 @@ async fn spawn_server(
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(mode);
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
     core.set_provider_instance(provider);
     // keep tempdir alive for the process lifetime of the test
     std::mem::forget(dir);
