@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.76 — 2026-09-12
+
+- Isolate sandbox artifacts cleanly from chat turn presentation.
+- Standardize error rendering with generic, robust presentation across message views.
+- Rebuild and synchronize client web bundles with up-to-date frontend assets.
+
 ## 3.0.75 — 2026-09-12
 
 - Fix chat presentation and sandbox terminal continuity across Everyday and Advanced modes.
