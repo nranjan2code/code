@@ -542,8 +542,7 @@ impl OutcomeSpec {
     /// Whether this outcome requires inspection, search, or enumeration.
     pub fn requires_inspection(&self) -> bool {
         self.requirements.iter().any(|r| {
-            r.kind == RequirementKind::Deliverable
-                && (r.description.contains("locate") || r.description.contains("analyze"))
+            r.kind == RequirementKind::Deliverable && r.description.contains("locate")
         })
     }
 

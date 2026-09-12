@@ -108,7 +108,7 @@ impl Act {
 
     /// Whether this act requires inspection, search, or enumeration tools.
     pub fn requires_inspection(self) -> bool {
-        matches!(self, Act::Locate | Act::Analyze)
+        matches!(self, Act::Locate)
     }
 
     /// Whether this act requires any tool invocation (execution, modification, or inspection).
