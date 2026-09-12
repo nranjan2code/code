@@ -1,0 +1,15 @@
+{
+  "name": "Vak",
+  "short_name": "Vak",
+  "description": "An agent you can inspect, constrain, and extend.",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#171714",
+  "theme_color": "#171714",
+  "icons": [
+    { "src": "/app/vak-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app/vak-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
