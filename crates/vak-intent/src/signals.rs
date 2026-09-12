@@ -208,9 +208,9 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("thank", Act::Converse, 0.8),
     ("bye", Act::Converse, 1.0),
     // Answer
-    ("what", Act::Answer, 0.5),
-    ("why", Act::Answer, 0.6),
-    ("how", Act::Answer, 0.4),
+    ("what", Act::Answer, 0.8),
+    ("why", Act::Answer, 0.8),
+    ("how", Act::Answer, 0.8),
     ("explain", Act::Answer, 0.9),
     ("describe", Act::Answer, 0.7),
     ("summarize", Act::Answer, 0.7),
@@ -259,7 +259,7 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     // Operate. Several of these are common nouns too ("a blog post", "the
     // release plan"), so they carry less weight than an unambiguous verb and
     // rely on the leading-position bonus when they really are the action.
-    ("deploy", Act::Operate, 1.0),
+    ("deploy", Act::Operate, 0.8),
     ("release", Act::Operate, 0.6),
     ("publish", Act::Operate, 0.9),
     ("send", Act::Operate, 0.9),

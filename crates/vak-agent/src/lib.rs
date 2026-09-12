@@ -1346,11 +1346,23 @@ impl Agent {
                     if is_subst {
                         receipts.substantive_bash_calls += 1;
                     }
-                } else if matches!(call.name.as_str(), "write" | "edit" | "patch") {
+                } else if matches!(
+                    call.name.as_str(),
+                    "write" | "edit" | "patch" | "remember" | "propose_skill"
+                ) {
                     receipts.files_modified += 1;
                 } else if matches!(
                     call.name.as_str(),
-                    "read" | "read_file" | "glob" | "grep" | "inspect" | "browse" | "webfetch"
+                    "read"
+                        | "read_file"
+                        | "glob"
+                        | "grep"
+                        | "inspect"
+                        | "browse"
+                        | "webfetch"
+                        | "session_search"
+                        | "search"
+                        | "session_list"
                 ) {
                     receipts.read_or_inspected += 1;
                 }
