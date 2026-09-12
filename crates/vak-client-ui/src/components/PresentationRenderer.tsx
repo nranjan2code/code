@@ -322,8 +322,6 @@ function compactFailure(text: string): { summary: string; details: string } {
     .replace(/\[(?:stdout|stderr)\]\s*/gi, "")
     .replace(/\s+/g, " ")
     .trim();
-  const packageError = cleaned.match(/(?:Error:\s*)?Cannot find package ['\"]([^'\"]+)['\"]/i);
-  if (packageError) return { summary: `Cannot find package “${packageError[1]}”.`, details };
   const first = (cleaned.split(/(?:\s+at\s+|\s+\[exit code|\s+exit code:)/i)[0] ?? cleaned)
     .replace(/^Error:\s*/i, "")
     .trim();
@@ -943,11 +941,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") {
       const isRawJson = item.fallback_text.trim().startsWith("{") || item.fallback_text.includes('"type":');
-      const text = !showOperatorChrome() && isRawJson
-        ? (item.fallback_text.includes("unknown_capability")
-            ? "The requested capability or web integration is currently unavailable for this query."
-            : "Tool execution required attention.")
-        : compactFailure(item.fallback_text).summary;
+      const failureText = item.content.type === "error" ? item.content.message : item.fallback_text;
+      const text = !showOperatorChrome() && isRawJson ? "The operation could not be completed." : compactFailure(failureText).summary;
       const details = isRawJson ? item.fallback_text : compactFailure(item.fallback_text).details;
       return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{text}</p><details class="semantic-recovery-details"><summary>View details</summary><pre>{details}</pre></details></div></section>;
     }
