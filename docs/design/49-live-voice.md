@@ -72,14 +72,14 @@ zero hits). Doc 38 lists full-duplex as an explicit non-goal.
 
 1. **It is narration, not conversation.** What ships is one-shot
    text→WAV that says `"Done."` / `"Task failed."`
-   (`crates/vak-client-ui/src/store.ts:787`) and reads permission prompts
-   aloud (`crates/vak-client-ui/src/components/ChatPane.tsx:233`). Two
+   (`crates/vak-client-ui/src/store.ts`) and reads permission prompts
+   aloud (`crates/vak-client-ui/src/components/ChatPane.tsx`). Two
    callers, both cues.
 2. **Off by default, buried.** `voiceEnabled: false`
    (`store.ts:212`), in a group under Settings → General
-   (`crates/vak-client-ui/src/components/Settings.tsx:804`).
+   (`crates/vak-client-ui/src/components/Settings.tsx`).
 3. **Silent failure without a Gemini key.** `/voice/speak` 400s
-   (`crates/vak-server/src/lib.rs:1396`); the client swallows it into
+   (`crates/vak-server/src/lib.rs`); the client swallows it into
    `console.error` (`store.ts:364`). Flip the toggle, hear nothing, learn
    nothing.
 4. **On desktop it is CSP-blocked even with a key.** `speak()` plays a
@@ -96,7 +96,7 @@ zero hits). Doc 38 lists full-duplex as an explicit non-goal.
 
 Structurally, the root cause of 3–6 was one thing: `google_live::speak()`
 is a **free function called straight from an axum handler**, not an impl
-of `Provider` (`crates/vak-llm/src/lib.rs:41`). It is absent from
+of `Provider` (`crates/vak-llm/src/lib.rs`). It is absent from
 `ProviderRegistry`, from the circuit breaker, from the route ladder, from
 key management, and from `doctor`. The current implementation routes through
 the configured provider, requires an explicit discovered model where the
@@ -285,7 +285,7 @@ utterance, not one per socket connection.
 
 ### 3. Transport: `WS /voice/session`
 
-Copy the shape of `pty_socket` (`crates/vak-server/src/web.rs:707`) — it
+Copy the shape of `pty_socket` (`crates/vak-server/src/web.rs`) — it
 is the established precedent for a bidirectional socket on this server,
 including its refusal gate.
 
@@ -315,7 +315,7 @@ including its refusal gate.
   already documents for `/voice/speak`, generalized from a character cap
   to a session cap.
 - **A live security gap to close in the same change.**
-  `crates/vak-server/src/lib.rs:2566` computes `mutating` — whether the
+  `crates/vak-server/src/lib.rs` computes `mutating` — whether the
   `Origin` header is checked — from the HTTP method, and a WebSocket
   upgrade is a GET, so `/pty` skips the Origin check entirely today. A
   `/voice/session` upgrade opens a mic relay that spends provider money;
@@ -341,11 +341,11 @@ interrupt plus a playback-buffer flush; a mid-run barge-in also invokes
 the existing `cancel_run`.
 
 The modality gate is inert today only for want of one branch.
-`Modality::Audio` exists (`crates/vak-intent/src/axes.rs:392`),
+`Modality::Audio` exists (`crates/vak-intent/src/axes.rs`),
 `leg_supports_modalities` already gates on it, and
-`crates/vak-intent/src/signals.rs:836` already folds any attachment's
+`crates/vak-intent/src/signals.rs` already folds any attachment's
 modality into `Reading::input_modalities` generically — but
-`crates/vak-core/src/lib.rs:4072` is the only place an `Attachment` is
+`crates/vak-core/src/lib.rs` is the only place an `Attachment` is
 ever constructed, and it hardcodes `Modality::Image`. Adding the audio
 branch there brings the whole gate alive with no further plumbing.
 
@@ -424,7 +424,7 @@ discovered partway through it.
   message arrives — contradicting the comment above it.
 - **Outbound**: add an audio field to `GatewayReply` (line 224) and call
   `sendVoice` when the resolved `VoiceConfig`
-  (`resolve_voice`, `crates/vak-server/src/gateway.rs:1358`) names a
+  (`resolve_voice`, `crates/vak-server/src/gateway.rs`) names a
   voice and the chosen `Speaker` supports a Telegram-compatible format.
   This is the point at which doc 38's Telegram claim stops being false.
 - **Codec.** `sendVoice` requires OGG/Opus. Rather than adding an Opus
@@ -436,13 +436,13 @@ discovered partway through it.
   is the one dependency decision in the whole plan and it resolves to
   "add no dependency."
 - **Renderer**: `media.audio` is already an allowed delivery block type
-  (`crates/vak-delivery/src/skills.rs:296`) backed by `MediaOutput` with
+  (`crates/vak-delivery/src/skills.rs`) backed by `MediaOutput` with
   `duration_ms`, but `PresentationRenderer.tsx` (~line 271) has no case
   for it. Add one.
 
 ### 7. Visibility
 
-- A `voice` check in `crates/vak-core/src/health.rs::collect`, using the
+- A `voice` check in `crates/vak-core/src/health.rs`, using the
   `HealthCheck { label, detail: Result<String,String> }` shape. Honours
   commit `9a65ec1`: a deliberately disabled voice stack reports
   `Ok("disabled")`, never `Err`; an enabled-but-unconfigured stack
@@ -464,7 +464,7 @@ The `[voice]` section and `VoiceSettings`/`VoiceResolved` are shipped alongside
 the per-bot/per-chat `VoiceConfig`. The following contract is the implemented
 shape, retained here as a reference:
 `ServerSettings`/`WebSettings`/`ServerResolved`
-(`crates/vak-config/src/lib.rs:183`) field-for-field in style —
+(`crates/vak-config/src/lib.rs`) field-for-field in style —
 `WebSettings::terminal` is the closest analogue to `[voice] enabled` in
 both shape and risk.
 
@@ -484,7 +484,7 @@ tts_base_url = "http://127.0.0.1:59125"     # piper / kokoro
 
 `[voice]` is privileged and is reset in `load_with_trust` next to the
 existing `fc.server = ServerSettings::default()` line
-(`crates/vak-config/src/lib.rs:2302`) and named in
+(`crates/vak-config/src/lib.rs`) and named in
 `PRIVILEGED_KEYS_NOTICE` (line 2234) — the same reasoning already
 written there for `web.terminal` applies verbatim: a cloned repository
 must not be able to open a microphone on the machine that cloned it.
@@ -525,7 +525,7 @@ returned by discovery or admin APIs.
   move here): resampler round-trip and anti-aliasing, i16/f32
   conversion, WAV header bytes, frame codec round-trip, VAD endpointing
   against a deterministic frame sequence.
-- `crates/vak-server/tests/voice_session.rs` — drive `/voice/session`
+- `crates/vak-server/src/web.rs` — exercise `/voice/session`
   end-to-end with a scripted fake provider, against the real secured
   router (the refusal and Origin checks are middleware properties and
   must be tested as real upgrade requests, not unit-called). Pin:

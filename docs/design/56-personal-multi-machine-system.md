@@ -30,7 +30,7 @@ preserved. Design statuses are context, not proof of production enforcement.
 
 | Foundation | Reuse | Required work |
 |---|---|---|
-| `vak-client-ui/src/host/{port,web,tauri}.ts`, `api.ts` | Shared client and host adapters | Split device affordances from execution destination. Current Tauri calls operate locally and API credentials use a module-global backend. |
+| `crates/vak-client-ui/src/host/`, `api.ts` | Shared client and host adapters | Split device affordances from execution destination. Current Tauri calls operate locally and API credentials use a module-global backend. |
 | `vak-server/src/web.rs` auth | Existing `/auth/*` entry points | Current login copies the server bearer into the cookie; logout clears the browser cookie. Add independent revocable sessions with server-enforced expiry. |
 | `vak-server/src/lib.rs` `active_core`, workspace routes | CorePool and canonical path checks | Resolve workspace per request/session. Shared active selection must not let another tab redirect work. |
 | `vak-server/src/bus.rs` | Server event adapter and local mode | `emit` uses the preceding sequence string as `prev_hash`, ignores encryption errors, and substitutes `{}` on serialization failure. Repair before claiming protected distributed delivery. |
