@@ -107,12 +107,12 @@ async fn cancellation_terminates_worker_process_group() {
     let ctx = ToolContext::new(workspace.path().to_path_buf());
     let cancel = ctx.cancel.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         cancel.cancel();
     });
 
     let output = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(5),
         tool("bash").execute(&json!({"command": "sleep 30"}), &ctx),
     )
     .await

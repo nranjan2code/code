@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.72 — 2026-09-12
+
+### Clean-Room Release Assembly and Execution Reliability
+
+- Make release assembly delete all release-owned generated output before rebuilding.
+- Bound scratch artifact discovery and reject escaped or symlinked execution paths.
+- Preserve execution output across broker cancellation and Workbench replay.
+
 ## 3.0.71 — 2026-09-12
 
 ### Advanced Chat Duplication Fixes, Quarantined Scratch Resolution, and Multi-Workspace File Access

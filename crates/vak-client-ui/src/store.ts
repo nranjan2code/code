@@ -171,15 +171,41 @@ export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>
     if (!id) continue;
     const current = rebuilt.get(id);
     if (kind === "ExecutionStarted") {
-      rebuilt.set(id, { id, ownerSessionId: typeof raw.owner_session_id === "string" ? raw.owner_session_id : undefined, tool: String(raw.tool ?? "bash"), command: String(raw.code_preview ?? ""), language: String(raw.language ?? "text"), scratchDir: String(raw.scratch_dir ?? ""), stdout: "", stderr: "", status: "running", packages: [], artifacts: [], timestamp: new Date().toLocaleTimeString() });
+      const started: WorkbenchExecution = {
+        id,
+        ownerSessionId: typeof raw.owner_session_id === "string" ? raw.owner_session_id : undefined,
+        tool: String(raw.tool ?? "bash"),
+        command: String(raw.code_preview ?? ""),
+        language: String(raw.language ?? "text"),
+        scratchDir: String(raw.scratch_dir ?? ""),
+        stdout: current?.stdout ?? "",
+        stderr: current?.stderr ?? "",
+        status: current?.status ?? "running",
+        exitCode: current?.exitCode,
+        durationMs: current?.durationMs,
+        memoryBytes: current?.memoryBytes,
+        cpuPercent: current?.cpuPercent,
+        outputTruncated: current?.outputTruncated,
+        packages: current?.packages ?? [],
+        artifacts: current?.artifacts ?? [],
+        timestamp: current?.timestamp ?? new Date().toLocaleTimeString(),
+      };
+      rebuilt.set(id, started);
       continue;
     }
     if (!current) continue;
     if (kind === "Stdout") current.stdout += String(raw.chunk ?? "");
     else if (kind === "Stderr") current.stderr += String(raw.chunk ?? "");
     else if (kind === "OutputTruncated") current.outputTruncated = true;
-    else if (kind === "PackageInstalled") current.packages.push(...(Array.isArray(raw.packages) ? raw.packages.map(String) : []));
-    else if (kind === "ArtifactGenerated") current.artifacts.push({ path: String(raw.path ?? ""), mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) });
+    else if (kind === "PackageInstalled") {
+      for (const packageName of Array.isArray(raw.packages) ? raw.packages.map(String) : []) {
+        if (!current.packages.includes(packageName)) current.packages.push(packageName);
+      }
+    }
+    else if (kind === "ArtifactGenerated") {
+      const artifact = { path: String(raw.path ?? ""), mimeType: String(raw.mime_type ?? "application/octet-stream"), sizeBytes: Number(raw.size_bytes ?? 0) };
+      if (!current.artifacts.some((item) => item.path === artifact.path)) current.artifacts.push(artifact);
+    }
     else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
     else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
   }

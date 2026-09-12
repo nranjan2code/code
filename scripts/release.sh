@@ -42,6 +42,29 @@ done
 cd "$ROOT_DIR"
 VERSION="$(workspace_version)"
 
+# Release assembly is a clean-room operation. Never let a previous release,
+# frontend bundle, or developer Cargo tree participate in this run. These are
+# the only generated trees this script owns; keep the list explicit so a
+# cleanup can never expand to user source or configuration.
+RELEASE_CLEAN_PATHS=(
+    "$ROOT_DIR/target"
+    "$ROOT_DIR/dist"
+    "$ROOT_DIR/crates/vak-admin-ui/dist"
+    "$ROOT_DIR/crates/vak-client-ui/dist"
+    "$ROOT_DIR/crates/vak-client-ui/dist-web"
+    "$ROOT_DIR/crates/vak-server/site/dist"
+)
+for generated_path in "${RELEASE_CLEAN_PATHS[@]}"; do
+    case "$generated_path" in
+        "$ROOT_DIR/target"|"$ROOT_DIR/dist"|"$ROOT_DIR/crates/vak-admin-ui/dist"|\
+        "$ROOT_DIR/crates/vak-client-ui/dist"|"$ROOT_DIR/crates/vak-client-ui/dist-web"|\
+        "$ROOT_DIR/crates/vak-server/site/dist") ;;
+        *) printf 'error: refusing to clean unexpected release path %s\n' "$generated_path" >&2; exit 2 ;;
+    esac
+    rm -rf -- "$generated_path"
+done
+printf 'release clean-room: removed prior generated outputs\n'
+
 # A release changes the identity of every workspace crate. Keeping those
 # one-shot test and release artifacts in the developer target directory made
 # each version accumulate indefinitely. Build in an isolated directory shared
@@ -167,24 +190,11 @@ command -v npm >/dev/null || {
     printf 'error: npm is required to build the admin and desktop frontends for release\n' >&2
     exit 1
 }
-# `scripts/ui_bundle_check.rs` accepts a MISSING `.src-manifest` — a
-# checkout whose bundle predates the manifest must still build. That is the
-# right call for a local build and the wrong one for a release: deleting the
-# manifest would silently disarm every staleness guard at once. A release
-# requires all three to be present before it trusts any of them.
+# The clean-room step deliberately removed all manifests. They are checked
+# after rebuilding below; checking before the build would make a fresh clone
+# impossible to release while allowing an old bundle to participate.
 printf '\n== bundle manifests ==\n'
-for manifest in \
-    crates/vak-admin-ui/dist/.src-manifest \
-    crates/vak-client-ui/dist-web/.src-manifest \
-    crates/vak-server/site/dist/.src-manifest; do
-    if [[ ! -s "$ROOT_DIR/$manifest" ]]; then
-        printf 'error: %s is missing or empty.\n' "$manifest" >&2
-        printf '       The build-time staleness guard treats an absent manifest as "fine",\n' >&2
-        printf '       so without this check a deleted manifest disarms it silently.\n' >&2
-        exit 1
-    fi
-    printf '  ✓ %-44s present\n' "$manifest"
-done
+printf '  · manifests will be validated after clean rebuilds\n'
 
 printf '\n== frontends ==\n'
 ( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm rebuild --silent && npm run build --silent >/dev/null )
@@ -224,6 +234,17 @@ if [[ -n "$(git status --porcelain -- crates/vak-server/site/dist)" ]]; then
     exit 1
 fi
 printf '  ✓ %-44s matches source\n' "vak-server/site/dist"
+
+for manifest in \
+    crates/vak-admin-ui/dist/.src-manifest \
+    crates/vak-client-ui/dist-web/.src-manifest \
+    crates/vak-server/site/dist/.src-manifest; do
+    if [[ ! -s "$ROOT_DIR/$manifest" ]]; then
+        printf 'error: clean rebuild did not produce %s\n' "$manifest" >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s present after rebuild\n' "$manifest"
+done
 
 if [[ "$SKIP_CHECKS" != true ]]; then
     cargo fmt --all -- --check

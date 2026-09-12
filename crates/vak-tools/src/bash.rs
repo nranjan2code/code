@@ -8,32 +8,15 @@ use crate::{Tool, ToolContext, ToolOutput};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_CAPTURE: usize = 1 << 20;
+const MAX_SCAN_ENTRIES: usize = 50_000;
 
 pub struct BashTool;
 
-/// A factual, lightweight inventory for the model prompt. This intentionally
-/// describes commands, not languages: `bash` remains the one universal
-/// execution interface and the inventory reflects the current host/image.
+/// The command inventory is runtime-dependent and belongs in execution output,
+/// not in a prompt assembled in the parent process. Advertising a host PATH
+/// here was incorrect for containerized/seatbelt workers.
 pub fn runtime_capability_summary() -> String {
-    let commands = [
-        "bash", "python3", "node", "npm", "go", "rustc", "cargo", "git", "curl", "jq", "make",
-    ];
-    let available = commands
-        .into_iter()
-        .filter(|command| {
-            std::env::var_os("PATH").is_some_and(|path| {
-                std::env::split_paths(&path).any(|dir| dir.join(command).is_file())
-            })
-        })
-        .collect::<Vec<_>>();
-    format!(
-        "\nSandbox runtime (observed now): universal `bash` execution is available. Commands currently discoverable: {}. You may install additional tools and packages through `bash` in quarantined `.vak/scratch/` when network/package installation is permitted; do not claim a tool was run without a successful execution receipt.\n",
-        if available.is_empty() {
-            "none".into()
-        } else {
-            available.join(", ")
-        }
-    )
+    "\nSandbox runtime: use universal `bash` execution. Command availability is verified by the execution result; do not claim a command succeeded without its receipt.\n".to_string()
 }
 
 #[async_trait]
@@ -82,11 +65,6 @@ impl Tool for BashTool {
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .max(1000);
 
-        let effective = match &ctx.sandbox {
-            Some(sb) => sb.wrap(command),
-            None => command.to_string(),
-        };
-
         let quarantine = args
             .get("quarantine")
             .and_then(|v| v.as_bool())
@@ -125,20 +103,49 @@ impl Tool for BashTool {
             (ctx.cwd.clone(), scratch_root)
         };
 
-        if let Some(custom_cwd) = args
-            .get("cwd")
-            .or_else(|| args.get("working_dir"))
-            .and_then(|v| v.as_str())
-        {
-            let target = if custom_cwd == "." || custom_cwd.is_empty() {
-                ctx.cwd.clone()
-            } else {
-                ctx.cwd.join(custom_cwd)
-            };
-            if target.starts_with(&ctx.cwd) && target.is_dir() {
+        if let Some(custom_cwd) = args.get("cwd").and_then(|v| v.as_str()) {
+            if custom_cwd != "." && !custom_cwd.is_empty() {
+                let workspace = match ctx.cwd.canonicalize() {
+                    Ok(path) => path,
+                    Err(_) => return ToolOutput::error("working directory is unavailable"),
+                };
+                let target = match workspace.join(custom_cwd).canonicalize() {
+                    Ok(path) => path,
+                    Err(_) => return ToolOutput::error("working directory does not exist"),
+                };
+                let allowed_root = if quarantine {
+                    scratch_dir
+                        .canonicalize()
+                        .unwrap_or_else(|_| scratch_dir.clone())
+                } else {
+                    workspace.clone()
+                };
+                if !target.starts_with(&allowed_root) || !target.is_dir() {
+                    return ToolOutput::error(
+                        "working directory must remain inside the active execution root",
+                    );
+                }
                 execution_dir = target;
             }
         }
+
+        // Command-scoped backends do not inherit the host process directory.
+        // Carry the validated directory into the command before wrapping it.
+        let execution_command = if ctx.sandbox.as_ref().is_some_and(|sandbox| {
+            sandbox.target() == vak_sandbox::backend::SandboxTarget::ToolCommand
+        }) && execution_dir != ctx.cwd
+        {
+            format!(
+                "cd {} && ({command})",
+                shell_quote(&execution_dir.display().to_string())
+            )
+        } else {
+            command.to_string()
+        };
+        let effective = match &ctx.sandbox {
+            Some(sb) => sb.wrap(&execution_command),
+            None => execution_command.clone(),
+        };
 
         let mut cmd = shell_command(&effective);
         cmd.current_dir(&execution_dir)
@@ -152,7 +159,7 @@ impl Tool for BashTool {
         // captured pipes open until the original command exits.
         isolate_process_group(&mut cmd);
 
-        let before_scratch = collect_candidate_files(&scratch_dir, &ctx.cwd);
+        let before_scratch = collect_candidate_files(&scratch_dir);
 
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
@@ -422,6 +429,10 @@ fn shell_command(command: &str) -> tokio::process::Command {
     }
 }
 
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn kill_process_group(pid: &Option<u32>) {
     #[cfg(unix)]
     if let Some(pid) = pid {
@@ -507,34 +518,22 @@ fn probe_process_memory(pid: Option<u32>) -> u64 {
     0
 }
 
-fn should_skip_scan_dir(name: &str) -> bool {
-    name == ".git" || name == "target" || name == "node_modules" || name == ".vak-home"
-}
-
 fn collect_candidate_files(
     scratch_dir: &std::path::Path,
-    cwd: &std::path::Path,
 ) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
     let mut map = std::collections::HashMap::new();
     fn scan(
         dir: &std::path::Path,
-        is_cwd: bool,
         map: &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
     ) {
         if !dir.exists() {
             return;
         }
         for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
             .into_iter()
-            .filter_entry(|e| {
-                if is_cwd && e.file_type().is_dir() {
-                    let name = e.file_name().to_string_lossy();
-                    !should_skip_scan_dir(&name)
-                } else {
-                    true
-                }
-            })
             .filter_map(Result::ok)
+            .take(MAX_SCAN_ENTRIES)
         {
             let path = entry.path().to_path_buf();
             if path.is_file()
@@ -545,10 +544,7 @@ fn collect_candidate_files(
             }
         }
     }
-    scan(scratch_dir, false, &mut map);
-    if cwd != scratch_dir {
-        scan(cwd, true, &mut map);
-    }
+    scan(scratch_dir, &mut map);
     map
 }
 
@@ -583,24 +579,10 @@ fn scan_new_candidate_artifacts(
 
     if scratch_dir.exists() {
         for entry in walkdir::WalkDir::new(scratch_dir)
+            .follow_links(false)
             .into_iter()
             .filter_map(Result::ok)
-        {
-            check_entry(entry.path().to_path_buf());
-        }
-    }
-    if cwd != scratch_dir && cwd.exists() {
-        for entry in walkdir::WalkDir::new(cwd)
-            .into_iter()
-            .filter_entry(|e| {
-                if e.file_type().is_dir() {
-                    let name = e.file_name().to_string_lossy();
-                    !should_skip_scan_dir(&name)
-                } else {
-                    true
-                }
-            })
-            .filter_map(Result::ok)
+            .take(MAX_SCAN_ENTRIES)
         {
             check_entry(entry.path().to_path_buf());
         }
@@ -974,7 +956,9 @@ mod tests {
     async fn custom_cwd_is_respected() {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
-        let sub = workspace.path().join("sub_module");
+        let sub = workspace
+            .path()
+            .join(".vak/scratch/test-custom-cwd/sub_module");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("sub.txt"), "in-sub").unwrap();
 
@@ -987,13 +971,33 @@ mod tests {
             .execute(
                 &serde_json::json!({
                     "command": "cat sub.txt",
-                    "cwd": "sub_module"
+                    "cwd": ".vak/scratch/test-custom-cwd/sub_module"
                 }),
                 &ctx,
             )
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("in-sub"));
+    }
+
+    #[tokio::test]
+    async fn custom_cwd_rejects_workspace_escape() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, _rx) = SandboxEventSink::new_with_id("test-cwd-escape".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_sandbox_sink(sink.with_quarantine(true));
+        let out = super::BashTool
+            .execute(
+                &serde_json::json!({
+                    "command": "pwd",
+                    "cwd": ".."
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("active execution root"));
     }
 
     #[tokio::test]

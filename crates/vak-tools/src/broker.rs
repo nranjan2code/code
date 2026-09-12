@@ -132,6 +132,8 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
         return ToolOutput::error("tool broker has no stderr");
     };
     let sink = ctx.sandbox_sink.clone();
+    let partial = Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_reader = partial.clone();
     let stderr_reader = tokio::spawn(async move {
         let mut bytes = Vec::new();
         let mut line = Vec::new();
@@ -144,6 +146,18 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
                 if let Some(payload) = frame.strip_prefix(b"VAK_EVENT:")
                     && let Ok(event) = serde_json::from_slice::<SandboxEvent>(payload)
                 {
+                    if let Ok(mut output) = partial_reader.lock() {
+                        match &event {
+                            SandboxEvent::Stdout { chunk, .. } => {
+                                output.push_str(chunk);
+                            }
+                            SandboxEvent::Stderr { chunk, .. } => {
+                                output.push_str("[stderr]\n");
+                                output.push_str(chunk);
+                            }
+                            _ => {}
+                        }
+                    }
                     if let Some(ref sink) = sink {
                         sink.emit(event);
                     }
@@ -175,7 +189,20 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
     let stdout = stdout_reader.await.unwrap_or_default();
     let stderr = stderr_reader.await.unwrap_or_default();
     if cancelled {
-        return ToolOutput::error("tool broker cancelled");
+        let mut content = String::from("tool broker cancelled");
+        if let Ok(output) = partial.lock()
+            && !output.is_empty()
+        {
+            content.push_str("\n\n[partial output]\n");
+            content.push_str(&output);
+        }
+        let diagnostics = String::from_utf8_lossy(&stderr).trim().to_string();
+        if !diagnostics.is_empty() {
+            content.push_str("\n\n[diagnostics]\n");
+            content.push_str(&diagnostics);
+        }
+        let _ = stdout;
+        return ToolOutput::error(content);
     }
     if stdout.len() as u64 > MAX_PROTOCOL_BYTES || stderr.len() as u64 > MAX_PROTOCOL_BYTES {
         return ToolOutput::error("tool broker output exceeded protocol limit");

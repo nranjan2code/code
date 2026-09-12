@@ -207,7 +207,26 @@ fn confined(root: &Path, relative: &str) -> Result<PathBuf, Error> {
     {
         return Err(Error::PathEscape(relative.to_string()));
     }
-    Ok(root.join(rel))
+    let root = root
+        .canonicalize()
+        .map_err(|error| Error::InvalidPlan(format!("root is unavailable: {error}")))?;
+    let mut current = root;
+    for component in rel.components() {
+        let std::path::Component::Normal(name) = component else {
+            continue;
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(Error::PathEscape(relative.to_string()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
+    Ok(current)
 }
 
 pub fn candidate_manifest(
@@ -333,6 +352,34 @@ mod tests {
         let receipt = promote(&candidate).unwrap();
         assert_eq!(receipt.applied, vec!["assets/chart.csv"]);
         assert_eq!(receipt.verification[0].status, "observed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn promotion_rejects_symlinked_candidate_paths() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            source.path().join("candidate.txt"),
+        )
+        .unwrap();
+
+        let candidate = CandidateManifest {
+            candidate_id: "symlink".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![CandidateFile {
+                path: "candidate.txt".into(),
+                candidate_hash: digest(b"secret"),
+                base_hash: None,
+                bytes: 6,
+            }],
+        };
+        assert!(matches!(promote(&candidate), Err(Error::PathEscape(_))));
+        assert!(!target.path().join("candidate.txt").exists());
     }
 
     #[test]
