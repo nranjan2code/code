@@ -188,7 +188,7 @@ impl vak_tools::Tool for SessionSearchTool {
                 &query,
                 // Filter after a larger ranked window so an unrelated Agent's
                 // hits cannot consume the caller's small result limit.
-                limit.max(DEFAULT_LIMIT).min(50).saturating_mul(2).min(50),
+                limit.clamp(DEFAULT_LIMIT, 50).saturating_mul(2).min(50),
                 Some(&exclude),
                 &extras,
             )?;
