@@ -726,10 +726,7 @@ mod registry_tests {
         )
         .expect("profiles");
         let result = load_agent_profile(dir.path(), "Pip");
-        match result {
-            Err(error) => assert!(error.contains("ambiguous")),
-            Ok(_) => panic!("duplicate helper names must be rejected"),
-        }
+        assert!(matches!(result, Err(error) if error.contains("ambiguous")));
     }
 
     #[test]
