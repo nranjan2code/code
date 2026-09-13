@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.82 — 2026-09-13
+
+- Preserve and read existing presentation stores written with the prior
+  capitalized scope spelling while emitting the corrected lowercase API form.
+- Restore gateway and Settings startup for users who already have presentation
+  activations on disk.
+
 ## 3.0.81 — 2026-09-13
 
 - Fix presentation-pack activation, deactivation, and reset requests by

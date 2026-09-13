@@ -212,7 +212,9 @@ pub enum CompiledPresentation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LibraryScope {
+    #[serde(alias = "User")]
     User,
+    #[serde(alias = "Workspace")]
     Workspace,
 }
 
@@ -1495,6 +1497,10 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<LibraryScope>("\"workspace\"").unwrap(),
+            LibraryScope::Workspace
+        );
+        assert_eq!(
+            serde_json::from_str::<LibraryScope>("\"Workspace\"").unwrap(),
             LibraryScope::Workspace
         );
     }
