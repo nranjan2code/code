@@ -210,6 +210,7 @@ pub enum CompiledPresentation {
 /// Trust boundary for reusable presentation definitions. User and workspace
 /// scopes are intentionally explicit so a pack cannot silently become global.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LibraryScope {
     User,
     Workspace,
@@ -335,7 +336,7 @@ impl PresentationLibrary {
             .get(id, revision)
             .ok_or_else(|| PresentationError::UnknownPresentation(id.to_owned()))?;
         let built_in = stored.origin.plugin_id.is_none() && stored.origin.owner == "builtin";
-        if stored.origin.scope != scope || (stored.origin.owner != owner && !built_in) {
+        if !built_in && (stored.origin.scope != scope || stored.origin.owner != owner) {
             return Err(PresentationError::ActivationDenied);
         }
         let activation = PresentationActivation {
@@ -374,7 +375,7 @@ impl PresentationLibrary {
             return false;
         };
         let built_in = original.origin.plugin_id.is_none() && original.origin.owner == "builtin";
-        if original.origin.scope != scope || (original.origin.owner != owner && !built_in) {
+        if !built_in && (original.origin.scope != scope || original.origin.owner != owner) {
             return false;
         }
         self.activate(id, 1, scope, owner).is_ok()
@@ -1462,6 +1463,39 @@ mod tests {
             library
                 .select(&accepts, LibraryScope::Workspace, "a-workspace")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn built_in_seed_can_be_explicitly_activated_for_user_scope() {
+        let seed = seeds::built_in_seed_pack()
+            .into_iter()
+            .next()
+            .expect("seed pack is non-empty");
+        let id = seed.spec.id.clone();
+        let revision = seed.spec.revision;
+        let accepts = seed.spec.accepts[0].clone();
+        let mut library = PresentationLibrary::default();
+        library.register(seed).expect("register seed");
+        library
+            .activate(&id, revision, LibraryScope::User, "user")
+            .expect("activate built-in for user");
+        assert!(
+            library
+                .select(&accepts, LibraryScope::User, "user")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn library_scope_json_matches_client_contract() {
+        assert_eq!(
+            serde_json::to_string(&LibraryScope::User).unwrap(),
+            "\"user\""
+        );
+        assert_eq!(
+            serde_json::from_str::<LibraryScope>("\"workspace\"").unwrap(),
+            LibraryScope::Workspace
         );
     }
 

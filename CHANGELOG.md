@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.81 — 2026-09-13
+
+- Fix presentation-pack activation, deactivation, and reset requests by
+  aligning scoped JSON values with the client contract.
+- Allow built-in presentation packs to be explicitly activated at either
+  Shared or workspace scope, with regression coverage for both.
+
 ## 3.0.80 — 2026-09-13
 
 - Make the Agent-owned platform contract authoritative across conversations,
