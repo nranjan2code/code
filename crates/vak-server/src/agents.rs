@@ -35,6 +35,8 @@ pub struct AgentDefinition {
     pub behaviour: String,
     #[serde(default)]
     pub responsibilities: String,
+    #[serde(default)]
+    pub instructions: String,
     pub animation: String,
     pub voice: String,
 }
@@ -56,6 +58,7 @@ impl AgentDefinition {
             personality: self.personality.clone(),
             behaviour: self.behaviour.clone(),
             responsibilities: self.responsibilities.clone(),
+            instructions: self.instructions.clone(),
         }
     }
 }
@@ -105,6 +108,7 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
             || profile.personality.len() > 4000
             || profile.behaviour.len() > 4000
             || profile.responsibilities.len() > 2000
+            || profile.instructions.len() > 8000
         {
             return Err(format!("agent '{}' is too large", profile.id));
         }
@@ -204,6 +208,7 @@ mod tests {
             personality: "Warm".into(),
             behaviour: "Be useful".into(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "subtle".into(),
             voice: "default".into(),
         }];
@@ -235,6 +240,7 @@ mod tests {
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
         };
@@ -253,6 +259,7 @@ mod tests {
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "off".into(),
             voice: "unknown".into(),
         };
@@ -271,6 +278,7 @@ mod tests {
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
         };
@@ -292,6 +300,7 @@ mod tests {
             personality: "Warm".into(),
             behaviour: "Be useful".into(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "subtle".into(),
             voice: "default".into(),
         };
@@ -319,6 +328,7 @@ mod tests {
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
         };

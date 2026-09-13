@@ -138,6 +138,21 @@ pub fn cron_next_after(
         .ok_or_else(|| format!("expression '{expr}' never fires within {CRON_HORIZON_DAYS} days"))
 }
 
+/// Named-IANA equivalent of [`cron_next_after`].
+pub fn cron_next_after_timezone(
+    expr: &str,
+    after: DateTime<Utc>,
+    timezone: &str,
+) -> Result<DateTime<Utc>, String> {
+    let tz: chrono_tz::Tz = timezone
+        .parse()
+        .map_err(|_| format!("unknown IANA timezone '{timezone}'"))?;
+    let local_after = after.with_timezone(&tz);
+    next_fire(&CronExpr::parse(expr)?, local_after)
+        .map(|value| value.with_timezone(&Utc))
+        .ok_or_else(|| format!("expression '{expr}' never fires within {CRON_HORIZON_DAYS} days"))
+}
+
 fn next_fire<Tz: TimeZone>(expr: &CronExpr, after: DateTime<Tz>) -> Option<DateTime<Tz>> {
     let tz = after.timezone();
     let naive = after.naive_local();
@@ -224,6 +239,14 @@ pub struct TaskDef {
     /// ticking when present. Validated against the cron grammar.
     #[serde(default)]
     pub schedule: Option<String>,
+    /// Optional IANA timezone name for recurring schedules. When absent,
+    /// legacy schedules retain system-local behavior.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Optional one-shot instant. When present, it takes precedence over
+    /// interval/cron scheduling and is consumed after the first run.
+    #[serde(default)]
+    pub due_at: Option<DateTime<Utc>>,
     /// Watchdog shell one-liner. XOR with `prompt`: script tasks run
     /// brokered bash and cost zero tokens when stdout stays empty.
     #[serde(default)]
@@ -277,6 +300,26 @@ impl TaskDef {
                 expr: expr.clone(),
                 reason,
             })?;
+        }
+        if self.due_at.is_some() && self.schedule.is_some() {
+            return Err(TaskError::BadSchedule {
+                expr: self.schedule.clone().unwrap_or_default(),
+                reason: "one-shot due_at cannot be combined with cron schedule".into(),
+            });
+        }
+        if let Some(zone) = self.timezone.as_deref() {
+            if zone.trim().is_empty() {
+                return Err(TaskError::BadSchedule {
+                    expr: zone.into(),
+                    reason: "timezone must be a named IANA zone".into(),
+                });
+            }
+            if zone.parse::<chrono_tz::Tz>().is_err() {
+                return Err(TaskError::BadSchedule {
+                    expr: zone.into(),
+                    reason: "unknown IANA timezone".into(),
+                });
+            }
         }
         Ok(())
     }
@@ -687,6 +730,8 @@ mod tests {
             last_wt: None,
             deliver_to: None,
             schedule: None,
+            timezone: None,
+            due_at: None,
             script: None,
             model_pin: None,
             agent_id: None,
@@ -719,6 +764,33 @@ mod tests {
             ..base_task()
         };
         assert!(watchdog.validate().is_ok());
+    }
+
+    #[test]
+    fn one_shot_and_timezone_validation_is_explicit() {
+        let mut task = base_task();
+        task.due_at = Some(Utc::now());
+        task.schedule = Some("0 9 * * *".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::BadSchedule { .. })
+        ));
+        task.schedule = None;
+        task.timezone = Some("  ".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::BadSchedule { .. })
+        ));
+    }
+
+    #[test]
+    fn named_timezone_cron_returns_utc_instant() {
+        let after = chrono::DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        let next = cron_next_after_timezone("0 9 * * *", after, "America/New_York")
+            .expect("next named-zone fire");
+        assert_eq!(next.to_rfc3339(), "2026-01-01T14:00:00+00:00");
     }
 
     #[test]

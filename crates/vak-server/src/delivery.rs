@@ -392,6 +392,20 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             template: None,
             posture: vak_delivery::DeliveryPosture::default(),
         },
+        "background" => DeliveryProfile {
+            surface: surface.into(),
+            markup: Markup::Plain,
+            max_chars: Some(4000),
+            supports_tables: false,
+            supports_code_blocks: false,
+            supports_links: true,
+            supports_actions: false,
+            template: None,
+            posture: vak_delivery::DeliveryPosture {
+                cadence: vak_delivery::Cadence::Digest,
+                urgency: vak_delivery::Urgency::Quiet,
+            },
+        },
         _ => DeliveryProfile {
             surface: surface.into(),
             markup: Markup::Plain,
@@ -461,6 +475,20 @@ pub(crate) async fn render_response(
     session_id: Option<&str>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
+    let intent_posture = outcome_metadata.as_ref().and_then(|metadata| {
+        let cadence = metadata.get("intent_cadence")?;
+        let urgency = metadata
+            .get("intent_urgency")
+            .map(String::as_str)
+            .unwrap_or("notify");
+        Some(vak_delivery::DeliveryPosture::from_intent_labels(
+            cadence, urgency,
+        ))
+    });
+    let mut profile = profile_for_surface(core, surface, requested);
+    if let Some(posture) = intent_posture {
+        profile.posture = posture;
+    }
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
         target: bot_id
@@ -485,7 +513,7 @@ pub(crate) async fn render_response(
             }
             answer
         }),
-        profile: profile_for_surface(core, surface, requested),
+        profile,
         skill_registry: Some(merged_presentation_skills(core)),
     };
     runtime.render(&job).await
@@ -1088,6 +1116,7 @@ mod tests {
                 personality: String::new(),
                 behaviour: String::new(),
                 responsibilities: String::new(),
+                instructions: String::new(),
             }))
             .with_conversation_context(Some(vak_session::ConversationContext {
                 conversation_id: "conv-1".into(),

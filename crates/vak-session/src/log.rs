@@ -908,9 +908,7 @@ impl SessionLog {
             .chain_to_root()
             .iter()
             .rev()
-            .find(|entry| {
-                matches!(&entry.payload, EntryPayload::Intent(record) if record.model_visible.is_some())
-            })
+            .find(|entry| matches!(&entry.payload, EntryPayload::Intent(_)))
             .map(|entry| entry.id.clone());
         for entry in self.chain_to_root() {
             match &entry.payload {

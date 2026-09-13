@@ -196,12 +196,19 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             0,
         );
         outcome.max_turns = Some(self.core.effective_max_turns());
+        let inherited_prompt_layers = session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.contract.prompt_layers.clone())
+            .unwrap_or_default();
         let deps = vak_flow::ExecutorDeps {
             provider: match self.core.provider() {
                 Ok(provider) => provider,
                 Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
             },
             system_prompt: self.system_prompt.clone(),
+            prompt_layers: inherited_prompt_layers,
             model: self.core.effective_model(),
             tools: self.tools.clone(),
             read_only_tools: self
@@ -569,6 +576,7 @@ pub fn vak_agent_identity() -> vak_session::types::AgentIdentity {
         personality: String::new(),
         behaviour: String::new(),
         responsibilities: String::new(),
+        instructions: String::new(),
     }
 }
 
@@ -2860,10 +2868,23 @@ impl Core {
         let runtime = prompts::RuntimeSections {
             capability_contract,
             surface: self.surface.prompt_section(),
-            runtime: vak_tools::bash::runtime_capability_summary(),
+            runtime: if capabilities
+                .iter()
+                .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash")
+            {
+                vak_tools::bash::runtime_capability_summary()
+            } else {
+                String::new()
+            },
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,
+            temporal: format!(
+                "\nTemporal context: current UTC instant {}; local date/time {} (system timezone {}). Treat relative dates as ambiguous unless the user's timezone is known.",
+                chrono::Utc::now().to_rfc3339(),
+                chrono::Local::now().to_rfc3339(),
+                chrono::Local::now().offset()
+            ),
         };
         prompts::resolve(&self.prompt_layers(seed), &runtime)
     }
@@ -2979,8 +3000,8 @@ impl Core {
                 prompts::PromptLayer::Agent,
                 Some(format!("agent:{}@{}", agent.id, agent.revision)),
                 prompts::LayerContent {
-                    identity: Some(format!("You are {}. {}", agent.name, agent.personality)),
-                    operating_rules: Some(format!("{}\nSpecialization: {}\nWork directly with the user in this continuous conversation. Coordinate tools and delegated work internally and return useful results. This identity does not grant tools, permissions, credentials or budget.", agent.behaviour, agent.responsibilities)),
+                    identity: Some(format!("You are {}. {}\nWorking style: {}\nUseful for: {}\nThis identity does not grant tools, permissions, credentials or budget.", agent.name, agent.personality, agent.behaviour, agent.responsibilities)),
+                    instructions: (!agent.instructions.trim().is_empty()).then(|| agent.instructions.clone()),
                     ..Default::default()
                 },
             ));
@@ -5041,6 +5062,7 @@ impl Core {
                 child_core.system_prompt_for_capabilities(&child_capability_set);
             let role_prompts = child_core.role_prompts(&child_capability_set);
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                parent_agent_identity: self.agent_identity().cloned(),
                 outcome_objective: Some(prompt_text.to_string()),
                 outcome: cfg.outcome.clone(),
                 provider: provider.clone(),
@@ -5145,7 +5167,7 @@ impl Core {
                 tool_schemas,
             })
         {
-            eprintln!("[capabilities] could not record turn binding: {error}");
+            return Err(CoreError::Session(error));
         }
         // Hooks come from TurnCapabilities — the same four-stage pipeline
         // that filtered tools and MCP aliases applies to hooks. Previously
@@ -5332,7 +5354,7 @@ impl Core {
                     .map(|episode| episode.commitment_id.clone()),
             };
             if let Err(error) = session.append_intent(record) {
-                eprintln!("[intent] could not record this turn's intent: {error}");
+                return Err(CoreError::Session(error));
             }
         }
 

@@ -130,7 +130,7 @@ fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
     let mentions_keyword = keywords.iter().any(|k| lower.contains(k));
     let mentions_tool = lower.contains(&tool.to_ascii_lowercase());
     let mentions_snippet = !err_first_line.is_empty() && lower.contains(&err_first_line);
-    mentions_keyword || mentions_tool || mentions_snippet || lower.len() > 60
+    mentions_keyword || mentions_tool || mentions_snippet
 }
 
 #[derive(Debug, Clone)]
@@ -233,14 +233,13 @@ impl StopPolicy {
 
     /// True when the prompt itself asks for executed verification or sandbox execution.
     fn demands_verification(prompt: &str) -> bool {
-        const DEMANDS: [&str; 12] = [
+        const DEMANDS: [&str; 11] = [
             "must pass",
             "tests pass",
             "run it",
             "run them",
-            "verify",
-            "prove that",
-            "prove it",
+            "verify by running",
+            "prove by running",
             "in sandbox",
             "in the sandbox",
             "show in sandbox",
@@ -588,7 +587,7 @@ mod tests {
     fn test_outcome_intent_requires_execution_receipt() {
         let p = StopPolicy::default();
         let mut reading = vak_intent::Reading::general();
-        reading.act = vak_intent::Act::Author;
+        reading.act = vak_intent::Act::Modify;
         let spec = vak_intent::OutcomeSpec::from_reading("create an svg animation", &reading, 1);
         assert!(spec.requires_execution());
 

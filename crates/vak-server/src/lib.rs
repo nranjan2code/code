@@ -12910,6 +12910,10 @@ struct TaskCreateBody {
     /// 5-field cron (`m h dom mon dow`, local time) replacing interval ticks.
     #[serde(default)]
     schedule: Option<String>,
+    #[serde(default)]
+    timezone: Option<String>,
+    #[serde(default)]
+    due_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Watchdog shell one-liner; XOR with `prompt`, never touches the LLM.
     #[serde(default)]
     script: Option<String>,
@@ -12976,6 +12980,8 @@ async fn create_task(
         last_wt: None,
         deliver_to: body.deliver_to,
         schedule: body.schedule.filter(|s| !s.trim().is_empty()),
+        timezone: body.timezone.filter(|s| !s.trim().is_empty()),
+        due_at: body.due_at,
         script: body.script.filter(|s| !s.trim().is_empty()),
         model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
         agent_id: body.agent_id.filter(|m| !m.trim().is_empty()),
@@ -13000,6 +13006,10 @@ struct TaskPatchBody {
     /// Tri-state: absent = keep, null/empty = clear, string = set.
     #[serde(default)]
     schedule: OptionalStr,
+    #[serde(default)]
+    timezone: OptionalStr,
+    #[serde(default)]
+    due_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
     #[serde(default)]
     script: OptionalStr,
     #[serde(default)]
@@ -13092,6 +13102,14 @@ async fn patch_task(
                 OptionalStr::Keep => {}
                 OptionalStr::Clear => candidate.schedule = None,
                 OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
+            }
+            match body.timezone {
+                OptionalStr::Keep => {}
+                OptionalStr::Clear => candidate.timezone = None,
+                OptionalStr::Set(ref s) => candidate.timezone = Some(s.clone()),
+            }
+            if let Some(v) = body.due_at {
+                candidate.due_at = v;
             }
             match body.script {
                 OptionalStr::Keep => {}
@@ -13305,12 +13323,19 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
     }
     let rid = format!("task-{}", &uuid::Uuid::now_v7().simple().to_string()[..8]);
     let wt = vak_core::worktree::create(&snapshot.cwd, &rid).ok()?;
+    let fired_at_utc = chrono::Utc::now();
+    let scheduled_prompt = format!(
+        "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a fixed date.]",
+        snapshot.prompt,
+        fired_at_utc.to_rfc3339(),
+        fired_at_utc.with_timezone(&chrono::Local).to_rfc3339(),
+    );
     let child_id = spawn_isolated_run(
         state,
         provider.clone(),
         &rid,
         &wt,
-        &snapshot.prompt,
+        &scheduled_prompt,
         snapshot.model_pin.as_deref(),
         snapshot.agent_id.as_deref(),
         snapshot.agent_revision,
@@ -13320,6 +13345,9 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
 
     update_tasks(state, |map| {
         if let Some(t) = map.get_mut(id) {
+            if t.due_at.is_some() {
+                t.enabled = false;
+            }
             t.last_run_at = Some(chrono::Utc::now());
             t.last_session_id = Some(child_id.clone());
             t.last_summary = None;
@@ -13639,20 +13667,31 @@ async fn scheduler_tick(state: &AppState) {
         tasks
             .values()
             .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
-            .filter(|t| match t.schedule.as_deref() {
-                Some(expr) => {
-                    let marker = markers.entry(t.id.clone()).or_insert_with(|| {
-                        vak_core::tasks::cron_next_after(expr, now_local)
-                            .unwrap_or_else(|_| park_marker())
-                    });
-                    now_local >= *marker
-                }
-                None => t
-                    .last_run_at
-                    .map(|l| {
-                        (now_local.with_timezone(&Utc) - l).num_seconds() >= t.interval_secs as i64
-                    })
-                    .unwrap_or(true),
+            .filter(|t| match t.due_at {
+                Some(due) => chrono::Utc::now() >= due,
+                None => match t.schedule.as_deref() {
+                    Some(expr) => {
+                        if let Some(zone) = t.timezone.as_deref() {
+                            let anchor = t.last_run_at.unwrap_or(t.created_at);
+                            vak_core::tasks::cron_next_after_timezone(expr, anchor, zone)
+                                .map(|next| chrono::Utc::now() >= next)
+                                .unwrap_or(false)
+                        } else {
+                            let marker = markers.entry(t.id.clone()).or_insert_with(|| {
+                                vak_core::tasks::cron_next_after(expr, now_local)
+                                    .unwrap_or_else(|_| park_marker())
+                            });
+                            now_local >= *marker
+                        }
+                    }
+                    None => t
+                        .last_run_at
+                        .map(|l| {
+                            (now_local.with_timezone(&Utc) - l).num_seconds()
+                                >= t.interval_secs as i64
+                        })
+                        .unwrap_or(true),
+                },
             })
             .map(|t| t.id.clone())
             .collect()
@@ -14198,6 +14237,8 @@ mod scheduler_pure_tests {
             last_wt: None,
             deliver_to: None,
             schedule: None,
+            timezone: None,
+            due_at: None,
             script: None,
             model_pin: None,
             agent_id: None,

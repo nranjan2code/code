@@ -2188,6 +2188,24 @@ impl Default for DeliveryPosture {
     }
 }
 
+impl DeliveryPosture {
+    /// Convert the intent kernel's serialized cadence/urgency labels at the
+    /// delivery boundary without introducing a dependency cycle.
+    pub fn from_intent_labels(cadence: &str, urgency: &str) -> Self {
+        let cadence = match cadence {
+            "on-completion" | "on_completion" => Cadence::OnCompletion,
+            "digest" => Cadence::Digest,
+            _ => Cadence::Live,
+        };
+        let urgency = match urgency {
+            "interrupt" => Urgency::Interrupt,
+            "quiet" => Urgency::Quiet,
+            _ => Urgency::Notify,
+        };
+        Self { cadence, urgency }
+    }
+}
+
 /// What to do with one packet under a posture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
@@ -2243,6 +2261,18 @@ mod posture_tests {
 
     fn posture(cadence: Cadence, urgency: Urgency) -> DeliveryPosture {
         DeliveryPosture { cadence, urgency }
+    }
+
+    #[test]
+    fn intent_labels_map_to_delivery_posture() {
+        assert_eq!(
+            DeliveryPosture::from_intent_labels("on-completion", "quiet"),
+            posture(Cadence::OnCompletion, Urgency::Quiet)
+        );
+        assert_eq!(
+            DeliveryPosture::from_intent_labels("unknown", "unknown"),
+            DeliveryPosture::default()
+        );
     }
 
     /// The behaviour this exists for: overnight work sends a roll-up, not a

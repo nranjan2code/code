@@ -183,6 +183,9 @@ pub struct AgentIdentity {
     pub behaviour: String,
     #[serde(default)]
     pub responsibilities: String,
+    /// User-authored instructions added to vak's universal foundation.
+    #[serde(default)]
+    pub instructions: String,
 }
 
 impl SessionHeader {

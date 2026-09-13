@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use vak_llm::Provider;
 use vak_permission::{Mode, PermissionEngine};
@@ -23,7 +24,21 @@ use crate::{
     Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, McpToolAlias, SteeringQueues,
 };
 
+fn vak_core_identity() -> vak_session::types::AgentIdentity {
+    vak_session::types::AgentIdentity {
+        id: "vak".into(),
+        revision: 1,
+        name: "Vak".into(),
+        personality: String::new(),
+        behaviour: String::new(),
+        responsibilities: String::new(),
+        instructions: String::new(),
+    }
+}
+
 pub struct TaskDeps {
+    /// Resolved parent Agent identity; inherited by default-delegated children.
+    pub parent_agent_identity: Option<vak_session::types::AgentIdentity>,
     /// Parent outcome context carried into the child for alignment only.
     pub outcome_objective: Option<String>,
     /// The parent's admitted outcome, narrowed for this child at dispatch.
@@ -92,6 +107,8 @@ struct AgentDefinition {
     behaviour: String,
     #[serde(default)]
     responsibilities: String,
+    #[serde(default)]
+    instructions: String,
 }
 
 fn default_agent_revision() -> u64 {
@@ -130,6 +147,7 @@ fn load_agent(cwd: &std::path::Path, requested: &str) -> Result<Option<AgentDefi
             personality: profile.personality.clone(),
             behaviour: profile.behaviour.clone(),
             responsibilities: profile.responsibilities.clone(),
+            instructions: profile.instructions.clone(),
         }));
     }
     let matches = profiles
@@ -486,12 +504,9 @@ impl TaskTool {
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let inferred_agent = prompt
-            .strip_prefix("Use my Agent “")
-            .and_then(|rest| rest.split_once("”"))
-            .map(|(name, _)| name.trim())
-            .filter(|name| !name.is_empty());
-        let selected_agent = explicit_agent.or(inferred_agent);
+        // Agent selection is typed tool input. Never infer ownership from
+        // model-authored child prose.
+        let selected_agent = explicit_agent;
         let profile = match selected_agent
             .as_ref()
             .map(|name| load_agent(&self.deps.cwd, name))
@@ -514,6 +529,11 @@ impl TaskTool {
             if !profile.responsibilities.trim().is_empty() {
                 child_system_prompt.push_str("\nUseful for: ");
                 child_system_prompt.push_str(&profile.responsibilities);
+            }
+            if !profile.instructions.trim().is_empty() {
+                child_system_prompt
+                    .push_str("\nCustom Agent instructions (within vak's authority): ");
+                child_system_prompt.push_str(profile.instructions.trim());
             }
             child_system_prompt.push_str("\nThis profile cannot grant tools, authority, credentials, budget, or approval bypasses.");
         } else if selected_agent.is_some() {
@@ -548,6 +568,38 @@ impl TaskTool {
             .collect();
         let path =
             SessionPath::new_session_file(&self.deps.sessions_home, &self.deps.cwd, &session_id);
+        let prompt_layers = profile
+            .as_ref()
+            .map(|profile| vak_session::types::AgentIdentity {
+                id: profile.id.clone(),
+                revision: profile.revision,
+                name: profile.name.clone(),
+                personality: profile.personality.clone(),
+                behaviour: profile.behaviour.clone(),
+                responsibilities: profile.responsibilities.clone(),
+                instructions: profile.instructions.clone(),
+            })
+            .or_else(|| self.deps.parent_agent_identity.clone())
+            .as_ref()
+            .map(|identity| {
+                let text = format!(
+                    "{}\n{}\n{}\n{}\n{}",
+                    identity.name,
+                    identity.personality,
+                    identity.behaviour,
+                    identity.responsibilities,
+                    identity.instructions
+                );
+                let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+                vec![vak_session::types::PromptLayerDescriptor {
+                    block: "identity".into(),
+                    layer: "agent".into(),
+                    source: Some(identity.id.clone()),
+                    digest,
+                    bytes: text.len(),
+                }]
+            })
+            .unwrap_or_default();
         let header = SessionHeader {
             agent: profile
                 .as_ref()
@@ -558,17 +610,10 @@ impl TaskTool {
                     personality: profile.personality.clone(),
                     behaviour: profile.behaviour.clone(),
                     responsibilities: profile.responsibilities.clone(),
+                    instructions: profile.instructions.clone(),
                 })
-                .or_else(|| {
-                    Some(vak_session::types::AgentIdentity {
-                        id: "vak".into(),
-                        revision: 1,
-                        name: "Vak".into(),
-                        personality: String::new(),
-                        behaviour: String::new(),
-                        responsibilities: String::new(),
-                    })
-                }),
+                .or_else(|| self.deps.parent_agent_identity.clone())
+                .or_else(|| Some(vak_core_identity())),
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),
             cwd: self.deps.cwd.clone(),
@@ -602,7 +647,7 @@ impl TaskTool {
                 }
                 .into(),
                 capabilities: child_capabilities,
-                prompt_layers: Vec::new(),
+                prompt_layers,
             },
         };
         let log = match SessionLog::create(path, header) {

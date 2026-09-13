@@ -87,6 +87,7 @@ thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 regex = "1"
 # Standards-compliant CommonMark AST for lossless, surface-neutral output projection.
 pulldown-cmark = "=0.13.4"

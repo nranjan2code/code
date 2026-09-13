@@ -351,6 +351,7 @@ async fn run_case_with_tools(
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
         }),
         session_id: format!("eval-{}", case.id),
         created_at: chrono::Utc::now(),

@@ -359,6 +359,7 @@ export interface Agent {
   personality: string;
   behaviour: string;
   responsibilities: string;
+  instructions: string;
   animation: "subtle" | "expressive" | "off";
   voice: string;
 }

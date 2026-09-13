@@ -185,6 +185,8 @@ pub fn build_task_def(
             .map(str::trim)
             .filter(|c| !c.is_empty())
             .map(str::to_string),
+        timezone: None,
+        due_at: None,
         script,
         model_pin: model_pin
             .map(str::trim)

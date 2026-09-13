@@ -56,6 +56,7 @@ use crate::types::{FlowDef, FlowState, NodeDef, NodeResult, NodeStatus};
 pub struct ExecutorDeps {
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
+    pub prompt_layers: Vec<vak_session::types::PromptLayerDescriptor>,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
     pub read_only_tools: Vec<Arc<dyn Tool>>,
@@ -526,6 +527,7 @@ async fn execute_node(
                         personality: String::new(),
                         behaviour: String::new(),
                         responsibilities: String::new(),
+                        instructions: String::new(),
                     })
                 }),
                 session_id: session_id.clone(),
@@ -553,7 +555,7 @@ async fn execute_node(
                     }
                     .into(),
                     capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
+                    prompt_layers: deps.prompt_layers.clone(),
                 },
             };
             let path = SessionPath::new_session_file(&deps.sessions_home, &deps.cwd, &session_id);

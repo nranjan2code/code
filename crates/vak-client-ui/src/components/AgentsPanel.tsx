@@ -11,6 +11,7 @@ export type Agent = {
   personality: string;
   behaviour: string;
   responsibilities: string;
+  instructions: string;
   animation: "subtle" | "expressive" | "off";
   voice: string;
 };
@@ -24,15 +25,15 @@ const presets: Array<{ id: Agent["character"]; label: string; glyph: string }> =
 ];
 
 function normalizeAgents(profiles: Agent[]): Agent[] {
-  return profiles.map((profile) => ({ ...profile, lifecycle: profile.lifecycle ?? "active", responsibilities: typeof profile.responsibilities === "string" ? profile.responsibilities : "" }));
+  return profiles.map((profile) => ({ ...profile, lifecycle: profile.lifecycle ?? "active", responsibilities: typeof profile.responsibilities === "string" ? profile.responsibilities : "", instructions: typeof profile.instructions === "string" ? profile.instructions : "" }));
 }
 
 function makeAgent(): Agent {
-  return { id: crypto.randomUUID(), revision: 1, lifecycle: "active", name: "", character: "orb", personality: "Warm, practical, and easy to talk to.", behaviour: "Take initiative on clear requests and explain the next useful step.", responsibilities: "", animation: "subtle", voice: "default" };
+  return { id: crypto.randomUUID(), revision: 1, lifecycle: "active", name: "", character: "orb", personality: "Warm, practical, and easy to talk to.", behaviour: "Take initiative on clear requests and explain the next useful step.", responsibilities: "", instructions: "", animation: "subtle", voice: "default" };
 }
 
 function defaultChoices(profile: Agent): Agent {
-  return { ...profile, character: "orb", personality: "Warm, practical, and easy to talk to.", behaviour: "Take initiative on clear requests and explain the next useful step.", responsibilities: "", animation: "subtle", voice: "default" };
+  return { ...profile, character: "orb", personality: "Warm, practical, and easy to talk to.", behaviour: "Take initiative on clear requests and explain the next useful step.", responsibilities: "", instructions: "", animation: "subtle", voice: "default" };
 }
 
 export default function AgentsPanel() {
@@ -126,6 +127,7 @@ export default function AgentsPanel() {
         <label>Personality<textarea class="settings-textarea" rows={2} value={value().personality} placeholder="How should this agent sound?" onInput={(e) => update("personality", e.currentTarget.value)} /></label>
         <label>Working style<textarea class="settings-textarea" rows={2} value={value().behaviour} placeholder="How should it approach work?" onInput={(e) => update("behaviour", e.currentTarget.value)} /></label>
         <label>Useful for<textarea class="settings-textarea" rows={2} value={value().responsibilities} placeholder="What kinds of requests should this Agent be useful for?" onInput={(e) => update("responsibilities", e.currentTarget.value)} /></label>
+        <label>Custom instructions<textarea class="settings-textarea" rows={4} value={value().instructions} placeholder="Extra instructions added to Vak's universal foundation" onInput={(e) => update("instructions", e.currentTarget.value)} /></label>
         <div class="agent-inline-fields"><label>Movement<select class="settings-input" value={value().animation} onChange={(e) => update("animation", e.currentTarget.value as Agent["animation"])}><option value="subtle">Subtle</option><option value="expressive">Expressive</option><option value="off">Still</option></select></label><label>Voice<select class="settings-input" value={value().voice} onChange={(e) => update("voice", e.currentTarget.value)}><option value="default">Vak's voice</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label><button type="button" class="settings-button" onClick={() => { if (typeof window === "undefined" || !("speechSynthesis" in window)) return; window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(`Hello, I'm ${value().name || "your Agent"}. I'll keep things clear and useful.`); utterance.rate = value().voice === "quiet" ? 0.86 : value().voice === "bright" ? 1.08 : 1; window.speechSynthesis.speak(utterance); }}>Preview voice</button></div>
         <div class="agent-example-replies" aria-label="Personality examples"><span>How this Agent might respond</span><div><p><strong>Greeting</strong> “What would you like a hand with?”</p><p><strong>Result</strong> “I found a clear next step and kept the details close by.”</p><p><strong>When unsure</strong> “I can continue once you choose between these two options.”</p></div></div>
         <p class="agent-profile-note">Personality, movement, and voice shape the experience. Permissions, privacy, and spending limits are always controlled separately.</p>

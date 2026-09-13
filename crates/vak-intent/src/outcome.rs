@@ -295,7 +295,25 @@ pub struct EvidenceReceipt {
     pub kind: String,
     pub producer: String,
     pub observed_at: chrono::DateTime<chrono::Utc>,
+    /// When the underlying source was published or last materially updated.
+    /// This is distinct from retrieval/observation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_published_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the fact or event actually occurred, if different from retrieval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_at: Option<chrono::DateTime<chrono::Utc>>,
     pub state: EvidenceState,
+}
+
+impl EvidenceReceipt {
+    /// Timestamp appropriate for freshness checks. Requirement evaluators can
+    /// choose publication/effective time explicitly; observation remains the
+    /// safe default for legacy receipts.
+    pub fn freshness_timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+        self.source_published_at
+            .or(self.effective_at)
+            .unwrap_or(self.observed_at)
+    }
 }
 
 pub fn evidence_state_from_age(
@@ -303,11 +321,28 @@ pub fn evidence_state_from_age(
     recorded_at: chrono::DateTime<chrono::Utc>,
     max_age: chrono::Duration,
 ) -> EvidenceState {
-    if recorded_at > now || now - recorded_at <= max_age {
+    // Small clock skew is tolerated, but a receipt far in the future must not
+    // become an automatically fresh proof.
+    const MAX_CLOCK_SKEW_SECS: i64 = 300;
+    if recorded_at > now + chrono::Duration::seconds(MAX_CLOCK_SKEW_SECS) {
+        EvidenceState::Stale
+    } else if now - recorded_at <= max_age {
         EvidenceState::Fresh
     } else {
         EvidenceState::Stale
     }
+}
+
+/// Evaluate freshness from a structured receipt. Source publication or event
+/// time is preferred when present; observation time remains the legacy
+/// fallback. This keeps retrieval of an old source from masquerading as a
+/// current fact.
+pub fn evidence_state_from_receipt(
+    now: chrono::DateTime<chrono::Utc>,
+    receipt: &EvidenceReceipt,
+    max_age: chrono::Duration,
+) -> EvidenceState {
+    evidence_state_from_age(now, receipt.freshness_timestamp(), max_age)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -411,6 +446,24 @@ pub fn evaluate_requirements_with_evidence(
             EvidenceState::None
         },
     )
+}
+
+/// Evaluate requirements using a concrete evidence receipt and its
+/// requirement freshness window. Retrieval success alone is insufficient.
+pub fn evaluate_requirements_with_receipt(
+    spec: &OutcomeSpec,
+    response: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+    receipt: Option<&EvidenceReceipt>,
+) -> Vec<RequirementEvaluation> {
+    let state = receipt
+        .map(|value| {
+            let max_age =
+                chrono::Duration::seconds(spec.evidence_max_age_secs.unwrap_or(86_400) as i64);
+            evidence_state_from_receipt(now, value, max_age)
+        })
+        .unwrap_or(EvidenceState::None);
+    evaluate_requirements_with_state(spec, response, state)
 }
 
 pub fn evaluate_requirements_with_state(
@@ -530,10 +583,8 @@ impl OutcomeSpec {
     pub fn requires_execution(&self) -> bool {
         self.requirements.iter().any(|r| {
             r.kind == RequirementKind::Deliverable
-                && (r.description.contains("author")
-                    || r.description.contains("modify")
+                && (r.description.contains("modify")
                     || r.description.contains("operate")
-                    || r.description.contains("verify")
                     || r.description.contains("govern")
                     || r.description.contains("orchestrate"))
         })
@@ -733,6 +784,31 @@ mod tests {
         );
         assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
         assert!(evaluations[1].reason.contains("stale"));
+    }
+
+    #[test]
+    fn evidence_receipt_keeps_observation_and_source_times_distinct() {
+        let observed = chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&chrono::Utc);
+        let published = chrono::DateTime::parse_from_rfc3339("2025-12-31T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&chrono::Utc);
+        let receipt = EvidenceReceipt {
+            id: "r1".into(),
+            kind: "article".into(),
+            producer: "web".into(),
+            observed_at: observed,
+            source_published_at: Some(published),
+            effective_at: None,
+            state: EvidenceState::Fresh,
+        };
+        assert_eq!(receipt.freshness_timestamp(), published);
+        assert_eq!(receipt.observed_at, observed);
+        assert_eq!(
+            evidence_state_from_receipt(observed, &receipt, chrono::Duration::days(1)),
+            EvidenceState::Stale
+        );
     }
 
     #[test]

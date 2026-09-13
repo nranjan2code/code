@@ -49,6 +49,8 @@ fn render_task(t: &TaskDef) -> Value {
         "prompt": if t.prompt.is_empty() { None } else { Some(t.prompt.clone()) },
         "script": t.script,
         "schedule": t.schedule,
+        "timezone": t.timezone,
+        "due_at": t.due_at,
         "interval_secs": if t.schedule.is_none() { Some(t.interval_secs) } else { None },
         "deliver_to": t.deliver_to,
         "model_pin": t.model_pin,
@@ -119,6 +121,14 @@ impl vak_tools::Tool for TasksTool {
                 "every_secs": {
                     "type": "integer",
                     "description": "Plain interval in seconds since last run (XOR with 'cron'; default 3600 if neither is given)"
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional IANA timezone name for cron interpretation, such as America/New_York"
+                },
+                "due_at": {
+                    "type": "string",
+                    "description": "Optional one-shot UTC timestamp in RFC3339; cannot be combined with cron"
                 },
                 "deliver_to": {
                     "type": "string",
@@ -229,6 +239,14 @@ impl vak_tools::Tool for TasksTool {
                     last_wt: None,
                     deliver_to,
                     schedule: cron,
+                    timezone: args
+                        .get("timezone")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    due_at: args
+                        .get("due_at")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.parse().ok()),
                     script,
                     model_pin: str_arg("model_pin"),
                     agent_id,

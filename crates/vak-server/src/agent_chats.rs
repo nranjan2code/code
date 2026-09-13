@@ -53,6 +53,7 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
         }
     } else {
         let profiles = match agents::effective(&core) {

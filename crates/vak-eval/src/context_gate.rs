@@ -87,6 +87,7 @@ fn build_fixture_log(
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),
+            instructions: String::new(),
         }),
         session_id: session_id.to_string(),
         created_at: chrono::Utc::now(),

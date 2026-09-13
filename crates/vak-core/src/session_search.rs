@@ -359,6 +359,7 @@ mod tests {
                     personality: String::new(),
                     behaviour: String::new(),
                     responsibilities: String::new(),
+                    instructions: String::new(),
                 }),
                 session_id: id.into(),
                 created_at: chrono::Utc::now(),

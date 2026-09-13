@@ -943,6 +943,7 @@ async fn run_flow_exec(
         vak_intent::OutcomeSpec::from_reading(name.clone(), &vak_intent::Reading::default(), 0);
     outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
+        prompt_layers: Vec::new(),
         provider,
         system_prompt: prepared.system_prompt,
         model: core.effective_model(),
@@ -1783,6 +1784,7 @@ async fn run_plan(
         vak_intent::OutcomeSpec::from_reading(task.clone(), &vak_intent::Reading::default(), 0);
     outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
+        prompt_layers: Vec::new(),
         provider,
         system_prompt: prepared.system_prompt,
         model: core.effective_model(),

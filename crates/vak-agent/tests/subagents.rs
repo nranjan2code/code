@@ -125,6 +125,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        parent_agent_identity: None,
         role_prompts: Default::default(),
         provider: scripted.clone(),
         system_prompt: "child-sys".into(),

@@ -47,6 +47,7 @@ three different answers inside one document today.
 | `surface` | **code** | runtime-derived | Doc 07 v0.2.1. The generated line is the runtime's own observation. |
 | `surface_note` | user | **concatenate, never remove** | Appends to the `Surface:` line. Structurally cannot rewrite it: a separate block, so nothing can name the generated sentence. |
 | `skills` / `mcp` | **code** | runtime-derived | Live inventories with digests. |
+| Agent instructions | user | additive, authority-capped | Custom Agent guidance is appended within the universal foundation and is frozen with Agent identity provenance. |
 
 This split is what lets the answer to "can I edit the prompt?" be an
 unqualified yes without it also meaning "yes, including the part that
@@ -68,6 +69,13 @@ built-in seed (shipped, code-owned)
   → Chat        gateway allowlist.json
   → Agent role  subagent role definition
 ```
+
+Agent custom instructions are an additive contribution at the Agent tier. They
+may refine tone, workflow, or domain focus, but cannot replace the universal
+identity, capability contract, permission ceiling, evidence rules, or approval
+requirements. The same value is persisted in `AgentDefinition`, projected into
+`AgentIdentity`, included in the effective prompt, and carried into child and
+flow session provenance.
 
 Composition per block kind reuses mechanisms that already exist rather than
 inventing a fourth inheritance idiom:
