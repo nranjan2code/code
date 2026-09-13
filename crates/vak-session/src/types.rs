@@ -529,6 +529,11 @@ pub enum ChildRunStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// SessionHeader intentionally carries the frozen agent contract and remains
+// inline so the append-only JSONL representation and all existing pattern
+// matches stay unchanged. Keep this representation decision explicit as the
+// header grows; boxing it would be a wire/API refactor, not a lint-only fix.
+#[allow(clippy::large_enum_variant)]
 pub enum EntryPayload {
     Header(SessionHeader),
     Message(MessageRecord),
