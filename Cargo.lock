@@ -7029,7 +7029,7 @@ dependencies = [
 
 [[package]]
 name = "vak"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "chrono",
  "clap",
@@ -7066,7 +7066,7 @@ dependencies = [
 
 [[package]]
 name = "vak-agent"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7089,7 +7089,7 @@ dependencies = [
 
 [[package]]
 name = "vak-bus"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -7110,7 +7110,7 @@ dependencies = [
 
 [[package]]
 name = "vak-commit"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "chrono",
  "serde",
@@ -7125,7 +7125,7 @@ dependencies = [
 
 [[package]]
 name = "vak-config"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "serde",
  "tempfile",
@@ -7136,7 +7136,7 @@ dependencies = [
 
 [[package]]
 name = "vak-core"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7172,7 +7172,7 @@ dependencies = [
 
 [[package]]
 name = "vak-delivery"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -7185,7 +7185,7 @@ dependencies = [
 
 [[package]]
 name = "vak-desktop"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "axum",
  "notify-rust",
@@ -7211,7 +7211,7 @@ dependencies = [
 
 [[package]]
 name = "vak-eval"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7232,7 +7232,7 @@ dependencies = [
 
 [[package]]
 name = "vak-flow"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7253,7 +7253,7 @@ dependencies = [
 
 [[package]]
 name = "vak-hooks"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "libc",
  "serde",
@@ -7267,7 +7267,7 @@ dependencies = [
 
 [[package]]
 name = "vak-intent"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "chrono",
  "serde",
@@ -7277,7 +7277,7 @@ dependencies = [
 
 [[package]]
 name = "vak-llm"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -7299,7 +7299,7 @@ dependencies = [
 
 [[package]]
 name = "vak-mcp"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "futures",
@@ -7317,7 +7317,7 @@ dependencies = [
 
 [[package]]
 name = "vak-ops"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -7328,7 +7328,7 @@ dependencies = [
 
 [[package]]
 name = "vak-permission"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "globset",
  "serde",
@@ -7338,7 +7338,7 @@ dependencies = [
 
 [[package]]
 name = "vak-plugin"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -7356,7 +7356,7 @@ dependencies = [
 
 [[package]]
 name = "vak-presentation"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "hex",
  "serde",
@@ -7367,7 +7367,7 @@ dependencies = [
 
 [[package]]
 name = "vak-sandbox"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "landlock",
  "serde",
@@ -7380,7 +7380,7 @@ dependencies = [
 
 [[package]]
 name = "vak-server"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "axum",
@@ -7429,7 +7429,7 @@ dependencies = [
 
 [[package]]
 name = "vak-session"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "chrono",
  "serde",
@@ -7444,7 +7444,7 @@ dependencies = [
 
 [[package]]
 name = "vak-store"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -7462,7 +7462,7 @@ dependencies = [
 
 [[package]]
 name = "vak-terminal"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "bytes",
  "chrono",
@@ -7479,7 +7479,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tools"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "globset",
@@ -7500,7 +7500,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tray"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "notify-rust",
  "png 0.17.16",
@@ -7514,7 +7514,7 @@ dependencies = [
 
 [[package]]
 name = "vak-voice"
-version = "3.0.79"
+version = "3.0.80"
 dependencies = [
  "async-trait",
  "serde",

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.80 — 2026-09-13
+
+- Make the Agent-owned platform contract authoritative across conversations,
+  channels, bots, scheduled work, and delivery provenance.
+- Update repository engineering and release documentation for the Agent-first
+  runtime and bundled local release workflow.
+
 ## 3.0.79 — 2026-09-13
 
 - Make user-facing conversations agent-first, with Vak and named agents available directly in the main UI.
