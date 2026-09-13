@@ -930,15 +930,14 @@ fn main() {
                 if !cwd.exists()
                     && let Err(error) = std::fs::create_dir_all(&cwd)
                 {
-                        let message = format!(
-                            "could not create default workspace {}: {error}",
-                            cwd.display()
-                        );
-                        eprintln!("{message}");
-                        let state = handle.state::<BackendState>();
-                        set_boot_error(&state, Some(message));
-                        return;
-                    }
+                    let message = format!(
+                        "could not create default workspace {}: {error}",
+                        cwd.display()
+                    );
+                    eprintln!("{message}");
+                    let state = handle.state::<BackendState>();
+                    set_boot_error(&state, Some(message));
+                    return;
                 }
                 {
                     let state = handle.state::<BackendState>();
