@@ -448,6 +448,7 @@ fn apply_preference(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn render_response(
     core: &Core,
     surface: &str,
@@ -1101,8 +1102,15 @@ mod tests {
             &core,
             DeliveryContent::Answer(AnswerDraft::from_markdown("result")),
         );
-        let DeliveryContent::Answer(answer) = content else {
-            panic!("answer content expected");
+        let answer = match content {
+            DeliveryContent::Answer(answer) => answer,
+            other => {
+                assert!(
+                    matches!(other, DeliveryContent::Answer(_)),
+                    "answer content expected"
+                );
+                return;
+            }
         };
         assert_eq!(
             answer.metadata.get("agent_id").map(String::as_str),
