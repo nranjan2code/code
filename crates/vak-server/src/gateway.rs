@@ -2819,6 +2819,7 @@ pub(crate) async fn deliver_and_record(
     .map(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn deliver_and_record_with_result(
     core: &Core,
     target: &str,

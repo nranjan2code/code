@@ -10929,7 +10929,7 @@ async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::
 
 async fn get_agent_profiles(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match agent_profiles::load(&state.core.cwd()) {
+    match agent_profiles::load(state.core.cwd()) {
         Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -10959,7 +10959,7 @@ async fn put_agent_profiles(
         )
             .into_response();
     };
-    match agent_profiles::save(&state.core.cwd(), &profiles) {
+    match agent_profiles::save(state.core.cwd(), &profiles) {
         Ok(saved_profiles) => {
             Json(serde_json::json!({ "saved": true, "profiles": saved_profiles })).into_response()
         }
@@ -12269,6 +12269,7 @@ async fn start_bestofn(
 /// (docs/design/29-personal-os.md P2) overrides the child's provider/model
 /// so BOTH main dispatches and any receipts carry the pinned id only — a
 /// pinned task never escalates to another model.
+#[allow(clippy::too_many_arguments)]
 async fn spawn_isolated_run(
     state: &AppState,
     provider: Arc<dyn Provider>,
@@ -12280,7 +12281,7 @@ async fn spawn_isolated_run(
     profile_revision: Option<u64>,
 ) -> Result<String, String> {
     let prompt = if let Some(profile_id) = profile_id {
-        let profiles = agent_profiles::load(&state.core.cwd())?;
+        let profiles = agent_profiles::load(state.core.cwd())?;
         let profile = profiles
             .iter()
             .find(|profile| profile.id == profile_id)
@@ -13319,7 +13320,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                     let delivery_state = if let Some(target) = &deliver_to {
                         // Delivery failure must not lose the recorded summary;
                         // it only means this transport could not be reached.
-                        match gateway::deliver_and_record_with_result(
+                        gateway::deliver_and_record_with_result(
                             &st.core,
                             target,
                             &format!("routine '{task_name}' finished:\n{text}"),
@@ -13330,10 +13331,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                             result_id.as_deref(),
                         )
                         .await
-                        {
-                            Ok(state) => state,
-                            Err(_) => "pending",
-                        }
+                        .unwrap_or("pending")
                     } else {
                         let dedupe_key = Some(format!("inbox|{child_session}"));
                         let _ = vak_core::inbox::record_with_result_and_key(

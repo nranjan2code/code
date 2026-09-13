@@ -111,6 +111,7 @@ pub fn save(cwd: &Path, profiles: &[AgentProfile]) -> Result<Vec<AgentProfile>, 
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
