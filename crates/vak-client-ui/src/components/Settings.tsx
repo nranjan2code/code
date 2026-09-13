@@ -81,6 +81,42 @@ function fmt(value: number): string {
   return value.toLocaleString();
 }
 
+type PresentationDefinition = api.PresentationLibraryResponse["definitions"][number];
+type PresentationFilter = "all" | "active" | "inactive";
+
+type PresentationType = {
+  id: string;
+  label: string;
+  semanticType: string;
+  definitions: PresentationDefinition[];
+  latest: PresentationDefinition;
+  activeRevision: number | null;
+  active: boolean;
+};
+
+type PresentationGroup = {
+  key: string;
+  label: string;
+  types: PresentationType[];
+  definitionCount: number;
+};
+
+function presentationLabel(value: string): string {
+  return value
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function presentationSemanticType(definition: PresentationDefinition): string {
+  return definition.spec.accepts?.[0] ?? "general";
+}
+
+function presentationGroupKey(definition: PresentationDefinition): string {
+  return presentationSemanticType(definition).split(".")[0] || "general";
+}
+
 async function copySettingText(value: string, label: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
@@ -97,25 +133,127 @@ export default function Settings() {
   const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
   const [voiceProviders] = createResource(() => api.listVoiceProviders());
   const [presentationLibrary, { refetch: refetchPresentations }] = createResource(() => api.listPresentations());
-  const presentationOwner = () => config()?.paths.cwd ?? backend().cwd ?? "workspace";
-  async function togglePresentation(definition: api.PresentationLibraryResponse["definitions"][number]) {
+  const [presentationQuery, setPresentationQuery] = createSignal("");
+  const [presentationFilter, setPresentationFilter] = createSignal<PresentationFilter>("all");
+  const [presentationExpanded, setPresentationExpanded] = createSignal<Set<string>>(new Set());
+  const [presentationVersions, setPresentationVersions] = createSignal<Set<string>>(new Set());
+  const [presentationBusy, setPresentationBusy] = createSignal<string | null>(null);
+  const presentationScope = () => capabilityScope();
+  const presentationOwner = () => presentationScope() === "user" ? "user" : config()?.paths.cwd ?? backend().cwd ?? "workspace";
+  const presentationActivation = (id: string) => presentationLibrary()?.activations.find((entry) => entry.spec_id === id && entry.scope === presentationScope() && entry.owner === presentationOwner());
+  const presentationCatalog = createMemo<PresentationGroup[]>(() => {
+    const definitions = presentationLibrary()?.definitions ?? [];
+    const byId = new Map<string, PresentationDefinition[]>();
+    for (const definition of definitions) {
+      const entries = byId.get(definition.spec.id) ?? [];
+      entries.push(definition);
+      byId.set(definition.spec.id, entries);
+    }
+    const groups = new Map<string, PresentationType[]>();
+    for (const [id, entries] of byId) {
+      const versions = [...entries].sort((a, b) => b.spec.revision - a.spec.revision);
+      const latest = versions[0];
+      const activeRevision = presentationActivation(id)?.revision ?? null;
+      const type: PresentationType = {
+        id,
+        label: presentationLabel(id.replace(/^seed\./, "")),
+        semanticType: presentationSemanticType(latest),
+        definitions: versions,
+        latest,
+        activeRevision,
+        active: activeRevision !== null,
+      };
+      const key = presentationGroupKey(latest);
+      const group = groups.get(key) ?? [];
+      group.push(type);
+      groups.set(key, group);
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, types]) => ({
+        key,
+        label: presentationLabel(key),
+        types: types.sort((a, b) => a.label.localeCompare(b.label)),
+        definitionCount: types.reduce((count, type) => count + type.definitions.length, 0),
+      }));
+  });
+  const presentationGroups = createMemo<PresentationGroup[]>(() => {
+    const query = presentationQuery().trim().toLowerCase();
+    const filter = presentationFilter();
+    return presentationCatalog()
+      .map((group) => ({
+        ...group,
+        types: group.types.filter((type) => {
+          const matchesQuery = !query || [type.id, type.label, type.semanticType].some((value) => value.toLowerCase().includes(query));
+          const matchesFilter = filter === "all" || (filter === "active" ? type.active : !type.active);
+          return matchesQuery && matchesFilter;
+        }),
+      }))
+      .filter((group) => group.types.length > 0);
+  });
+  const activePresentationCount = () => presentationCatalog().reduce((count, group) => count + group.types.filter((type) => type.active).length, 0);
+  const togglePresentationGroup = (key: string) => {
+    setPresentationExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  const togglePresentationVersions = (id: string) => {
+    setPresentationVersions((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const presentationBusyFor = (key: string) => presentationBusy() === key;
+  async function activatePresentation(definition: PresentationDefinition) {
     try {
-      const active = presentationLibrary()?.activations.some((entry) => entry.spec_id === definition.spec.id && entry.revision === definition.spec.revision && entry.owner === presentationOwner());
-      if (active) await api.deactivatePresentation(definition.spec.id, "workspace", presentationOwner());
-      else await api.activatePresentation(definition.spec.id, definition.spec.revision, "workspace", presentationOwner());
+      await api.activatePresentation(definition.spec.id, definition.spec.revision, presentationScope(), presentationOwner());
       await refetchPresentations();
-      setNotice({ kind: "info", text: active ? "Presentation deactivated" : "Presentation activated" });
+      setNotice({ kind: "info", text: `${presentationLabel(definition.spec.id.replace(/^seed\./, ""))} activated` });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not change presentation: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
-  async function resetPresentation(definition: api.PresentationLibraryResponse["definitions"][number]) {
+  async function deactivatePresentation(id: string) {
     try {
-      await api.resetPresentation(definition.spec.id, "workspace", presentationOwner());
+      await api.deactivatePresentation(id, presentationScope(), presentationOwner());
+      await refetchPresentations();
+      setNotice({ kind: "info", text: `${presentationLabel(id.replace(/^seed\./, ""))} deactivated` });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not change presentation: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  async function resetPresentation(id: string) {
+    try {
+      await api.resetPresentation(id, presentationScope(), presentationOwner());
       await refetchPresentations();
       setNotice({ kind: "info", text: "Presentation reset to its original revision" });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not reset presentation: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  async function runPresentationAction(key: string, action: () => Promise<void>) {
+    if (presentationBusy()) return;
+    setPresentationBusy(key);
+    try {
+      await action();
+    } finally {
+      setPresentationBusy(null);
+    }
+  }
+  async function applyPresentationType(type: PresentationType) {
+    const active = presentationActivation(type.id);
+    if (active?.revision === type.latest.spec.revision) await deactivatePresentation(type.id);
+    else await activatePresentation(type.latest);
+  }
+  async function applyPresentationGroup(group: PresentationGroup) {
+    const latest = group.types;
+    const allLatestActive = latest.every((type) => presentationActivation(type.id)?.revision === type.latest.spec.revision);
+    for (const type of latest) {
+      if (allLatestActive) await deactivatePresentation(type.id);
+      else if (presentationActivation(type.id)?.revision !== type.latest.spec.revision) await activatePresentation(type.latest);
     }
   }
   async function exportPresentationPack() {
@@ -952,15 +1090,58 @@ export default function Settings() {
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
-                <Row title="Reusable presentations" description="Validated experience-pack cards available in this workspace."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${presentationLibrary()?.definitions.length ?? 0} definitions · ${presentationLibrary()?.activations.length ?? 0} active`}</span></Row>
+                <Row title="Reusable presentations" description="Validated experience-pack cards that Vak can use when rendering work. Choose only the families you want available to this scope."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationLibrary()?.definitions.length ?? 0} definitions`}</span></Row>
                 <Row title="Presentation packs" description="Share validated definitions without sharing task results. Imported packs stay disabled until you activate them."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
-                <Show when={(presentationLibrary()?.definitions.length ?? 0) > 0}>
-                  <For each={presentationLibrary()?.definitions ?? []}>
-                    {(definition) => {
-                      const active = () => presentationLibrary()?.activations.some((entry) => entry.spec_id === definition.spec.id && entry.revision === definition.spec.revision && entry.owner === presentationOwner()) ?? false;
-                      return <Row title={`${definition.spec.id} · v${definition.spec.revision}`} description={`${definition.origin.plugin_id ?? "Built-in"} · ${definition.spec.accepts?.join(", ") ?? "generic"}`}><span class="settings-actions"><button class="settings-button" onClick={() => void togglePresentation(definition)}>{active() ? "Deactivate" : "Activate"}</button><button class="settings-button" onClick={() => void resetPresentation(definition)}>Reset</button></span></Row>;
-                    }}
-                  </For>
+                <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
+                  <section class="presentation-library" aria-label="Reusable presentations">
+                    <div class="presentation-toolbar">
+                      <label class="presentation-search"><Icon name="search" size={14} /><input aria-label="Search presentations" placeholder="Search by name or capability…" value={presentationQuery()} onInput={(event) => setPresentationQuery(event.currentTarget.value)} /></label>
+                      <div class="presentation-filters" role="group" aria-label="Presentation filter">
+                        <For each={[{ id: "all", label: "All" }, { id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }] as const}>{(filter) => <button type="button" classList={{ active: presentationFilter() === filter.id }} aria-pressed={presentationFilter() === filter.id} onClick={() => setPresentationFilter(filter.id)}>{filter.label}</button>}</For>
+                      </div>
+                    </div>
+                    <div class="presentation-scope-note"><Icon name={presentationScope() === "user" ? "layers" : "folder"} /><span>Managing <strong>{presentationScope() === "user" ? "Shared" : "This workspace"}</strong>. These activations are selected before broader workspace fallbacks.</span></div>
+                    <Show when={presentationGroups().length > 0} fallback={<div class="presentation-empty">No presentation packs match this filter.</div>}>
+                      <div class="presentation-groups">
+                        <For each={presentationGroups()}>{(group, index) => {
+                          const open = () => presentationExpanded().has(group.key) || (!presentationExpanded().size && !presentationQuery() && presentationFilter() === "all" && index() === 0);
+                          const allLatestActive = () => group.types.every((type) => presentationActivation(type.id)?.revision === type.latest.spec.revision);
+                          const groupBusy = () => presentationBusyFor(`group:${group.key}`);
+                          return <section class="presentation-group" classList={{ open: open() }}>
+                            <div class="presentation-group-header">
+                              <button type="button" class="presentation-disclosure" aria-expanded={open()} onClick={() => togglePresentationGroup(group.key)}><Icon name="chevron" /><span><strong>{group.label}</strong><small>{group.types.length} pack{group.types.length === 1 ? "" : "s"} · {group.definitionCount} versions</small></span></button>
+                              <span class="presentation-group-count">{group.types.filter((type) => type.active).length} active</span>
+                              <button type="button" class="settings-button" disabled={groupBusy()} onClick={() => void runPresentationAction(`group:${group.key}`, () => applyPresentationGroup(group))}>{groupBusy() ? "Working…" : allLatestActive() ? "Deactivate group" : "Activate latest"}</button>
+                            </div>
+                            <Show when={open()}>
+                              <div class="presentation-group-body">
+                                <For each={group.types}>{(type) => {
+                                  const activeRevision = () => presentationActivation(type.id)?.revision ?? null;
+                                  const busy = () => presentationBusyFor(type.id);
+                                  const latestActive = () => activeRevision() === type.latest.spec.revision;
+                                  const versionsOpen = () => presentationVersions().has(type.id);
+                                  return <div class="presentation-type">
+                                    <div class="presentation-type-main">
+                                      <div class="presentation-type-copy"><strong>{type.label}</strong><span>{type.semanticType} · {type.latest.origin.plugin_id ?? "Built-in"}</span></div>
+                                      <Show when={type.active}><span class="settings-status good">v{activeRevision()} active</span></Show>
+                                      <button type="button" class="settings-button" disabled={busy()} onClick={() => void runPresentationAction(type.id, () => applyPresentationType(type))}>{busy() ? "Working…" : latestActive() ? "Deactivate" : type.active ? "Use latest" : "Activate"}</button>
+                                      <button type="button" class="settings-button subtle" disabled={busy()} onClick={() => void runPresentationAction(`reset:${type.id}`, () => resetPresentation(type.id))}>Reset</button>
+                                    </div>
+                                    <Show when={type.definitions.length > 1}>
+                                      <button type="button" class="presentation-versions-toggle" aria-expanded={versionsOpen()} onClick={() => togglePresentationVersions(type.id)}><Icon name="chevron" />{versionsOpen() ? "Hide" : "Show"} {type.definitions.length} versions</button>
+                                      <Show when={versionsOpen()}>
+                                        <div class="presentation-versions"><For each={type.definitions}>{(definition) => <div class="presentation-version"><span>v{definition.spec.revision}{definition.spec.revision === type.latest.spec.revision ? " · latest" : ""}</span><Show when={activeRevision() === definition.spec.revision}><span class="settings-status good">active</span></Show><button type="button" class="settings-button" disabled={busy() || activeRevision() === definition.spec.revision} onClick={() => void runPresentationAction(type.id, () => activatePresentation(definition))}>{activeRevision() === definition.spec.revision ? "Using" : "Use this"}</button></div>}</For></div>
+                                      </Show>
+                                    </Show>
+                                  </div>;
+                                }}</For>
+                              </div>
+                            </Show>
+                          </section>;
+                        }}</For>
+                      </div>
+                    </Show>
+                  </section>
                 </Show>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>

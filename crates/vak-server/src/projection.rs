@@ -424,6 +424,30 @@ fn snapshot_inner(
                                 rejected_outcome_requirements =
                                     plan.merge_outcome_requirements(outcome);
                             }
+                            // An activation is the user's standing choice for this
+                            // scope. Use it automatically for the first compatible
+                            // typed result; explicit session selection still wins.
+                            let selected_for_output = selected_presentation.clone().or_else(|| {
+                                adaptive_library.and_then(|library| {
+                                    let workspace_owner = session
+                                        .header()
+                                        .map(|header| {
+                                            header.contract_cwd().to_string_lossy().into_owned()
+                                        })
+                                        .unwrap_or_else(|| "workspace".into());
+                                    plan.accepted.iter().find_map(|candidate| {
+                                        library
+                                            .select_preferred(
+                                                &candidate.semantic_type,
+                                                "user",
+                                                &workspace_owner,
+                                            )
+                                            .map(|stored| {
+                                                (stored.spec.id.clone(), stored.spec.revision)
+                                            })
+                                    })
+                                })
+                            });
                             let output_status = status_for_completion(
                                 turn_evaluations
                                     .get(&turn)
@@ -465,7 +489,7 @@ fn snapshot_inner(
                                                     available.to_string(),
                                                 );
                                             }
-                                            if let Some((spec_id, revision)) = selected_presentation
+                                            if let Some((spec_id, revision)) = selected_for_output
                                                 .as_ref()
                                                 && library.definitions().any(|stored| {
                                                     stored.spec.id == *spec_id
@@ -626,7 +650,7 @@ fn snapshot_inner(
                                 fallback_text: text.clone(),
                             });
                             if let (Some(library), Some((spec_id, revision))) =
-                                (adaptive_library, selected_presentation.as_ref())
+                                (adaptive_library, selected_for_output.as_ref())
                                 && let Some(stored) = library.definitions().find(|stored| {
                                     stored.spec.id == *spec_id && stored.spec.revision == *revision
                                 })
