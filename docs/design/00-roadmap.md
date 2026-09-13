@@ -32,6 +32,7 @@ that owns its contract.
 | Outcome-directed runtime: bounded OutcomeSpec, evidence-aware evaluation, collaborative goal updates, and result-scoped cross-surface presentation | `docs/design/52-outcome-directed-runtime.md`, `docs/design/30-output-engineering.md` |
 | Service control plane, Operations Center | `docs/design/28-operations.md` |
 | Installed lifecycle: install, verify, status, update, uninstall | `docs/design/32-release-engineering.md` |
+| Agent-owned conversations, audience-scoped memory, channel endpoint routing, lifecycle-gated admission, and durable delivery provenance | `docs/design/64-agent-owned-platform.md` |
 
 ## What 2.0.0 delivers
 

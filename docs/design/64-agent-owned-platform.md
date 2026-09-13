@@ -20,9 +20,9 @@ runtime reader or migration is required. Unsupported stores are identified
 before dispatch or mutation, with an explicit fresh-start procedure. Refusal
 must leave old ledgers untouched: no automatic purge, rewrite, or inferred
 deletion. An operator may export/backup using the prior release and select a
-fresh data location or explicitly reset. Develop bounded slices but ship the
-schema, API, and UI cutover together after all admission paths are converted.
-Document 63 remains the shipped contract until this replacement is verified.
+fresh data location or explicitly reset. The schema, API, UI, and all admission
+paths are now cut over; this document is the authoritative contract. Document
+63 is retained only as historical context and is not a runtime contract.
 
 ## Product vocabulary
 
@@ -247,7 +247,7 @@ personal users need not visit Admin for routine setup. The Operations Center pro
 endpoint, Bot, and run provenance from real records; it never manufactures a
 dashboard-only state.
 
-## Replacement plan
+## Replacement plan (completed)
 
 1. Inventory every ingress/store and define core records, access predicates,
    layering, lifecycle transitions, and new-major refusal guards, with tests.

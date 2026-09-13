@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.36 — all roadmap phases implemented and repository-verified; first-class voice shipped and installed.**
+**Status: v3.0.79 — Agent-owned conversations and channel delivery are implemented and repository-verified; first-class voice shipped and installed.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -76,6 +76,11 @@ and the adaptive assistant experience (`docs/design/61-adaptive-assistant-experi
 one calm conversation with contextual task details, unified navigation, clean prose with prompt
 scaffolding scrubbing, typed work objects, theme packs across Dark Obsidian, Quiet Sage, Soft Paper,
 High Contrast, and Light, and sandboxed artifact inspection that opens only when relevant or requested).
+The Agent-owned platform (`docs/design/64-agent-owned-platform.md`) is now authoritative:
+Agents own conversations, memory boundaries, lifecycle, channel targets, scheduled work,
+request admission, and delivery provenance; Bots are transport identities and channels are
+endpoints, while internal tasks remain implementation details behind the Agent conversation.
+Document 63 is retained as historical context only.
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 
@@ -490,6 +495,17 @@ shipped behaviour rather than a proposal.
     the real context window or default conservatively (8,192 tokens) to ensure context
     compaction triggers reliably on local hardware rather than overflowing context.
 
+37. **Agent ownership is mandatory for new work.** Every newly admitted session,
+    request, scheduled run, child/delegated run, and channel delivery has one
+    resolved Agent identity plus its ConversationKey, audience, origin, and
+    configuration revision. Agent identity is resolved at admission and cannot
+    be supplied by untrusted client text. Bots identify transport credentials;
+    channels identify endpoints; neither is an Agent. Paused, archived, or
+    revoked Agents and endpoints fail closed, cancel affected work, and never
+    fall back to Vak. Internal tasks, tools, flows, and subagents inherit or
+    explicitly freeze Agent ownership and are projected back only through
+    authorized Agent conversations (docs/design/64-agent-owned-platform.md).
+
 ## Code rules
 
 - Edition 2024, stable toolchain. `cargo fmt` + `cargo clippy -D warnings` must pass.
@@ -725,7 +741,10 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      alert rows (docs/design/15-reliability.md), task store +
                      cron engine, health report, backup export/import,
                      digest, shared transcript_md renderer
-                     (docs/design/29-personal-os.md)
+                     (docs/design/29-personal-os.md) + AgentDefinition store,
+                     Agent/ConversationKey admission and lifecycle resolution,
+                     scoped ownership/provenance for sessions, schedules,
+                     child runs, and delivery (docs/design/64-agent-owned-platform.md)
 crates/vak-server/site
                      The public website at `/`, `/surfaces`, `/security`,
                      `/install` — src/ built by build.py into a COMMITTED
@@ -752,6 +771,9 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      AgentEvent and transcript endpoints
                      (docs/design/22-gateway.md, 28-operations.md,
                      29-personal-os.md, 30-output-engineering.md) +
+                     Agent-owned endpoint routing, request receipts, audience
+                     isolation, lifecycle-gated admission, and bot-scoped
+                     delivery provenance (docs/design/64-agent-owned-platform.md) +
                      multi-bot-per-channel: `Bot` identities independent of
                      surface, bot->chat->workspace policy/permission/route
                      resolution chain, bots.json store, /gateway/bots CRUD
@@ -798,7 +820,10 @@ crates/vak-client-ui SolidJS + Vite WORKSPACE client, shared by the Tauri
                      state. Builds twice from one source: dist/ (base "./",
                      shipped by vak-desktop, gitignored) and dist-web/ (base
                      "/app/", embedded by vak-server, COMMITTED so a headless
-                     box builds the server without node)
+                     box builds the server without node). The primary navigation
+                     is Agent-first: one durable conversation per Agent, with
+                     channels, history, and internal work behind settings/details
+                     (docs/design/64-agent-owned-platform.md)
 crates/vak-admin-ui  SolidJS + Vite admin console source; the commitment
                      portfolio (#/commitments) with the evidence meter --
                      the satisfaction lattice drawn, achieved as fill and
