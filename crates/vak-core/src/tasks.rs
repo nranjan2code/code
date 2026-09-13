@@ -211,6 +211,12 @@ pub struct TaskDef {
     pub last_session_id: Option<String>,
     pub last_summary: Option<String>,
     #[serde(default)]
+    pub last_result_id: Option<String>,
+    #[serde(default)]
+    pub last_run_status: Option<String>,
+    #[serde(default)]
+    pub last_delivery_state: Option<String>,
+    #[serde(default)]
     pub last_wt: Option<WtMeta>,
     #[serde(default)]
     pub deliver_to: Option<String>,
@@ -226,6 +232,11 @@ pub struct TaskDef {
     /// never escalates.
     #[serde(default)]
     pub model_pin: Option<String>,
+    /// Saved helper identity used when this task was created.
+    #[serde(default)]
+    pub agent_profile_id: Option<String>,
+    #[serde(default)]
+    pub agent_profile_revision: Option<u64>,
 }
 
 fn default_interval() -> u64 {
@@ -670,11 +681,16 @@ mod tests {
             last_run_at: None,
             last_session_id: None,
             last_summary: None,
+            last_result_id: None,
+            last_run_status: None,
+            last_delivery_state: None,
             last_wt: None,
             deliver_to: None,
             schedule: None,
             script: None,
             model_pin: None,
+            agent_profile_id: None,
+            agent_profile_revision: None,
         }
     }
 
@@ -733,6 +749,7 @@ mod tests {
             "last_run_at": "2026-08-01T09:00:00Z",
             "last_session_id": "abc",
             "last_summary": "done",
+            "last_result_id": "result-1",
             "last_wt": { "path": "/tmp/wt", "branch": "vak/abc" },
             "deliver_to": "log:ops"
           }

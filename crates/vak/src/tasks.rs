@@ -173,6 +173,9 @@ pub fn build_task_def(
         last_run_at: None,
         last_session_id: None,
         last_summary: None,
+        last_result_id: None,
+        last_run_status: None,
+        last_delivery_state: None,
         last_wt: None,
         deliver_to: deliver
             .map(str::trim)
@@ -187,6 +190,8 @@ pub fn build_task_def(
             .map(str::trim)
             .filter(|m| !m.is_empty())
             .map(str::to_string),
+        agent_profile_id: None,
+        agent_profile_revision: None,
         prompt,
     })
 }

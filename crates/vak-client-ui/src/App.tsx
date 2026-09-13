@@ -77,6 +77,7 @@ import {
   setConnection,
   setArmedGoal,
   goalAppliesTo,
+  type ReplyTarget,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -519,6 +520,7 @@ export async function sendPrompt(
   // reviewed the *focused* session's diff copy regardless of which
   // session's changes were actually on screen.
   targetId?: string | null,
+  replyTarget?: ReplyTarget | null,
 ) {
   if (!text.trim() && !(attachments && attachments.length)) return;
   let id = targetId ?? activeId();
@@ -562,20 +564,66 @@ export async function sendPrompt(
     appendSystem(id, `🎯 goal armed (${criteria.length} criteria) — next prompt will be audited`);
     return;
   }
+  if (text.trim() === "/status") {
+    try {
+      const projection = await api.work(id);
+      if (!projection) {
+        appendSystem(id, "Nothing is currently tracked for this conversation.");
+      } else {
+        const items = Object.values(projection.items ?? {});
+        const active = items.filter((item) => ["running", "blocked", "waiting_approval", "ready_for_verification"].includes(item.status));
+        const done = items.filter((item) => ["succeeded", "failed", "cancelled", "interrupted"].includes(item.status));
+        appendSystem(id, active.length
+          ? `${active.length} item${active.length === 1 ? " is" : "s are"} active${done.length ? `; ${done.length} finished` : ""}.`
+          : `No active work${done.length ? `; ${done.length} item${done.length === 1 ? " is" : "s are"} finished` : ""}.`);
+      }
+    } catch (e) {
+      appendSystem(id, `Status unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return;
+  }
 
   const thisGoal = goalAppliesTo(id);
   setArmedGoal(null);
   appendUser(id, text);
   try {
+    const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (isRunning(id)) {
-      const receipt = await api.steer(id, text, attachments);
+      const receipt = await api.steer(id, text, attachments, requestId, {
+        message_id: requestId,
+        conversation_id: id,
+        target_work_id: replyTarget?.sessionId,
+        target_result_id: replyTarget?.resultId,
+        relation: "follow_up",
+        provenance: "client.composer",
+      });
       if (receipt.state === "steering_queued") {
         appendSystem(id, `Steering queued · ${receipt.request_id}`);
       }
     } else {
       markRunning(id, true);
       try {
-        await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments);
+        const routing: api.RoutingEnvelope = {
+          message_id: requestId,
+          conversation_id: id,
+          target_work_id: replyTarget?.sessionId,
+          target_result_id: replyTarget?.resultId,
+          relation: replyTarget ? "correction" : "independent",
+          provenance: "client.composer",
+        };
+        try {
+          await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+        } catch (firstError) {
+          // A lost HTTP response must recover the same admission. Retry only
+          // transport-shaped failures; server rejections remain visible and
+          // are never repeated as a different request.
+          const message = firstError instanceof Error ? firstError.message.toLowerCase() : String(firstError).toLowerCase();
+          const transportFailure = firstError instanceof TypeError || /network|fetch|timeout|connection|failed to fetch/.test(message);
+          if (!transportFailure) throw firstError;
+          await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+        }
       } catch (e) {
         markRunning(id, false);
         throw e;

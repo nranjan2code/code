@@ -229,6 +229,7 @@ export type SandboxEvent =
   | { kind: "ExecutionFinished"; execution_id: string; exit_code: number; duration_ms: number; artifacts: string[] };
 
 export type AgentEvent =
+  | "StreamOpened"
   | { TurnStart: { turn: number } }
   | { Stream: StreamEvent }
   | { ToolCallStart: { id: string; name: string; args_json: string } }
@@ -432,6 +433,9 @@ export interface TaskDef {
   last_run_at?: string | null;
   last_session_id?: string | null;
   last_summary?: string | null;
+  last_result_id?: string | null;
+  last_run_status?: string | null;
+  last_delivery_state?: string | null;
   last_wt?: { path: string; branch: string } | null;
   deliver_to?: string | null;
   /** 5-field cron (`m h dom mon dow`, local time); replaces interval ticks. */
@@ -440,6 +444,10 @@ export interface TaskDef {
   script?: string | null;
   /** Pinned model id; a pinned task never escalates. */
   model_pin?: string | null;
+  agent_profile_id?: string | null;
+  agent_profile_revision?: number | null;
+  next_run_at?: string | null;
+  timezone?: string | null;
 }
 
 export interface OpsServiceState {

@@ -21,6 +21,14 @@ pub struct SessionLog {
 }
 
 impl SessionLog {
+    /// Returns whether this append-only ledger already recorded admission for
+    /// a client request. This is used to make network retries idempotent.
+    pub fn has_request_admission(&self, request_id: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            matches!(&entry.payload, EntryPayload::Activity(activity)
+                if activity.data.get("request_id").map(String::as_str) == Some(request_id))
+        })
+    }
     pub fn create(path: PathBuf, header: SessionHeader) -> Result<Self, SessionError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

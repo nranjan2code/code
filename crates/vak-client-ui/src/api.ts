@@ -350,6 +350,26 @@ export function getPromptEffective(): Promise<{ text: string; fingerprint: strin
   return req("/config/prompts/effective");
 }
 
+export interface AgentProfile {
+  id: string;
+  revision: number;
+  name: string;
+  character: "orb" | "leaf" | "sun" | "wave" | "spark";
+  personality: string;
+  behaviour: string;
+  responsibilities: string;
+  animation: "subtle" | "expressive" | "off";
+  voice: string;
+}
+
+export function listAgentProfiles(): Promise<{ profiles: AgentProfile[] }> {
+  return req("/config/agents");
+}
+
+export function saveAgentProfiles(profiles: AgentProfile[]): Promise<{ saved: boolean; profiles: AgentProfile[] }> {
+  return req("/config/agents", { method: "PUT", body: JSON.stringify({ profiles }) });
+}
+
 export function getHooks(): Promise<{ hooks: HookConfig[] }> {
   return req("/config/hooks");
 }
@@ -414,6 +434,10 @@ export function presentation(id: string): Promise<OutputTimeline> {
   return req(`/sessions/${encodeURIComponent(id)}/presentation`);
 }
 
+export function result(id: string, resultId: string): Promise<OutputTimeline["items"][number]> {
+  return req(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}`);
+}
+
 export function openPresentationStream(
   id: string,
   onEvent: (event: PresentationStreamEvent) => void,
@@ -447,11 +471,17 @@ export function runPrompt(
   prompt: string,
   goal?: { objective: string; criteria: string[] },
   attachments?: { mime: string; data: string }[],
+  requestId?: string,
+  routing?: RoutingEnvelope,
 ): Promise<void> {
   return req(`/sessions/${id}/run`, {
     method: "POST",
     body: JSON.stringify({
       prompt,
+      request_id: requestId ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      routing,
       goal: goal?.objective,
       criteria: goal?.criteria,
       attachments: attachments ?? [],
@@ -459,11 +489,23 @@ export function runPrompt(
   });
 }
 
+export type RoutingEnvelope = {
+  message_id?: string;
+  conversation_id?: string;
+  target_work_id?: string;
+  target_result_id?: string;
+  relation?: "independent" | "follow_up" | "correction" | "status" | "cancel" | "schedule";
+  outcome_revision?: number;
+  provenance?: string;
+};
+
 // ---- subagents (attach / steer / stop) ---------------------------------------
 
 export interface ActiveSubagent {
   id: string;
   label: string;
+  profile_id?: string | null;
+  profile_revision?: number | null;
   elapsed_secs: number;
   parent_session_id: string;
 }
@@ -513,10 +555,17 @@ export type InterventionReceipt = {
   reason?: string;
 };
 
-export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<InterventionReceipt> {
+export function steer(id: string, text: string, attachments?: { mime: string; data: string }[], requestId?: string, routing?: RoutingEnvelope): Promise<InterventionReceipt> {
   return req(`/sessions/${id}/steering`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments: attachments ?? [] }),
+    body: JSON.stringify({
+      text,
+      attachments: attachments ?? [],
+      request_id: requestId ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+      routing,
+    }),
   });
 }
 
@@ -1008,6 +1057,8 @@ export interface TaskDraft {
   schedule?: string | null;
   script?: string | null;
   model_pin?: string | null;
+  agent_profile_id?: string | null;
+  agent_profile_revision?: number | null;
 }
 
 export function createTask(draft: TaskDraft): Promise<unknown> {
@@ -1039,6 +1090,10 @@ export function deleteTask(id: string): Promise<unknown> {
 
 export function runTaskNow(id: string): Promise<unknown> {
   return req(`/tasks/${id}/run-now`, { method: "POST" });
+}
+
+export function retryTaskDelivery(id: string): Promise<{ replayed: number; failed: number }> {
+  return req(`/tasks/${encodeURIComponent(id)}/retry-delivery`, { method: "POST", body: "{}" });
 }
 
 export function getLaunch(id: string): Promise<{
@@ -1159,6 +1214,8 @@ export interface InboxEntry {
   body: string;
   session_id?: string | null;
   task_id?: string | null;
+  result_id?: string | null;
+  origin_state?: "available" | "unavailable";
 }
 
 export function listInbox(

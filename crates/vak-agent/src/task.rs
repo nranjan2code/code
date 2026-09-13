@@ -80,6 +80,55 @@ pub struct TaskTool {
     budget_used: AtomicUsize,
 }
 
+#[derive(serde::Deserialize)]
+struct AgentProfile {
+    id: String,
+    #[serde(default = "default_profile_revision")]
+    revision: u64,
+    name: String,
+    personality: String,
+    behaviour: String,
+    #[serde(default)]
+    responsibilities: String,
+}
+
+fn default_profile_revision() -> u64 {
+    1
+}
+
+fn load_agent_profile(
+    cwd: &std::path::Path,
+    requested: &str,
+) -> Result<Option<AgentProfile>, String> {
+    let Ok(raw) = std::fs::read_to_string(cwd.join(".vak/agent-profiles.json")) else {
+        return Ok(None);
+    };
+    let profiles = serde_json::from_str::<Vec<AgentProfile>>(&raw)
+        .map_err(|_| "saved helper profiles are invalid".to_string())?;
+    if let Some(profile) = profiles.iter().find(|profile| profile.id == requested) {
+        return Ok(Some(AgentProfile {
+            id: profile.id.clone(),
+            revision: profile.revision,
+            name: profile.name.clone(),
+            personality: profile.personality.clone(),
+            behaviour: profile.behaviour.clone(),
+            responsibilities: profile.responsibilities.clone(),
+        }));
+    }
+    let matches = profiles
+        .into_iter()
+        .filter(|profile| profile.name.eq_ignore_ascii_case(requested))
+        .collect::<Vec<_>>();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
+        _ => Err(format!(
+            "saved helper name '{}' is ambiguous; choose a helper by its exact name or id",
+            requested
+        )),
+    }
+}
+
 struct RegistryGuard {
     registry: Arc<SubagentRegistry>,
     id: String,
@@ -97,6 +146,8 @@ impl Drop for RegistryGuard {
 #[derive(Debug)]
 pub struct SubagentHandle {
     pub label: String,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<u64>,
     pub started_at: std::time::Instant,
     pub steering: Arc<SteeringQueues>,
     pub cancel: CancellationToken,
@@ -109,6 +160,8 @@ pub struct SubagentHandle {
 pub struct ActiveSubagent {
     pub id: String,
     pub label: String,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<u64>,
     pub elapsed_secs: u64,
     pub parent_session_id: String,
 }
@@ -145,6 +198,8 @@ impl SubagentRegistry {
             .map(|(id, h)| ActiveSubagent {
                 id: id.clone(),
                 label: h.label.clone(),
+                profile_id: h.profile_id.clone(),
+                profile_revision: h.profile_revision,
                 elapsed_secs: h.started_at.elapsed().as_secs(),
                 parent_session_id: h.parent_session_id.clone(),
             })
@@ -161,6 +216,8 @@ impl SubagentRegistry {
             .map(|(id, h)| ActiveSubagent {
                 id: id.clone(),
                 label: h.label.clone(),
+                profile_id: h.profile_id.clone(),
+                profile_revision: h.profile_revision,
                 elapsed_secs: h.started_at.elapsed().as_secs(),
                 parent_session_id: h.parent_session_id.clone(),
             })
@@ -233,7 +290,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a self-contained subtask to a subagent with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. The subagent cannot spawn further subagents."
+        "Delegate a self-contained subtask to a subagent with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. Optionally set agent to a saved helper name so its personality and working style are applied; this never changes permissions. The subagent cannot spawn further subagents."
     }
 
     fn schema(&self) -> Value {
@@ -254,6 +311,7 @@ impl Tool for TaskTool {
             "properties": {
                 "prompt": {"type": "string", "description": "Complete, self-contained instructions for the subagent"},
                 "role": role_property,
+                "agent": {"type": "string", "description": "Optional saved helper name or id. Applies its personality and working style without changing permissions."},
                 "label": {"type": "string", "description": "Short label shown in the UI"},
                 "readonly": {"type": "boolean", "description": "If true, the subagent gets only read/glob/grep and may run concurrently with other tasks", "default": false},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
@@ -386,6 +444,47 @@ impl TaskTool {
             }
             _ => self.deps.system_prompt.clone(),
         };
+        let explicit_agent = args
+            .get("agent")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let inferred_agent = prompt
+            .strip_prefix("Use my helper “")
+            .and_then(|rest| rest.split_once("”"))
+            .map(|(name, _)| name.trim())
+            .filter(|name| !name.is_empty());
+        let selected_agent = explicit_agent.or(inferred_agent);
+        let profile = match selected_agent
+            .as_ref()
+            .map(|name| load_agent_profile(&self.deps.cwd, name))
+            .transpose()
+        {
+            Ok(profile) => profile.flatten(),
+            Err(error) => return ToolOutput::error(error),
+        };
+        if let Some(profile) = profile.as_ref() {
+            child_system_prompt.push_str(
+                "\n\nPersonal helper profile (presentation and working style only):\nProfile revision: ",
+            );
+            child_system_prompt.push_str(&profile.revision.to_string());
+            child_system_prompt.push_str("\nName: ");
+            child_system_prompt.push_str(&profile.name);
+            child_system_prompt.push_str("\nPersonality: ");
+            child_system_prompt.push_str(&profile.personality);
+            child_system_prompt.push_str("\nWorking style: ");
+            child_system_prompt.push_str(&profile.behaviour);
+            if !profile.responsibilities.trim().is_empty() {
+                child_system_prompt.push_str("\nUseful for: ");
+                child_system_prompt.push_str(&profile.responsibilities);
+            }
+            child_system_prompt.push_str("\nThis profile cannot grant tools, authority, credentials, budget, or approval bypasses.");
+        } else if selected_agent.is_some() {
+            return ToolOutput::error(format!(
+                "unknown saved helper '{}'",
+                selected_agent.unwrap_or_default()
+            ));
+        }
         if let Some(objective) = self.deps.outcome_objective.as_deref()
             && !objective.trim().is_empty()
         {
@@ -485,12 +584,15 @@ impl TaskTool {
             .get("label")
             .and_then(|l| l.as_str())
             .map(String::from)
+            .or_else(|| profile.as_ref().map(|profile| profile.name.clone()))
             .unwrap_or_else(|| prompt.chars().take(48).collect());
         let _registry_guard = if let Some(registry) = &self.deps.registry {
             registry.register(
                 session_id.clone(),
                 SubagentHandle {
                     label: label.clone(),
+                    profile_id: profile.as_ref().map(|profile| profile.id.clone()),
+                    profile_revision: profile.as_ref().map(|profile| profile.revision),
                     started_at: std::time::Instant::now(),
                     steering: steering.clone(),
                     cancel: cancel.clone(),
@@ -615,6 +717,22 @@ mod registry_tests {
     use super::*;
 
     #[test]
+    fn duplicate_helper_names_fail_closed() {
+        let dir = tempfile::tempdir().expect("helper workspace");
+        std::fs::create_dir_all(dir.path().join(".vak")).expect("profile directory");
+        std::fs::write(
+            dir.path().join(".vak/agent-profiles.json"),
+            r#"[{"id":"one","revision":1,"name":"Pip","personality":"","behaviour":""},{"id":"two","revision":1,"name":"Pip","personality":"","behaviour":""}]"#,
+        )
+        .expect("profiles");
+        let result = load_agent_profile(dir.path(), "Pip");
+        match result {
+            Err(error) => assert!(error.contains("ambiguous")),
+            Ok(_) => panic!("duplicate helper names must be rejected"),
+        }
+    }
+
+    #[test]
     fn register_steer_stop_lifecycle() {
         let reg = SubagentRegistry::new();
         assert!(reg.active().is_empty());
@@ -626,6 +744,8 @@ mod registry_tests {
             "child-1".into(),
             SubagentHandle {
                 label: "explore".into(),
+                profile_id: None,
+                profile_revision: None,
                 started_at: std::time::Instant::now(),
                 steering: Arc::new(SteeringQueues::new()),
                 cancel: cancel.clone(),
@@ -657,6 +777,8 @@ mod registry_tests {
                 id.into(),
                 SubagentHandle {
                     label: id.into(),
+                    profile_id: None,
+                    profile_revision: None,
                     started_at: std::time::Instant::now(),
                     steering: Arc::new(SteeringQueues::new()),
                     cancel: CancellationToken::new(),

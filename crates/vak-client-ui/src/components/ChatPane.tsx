@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, type Item } from "../store";
-import { approve, isApprovalPending, openFileSmart } from "../App";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, type Item } from "../store";
+import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -33,10 +33,31 @@ function stripVakFence(text: string): string {
  * of the headline type scale (22px/620/-0.02em) it defines.
  */
 function EmptyChat(props: { hasSession: boolean }) {
+  const ongoing = createMemo(() => sessions().filter((session) => session.running).slice(0, 3));
+  const completed = createMemo(() => sessions().filter((session) => !session.running).slice(0, 3));
+  const [previews, setPreviews] = createSignal<Record<string, string>>({});
+  const [previewLoaded, setPreviewLoaded] = createSignal<ReadonlySet<string>>(new Set());
+  createEffect(() => {
+    const targets = completed();
+    for (const session of targets) {
+      if (previewLoaded().has(session.session_id)) continue;
+      setPreviewLoaded((current) => new Set([...current, session.session_id]));
+      void api.presentation(session.session_id).then((timeline) => {
+        const result = [...timeline.items].reverse().find((item) =>
+          (item.role === "assistant" || item.role === "subagent") &&
+          (item.status === "succeeded" || item.status === "partial") &&
+          item.fallback_text.trim().length > 0,
+        );
+        const text = result?.fallback_text.trim();
+        if (text) setPreviews((current) => ({ ...current, [session.session_id]: text.slice(0, 140) }));
+      }).catch(() => { /* a preview is optional; the session remains reopenable */ });
+    }
+  });
   return (
     <div class="chat-empty">
       <div class="chat-empty-mark">
-        <Icon name="chat" size={22} />
+        <span class="vak-companion" aria-hidden="true">◌</span>
+        <Icon name="chat" size={16} />
       </div>
       <h2 class="chat-empty-headline">
         {props.hasSession ? "Nothing here yet" : "What would you like to do?"}
@@ -47,6 +68,18 @@ function EmptyChat(props: { hasSession: boolean }) {
           : "Ask a question or hand over something to plan, find, create, remember, schedule, or complete."}
       </p>
       <Show when={!props.hasSession}>
+        <Show when={ongoing().length > 0}>
+          <div class="home-ongoing" aria-label="Ongoing work" aria-live="polite">
+            <div class="home-ongoing-heading"><span>Ongoing</span><small>Vak is working in the background</small></div>
+            <For each={ongoing()}>{(session) => <button type="button" class="home-ongoing-item" onClick={() => void activate(session.session_id)}><span class="dot run" /><span>{session.title || "Untitled task"}</span><small>Working</small></button>}</For>
+          </div>
+        </Show>
+        <Show when={completed().length > 0}>
+          <div class="home-recent" aria-label="Recent results">
+            <div class="home-ongoing-heading"><span>Recent results</span><small>Pick up where you left off</small></div>
+            <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark">✓</span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
+          </div>
+        </Show>
         <div class="chat-empty-examples" aria-label="Things Vak can help with">
           <For each={[
             ["Research a question", "Research this question and summarize the important points."],
@@ -380,7 +413,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
   const primary = createMemo<{ key: string; value: string } | null>(() => {
     try {
       const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
-      for (const key of APPROVAL_PRIMARY_KEYS) {
+      for (const key of APPROVAL_PRIMARY_KEYS.filter((candidate) => candidate !== "command")) {
         const value = parsed[key];
         if (typeof value === "string" && value.trim()) {
           return { key, value: value.trim() };
@@ -395,7 +428,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     try {
       const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
       return Object.entries(parsed)
-        .filter(([, value]) => typeof value === "string" && value.length < 180)
+        .filter(([key, value]) => key !== "command" && typeof value === "string" && value.length < 180)
         .slice(0, 2)
         .map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`)
         .join(" · ");
@@ -405,7 +438,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
   });
   return (
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
-    <div class="ap-head">Approval requested — {props.item.tool}</div>
+    <div class="ap-head">Vak wants to use {props.item.tool}</div>
     <Show when={primary()}>
       {(p) => (
         <code class="ap-primary" title={p().value}>
@@ -414,9 +447,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
         </code>
       )}
     </Show>
-    <Show when={props.item.reason}>
-      <div class="ap-reason">{props.item.reason}</div>
-    </Show>
+    <div class="ap-reason">This needs your approval before it can continue.</div>
     <div class="ap-summary">{summary()}</div>
     <details class="ap-details">
       <summary>View request details</summary>

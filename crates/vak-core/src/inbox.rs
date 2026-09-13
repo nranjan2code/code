@@ -64,6 +64,10 @@ pub struct Entry {
     pub session_id: Option<String>,
     #[serde(default)]
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub result_id: Option<String>,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,6 +123,50 @@ pub fn record(
     session_id: Option<&str>,
     task_id: Option<&str>,
 ) -> Result<Entry, InboxError> {
+    record_with_result_and_key(home, kind, title, body, session_id, task_id, None, None)
+}
+
+/// Append a notification linked to one immutable presentation result.
+pub fn record_with_result(
+    home: &Path,
+    kind: Kind,
+    title: &str,
+    body: &str,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+    result_id: Option<&str>,
+) -> Result<Entry, InboxError> {
+    record_with_result_and_key(
+        home, kind, title, body, session_id, task_id, result_id, None,
+    )
+}
+
+/// Append a notification only once for a stable source/destination identity.
+/// The check and append are serialized by the inbox file lock, so delivery
+/// retries cannot create duplicate unread entries.
+pub fn record_with_result_and_key(
+    home: &Path,
+    kind: Kind,
+    title: &str,
+    body: &str,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+    result_id: Option<&str>,
+    dedupe_key: Option<&str>,
+) -> Result<Entry, InboxError> {
+    let _dedupe_lock = if dedupe_key.is_some() {
+        Some(acquire_dedupe_lock(home)?)
+    } else {
+        None
+    };
+    if let Some(key) = dedupe_key {
+        if let Some(existing) = list(home, MAX_SCAN)
+            .into_iter()
+            .find(|entry| entry.dedupe_key.as_deref() == Some(key))
+        {
+            return Ok(existing);
+        }
+    }
     let path = inbox_path(home);
     let ts = Utc::now();
     let entry = Entry {
@@ -129,10 +177,47 @@ pub fn record(
         body: body.to_string(),
         session_id: session_id.map(str::to_string),
         task_id: task_id.map(str::to_string),
+        result_id: result_id.map(str::to_string),
+        dedupe_key: dedupe_key.map(str::to_string),
     };
     let line = serde_json::to_string(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
     append_line(&path, &line)?;
     Ok(entry)
+}
+
+struct DedupeLock {
+    path: PathBuf,
+}
+
+impl Drop for DedupeLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_dedupe_lock(home: &Path) -> Result<DedupeLock, InboxError> {
+    let path = home.join("inbox.dedupe.lock");
+    std::fs::create_dir_all(home).map_err(|source| InboxError::Io {
+        path: home.to_path_buf(),
+        source,
+    })?;
+    for _ in 0..200 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(DedupeLock { path }),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(source) => return Err(InboxError::Io { path, source }),
+        }
+    }
+    Err(InboxError::Io {
+        path,
+        source: std::io::Error::new(std::io::ErrorKind::TimedOut, "inbox dedupe lock timed out"),
+    })
 }
 
 /// Mark `id` read by appending a tombstone. Idempotent via
@@ -440,5 +525,34 @@ mod tests {
         assert_eq!(line, "\"proposal_opened\"");
         let back: Kind = serde_json::from_str(&line).unwrap();
         assert_eq!(back, Kind::ProposalOpened);
+    }
+
+    #[test]
+    fn result_delivery_deduplicates_by_source_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = record_with_result_and_key(
+            dir.path(),
+            Kind::TaskSummary,
+            "finished",
+            "answer",
+            Some("session"),
+            Some("task"),
+            Some("result-1"),
+            Some("surface:chat|result-1|0"),
+        )
+        .unwrap();
+        let second = record_with_result_and_key(
+            dir.path(),
+            Kind::TaskSummary,
+            "finished",
+            "answer changed",
+            Some("session"),
+            Some("task"),
+            Some("result-1"),
+            Some("surface:chat|result-1|0"),
+        )
+        .unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(list(dir.path(), 10).len(), 1);
     }
 }

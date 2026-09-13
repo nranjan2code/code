@@ -487,6 +487,12 @@ fn last_project() -> Option<PathBuf> {
     cwd.is_dir().then_some(cwd)
 }
 
+fn startup_workspace(explicit: Option<PathBuf>, remembered: Option<PathBuf>) -> PathBuf {
+    explicit
+        .or(remembered)
+        .unwrap_or_else(vak_config::paths::default_workspace)
+}
+
 /// The workspaces this shell offers, from the ONE store every surface
 /// shares (`vak_core::workspaces`).
 ///
@@ -916,13 +922,30 @@ fn main() {
                 // folder was explicitly chosen, so it is trusted).
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
                 let explicit_project = launch_project;
-                if let Some(cwd) = explicit_project.clone().or_else(last_project) {
+                // Vak opens its canonical personal workspace on first launch.
+                // Choosing a folder is a later workspace switch, not an
+                // onboarding prerequisite; the default can be changed from
+                // the workspace controls whenever the person wants.
+                let cwd = startup_workspace(explicit_project.clone(), last_project());
+                if !cwd.exists() {
+                    if let Err(error) = std::fs::create_dir_all(&cwd) {
+                        let message = format!(
+                            "could not create default workspace {}: {error}",
+                            cwd.display()
+                        );
+                        eprintln!("{message}");
+                        let state = handle.state::<BackendState>();
+                        set_boot_error(&state, Some(message));
+                        return;
+                    }
+                }
+                {
                     let state = handle.state::<BackendState>();
                     if let Err(e) = start_project_backend(
                         handle.clone(),
                         &state,
                         cwd.to_string_lossy().into_owned(),
-                        explicit_project.is_some(),
+                        true,
                         None,
                     )
                     .await
@@ -973,7 +996,7 @@ fn main() {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{TRAY_FLAG, is_tray_launch, requested_project};
+    use super::{TRAY_FLAG, is_tray_launch, requested_project, startup_workspace};
 
     /// The single-instance plugin hands a second process's whole argv
     /// (program name included) to the live app. A login launch from the
@@ -1007,6 +1030,24 @@ mod tests {
         assert_eq!(
             requested_project(["vak-desktop", "--tray", project_text.as_str()]),
             Some(project)
+        );
+    }
+
+    #[test]
+    fn first_launch_uses_default_workspace_and_precedence_is_explicit() {
+        let explicit = std::path::PathBuf::from("/tmp/explicit-vak-workspace");
+        let remembered = std::path::PathBuf::from("/tmp/remembered-vak-workspace");
+        assert_eq!(
+            startup_workspace(None, None),
+            vak_config::paths::default_workspace()
+        );
+        assert_eq!(
+            startup_workspace(None, Some(remembered.clone())),
+            remembered
+        );
+        assert_eq!(
+            startup_workspace(Some(explicit.clone()), Some(remembered)),
+            explicit
         );
     }
 }

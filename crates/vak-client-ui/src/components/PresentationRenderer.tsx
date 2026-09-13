@@ -339,8 +339,8 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       aria-atomic="true"
       aria-label={`${pending() ? "Approval requested" : "Approval resolved"} for ${content.tool}`}
     >
-      <div class="ap-head">Approval requested — {content.tool}</div>
-      <div class="ap-reason">{content.reason}</div>
+      <div class="ap-head">Vak wants to use {content.tool}</div>
+      <div class="ap-reason">This needs your approval before it can continue.</div>
       <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{content.args_json}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
         <div class="ap-actions">
@@ -916,7 +916,22 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
-  const ordered = () => props.items.filter((item) => !["progress", "retry", "information"].includes(item.kind));
+  const ordered = () => {
+    const seen = new Set<string>();
+    return props.items
+      .filter((item) => !["progress", "retry", "information"].includes(item.kind))
+      // A denied approval can produce both a permission error and a later
+      // abort marker. Present one calm outcome in chat; full receipts remain
+      // available in task details.
+      .filter((item) => {
+        if (item.kind !== "error") return true;
+        const raw = item.fallback_text.toLowerCase();
+        if (!raw.includes("denied") && !raw.includes("aborted")) return true;
+        if (seen.has("permission-stop")) return false;
+        seen.add("permission-stop");
+        return true;
+      });
+  };
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {
       return <UserMessage document={item.content.document} text={item.fallback_text} />;

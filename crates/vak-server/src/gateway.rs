@@ -2812,22 +2812,64 @@ pub(crate) async fn deliver_and_record(
     session_id: Option<&str>,
     task_id: Option<&str>,
 ) -> Result<(), String> {
-    let _ = vak_core::inbox::record(
+    deliver_and_record_with_result(
+        core, target, text, inbox_kind, title, session_id, task_id, None,
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn deliver_and_record_with_result(
+    core: &Core,
+    target: &str,
+    text: &str,
+    inbox_kind: vak_core::inbox::Kind,
+    title: String,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+    result_id: Option<&str>,
+) -> Result<&'static str, String> {
+    let dedupe_key = result_id.map(|result| format!("{target}|{result}|{}", inbox_kind as u8));
+    let _ = vak_core::inbox::record_with_result_and_key(
         &core.sessions_home(),
         inbox_kind,
         &title,
         text,
         session_id,
         task_id,
+        result_id,
+        dedupe_key.as_deref(),
     );
+    let mut answer = AnswerDraft::from_markdown(text);
+    if let Some(value) = task_id {
+        answer.metadata.insert("vak_task_id".into(), value.into());
+    }
+    if let Some(value) = session_id {
+        answer
+            .metadata
+            .insert("vak_session_id".into(), value.into());
+    }
+    if let Some(value) = result_id {
+        answer.metadata.insert("vak_result_id".into(), value.into());
+    }
     crate::delivery::deliver(
         core,
         target,
         DeliveryKind::TaskSummary,
-        DeliveryContent::Answer(AnswerDraft::from_markdown(text)),
+        DeliveryContent::Answer(answer),
     )
     .await
-    .map(|_| ())
+    .map(|packet| {
+        if packet
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.starts_with("delivery held:"))
+        {
+            "queued"
+        } else {
+            "delivered"
+        }
+    })
 }
 
 async fn deliver_approval_and_record(

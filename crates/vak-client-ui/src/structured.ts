@@ -35,6 +35,9 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
 export function stripControlScaffolding(text: string): string {
   if (!text) return "";
   return text
+    // Stop-policy nudges are model-visible ledger entries, but are control
+    // traffic rather than something a person should see as their own message.
+    .replace(/\[stop-guard\]:[\s\S]*?(?:Please continue\.?|$)/gi, "")
     .replace(/<conversation_thread[\s\S]*?(?:<\/conversation_thread>|$)/gi, "")
     .replace(/<context_summary[\s\S]*?(?:<\/context_summary>|$)/gi, "")
     .replace(/<intent[\s\S]*?(?:<\/intent>|$)/gi, "")
@@ -52,6 +55,9 @@ export function stripControlScaffolding(text: string): string {
  */
 export function cleanAssistantText(text: string): string {
   const normalized = stripControlScaffolding(text)
+    // Keep the chat focused on the result. Execution narration belongs in
+    // Workbench and approval details, not in the assistant's answer bubble.
+    .replace(/^\s*I will write and execute this within the sandbox[^\n]*\.?\s*$/gim, "")
     .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/gim, "")
     .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed|done)[\s\S]*$/gi, "")
     .replace(/(?:\r?\n)?\s*completed\s*$/gi, "")

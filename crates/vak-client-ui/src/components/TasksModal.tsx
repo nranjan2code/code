@@ -21,6 +21,24 @@ function fmtInterval(s: number): string {
   return `${s}s`;
 }
 
+function runStatusLabel(status: string): string {
+  return ({
+    working: "Working now",
+    complete: "Finished",
+    failed: "Couldn’t finish",
+    interrupted: "Paused by restart",
+  } as Record<string, string>)[status] ?? status;
+}
+
+function deliveryStatusLabel(status: string): string {
+  return ({
+    pending: "Delivery waiting",
+    delivered: "Sent",
+    queued: "Queued for delivery",
+    inbox: "Saved in Inbox",
+  } as Record<string, string>)[status] ?? status;
+}
+
 const INTERVALS: [number, string][] = [
   [5, "5m"],
   [15, "15m"],
@@ -47,6 +65,8 @@ export default function TasksModal() {
   const [schedule, setSchedule] = createSignal("");
   const [script, setScript] = createSignal("");
   const [modelPin, setModelPin] = createSignal("");
+  const [agentProfiles, setAgentProfiles] = createSignal<api.AgentProfile[]>([]);
+  const [agentProfileId, setAgentProfileId] = createSignal("");
 
   const refresh = async () => {
     try {
@@ -59,6 +79,7 @@ export default function TasksModal() {
   createEffect(() => {
     if (!tasksOpen()) return;
     void refresh();
+    void api.listAgentProfiles().then((result) => setAgentProfiles(result.profiles)).catch(() => { /* helper selection is optional */ });
     const t = setInterval(() => void refresh(), 15_000);
     onCleanup(() => clearInterval(t));
   });
@@ -78,6 +99,7 @@ export default function TasksModal() {
     setSchedule("");
     setScript("");
     setModelPin("");
+    setAgentProfileId("");
     setMinutes(60);
   };
 
@@ -91,6 +113,8 @@ export default function TasksModal() {
         schedule: schedule().trim() || null,
         script: script().trim() || null,
         model_pin: modelPin().trim() || null,
+        agent_profile_id: agentProfileId() || null,
+        agent_profile_revision: agentProfiles().find((profile) => profile.id === agentProfileId())?.revision ?? null,
       });
       setError(null);
       resetForm();
@@ -133,6 +157,18 @@ export default function TasksModal() {
     await refresh();
   };
 
+  const retryDelivery = async (t: TaskDef) => {
+    try {
+      const result = await api.retryTaskDelivery(t.id);
+      setError(result.failed
+        ? `${result.replayed} delivery${result.replayed === 1 ? "" : "ies"} replayed; ${result.failed} still waiting`
+        : `${result.replayed} delivery${result.replayed === 1 ? "" : "ies"} replayed`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const openDiff = (t: TaskDef) => {
     if (!t.last_session_id) return;
     setDiffTarget(t.last_session_id);
@@ -171,9 +207,17 @@ export default function TasksModal() {
                     <Show when={t.model_pin}>
                       <span class="badge" title={`Pinned model — never escalates`}>{t.model_pin}</span>
                     </Show>
+                    <Show when={t.agent_profile_id}>
+                      <span class="badge" title={`Helper profile revision ${t.agent_profile_revision ?? 1}`}>helper · {agentProfiles().find((profile) => profile.id === t.agent_profile_id)?.name ?? "saved helper"}{(() => { const current = agentProfiles().find((profile) => profile.id === t.agent_profile_id); return current && t.agent_profile_revision && current.revision !== t.agent_profile_revision ? " · updated" : ""; })()}</span>
+                    </Show>
                     {!t.enabled && <span class="badge">off</span>}
                   </div>
                   <div class="task-prompt" title={t.script ?? t.prompt}>{t.script ?? t.prompt}</div>
+                  <div class="task-schedule-note">
+                    <Show when={t.next_run_at} fallback="Next run is calculated when the scheduler is available.">
+                      {(next) => <>Next run {new Date(next()).toLocaleString()} · {t.timezone ?? "workspace local time"}</>}
+                    </Show>
+                  </div>
                   <Show when={t.last_run_at || t.last_summary || t.last_session_id}>
                     <details class="task-run">
                       <summary>
@@ -197,12 +241,30 @@ export default function TasksModal() {
                             open transcript · {t.last_session_id!.slice(0, 8)}
                           </button>
                         </Show>
+                        <Show when={t.last_result_id}>
+                          <button
+                            class="chip sm"
+                            title="Open the conversation containing this result"
+                            onClick={() => t.last_session_id && setTranscriptViewId(t.last_session_id)}
+                          >
+                            result · {t.last_result_id!.slice(0, 8)}
+                          </button>
+                        </Show>
+                        <Show when={t.last_run_status}>
+                          <span class="badge">{runStatusLabel(t.last_run_status!)}</span>
+                        </Show>
+                        <Show when={t.last_delivery_state}>
+                          <span class="badge">{deliveryStatusLabel(t.last_delivery_state!)}</span>
+                        </Show>
                       </div>
                     </details>
                   </Show>
                 </div>
                 <div class="task-actions">
                   <button type="button" class="chip sm" onClick={() => void runNow(t)}>run now</button>
+                  <Show when={t.last_delivery_state === "pending" || t.last_delivery_state === "queued"}>
+                    <button type="button" class="chip sm" onClick={() => void retryDelivery(t)}>retry delivery</button>
+                  </Show>
                   <Show when={t.last_session_id}>
                     <button type="button" class="chip sm" onClick={() => openDiff(t)}>diff</button>
                   </Show>
@@ -261,6 +323,12 @@ export default function TasksModal() {
                     value={modelPin()}
                     onInput={(e) => setModelPin(e.currentTarget.value)}
                   />
+                  <Show when={agentProfiles().length > 0}>
+                    <select class="model-pin-input" aria-label="Helper for this task" value={agentProfileId()} onChange={(e) => setAgentProfileId(e.currentTarget.value)}>
+                      <option value="">helper: Vak decides</option>
+                      <For each={agentProfiles()}>{(profile) => <option value={profile.id}>{profile.name}{agentProfiles().filter((candidate) => candidate.name.toLowerCase() === profile.name.toLowerCase()).length > 1 ? ` · ${profile.id.slice(0, 6)}` : ""}</option>}</For>
+                    </select>
+                  </Show>
                 </div>
                 <div class="task-add-row">
                   <button type="button" class="btn primary" disabled={!draftValid()} onClick={() => void add()}>create</button>

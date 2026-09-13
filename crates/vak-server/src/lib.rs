@@ -76,6 +76,7 @@ pub(crate) fn pin_test_data_home() {
 
 mod admin;
 mod admin_ui;
+mod agent_profiles;
 mod bus;
 mod channels;
 mod client_ui;
@@ -113,7 +114,7 @@ pub(crate) mod test_support {
     }
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -186,6 +187,9 @@ pub(crate) struct SessionHandle {
     /// Last time a request resolved this handle, for idle eviction.
     pub(crate) last_touched: Mutex<std::time::Instant>,
     pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
+    /// Admission identities currently owned by this handle. This closes the
+    /// retry race while the runner owns the ledger.
+    pub(crate) admissions: Arc<Mutex<HashSet<String>>>,
 }
 
 #[derive(Clone)]
@@ -664,6 +668,7 @@ fn router_with_state(state: AppState) -> Router {
             axum::routing::patch(patch_task).delete(delete_task),
         )
         .route("/tasks/{id}/run-now", post(run_task_now))
+        .route("/tasks/{id}/retry-delivery", post(retry_task_delivery))
         .route("/sessions/{id}/launch", get(get_launch))
         .route("/sessions/{id}/launch/start", post(start_launch))
         .route("/sessions/{id}/launch/stop", post(stop_launch))
@@ -689,6 +694,7 @@ fn router_with_state(state: AppState) -> Router {
             get(session_sandbox_executions),
         )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
+        .route("/sessions/{id}/results/{result_id}", get(session_result))
         .route(
             "/sessions/{id}/presentation/feedback",
             post(presentation_feedback),
@@ -755,6 +761,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config/prompts/effective", get(get_prompt_effective))
         .route("/config/prompts/preview", post(preview_prompt))
         .route("/config/prompts/roles", get(list_prompt_roles))
+        .route(
+            "/config/agents",
+            get(get_agent_profiles).put(put_agent_profiles),
+        )
         .route(
             "/config/hooks/global",
             get(get_global_hooks).put(put_global_hooks),
@@ -1357,15 +1367,28 @@ async fn replay_operations_outbox(
     let requested_at = Utc::now();
     match delivery::replay_outbox_job(&state.core, &job_id).await {
         Ok(()) => {
-            let after = delivery::outbox_records(&state.core)
+            let after_record = delivery::outbox_records(&state.core)
                 .ok()
                 .and_then(|records| {
                     records
                         .into_iter()
                         .find(|record| record.job.job_id == job_id)
-                })
+                });
+            let after = after_record
+                .as_ref()
                 .map(|record| state_label(record.state).to_string())
                 .unwrap_or_else(|| "not found".to_string());
+            if after == "delivered"
+                && let Some(record) = after_record.as_ref()
+                && let vak_delivery::DeliveryContent::Answer(answer) = &record.job.content
+                && let Some(task_id) = answer.metadata.get("vak_task_id")
+            {
+                update_tasks(&state, |tasks| {
+                    if let Some(task) = tasks.get_mut(task_id) {
+                        task.last_delivery_state = Some("delivered".into());
+                    }
+                });
+            }
             let verification_status = if after == "delivered" {
                 "verified"
             } else {
@@ -3389,6 +3412,7 @@ pub(crate) fn register_handle(
         side_events_tx,
         last_touched: Mutex::new(std::time::Instant::now()),
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
+        admissions: Arc::new(Mutex::new(HashSet::new())),
     });
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         let durable_session_id = id.clone();
@@ -3766,8 +3790,36 @@ fn summarize_jsonl(
 }
 
 #[derive(serde::Deserialize)]
+struct RoutingEnvelope {
+    /// The user message that caused this admission. This is metadata, not a
+    /// capability or an instruction to the model.
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default)]
+    conversation_id: Option<String>,
+    #[serde(default)]
+    target_work_id: Option<String>,
+    #[serde(default)]
+    target_result_id: Option<String>,
+    /// `independent`, `follow_up`, `correction`, `status`, `cancel`, or
+    /// `schedule`; unknown values are retained as provenance but never used
+    /// to authorize work.
+    #[serde(default)]
+    relation: Option<String>,
+    #[serde(default)]
+    outcome_revision: Option<u64>,
+    #[serde(default)]
+    provenance: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// Stable client identity used to make network retries idempotent.
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    routing: Option<RoutingEnvelope>,
     /// Optional run-scoped work profile. `managed` creates and persists a
     /// work contract before the agent can execute tools.
     #[serde(default)]
@@ -3910,20 +3962,91 @@ async fn run_prompt(
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(taken) = handle
+    if let Some(routing) = body.routing.as_ref()
+        && let Some(expected) = routing.outcome_revision
+        && !routing_revision_is_current(&handle, expected)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "target result is stale; refresh before continuing",
+                "target_revision": expected,
+            })),
+        )
+            .into_response();
+    }
+    let request_id = body.request_id.clone();
+    if let Some(request_id) = request_id.as_deref()
+        && handle
+            .admissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(request_id)
+    {
+        return StatusCode::ACCEPTED.into_response();
+    }
+    let Some(mut taken) = handle
         .session
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
     else {
+        if request_id.is_some() {
+            return StatusCode::ACCEPTED.into_response();
+        }
         return StatusCode::CONFLICT.into_response(); // run already active
     };
+    if let Some(request_id) = request_id.as_deref()
+        && taken.has_request_admission(request_id)
+    {
+        *handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+        return StatusCode::ACCEPTED.into_response();
+    }
     if let Err(e) = handle.core.provider() {
         *handle
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
         return provider_unavailable(e);
+    }
+    if let Some(request_id) = request_id.as_deref() {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("request_id".into(), request_id.to_owned());
+        if let Some(routing) = body.routing.as_ref() {
+            record_routing_data(&mut data, routing);
+        }
+        if taken
+            .append_activity(vak_session::ActivityRecord {
+                activity_id: format!("admission-{request_id}"),
+                turn: None,
+                kind: vak_session::ActivityKind::Run,
+                status: vak_session::ActivityStatus::Running,
+                label: "Request accepted".into(),
+                detail: None,
+                data,
+            })
+            .is_err()
+        {
+            *handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(
+                    serde_json::json!({"error": "could not durably record request admission"}),
+                ),
+            )
+                .into_response();
+        }
+        handle
+            .admissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(request_id.to_owned());
     }
 
     // Give SSE consumers a moment to attach so terminal events are seen.
@@ -4134,7 +4257,15 @@ async fn run_prompt(
                         .unwrap_or_else(std::sync::PoisonError::into_inner),
                 );
                 for activity in buffered {
+                    let request_id = activity.data.get("request_id").cloned();
                     let _ = session_log.append_activity(activity);
+                    if let Some(request_id) = request_id {
+                        handle
+                            .admissions
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .remove(&request_id);
+                    }
                 }
                 *handle
                     .presentation
@@ -4193,6 +4324,13 @@ async fn run_prompt(
                 });
             }
         }
+        if let Some(request_id) = request_id {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+        }
         drop(steering);
     });
 
@@ -4202,6 +4340,13 @@ async fn run_prompt(
 #[derive(serde::Deserialize)]
 struct SteeringBody {
     text: String,
+    /// Caller-owned id used to recover a retry without enqueuing duplicate
+    /// steering input. Older callers may omit it; the server then generates
+    /// one for the single attempt.
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    routing: Option<RoutingEnvelope>,
     /// Origin is metadata for the audit trail, never an authority grant.
     #[serde(default = "default_intervention_source")]
     source: String,
@@ -4223,9 +4368,60 @@ async fn send_steering(
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if let Some(routing) = body.routing.as_ref()
+        && let Some(expected) = routing.outcome_revision
+        && !routing_revision_is_current(&handle, expected)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "target result is stale; refresh before continuing",
+                "target_revision": expected,
+            })),
+        )
+            .into_response();
+    }
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("intervention-{}", uuid::Uuid::now_v7()));
+    let already_admitted = handle
+        .admissions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&request_id)
+        || handle
+            .session
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|log| log.has_request_admission(&request_id))
+            })
+            .unwrap_or(false);
+    if already_admitted {
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "request_id": request_id,
+                "decision": "duplicate",
+                "state": "already_admitted",
+            })),
+        )
+            .into_response();
+    }
+    handle
+        .admissions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(request_id.clone());
     let kind = vak_intent::classify_intervention(&body.text);
     let evaluation = vak_intent::evaluate_intervention(vak_intent::InterventionRequest {
-        request_id: format!("intervention-{}", uuid::Uuid::now_v7()),
+        request_id: request_id.clone(),
         kind: kind.clone(),
         text: body.text.clone(),
         source: body.source.clone(),
@@ -4254,10 +4450,16 @@ async fn send_steering(
                 ("decision".into(), evaluation.decision.as_str().into()),
                 ("source".into(), body.source.clone()),
                 ("reason".into(), evaluation.reason.clone()),
+                ("routing".into(), routing_summary(body.routing.as_ref())),
             ]),
         },
     );
     if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
+        handle
+            .admissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&request_id);
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
@@ -4270,6 +4472,11 @@ async fn send_steering(
     }
     match kind {
         vak_intent::InterventionKind::Status => {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
             return (
                 StatusCode::ACCEPTED,
                 Json(serde_json::json!({
@@ -4281,6 +4488,11 @@ async fn send_steering(
                 .into_response();
         }
         vak_intent::InterventionKind::Pause => {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
             handle.steering.pause();
             record_control_activity(&handle, "Run paused", "pause");
             return (
@@ -4295,6 +4507,11 @@ async fn send_steering(
                 .into_response();
         }
         vak_intent::InterventionKind::Resume => {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
             handle.steering.resume();
             record_control_activity(&handle, "Run resumed", "resume");
             return (
@@ -4309,6 +4526,11 @@ async fn send_steering(
                 .into_response();
         }
         vak_intent::InterventionKind::Cancel => {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
             handle
                 .cancel
                 .lock()
@@ -4347,6 +4569,21 @@ async fn send_steering(
             role: vak_llm::Role::User,
             content: blocks,
         });
+    }
+    // If the ledger was available, the activity is durable already and the
+    // in-memory guard can be released. A busy runner keeps it until its
+    // buffered activity is flushed at turn completion.
+    if handle
+        .session
+        .lock()
+        .ok()
+        .is_some_and(|guard| guard.is_some())
+    {
+        handle
+            .admissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&request_id);
     }
     (
         StatusCode::ACCEPTED,
@@ -4690,6 +4927,51 @@ fn record_activity_or_buffer(handle: &SessionHandle, activity: vak_session::Acti
     } else if let Ok(mut activities) = handle.activity_buffer.lock() {
         activities.push(activity);
     }
+}
+
+fn record_routing_data(
+    data: &mut std::collections::BTreeMap<String, String>,
+    routing: &RoutingEnvelope,
+) {
+    if let Some(value) = routing.message_id.as_deref() {
+        data.insert("message_id".into(), value.into());
+    }
+    if let Some(value) = routing.conversation_id.as_deref() {
+        data.insert("conversation_id".into(), value.into());
+    }
+    if let Some(value) = routing.target_work_id.as_deref() {
+        data.insert("target_work_id".into(), value.into());
+    }
+    if let Some(value) = routing.target_result_id.as_deref() {
+        data.insert("target_result_id".into(), value.into());
+    }
+    if let Some(value) = routing.relation.as_deref() {
+        data.insert("relation".into(), value.into());
+    }
+    if let Some(value) = routing.outcome_revision {
+        data.insert("outcome_revision".into(), value.to_string());
+    }
+    if let Some(value) = routing.provenance.as_deref() {
+        data.insert("routing_provenance".into(), value.into());
+    }
+}
+
+fn routing_revision_is_current(handle: &SessionHandle, expected: u64) -> bool {
+    handle.intent.lock().ok().is_some_and(|record| {
+        record
+            .as_ref()
+            .and_then(|intent| intent.outcome.as_ref())
+            .is_some_and(|outcome| outcome.revision == expected)
+    })
+}
+
+fn routing_summary(routing: Option<&RoutingEnvelope>) -> String {
+    let Some(routing) = routing else {
+        return String::new();
+    };
+    let mut data = std::collections::BTreeMap::new();
+    record_routing_data(&mut data, routing);
+    serde_json::to_string(&data).unwrap_or_default()
 }
 
 fn deny_pending_approvals(handle: &SessionHandle) {
@@ -5553,6 +5835,59 @@ async fn presentation_snapshot(
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Fetch one immutable result from the typed presentation projection. This
+/// keeps background notifications addressable without exposing transcript or
+/// transport internals to the client.
+async fn session_result(
+    State(state): State<AppState>,
+    Path((id, result_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let timeline = if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(session) = guard.as_ref() {
+            let planner = delivery::merged_presentation_planner(&handle.core);
+            match presentation_store(&state).load() {
+                Ok(library) => crate::projection::snapshot_with_planner_and_library(
+                    &id, session, &planner, &library,
+                ),
+                Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
+            }
+        } else {
+            handle
+                .presentation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    } else if let Some(session) = open_historical_session(&state, &id) {
+        crate::projection::snapshot(&id, &session)
+    } else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response();
+    };
+    match timeline.items.into_iter().find(|item| {
+        item.id == result_id
+            || item
+                .outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.result_id == result_id)
+    }) {
+        Some(item) => Json(item).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown result" })),
         )
             .into_response(),
     }
@@ -6745,6 +7080,22 @@ async fn inbox_list(
     .into_iter()
     .take(limit)
     .collect::<Vec<_>>();
+    let entries = entries
+        .into_iter()
+        .map(|entry| {
+            let mut value = serde_json::to_value(&entry).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(session_id) = entry.session_id.as_deref() {
+                let available = state.get(session_id).is_some()
+                    || open_historical_session(&state, session_id).is_some();
+                value["origin_state"] = serde_json::json!(if available {
+                    "available"
+                } else {
+                    "unavailable"
+                });
+            }
+            value
+        })
+        .collect::<Vec<_>>();
     Json(serde_json::json!({ "entries": entries, "unread_count": unread_count }))
 }
 
@@ -10576,6 +10927,50 @@ async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::
     Json(prompt_effective_payload(&state.core)).into_response()
 }
 
+async fn get_agent_profiles(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match agent_profiles::load(&state.core.cwd()) {
+        Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn put_agent_profiles(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(raw) = body.get("profiles") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "profiles is required" })),
+        )
+            .into_response();
+    };
+    let Ok(profiles) = serde_json::from_value::<Vec<agent_profiles::AgentProfile>>(raw.clone())
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "invalid agent profiles" })),
+        )
+            .into_response();
+    };
+    match agent_profiles::save(&state.core.cwd(), &profiles) {
+        Ok(saved_profiles) => {
+            Json(serde_json::json!({ "saved": true, "profiles": saved_profiles })).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
 fn prompt_effective_payload(core: &vak_core::Core) -> serde_json::Value {
     let resolution = core.resolve_prompt(&core.capability_descriptors());
     serde_json::json!({
@@ -11822,7 +12217,18 @@ async fn start_bestofn(
 
     let mut runs = Vec::new();
     for (rid, wt) in &created {
-        match spawn_isolated_run(&state, provider.clone(), rid, wt, &body.prompt, None).await {
+        match spawn_isolated_run(
+            &state,
+            provider.clone(),
+            rid,
+            wt,
+            &body.prompt,
+            None,
+            None,
+            None,
+        )
+        .await
+        {
             Ok(child_id) => {
                 state
                     .best_runs
@@ -11870,7 +12276,36 @@ async fn spawn_isolated_run(
     wt: &vak_core::worktree::Worktree,
     prompt: &str,
     model_pin: Option<&str>,
+    profile_id: Option<&str>,
+    profile_revision: Option<u64>,
 ) -> Result<String, String> {
+    let prompt = if let Some(profile_id) = profile_id {
+        let profiles = agent_profiles::load(&state.core.cwd())?;
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| format!("agent profile '{profile_id}' no longer exists"))?;
+        if let Some(expected) = profile_revision
+            && expected != profile.revision
+        {
+            return Err(format!(
+                "agent profile '{profile_id}' changed from revision {expected} to {}",
+                profile.revision
+            ));
+        }
+        format!(
+            "[Named helper: {} | profile {} revision {}]\nPersonality: {}\nWorking style: {}\nUseful for: {}\nThese preferences affect communication only. They do not grant tools, authority, credentials, budget, or approval bypass.\n\nRequest:\n{}",
+            profile.name,
+            profile.id,
+            profile.revision,
+            profile.personality,
+            profile.behaviour,
+            profile.responsibilities,
+            prompt
+        )
+    } else {
+        prompt.to_owned()
+    };
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
         .map(|c| {
             c.with_surface(vak_core::Surface::Background)
@@ -11905,7 +12340,7 @@ async fn spawn_isolated_run(
         wt.path.clone(),
         state.core.clone(),
     );
-    begin_turn(&handle, &child_core, prompt, false);
+    begin_turn(&handle, &child_core, &prompt, false);
     Ok(child_id)
 }
 
@@ -12289,11 +12724,26 @@ fn load_tasks(state: &AppState) {
     match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
         Ok(store) => {
             *map = store.all().into_iter().map(|t| (t.id.clone(), t)).collect();
+            if recover_interrupted_tasks(&mut map) {
+                write_tasks_file(state, &map);
+            }
         }
         // A corrupt tasks file is surfaced loudly, never silently dropped:
         // those definitions represent real automation the user expects.
         Err(e) => eprintln!("[scheduler] tasks file unreadable, ignoring: {e}"),
     }
+}
+
+fn recover_interrupted_tasks(tasks: &mut HashMap<String, TaskDef>) -> bool {
+    let mut recovered = false;
+    for task in tasks.values_mut() {
+        if task.last_run_status.as_deref() == Some("working") {
+            task.last_run_status = Some("interrupted".into());
+            task.last_delivery_state = Some("pending".into());
+            recovered = true;
+        }
+    }
+    recovered
 }
 
 /// fsyncs a directory so a prior rename into it is durable across a crash,
@@ -12356,6 +12806,10 @@ fn update_tasks<T>(state: &AppState, f: impl FnOnce(&mut HashMap<String, TaskDef
 
 async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
     let cwd = state.core.cwd().clone();
+    let next_fire = state
+        .next_fire
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut mine: Vec<TaskDef> = state
         .tasks
         .lock()
@@ -12365,7 +12819,44 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
         .cloned()
         .collect();
     mine.sort_by_key(|t| t.created_at);
-    Json(serde_json::json!({ "tasks": mine }))
+    let now = chrono::Local::now();
+    let tasks = mine
+        .into_iter()
+        .map(|task| {
+            let next = task
+                .schedule
+                .as_deref()
+                .and_then(|expr| {
+                    next_fire
+                        .get(&task.id)
+                        .map(|at| at.with_timezone(&Utc))
+                        .or_else(|| {
+                            vak_core::tasks::cron_next_after(expr, now)
+                                .ok()
+                                .map(|at| at.with_timezone(&Utc))
+                        })
+                })
+                .or_else(|| {
+                    task.last_run_at
+                        .map(|last| last + chrono::Duration::seconds(task.interval_secs as i64))
+                })
+                .or_else(|| Some(now.with_timezone(&Utc)));
+            let mut value = serde_json::to_value(task).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "next_run_at".into(),
+                    next.map(|at| serde_json::Value::String(at.to_rfc3339()))
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                object.insert(
+                    "timezone".into(),
+                    serde_json::Value::String(now.offset().to_string()),
+                );
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({ "tasks": tasks }))
 }
 
 #[derive(serde::Deserialize)]
@@ -12387,6 +12878,10 @@ struct TaskCreateBody {
     /// Pin dispatches to one model id (`provider/model` or bare model id).
     #[serde(default)]
     model_pin: Option<String>,
+    #[serde(default)]
+    agent_profile_id: Option<String>,
+    #[serde(default)]
+    agent_profile_revision: Option<u64>,
 }
 
 fn task_default_interval() -> u64 {
@@ -12437,11 +12932,16 @@ async fn create_task(
         last_run_at: None,
         last_session_id: None,
         last_summary: None,
+        last_result_id: None,
+        last_run_status: None,
+        last_delivery_state: None,
         last_wt: None,
         deliver_to: body.deliver_to,
         schedule: body.schedule.filter(|s| !s.trim().is_empty()),
         script: body.script.filter(|s| !s.trim().is_empty()),
         model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
+        agent_profile_id: body.agent_profile_id.filter(|m| !m.trim().is_empty()),
+        agent_profile_revision: body.agent_profile_revision,
     };
     if let Err((status, payload)) = validate_task_fields(&task) {
         return (status, Json(payload)).into_response();
@@ -12648,6 +13148,51 @@ async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> 
     }
 }
 
+/// Replay pending deliveries for one task without executing the task again.
+async fn retry_task_delivery(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records = match delivery::outbox_records(&state.core) {
+        Ok(records) => records,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    let jobs = records
+        .into_iter()
+        .filter(|record| record.state == vak_delivery::outbox::OutboxState::Pending)
+        .filter(|record| match &record.job.content {
+            vak_delivery::DeliveryContent::Answer(answer) => {
+                answer.metadata.get("vak_task_id").map(String::as_str) == Some(id.as_str())
+            }
+            _ => false,
+        })
+        .map(|record| record.job.job_id)
+        .collect::<Vec<_>>();
+    let mut replayed = 0usize;
+    let mut failed = 0usize;
+    for job_id in jobs {
+        match delivery::replay_outbox_job(&state.core, &job_id).await {
+            Ok(()) => replayed += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    if replayed > 0 && failed == 0 {
+        update_tasks(&state, |tasks| {
+            if let Some(task) = tasks.get_mut(&id) {
+                task.last_delivery_state = Some("delivered".into());
+            }
+        });
+    }
+    Json(serde_json::json!({ "replayed": replayed, "failed": failed })).into_response()
+}
+
 /// Split a `model_pin` into (provider, model). A bare model id pins only
 /// the model and keeps this server's active provider.
 pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, String) {
@@ -12712,6 +13257,8 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         &wt,
         &snapshot.prompt,
         snapshot.model_pin.as_deref(),
+        snapshot.agent_profile_id.as_deref(),
+        snapshot.agent_profile_revision,
     )
     .await
     .ok()?;
@@ -12721,6 +13268,9 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
             t.last_run_at = Some(chrono::Utc::now());
             t.last_session_id = Some(child_id.clone());
             t.last_summary = None;
+            t.last_result_id = None;
+            t.last_run_status = Some("working".into());
+            t.last_delivery_state = Some("pending".into());
             t.last_wt = Some(WtMeta {
                 path: wt.path,
                 branch: wt.branch,
@@ -12745,18 +13295,31 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
-                if let AgentEvent::RunFinished { summary, .. } = ev.event {
+                if let AgentEvent::RunFinished { summary, is_error } = ev.event {
                     let text =
                         last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
+                    let result_id = child_handle
+                        .presentation
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .items
+                        .iter()
+                        .rev()
+                        .find_map(|item| {
+                            item.outcome
+                                .as_ref()
+                                .map(|outcome| outcome.result_id.clone())
+                        });
                     update_tasks(&st, |map| {
                         if let Some(t) = map.get_mut(&tid) {
                             t.last_summary = Some(text.clone());
+                            t.last_result_id = result_id.clone();
                         }
                     });
-                    if let Some(target) = &deliver_to {
+                    let delivery_state = if let Some(target) = &deliver_to {
                         // Delivery failure must not lose the recorded summary;
                         // it only means this transport could not be reached.
-                        let _ = gateway::deliver_and_record(
+                        match gateway::deliver_and_record_with_result(
                             &st.core,
                             target,
                             &format!("routine '{task_name}' finished:\n{text}"),
@@ -12764,10 +13327,35 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                             format!("routine '{task_name}' finished"),
                             Some(&child_session),
                             Some(&tid),
+                            result_id.as_deref(),
                         )
-                        .await;
-                    }
+                        .await
+                        {
+                            Ok(state) => state,
+                            Err(_) => "pending",
+                        }
+                    } else {
+                        let dedupe_key = Some(format!("inbox|{child_session}"));
+                        let _ = vak_core::inbox::record_with_result_and_key(
+                            &st.core.sessions_home(),
+                            vak_core::inbox::Kind::TaskSummary,
+                            &format!("routine '{task_name}' finished"),
+                            &format!("routine '{task_name}' finished:\n{text}"),
+                            Some(&child_session),
+                            Some(&tid),
+                            result_id.as_deref(),
+                            dedupe_key.as_deref(),
+                        );
+                        "inbox"
+                    };
                     check_budget_alert(&st, &tid).await;
+                    update_tasks(&st, |map| {
+                        if let Some(task) = map.get_mut(&tid) {
+                            task.last_run_status =
+                                Some(if is_error { "failed" } else { "complete" }.into());
+                            task.last_delivery_state = Some(delivery_state.into());
+                        }
+                    });
                     break;
                 }
             }
@@ -12860,7 +13448,14 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
     {
         return None;
     }
+    update_tasks(state, |map| {
+        if let Some(current) = map.get_mut(&task.id) {
+            current.last_run_status = Some("working".into());
+            current.last_delivery_state = Some("pending".into());
+        }
+    });
     let outcome = execute_script(&state.core, &task.cwd, script).await;
+    let mut delivery_state = "inbox";
     // Deliver FIRST: once the summary is visible on the task, its delivery
     // attempt has already been made. With zero transports configured the
     // inbox itself is the sink (docs/design/29 P6): a watchdog summary is
@@ -12870,7 +13465,7 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             let title = format!("watchdog '{}'", task.name);
             match task.deliver_to.as_deref() {
                 Some(target) => {
-                    let _ = gateway::deliver_and_record(
+                    match gateway::deliver_and_record_with_result(
                         &state.core,
                         target,
                         &outcome.text,
@@ -12878,8 +13473,13 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
                         title,
                         None,
                         Some(&task.id),
+                        None,
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(state) => delivery_state = state,
+                        Err(_) => delivery_state = "pending",
+                    }
                 }
                 None => {
                     let _ = vak_core::inbox::record(
@@ -12899,7 +13499,7 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             task.name, outcome.text
         );
         let target = task.deliver_to.as_deref().unwrap_or(FALLBACK_ALERT_TARGET);
-        let _ = gateway::deliver_and_record(
+        match gateway::deliver_and_record_with_result(
             &state.core,
             target,
             &format!("watchdog '{}' alert:\n{}", task.name, outcome.text),
@@ -12907,8 +13507,13 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             format!("failure: watchdog '{}'", task.name),
             None,
             Some(&task.id),
+            None,
         )
-        .await;
+        .await
+        {
+            Ok(state) => delivery_state = state,
+            Err(_) => delivery_state = "pending",
+        }
     }
     update_tasks(state, |map| {
         if let Some(t) = map.get_mut(&task.id) {
@@ -12918,6 +13523,8 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             } else {
                 outcome.text.clone()
             });
+            t.last_run_status = Some(if outcome.ok { "complete" } else { "failed" }.into());
+            t.last_delivery_state = Some(delivery_state.into());
         }
     });
     check_budget_alert(state, &task.id).await;
@@ -13504,9 +14111,10 @@ async fn launch_logs(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod scheduler_pure_tests {
-    use super::{cron_slot_missed, stdout_section};
+    use super::{TaskDef, cron_slot_missed, recover_interrupted_tasks, stdout_section};
     use chrono::TimeZone;
     use chrono::Utc;
+    use std::collections::HashMap;
 
     fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
         chrono::Local
@@ -13517,6 +14125,42 @@ mod scheduler_pure_tests {
 
     fn utc(dt: chrono::DateTime<chrono::Local>) -> chrono::DateTime<Utc> {
         dt.with_timezone(&Utc)
+    }
+
+    #[test]
+    fn restart_recovery_marks_only_interrupted_tasks() {
+        let make = |id: &str, status: Option<&str>| TaskDef {
+            id: id.into(),
+            name: id.into(),
+            prompt: "check in".into(),
+            interval_secs: 3600,
+            enabled: true,
+            cwd: std::path::PathBuf::from("/tmp"),
+            created_at: Utc::now(),
+            last_run_at: None,
+            last_session_id: None,
+            last_summary: None,
+            last_result_id: None,
+            last_run_status: status.map(str::to_owned),
+            last_delivery_state: Some("pending".into()),
+            last_wt: None,
+            deliver_to: None,
+            schedule: None,
+            script: None,
+            model_pin: None,
+            agent_profile_id: None,
+            agent_profile_revision: None,
+        };
+        let mut tasks = HashMap::from([
+            ("running".into(), make("running", Some("working"))),
+            ("done".into(), make("done", Some("complete"))),
+        ]);
+        assert!(recover_interrupted_tasks(&mut tasks));
+        assert_eq!(
+            tasks["running"].last_run_status.as_deref(),
+            Some("interrupted")
+        );
+        assert_eq!(tasks["done"].last_run_status.as_deref(), Some("complete"));
     }
 
     #[test]

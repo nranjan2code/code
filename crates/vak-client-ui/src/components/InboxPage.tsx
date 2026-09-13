@@ -4,6 +4,7 @@ import {
   setInboxUnread,
   setTasksOpen,
   setTranscriptViewId,
+  setReplyTarget,
 } from "../store";
 import * as api from "../api";
 import type { InboxEntry } from "../api";
@@ -219,6 +220,11 @@ export default function InboxPage() {
                         <p class="inbox-body">{entry.body}</p>
                         <div class="inbox-links">
                           <Show when={entry.session_id}>
+                            <Show when={entry.origin_state === "unavailable"}>
+                              <span class="chip sm" title="The originating conversation is no longer available">
+                                origin unavailable
+                              </span>
+                            </Show>
                             <Show when={entry.kind === "approval_pending"}>
                               <button
                                 class="btn sm primary"
@@ -231,7 +237,14 @@ export default function InboxPage() {
                             <button
                               class="chip sm"
                               title="Open the read-only transcript"
-                              onClick={() => setTranscriptViewId(entry.session_id!)}
+                              onClick={() => {
+                                setTranscriptViewId(entry.session_id!);
+                                setReplyTarget({
+                                  sessionId: entry.session_id!,
+                                  resultId: entry.result_id ?? undefined,
+                                  label: entry.result_id ? `result ${entry.result_id.slice(0, 8)}` : "this result",
+                                });
+                              }}
                             >
                               session · {entry.session_id!.slice(0, 8)}
                             </button>
@@ -239,6 +252,15 @@ export default function InboxPage() {
                           <Show when={entry.task_id}>
                             <button class="chip sm" title="Open scheduled tasks" onClick={() => setTasksOpen(true)}>
                               task · {entry.task_id!.slice(0, 8)}
+                            </button>
+                          </Show>
+                          <Show when={entry.result_id}>
+                            <button
+                              class="chip sm"
+                              title="Open the conversation containing this result"
+                              onClick={() => entry.session_id && void activate(entry.session_id)}
+                            >
+                              result · {entry.result_id!.slice(0, 8)}
                             </button>
                           </Show>
                           <button

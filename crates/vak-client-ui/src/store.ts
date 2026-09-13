@@ -60,6 +60,12 @@ export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
+export interface ReplyTarget {
+  sessionId: string;
+  resultId?: string;
+  label: string;
+}
+export const [replyTarget, setReplyTarget] = createSignal<ReplyTarget | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
 
 const PROMPT_HISTORY_KEY = "vak.promptHistory";
@@ -785,6 +791,11 @@ export function applyEvent(
   },
 ) {
   const b: Bucket = opts.bucket ?? "main";
+  // Rust's externally tagged unit variant serializes as the bare string
+  // `"StreamOpened"`, while object variants serialize as `{ Variant: ... }`.
+  // It is a lifecycle hint only; accepting the unit form keeps the stream
+  // quiet and avoids applying the `in` operator to a primitive.
+  if (typeof ev === "string") return;
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
     cueTurnStart();

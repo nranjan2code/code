@@ -6,6 +6,8 @@ import {
   isRunning,
   itemsOf,
   promptHistory,
+  replyTarget,
+  setReplyTarget,
   recordPrompt,
   setNotice,
   setArmedGoal,
@@ -14,7 +16,7 @@ import {
   switchModel,
   workspaceSwitching,
 } from "../store";
-import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
+import { loadHealth, newSession, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
@@ -44,6 +46,7 @@ const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "clear", description: "Clear current prompt draft and pending attachments" },
   { name: "btw", description: "Ask a side question without landing on main session chain" },
   { name: "compact", description: "Compact session context to free up context window tokens" },
+  { name: "status", description: "Check current work without starting or steering a task" },
   { name: "diff", description: "Open diff inspector to review code changes" },
   { name: "terminal", description: "Open integrated shell terminal pane" },
   { name: "files", description: "Mention workspace files and attach code (@)" },
@@ -67,12 +70,17 @@ export default function Composer(props: { cwd: string }) {
   let draftText = "";
   const [modelList, setModelList] = createSignal<string[]>([]);
   const [lookupError, setLookupError] = createSignal("");
+  const [agentProfiles, setAgentProfiles] = createSignal<api.AgentProfile[]>([]);
+  const [selectedAgent, setSelectedAgent] = createSignal("");
+  const [separateNext, setSeparateNext] = createSignal(false);
+  const helperGlyph = (character: api.AgentProfile["character"]) => ({ orb: "◌", leaf: "◒", sun: "☼", wave: "〰", spark: "✦" }[character] ?? "◌");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
 
   const isTouchDevice = () => typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
 
   onMount(() => {
+    void api.listAgentProfiles().then((result) => setAgentProfiles(result.profiles)).catch(() => { /* helper picker is optional */ });
     const onEditPrompt = (ev: Event) => {
       const custom = ev as CustomEvent<{ text: string }>;
       if (custom.detail?.text) {
@@ -320,7 +328,7 @@ export default function Composer(props: { cwd: string }) {
     });
   };
 
-  const submit = () => {
+  const submit = async () => {
     const t = text().trim();
     const files = pendingFiles();
     // No active task is fine: sendPrompt creates one.
@@ -329,7 +337,13 @@ export default function Composer(props: { cwd: string }) {
       setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
       return;
     }
-    if (t) recordPrompt(t);
+    const assigned = agentProfiles().find((profile) => profile.id === selectedAgent());
+    const routedText = assigned ? `Use my helper “${assigned.name}” for this request.\n\n${t}` : t;
+    const target = replyTarget();
+    const startSeparately = !target && separateNext() && !!activeId() && isRunning(activeId()!);
+    if (startSeparately) await newSession();
+    setSeparateNext(false);
+    if (t) recordPrompt(routedText);
     setHistoryIdx(-1);
     draftText = "";
     setText("");
@@ -339,7 +353,8 @@ export default function Composer(props: { cwd: string }) {
     queueMicrotask(grow);
     // No need to pass or clear the goal here: sendPrompt consumes
     // `armedGoal` itself (store.ts), for whichever session it resolves.
-    void sendPrompt(t, undefined, files.length ? files : undefined);
+    void sendPrompt(routedText, undefined, files.length ? files : undefined, target?.sessionId, target);
+    setReplyTarget(null);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -441,6 +456,12 @@ export default function Composer(props: { cwd: string }) {
 
   return (
     <div class="composer-wrap">
+      <Show when={replyTarget()}>
+        {(target) => <div class="composer-target" role="status">
+          <span>Replying to {target().label}</span>
+          <button type="button" class="icon-button subtle" aria-label="Remove reply target" onClick={() => setReplyTarget(null)}>×</button>
+        </div>}
+      </Show>
       <Show when={slashMatches().length}>
         <div class="mention-menu slash-menu">
           <For each={slashMatches()}>
@@ -548,6 +569,12 @@ export default function Composer(props: { cwd: string }) {
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Workspace: ${props.cwd.split("/").pop()}`}</span></button>
+                <Show when={activeId() && isRunning(activeId()!)}>
+                  <button type="button" class={separateNext() ? "selected" : ""} onClick={() => setSeparateNext((value) => !value)}><Icon name="add" size={14} /><span>{separateNext() ? "Next message starts separately" : "Start next request separately"}</span></button>
+                </Show>
+                <Show when={agentProfiles().length > 0}>
+                  <label class="composer-agent-choice"><span><Icon name="spark" size={14} />Helper</span><select class="composer-mode" aria-label="Helper for this request" value={selectedAgent()} onChange={(e) => setSelectedAgent(e.currentTarget.value)}><option value="">Vak decides</option><For each={agentProfiles()}>{(profile) => <option value={profile.id}>{profile.name}{agentProfiles().filter((candidate) => candidate.name.toLowerCase() === profile.name.toLowerCase()).length > 1 ? ` · ${profile.id.slice(0, 6)}` : ""}</option>}</For></select></label>
+                </Show>
                 <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
                 <select
@@ -569,6 +596,9 @@ export default function Composer(props: { cwd: string }) {
                 </select>
               </div>
             </details>
+            <Show when={agentProfiles().find((profile) => profile.id === selectedAgent())}>
+              {(profile) => <span class="composer-helper-chip"><span class={`agent-glyph ${profile().character}`}>{helperGlyph(profile().character)}</span><span>with {profile().name}</span><button type="button" aria-label={`Remove ${profile().name} from this request`} onClick={() => setSelectedAgent("")}>×</button></span>}
+            </Show>
             <VoiceControl sessionId={activeId() ?? undefined} onFinal={(value) => { void sendPrompt(value, undefined, undefined, activeId()); }} />
             <input
               ref={fileInput}

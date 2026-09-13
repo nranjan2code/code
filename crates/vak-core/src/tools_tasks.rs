@@ -52,8 +52,13 @@ fn render_task(t: &TaskDef) -> Value {
         "interval_secs": if t.schedule.is_none() { Some(t.interval_secs) } else { None },
         "deliver_to": t.deliver_to,
         "model_pin": t.model_pin,
+        "agent_profile_id": t.agent_profile_id,
+        "agent_profile_revision": t.agent_profile_revision,
         "last_run_at": t.last_run_at,
         "last_summary": t.last_summary,
+        "last_result_id": t.last_result_id,
+        "last_run_status": t.last_run_status,
+        "last_delivery_state": t.last_delivery_state,
     })
 }
 
@@ -122,6 +127,10 @@ impl vak_tools::Tool for TasksTool {
                 "model_pin": {
                     "type": "string",
                     "description": "Optional: pin this task to one model id instead of the workspace default"
+                },
+                "agent": {
+                    "type": "string",
+                    "description": "Optional saved helper name or id; records helper provenance for future runs"
                 }
             },
             "required": ["action"]
@@ -180,6 +189,22 @@ impl vak_tools::Tool for TasksTool {
                     }
                 };
                 let deliver_to = str_arg("deliver_to").or_else(|| self.default_deliver_to.clone());
+                let agent_profile_id = str_arg("agent");
+                let agent_profile_revision = agent_profile_id.as_ref().and_then(|id| {
+                    std::fs::read_to_string(self.cwd.join(".vak/agent-profiles.json"))
+                        .ok()
+                        .and_then(|raw| serde_json::from_str::<Vec<Value>>(&raw).ok())
+                        .and_then(|profiles| {
+                            profiles.into_iter().find(|profile| {
+                                profile.get("id").and_then(Value::as_str) == Some(id)
+                                    || profile
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|name| name.eq_ignore_ascii_case(id))
+                            })
+                        })
+                        .and_then(|profile| profile.get("revision").and_then(Value::as_u64))
+                });
                 if let Some(d) = &deliver_to
                     && !d.contains(':')
                 {
@@ -198,11 +223,16 @@ impl vak_tools::Tool for TasksTool {
                     last_run_at: None,
                     last_session_id: None,
                     last_summary: None,
+                    last_result_id: None,
+                    last_run_status: None,
+                    last_delivery_state: None,
                     last_wt: None,
                     deliver_to,
                     schedule: cron,
                     script,
                     model_pin: str_arg("model_pin"),
+                    agent_profile_id,
+                    agent_profile_revision,
                 };
                 if let Err(e) = task.validate() {
                     return vak_tools::ToolOutput::error(task_error_message(e));
