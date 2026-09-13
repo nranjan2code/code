@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.78 — 2026-09-13
+
+- Add universal delegation with named helper profiles, character styles, personalities, behaviours, animation, and voice settings.
+- Simplify permission and approval presentation while keeping detailed requests available on demand.
+- Remove internal execution and stop-policy scaffolding from the normal chat surface.
+- Expand rich result presentation across recipes, timelines, comparisons, research, and structured outputs.
+
 ## 3.0.77 — 2026-09-12
 
 - Remove the legacy AWS Hyper/Rustls client path so the dependency audit is clear of blocking vulnerabilities.
