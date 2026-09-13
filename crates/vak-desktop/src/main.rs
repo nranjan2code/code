@@ -927,8 +927,9 @@ fn main() {
                 // onboarding prerequisite; the default can be changed from
                 // the workspace controls whenever the person wants.
                 let cwd = startup_workspace(explicit_project.clone(), last_project());
-                if !cwd.exists() {
-                    if let Err(error) = std::fs::create_dir_all(&cwd) {
+                if !cwd.exists()
+                    && let Err(error) = std::fs::create_dir_all(&cwd)
+                {
                         let message = format!(
                             "could not create default workspace {}: {error}",
                             cwd.display()

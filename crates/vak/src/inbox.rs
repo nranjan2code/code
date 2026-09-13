@@ -249,6 +249,8 @@ mod tests {
             body: String::new(),
             session_id: None,
             task_id: None,
+            result_id: None,
+            dedupe_key: None,
         }
     }
 
