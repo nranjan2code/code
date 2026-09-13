@@ -11,8 +11,10 @@ import {
   isRunning,
   markRunning,
   resolveApproval,
-  resetSessionView,
   setActiveId,
+  activeAgentId,
+  setAgentOpening,
+  setReplyTarget,
   setBackend,
   setDockTab,
   setEditorPath,
@@ -131,10 +133,8 @@ export async function refreshSessions() {
     const res = await api.listSessions();
     if (source === api.backendUrl()) {
       setSessions(res.sessions);
-      // Startup is intentionally a fresh state. Persisted sessions remain
-      // available in the sidebar, but opening the app must never resurrect
-      // the last task (including an archived one). A task is rendered only
-      // after the operator explicitly selects it or sends a new prompt.
+      // Startup opens the canonical Vak conversation through agent admission.
+      // Session refresh itself never chooses an arbitrary recent task.
       // The other pane's session was deleted elsewhere — collapse the split
       // rather than showing a ghost.
       const other = splitId();
@@ -440,6 +440,7 @@ export async function activate(id: string) {
     return;
   }
   setActiveId(id);
+  setReplyTarget(null);
   // Do not let execution/artifact state from the previously selected task
   // bleed into this task while its durable sidecar is loading.
   resetWorkbenchExecutions();
@@ -453,21 +454,43 @@ export async function activate(id: string) {
     await api.attachSession(id);
   } catch (e) {
     appendSystem(id, `could not resume this task: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
   }
   openStream(id);
   await hydrate(id);
+  return true;
+}
+
+let openingAgent: Promise<string | null> | null = null;
+export async function openAgentChat(agentId = "vak"): Promise<string | null> {
+  if (openingAgent) return null;
+  setAgentOpening(true);
+  const source = api.backendUrl();
+  const cwd = backend().cwd;
+  openingAgent = (async () => {
+  try {
+    const res = await api.openAgent(agentId);
+    if (source !== api.backendUrl() || cwd !== backend().cwd) return null;
+    setSessions((current) => [...current.filter((s) => s.session_id !== res.session_id), {session_id: res.session_id, cwd: res.cwd, agent: res.agent}]);
+    closeSplit();
+    setReplyTarget(null);
+    setArmedGoal(null);
+    setDockTab(null);
+    if (await activate(res.session_id) === false) throw new Error("The conversation could not be resumed. Try again.");
+    await refreshSessions();
+    return res.session_id;
+  } catch (e) {
+    setNotice({ kind: "error", text: `Could not open this agent: ${e instanceof Error ? e.message : String(e)}` });
+    return null;
+  }
+  })();
+  try { return await openingAgent; }
+  finally { openingAgent = null; setAgentOpening(false); }
 }
 
 export async function newSession() {
-  pruneStreams();
-  try {
-    const res = await api.createSession();
-    resetSessionView(res.session_id);
-    await activate(res.session_id);
-    await refreshSessions();
-  } catch (e) {
-    setNotice({ kind: "error", text: `Could not create a task: ${e instanceof Error ? e.message : String(e)}` });
-  }
+  await openAgentChat(activeAgentId());
+  window.dispatchEvent(new CustomEvent("vak:focus-composer"));
 }
 
 // ---- Split view ----------------------------------------------------------------
@@ -525,13 +548,8 @@ export async function sendPrompt(
   if (!text.trim() && !(attachments && attachments.length)) return;
   let id = targetId ?? activeId();
   if (!id) {
-    // Typing into the empty state is the natural way to start: create the
-    // task rather than silently dropping the prompt because nothing is
-    // selected. Only applies to the focused-session path — a caller
-    // naming an explicit `targetId` means an existing session.
-    await newSession();
-    id = activeId();
-    if (!id) return; // newSession already surfaced why
+    id = await openAgentChat("vak");
+    if (!id) return;
   }
   // Goal mode (docs/design/27 Phase H): /goal arms, bare /goal shows
   // status, /goal off disarms — mirroring the TUI. Shares one signal
@@ -757,6 +775,8 @@ function resetWorkspaceView() {
   closeAllStreams();
   closeAllSideStreams();
   setActiveId(null);
+  setReplyTarget(null);
+  setArmedGoal(null);
   setSplitId(null);
   setSplitFocused(false);
   setSessions([]);
@@ -797,6 +817,7 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
     setBackend(info);
     await loadHealth();
     await refreshSessions();
+    if (!activeId() && !window.location.hash.startsWith("#/s/")) await openAgentChat("vak");
     return true;
   } catch {
     return false;

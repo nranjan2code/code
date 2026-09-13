@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, agentForSession, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
@@ -150,6 +150,9 @@ function visibleItems(list: Item[]): Item[] {
   // Filter out any control scaffolding messages (e.g. <conversation_thread>,
   // <context_summary>, <intent>, <work_contract>) so they never leak into the chat canvas.
   const cleanList = list.filter((it) => {
+    // Child agents and orchestration steps belong to the selected agent's
+    // internal workspace. The user-facing chat shows outcomes, not machinery.
+    if (it.kind === "subagent") return false;
     if (it.kind === "user") {
       return stripControlScaffolding(it.text).length > 0;
     }
@@ -574,7 +577,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
           <span class="assistant-avatar-mark">
             <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
           </span>
-          <span class="assistant-name">Vak</span>
+          <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
           <Show when={props.item.streaming}>
             <span class="assistant-live-pulse" title="Generating">
               <span class="dot run" />

@@ -515,6 +515,7 @@ async fn execute_node(
                     .as_nanos()
             );
             let header = vak_session::types::SessionHeader {
+                agent: None,
                 session_id: session_id.clone(),
                 created_at: chrono::Utc::now(),
                 cwd: deps.cwd.clone(),

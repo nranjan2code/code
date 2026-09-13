@@ -82,6 +82,7 @@ fn text(t: &str) -> AssistantMessage {
 
 fn make_header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     SessionHeader {
+        agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),
         cwd: dir.to_path_buf(),

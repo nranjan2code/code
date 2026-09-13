@@ -80,6 +80,7 @@ fn build_fixture_log(
 ) -> Result<SessionLog, String> {
     let cwd = dir.to_path_buf();
     let header = vak_session::types::SessionHeader {
+        agent: None,
         session_id: session_id.to_string(),
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),

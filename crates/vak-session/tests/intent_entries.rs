@@ -17,6 +17,7 @@ use vak_session::{SessionLog, SessionPath};
 
 fn header() -> SessionHeader {
     SessionHeader {
+        agent: None,
         session_id: "s-intent".into(),
         created_at: chrono::Utc::now(),
         cwd: PathBuf::from("/tmp/proj"),

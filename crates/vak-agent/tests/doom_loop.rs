@@ -78,6 +78,7 @@ fn text_msg(t: &str) -> AssistantMessage {
 async fn third_identical_call_is_blocked_with_reason() {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "doom-loop".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
@@ -168,6 +169,7 @@ async fn third_identical_call_is_blocked_with_reason() {
 async fn different_args_are_not_counted_together() {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "no-doom".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

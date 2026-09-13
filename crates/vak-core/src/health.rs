@@ -850,6 +850,7 @@ mod tests {
         core.set_sessions_home(home.path().to_path_buf());
 
         let header = SessionHeader {
+            agent: None,
             session_id: "s-health".into(),
             created_at: chrono::Utc::now(),
             cwd: dir.path().to_path_buf(),

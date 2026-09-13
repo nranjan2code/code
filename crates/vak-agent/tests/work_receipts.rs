@@ -129,6 +129,7 @@ fn setup_with(
     let (home, path) = session_paths(dir.path());
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "receipts".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

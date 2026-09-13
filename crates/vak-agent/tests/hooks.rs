@@ -74,6 +74,7 @@ fn bash_call(id: &str, cmd: &str) -> AssistantMessage {
 fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "s-hooks".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

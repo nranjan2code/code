@@ -10,6 +10,7 @@ use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
 fn header() -> SessionHeader {
     SessionHeader {
+        agent: None,
         session_id: "s-chain".into(),
         created_at: chrono::Utc::now(),
         cwd: PathBuf::from("/tmp/proj"),

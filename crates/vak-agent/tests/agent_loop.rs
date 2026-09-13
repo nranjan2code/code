@@ -96,6 +96,7 @@ struct Harness {
 fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harness {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "s-test".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

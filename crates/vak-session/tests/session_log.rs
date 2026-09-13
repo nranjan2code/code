@@ -14,6 +14,7 @@ use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog, Sess
 
 fn header() -> SessionHeader {
     SessionHeader {
+        agent: None,
         session_id: "s-test".into(),
         created_at: chrono::Utc::now(),
         cwd: PathBuf::from("/tmp/proj"),
@@ -377,6 +378,7 @@ fn restart_attaches_completed_child_for_verification_without_marking_it_succeede
     let mut child = SessionLog::create(
         child_path,
         SessionHeader {
+            agent: None,
             session_id: "child-1".into(),
             ..header()
         },

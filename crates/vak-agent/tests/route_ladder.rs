@@ -135,6 +135,7 @@ fn setup_with_primary(
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        agent: None,
         session_id: "ladder".into(),
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),

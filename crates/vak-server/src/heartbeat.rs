@@ -246,6 +246,7 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
         HEARTBEAT_SESSION_ID,
     );
     let header = SessionHeader {
+        agent: None,
         session_id: HEARTBEAT_SESSION_ID.to_string(),
         created_at: chrono::Utc::now(),
         cwd: core.cwd().clone(),

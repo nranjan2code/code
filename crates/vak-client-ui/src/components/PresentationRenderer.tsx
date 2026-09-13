@@ -7,7 +7,7 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { openInEditor, openWorkbenchArtifact, uiPreferences } from "../store";
+import { activeId, agentForSession, openInEditor, openWorkbenchArtifact, uiPreferences } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
@@ -34,14 +34,14 @@ import { parseVakFence, stripControlScaffolding } from "../structured";
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
  *  visual identity when ChatPane switches to PresentationTimelineView. */
-function AssistantMessage(props: { children: JSX.Element; text?: string }) {
+function AssistantMessage(props: { children: JSX.Element; text?: string; sessionId?: string }) {
   return (
     <div class="semantic-assistant">
       <div class="assistant-turn-head">
         <span class="assistant-avatar-mark">
           <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
         </span>
-        <span class="assistant-name">Vak</span>
+        <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
       </div>
       <div class="assistant-turn-body">
         {props.children}
@@ -939,7 +939,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
     if (item.content.type === "document") return showOperatorChrome()
       ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>
-      : item.role === "user" ? <UserMessage document={item.content.document} text={item.fallback_text} /> : <AssistantMessage text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      : item.role === "user" ? <UserMessage document={item.content.document} text={item.fallback_text} /> : <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     if (item.content.type === "outcome") {
       if (showOperatorChrome()) {
         return (
@@ -952,7 +952,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       }
       // Never leak internal lifecycle metadata (e.g. "primary deliverable: produced", "completed") as assistant prose
       if (!item.content.document) return null;
-      return <AssistantMessage text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     }
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;

@@ -512,6 +512,7 @@ impl TaskTool {
         let path =
             SessionPath::new_session_file(&self.deps.sessions_home, &self.deps.cwd, &session_id);
         let header = SessionHeader {
+            agent: None,
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),
             cwd: self.deps.cwd.clone(),

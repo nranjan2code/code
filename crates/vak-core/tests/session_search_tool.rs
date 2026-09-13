@@ -69,6 +69,7 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
 
 fn header_for(id: &str, cwd: &Path) -> SessionHeader {
     SessionHeader {
+        agent: None,
         session_id: id.to_string(),
         created_at: chrono::Utc::now(),
         cwd: cwd.to_path_buf(),

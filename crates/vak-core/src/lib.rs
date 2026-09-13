@@ -582,6 +582,7 @@ pub struct Core {
     /// Named agent role for this turn, selecting a `prompts/agents/<name>`
     /// sub-layer. Set for subagents spawned with an explicit role.
     prompt_role: Option<String>,
+    agent_identity: Option<vak_session::types::AgentIdentity>,
     /// Prompt layers the caller supplies rather than the filesystem: the
     /// gateway's bot and chat tiers. `Arc` because `Core` is cloned per
     /// turn and this is almost always empty.
@@ -905,6 +906,7 @@ impl Core {
             default_deliver_to: None,
             surface: Surface::Unknown,
             prompt_role: None,
+            agent_identity: None,
             prompt_overlays: Arc::new(Vec::new()),
             approver_answerable: true,
             inner: Arc::new(CoreInner {
@@ -2690,6 +2692,11 @@ impl Core {
         self.prompt_role.as_deref()
     }
 
+    pub fn with_agent_identity(mut self, agent: Option<vak_session::types::AgentIdentity>) -> Self {
+        self.agent_identity = agent;
+        self
+    }
+
     /// Attach caller-owned prompt layers (the gateway's bot and chat tiers).
     /// Restrictive by construction: `resolve` folds guardrails in and lets a
     /// narrower identity win, and neither can reach the code-owned blocks.
@@ -2925,6 +2932,19 @@ impl Core {
         // Gateway and role tiers handed in by the caller that knows them:
         // operator state, not files on this machine's disk.
         layers.extend(self.prompt_overlays.iter().cloned());
+        if let Some(agent) = &self.agent_identity
+            && agent.id != "vak"
+        {
+            layers.push(prompts::LayerInput::new(
+                prompts::PromptLayer::Agent,
+                Some(format!("agent:{}@{}", agent.id, agent.revision)),
+                prompts::LayerContent {
+                    identity: Some(format!("You are {}. {}", agent.name, agent.personality)),
+                    operating_rules: Some(format!("{}\nSpecialization: {}\nWork directly with the user in this continuous conversation. Coordinate tools and delegated work internally and return useful results. This identity does not grant tools, permissions, credentials or budget.", agent.behaviour, agent.responsibilities)),
+                    ..Default::default()
+                },
+            ));
+        }
         layers
     }
 
@@ -4160,6 +4180,7 @@ impl Core {
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
         let header = SessionHeader {
+            agent: self.agent_identity.clone(),
             session_id,
             created_at: chrono::Utc::now(),
             cwd: self.inner.cwd.clone(),
@@ -4481,6 +4502,7 @@ impl Core {
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         let prompt_text = prompt.text_content();
+        self.agent_identity = session.header().and_then(|header| header.agent.clone());
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier
         // loses to it, and a disagreement is recorded rather than believed.

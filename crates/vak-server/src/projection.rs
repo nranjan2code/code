@@ -1698,6 +1698,7 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                agent: None,
                 session_id: "session-1".into(),
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),
@@ -1846,6 +1847,7 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                agent: None,
                 session_id: "session-2".into(),
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),
@@ -1950,6 +1952,7 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                agent: None,
                 session_id: "session-3".into(),
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),
@@ -2028,6 +2031,7 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                agent: None,
                 session_id: "session-personas".into(),
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),

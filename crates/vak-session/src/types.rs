@@ -111,6 +111,9 @@ pub struct PromptLayerDescriptor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHeader {
+    /// Frozen user-facing owner. Absence denotes the built-in Vak agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentIdentity>,
     pub session_id: String,
     pub created_at: DateTime<Utc>,
     pub cwd: PathBuf,
@@ -121,6 +124,17 @@ pub struct SessionHeader {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_item_id: Option<String>,
     pub contract: FrozenContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIdentity {
+    pub id: String,
+    pub revision: u64,
+    pub name: String,
+    pub personality: String,
+    pub behaviour: String,
+    #[serde(default)]
+    pub responsibilities: String,
 }
 
 impl SessionHeader {

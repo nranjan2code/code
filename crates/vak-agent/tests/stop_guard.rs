@@ -78,6 +78,7 @@ struct Harness {
 fn harness(policy: Option<StopPolicy>, responses: Vec<ScriptedResponse>) -> Harness {
     let dir = tempdir().expect("tempdir");
     let header = SessionHeader {
+        agent: None,
         session_id: "s-stop".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

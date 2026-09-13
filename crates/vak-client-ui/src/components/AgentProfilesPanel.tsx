@@ -1,5 +1,6 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal, createEffect, onCleanup } from "solid-js";
 import * as api from "../api";
+import { settingsScope, backend } from "../store";
 
 export type AgentProfile = {
   id: string;
@@ -13,7 +14,6 @@ export type AgentProfile = {
   voice: string;
 };
 
-const STORAGE_KEY = "vak.agentProfiles";
 const presets: Array<{ id: AgentProfile["character"]; label: string; glyph: string }> = [
   { id: "orb", label: "Soft orb", glyph: "◌" },
   { id: "leaf", label: "Quiet leaf", glyph: "◒" },
@@ -21,16 +21,6 @@ const presets: Array<{ id: AgentProfile["character"]; label: string; glyph: stri
   { id: "wave", label: "Gentle wave", glyph: "〰" },
   { id: "spark", label: "Bright spark", glyph: "✦" },
 ];
-
-function readProfiles(): AgentProfile[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(value)) return [];
-    return value.filter((p): p is AgentProfile => p && typeof p.id === "string" && typeof p.name === "string").map((p) => ({ ...p, responsibilities: typeof p.responsibilities === "string" ? p.responsibilities : "" }));
-  } catch {
-    return [];
-  }
-}
 
 function normalizeProfiles(profiles: AgentProfile[]): AgentProfile[] {
   return profiles.map((profile) => ({ ...profile, responsibilities: typeof profile.responsibilities === "string" ? profile.responsibilities : "" }));
@@ -45,7 +35,7 @@ function defaultChoices(profile: AgentProfile): AgentProfile {
 }
 
 export default function AgentProfilesPanel() {
-  const [profiles, setProfiles] = createSignal<AgentProfile[]>(readProfiles());
+  const [profiles, setProfiles] = createSignal<AgentProfile[]>([]);
   const [selected, setSelected] = createSignal<string | null>(null);
   const [draft, setDraft] = createSignal<AgentProfile | null>(null);
   const [saveError, setSaveError] = createSignal("");
@@ -54,12 +44,19 @@ export default function AgentProfilesPanel() {
   onCleanup(() => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
   });
-  onMount(() => {
-    void api.listAgentProfiles().then((result) => {
+  const [loading, setLoading] = createSignal(true);
+  createEffect(() => {
+    const scope = settingsScope();
+    void backend().cwd;
+    let disposed = false;
+    setProfiles([]); setDraft(null); setSelected(null); setLoading(true); setSaveError("");
+    void api.listAgentProfiles(scope).then((result) => {
+      if (disposed) return;
       const normalized = normalizeProfiles(result.profiles);
       setProfiles(normalized);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    }).catch(() => { /* local draft remains available while the server is offline */ });
+
+    }).catch((error) => { if (!disposed) setSaveError(String(error)); }).finally(() => { if (!disposed) setLoading(false); });
+    onCleanup(() => { disposed = true; });
   });
   const save = async () => {
     const value = current();
@@ -69,10 +66,10 @@ export default function AgentProfilesPanel() {
       ? profiles().map((p) => p.id === value.id ? { ...value, name: value.name.trim() } : p)
       : [...profiles(), { ...value, name: value.name.trim() }];
     try {
-      const saved = await api.saveAgentProfiles(next);
+      const saved = await api.saveAgentProfiles(next, settingsScope());
       const normalized = normalizeProfiles(saved.profiles);
       setProfiles(normalized);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save this helper. Try again.");
       return;
@@ -91,10 +88,10 @@ export default function AgentProfilesPanel() {
     const previous = profiles();
     const next = profiles().filter((p) => p.id !== id);
     try {
-      const saved = await api.saveAgentProfiles(next);
+      const saved = await api.saveAgentProfiles(next, settingsScope());
       const normalized = normalizeProfiles(saved.profiles);
       setProfiles(normalized);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+
     } catch (error) {
       setProfiles(previous);
       setSaveError(error instanceof Error ? error.message : "Could not remove this helper. Try again.");
@@ -109,15 +106,17 @@ export default function AgentProfilesPanel() {
 
   return (
     <section class="agent-profiles">
+      <Show when={loading()}><p role="status">Loading agents…</p></Show>
+      <Show when={saveError()}><p role="alert">{saveError()}</p></Show>
       <div class="agent-profiles-heading">
         <div><h2>Your agents</h2><p>Create a named helper with its own look and manner. This is optional—Vak works beautifully on its own.</p></div>
-        <button type="button" class="settings-button primary" onClick={() => { const next = makeProfile(); setSelected(next.id); setDraft(next); }}>Create agent</button>
+        <button type="button" class="settings-button primary" disabled={loading() || !!saveError()} onClick={() => { const next = makeProfile(); setSelected(next.id); setDraft(next); }}>Create agent</button>
       </div>
       <Show when={profiles().length > 0} fallback={<div class="agent-profiles-empty"><span class="agent-empty-glyph">✦</span><div><strong>Make Vak feel like yours</strong><p>Name a helper, choose a character, and decide how it should work with you.</p></div></div>}>
         <div class="agent-profile-list"><For each={profiles()}>{(profile) => <button type="button" class="agent-profile-chip" title={`${profile.name} · saved revision ${profile.revision} · ${profile.id}`} classList={{ active: selected() === profile.id }} onClick={() => { setSelected(profile.id); setDraft(null); }}><span class={`agent-glyph ${profile.character}`}>{character(profile.character).glyph}</span><span>{profile.name}</span></button>}</For></div>
       </Show>
       <Show when={selectedProfile() && !draft()}>
-        <div class="agent-profile-summary"><span class={`agent-avatar ${selectedProfile()!.character}`}>{character(selectedProfile()!.character).glyph}</span><div><strong>{selectedProfile()!.name}</strong><p>{selectedProfile()!.personality}</p><small>Saved revision {selectedProfile()!.revision} · available when you ask Vak to use this helper.</small></div><button type="button" class="settings-button" onClick={() => setDraft({ ...selectedProfile()! })}>Edit</button><button type="button" class="settings-button" onClick={() => { const copy = { ...selectedProfile()!, id: crypto.randomUUID(), revision: 1, name: `${selectedProfile()!.name} copy` }; setSelected(copy.id); setDraft(copy); }}>Duplicate</button><button type="button" class="settings-button danger" onClick={() => remove(selectedProfile()!.id)}>Remove</button></div>
+        <div class="agent-profile-summary"><span class={`agent-avatar ${selectedProfile()!.character}`}>{character(selectedProfile()!.character).glyph}</span><div><strong>{selectedProfile()!.name}</strong><p>{selectedProfile()!.personality}</p><small>Saved revision {selectedProfile()!.revision} · open this agent from the sidebar. Existing chats retain their saved instructions.</small></div><button type="button" class="settings-button" onClick={() => setDraft({ ...selectedProfile()! })}>Edit</button><button type="button" class="settings-button" onClick={() => { const copy = { ...selectedProfile()!, id: crypto.randomUUID(), revision: 1, name: `${selectedProfile()!.name} copy` }; setSelected(copy.id); setDraft(copy); }}>Duplicate</button><button type="button" class="settings-button danger" onClick={() => remove(selectedProfile()!.id)}>Remove</button></div>
       </Show>
       <Show when={current()}>{(value) => <div class="agent-profile-editor">
         <div class="agent-preview"><span class={`agent-avatar ${value().character} ${value().animation}`}>{character(value().character).glyph}</span><div><strong>{value().name || "Your new agent"}</strong><span>{value().personality || "A personality that sounds like you want."}</span></div></div>

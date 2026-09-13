@@ -22,6 +22,7 @@ import {
   sidebarOpen,
   splitId,
   itemsOf,
+  agentForSession,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -43,7 +44,7 @@ const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "p
 
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
-  const title = createMemo(() => session()?.title || (activeId() ? "Untitled task" : "New task"));
+  const title = createMemo(() => agentForSession(activeId()).name);
   const taskStatus = createMemo(() => {
     const id = activeId();
     if (!id) return "New task";

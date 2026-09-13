@@ -85,6 +85,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
     let parent_id = "parent-x".to_string();
 
     let header = SessionHeader {
+        agent: None,
         session_id: parent_id.clone(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

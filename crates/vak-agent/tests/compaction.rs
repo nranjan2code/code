@@ -78,6 +78,7 @@ fn text(t: &str) -> AssistantMessage {
 async fn overflow_triggers_compaction_then_run_completes() {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "compact".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
@@ -192,6 +193,7 @@ async fn overflow_triggers_compaction_then_run_completes() {
 async fn still_over_after_compaction_fails_closed() {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "over".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
@@ -340,6 +342,7 @@ mod pair_boundary_and_reuse {
         // result user message — the orphan case.
         let dir = tempdir().unwrap();
         let header = SessionHeader {
+            agent: None,
             session_id: "pairs".into(),
             created_at: chrono::Utc::now(),
             cwd: dir.path().to_path_buf(),

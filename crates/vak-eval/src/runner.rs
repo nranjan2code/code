@@ -344,6 +344,7 @@ async fn run_case_with_tools(
     }
 
     let header = SessionHeader {
+        agent: None,
         session_id: format!("eval-{}", case.id),
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),

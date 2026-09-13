@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show, untrack } from "solid-js";
 import {
   activeId,
   armedGoal,
@@ -15,8 +15,10 @@ import {
   setShowShortcuts,
   switchModel,
   workspaceSwitching,
+  agentForSession,
+  agentOpening,
 } from "../store";
-import { loadHealth, newSession, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
+import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
@@ -70,17 +72,28 @@ export default function Composer(props: { cwd: string }) {
   let draftText = "";
   const [modelList, setModelList] = createSignal<string[]>([]);
   const [lookupError, setLookupError] = createSignal("");
-  const [agentProfiles, setAgentProfiles] = createSignal<api.AgentProfile[]>([]);
-  const [selectedAgent, setSelectedAgent] = createSignal("");
-  const [separateNext, setSeparateNext] = createSignal(false);
-  const helperGlyph = (character: api.AgentProfile["character"]) => ({ orb: "◌", leaf: "◒", sun: "☼", wave: "〰", spark: "✦" }[character] ?? "◌");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
+  const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]}>();
+  let draftOwner = "";
+  createEffect(() => {
+    const owner = `${props.cwd}:${activeId() ?? "vak"}`;
+    untrack(() => {
+      if (draftOwner) drafts.set(draftOwner, {text: text(), files: pendingFiles()});
+      const draft = drafts.get(owner);
+      setText(draft?.text ?? ""); setPendingFiles(draft?.files ?? []);
+      setMention(null); setComposerError(null); setHistoryIdx(-1);
+      draftOwner = owner;
+      queueMicrotask(() => { if (ta) grow(); });
+    });
+  });
 
   const isTouchDevice = () => typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
 
   onMount(() => {
-    void api.listAgentProfiles().then((result) => setAgentProfiles(result.profiles)).catch(() => { /* helper picker is optional */ });
+    const focus = () => ta?.focus();
+    window.addEventListener("vak:focus-composer", focus);
+    onCleanup(() => window.removeEventListener("vak:focus-composer", focus));
     const onEditPrompt = (ev: Event) => {
       const custom = ev as CustomEvent<{ text: string }>;
       if (custom.detail?.text) {
@@ -98,6 +111,7 @@ export default function Composer(props: { cwd: string }) {
     onCleanup(() => window.removeEventListener("vak:edit-prompt", onEditPrompt));
   });
 
+
   createEffect(() => {
     const p = health()?.provider;
     if (!p) return;
@@ -113,6 +127,7 @@ export default function Composer(props: { cwd: string }) {
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
   const addFiles = (list: FileList | File[]) => {
+    const owner = draftOwner;
     setComposerError(null);
     for (const file of Array.from(list)) {
       if (file.type.startsWith("image/")) {
@@ -122,6 +137,7 @@ export default function Composer(props: { cwd: string }) {
         }
         const reader = new FileReader();
         reader.onload = () => {
+          if (owner !== draftOwner) return;
           const url = String(reader.result ?? "");
           const base64 = url.includes(",") ? url.slice(url.indexOf(",") + 1) : "";
           if (base64) {
@@ -137,6 +153,7 @@ export default function Composer(props: { cwd: string }) {
         }
         const reader = new FileReader();
         reader.onload = () => {
+          if (owner !== draftOwner) return;
           const content = String(reader.result ?? "");
           const ext = file.name.split(".").pop() ?? "";
           const codeBlock = `\n\`\`\`${ext}\n// ${file.name}\n${content}\n\`\`\`\n`;
@@ -329,6 +346,7 @@ export default function Composer(props: { cwd: string }) {
   };
 
   const submit = async () => {
+    if (agentOpening()) return;
     const t = text().trim();
     const files = pendingFiles();
     // No active task is fine: sendPrompt creates one.
@@ -337,13 +355,8 @@ export default function Composer(props: { cwd: string }) {
       setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
       return;
     }
-    const assigned = agentProfiles().find((profile) => profile.id === selectedAgent());
-    const routedText = assigned ? `Use my helper “${assigned.name}” for this request.\n\n${t}` : t;
     const target = replyTarget();
-    const startSeparately = !target && separateNext() && !!activeId() && isRunning(activeId()!);
-    if (startSeparately) await newSession();
-    setSeparateNext(false);
-    if (t) recordPrompt(routedText);
+    if (t) recordPrompt(t);
     setHistoryIdx(-1);
     draftText = "";
     setText("");
@@ -353,7 +366,7 @@ export default function Composer(props: { cwd: string }) {
     queueMicrotask(grow);
     // No need to pass or clear the goal here: sendPrompt consumes
     // `armedGoal` itself (store.ts), for whichever session it resolves.
-    void sendPrompt(routedText, undefined, files.length ? files : undefined, target?.sessionId, target);
+    void sendPrompt(t, undefined, files.length ? files : undefined, target?.sessionId, target);
     setReplyTarget(null);
   };
 
@@ -543,8 +556,9 @@ export default function Composer(props: { cwd: string }) {
         <textarea
           ref={ta}
           rows={1}
-          aria-label={activeId() && isRunning(activeId()) ? "Add direction while Vak is working" : "Task prompt"}
-          placeholder={activeId() && isRunning(activeId()) ? "Add direction while Vak is working…" : "Ask Vak to build, fix, explain, research, write, or analyze…"}
+          disabled={agentOpening()}
+          aria-label={`Message ${agentForSession(activeId()).name}`}
+          placeholder={`Ask ${agentForSession(activeId()).name} anything…`}
           value={text()}
           onInput={(event) => {
             setText(event.currentTarget.value);
@@ -569,12 +583,6 @@ export default function Composer(props: { cwd: string }) {
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Workspace: ${props.cwd.split("/").pop()}`}</span></button>
-                <Show when={activeId() && isRunning(activeId()!)}>
-                  <button type="button" class={separateNext() ? "selected" : ""} onClick={() => setSeparateNext((value) => !value)}><Icon name="add" size={14} /><span>{separateNext() ? "Next message starts separately" : "Start next request separately"}</span></button>
-                </Show>
-                <Show when={agentProfiles().length > 0}>
-                  <label class="composer-agent-choice"><span><Icon name="spark" size={14} />Helper</span><select class="composer-mode" aria-label="Helper for this request" value={selectedAgent()} onChange={(e) => setSelectedAgent(e.currentTarget.value)}><option value="">Vak decides</option><For each={agentProfiles()}>{(profile) => <option value={profile.id}>{profile.name}{agentProfiles().filter((candidate) => candidate.name.toLowerCase() === profile.name.toLowerCase()).length > 1 ? ` · ${profile.id.slice(0, 6)}` : ""}</option>}</For></select></label>
-                </Show>
                 <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
                 <select
@@ -596,10 +604,7 @@ export default function Composer(props: { cwd: string }) {
                 </select>
               </div>
             </details>
-            <Show when={agentProfiles().find((profile) => profile.id === selectedAgent())}>
-              {(profile) => <span class="composer-helper-chip"><span class={`agent-glyph ${profile().character}`}>{helperGlyph(profile().character)}</span><span>with {profile().name}</span><button type="button" aria-label={`Remove ${profile().name} from this request`} onClick={() => setSelectedAgent("")}>×</button></span>}
-            </Show>
-            <VoiceControl sessionId={activeId() ?? undefined} onFinal={(value) => { void sendPrompt(value, undefined, undefined, activeId()); }} />
+            <Show when={activeId()} keyed>{(sid) => <VoiceControl sessionId={sid} onFinal={(value) => { void sendPrompt(value, undefined, undefined, sid); }} />}</Show>
             <input
               ref={fileInput}
               type="file"

@@ -362,12 +362,16 @@ export interface AgentProfile {
   voice: string;
 }
 
-export function listAgentProfiles(): Promise<{ profiles: AgentProfile[] }> {
-  return req("/config/agents");
+export function listAgentProfiles(scope?: "user" | "workspace"): Promise<{ profiles: AgentProfile[] }> {
+  return req(scope ? `/config/agents?scope=${scope}` : "/agents");
 }
 
-export function saveAgentProfiles(profiles: AgentProfile[]): Promise<{ saved: boolean; profiles: AgentProfile[] }> {
-  return req("/config/agents", { method: "PUT", body: JSON.stringify({ profiles }) });
+export function saveAgentProfiles(profiles: AgentProfile[], scope: "user" | "workspace" = "workspace"): Promise<{ saved: boolean; profiles: AgentProfile[] }> {
+  return req("/config/agents", { method: "PUT", body: JSON.stringify({ profiles, scope }) });
+}
+
+export function openAgent(id: string): Promise<{session_id: string; cwd: string; agent: AgentProfile}> {
+  return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: "{}"});
 }
 
 export function getHooks(): Promise<{ hooks: HookConfig[] }> {
@@ -405,10 +409,6 @@ export function rejectProposal(id: string): Promise<{ rejected: string }> {
 
 export function listSessions(): Promise<{ sessions: SessionSummary[] }> {
   return req("/sessions");
-}
-
-export function createSession(): Promise<{ session_id: string }> {
-  return req("/sessions", { method: "POST", body: "{}" });
 }
 
 export function attachSession(id: string): Promise<{ session_id: string }> {

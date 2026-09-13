@@ -523,6 +523,7 @@ mod tests {
 
     fn test_header(id: &str) -> SessionHeader {
         SessionHeader {
+            agent: None,
             session_id: id.to_string(),
             created_at: chrono::Utc::now(),
             cwd: std::env::current_dir().unwrap(),

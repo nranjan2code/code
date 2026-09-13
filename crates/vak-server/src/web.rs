@@ -638,6 +638,7 @@ mod tests {
         std::fs::create_dir_all(&ledger_dir).unwrap();
 
         let header = SessionHeader {
+            agent: None,
             session_id: "s1".into(),
             created_at: chrono::Utc::now(),
             cwd: workspace.clone(),

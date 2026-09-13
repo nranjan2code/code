@@ -66,6 +66,7 @@ fn build(
 ) -> Agent {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "rel".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
@@ -227,6 +228,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
 
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        agent: None,
         session_id: "hung".into(),
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),

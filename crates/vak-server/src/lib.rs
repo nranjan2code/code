@@ -76,6 +76,7 @@ pub(crate) fn pin_test_data_home() {
 
 mod admin;
 mod admin_ui;
+mod agent_chats;
 mod agent_profiles;
 mod bus;
 mod channels;
@@ -761,6 +762,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config/prompts/effective", get(get_prompt_effective))
         .route("/config/prompts/preview", post(preview_prompt))
         .route("/config/prompts/roles", get(list_prompt_roles))
+        .route("/agents", get(agent_chats::list))
+        .route("/agents/{agent}/open", post(agent_chats::open))
         .route(
             "/config/agents",
             get(get_agent_profiles).put(put_agent_profiles),
@@ -3371,6 +3374,7 @@ pub(crate) fn register_handle(
     cwd: PathBuf,
     core: Core,
 ) -> Arc<SessionHandle> {
+    let core = core.with_agent_identity(session.header().and_then(|header| header.agent.clone()));
     let durable_home = core.sessions_home();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
@@ -3701,7 +3705,8 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         // Header-only sessions are abandoned drafts (for example, creating a
         // task and immediately switching away). Keep the ledger append-only,
         // but do not let empty drafts accumulate in the task switcher.
-        if entry_count <= 1 {
+        let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
+        if entry_count <= 1 && agent.is_none() {
             continue;
         }
         let running = state.get(&session_id).is_some_and(|handle| {
@@ -3718,6 +3723,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             "created_at": created_at,
             "updated_at": updated_at,
             "entries": entry_count,
+            "agent": agent,
             "title": title,
             "running": running,
             "archived": archived,
@@ -10927,9 +10933,27 @@ async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::
     Json(prompt_effective_payload(&state.core)).into_response()
 }
 
-async fn get_agent_profiles(State(state): State<AppState>) -> axum::response::Response {
+async fn get_agent_profiles(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match agent_profiles::load(state.core.cwd()) {
+    let root = match query
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("workspace")
+    {
+        "user" => vak_config::paths::default_workspace(),
+        "workspace" => state.active_core().cwd().clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid agent scope"})),
+            )
+                .into_response();
+        }
+    };
+    match agent_profiles::load(&root) {
         Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -10959,7 +10983,22 @@ async fn put_agent_profiles(
         )
             .into_response();
     };
-    match agent_profiles::save(state.core.cwd(), &profiles) {
+    let root = match body
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("workspace")
+    {
+        "user" => vak_config::paths::default_workspace(),
+        "workspace" => state.active_core().cwd().clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid agent scope"})),
+            )
+                .into_response();
+        }
+    };
+    match agent_profiles::save(&root, &profiles) {
         Ok(saved_profiles) => {
             Json(serde_json::json!({ "saved": true, "profiles": saved_profiles })).into_response()
         }
@@ -12280,8 +12319,8 @@ async fn spawn_isolated_run(
     profile_id: Option<&str>,
     profile_revision: Option<u64>,
 ) -> Result<String, String> {
-    let prompt = if let Some(profile_id) = profile_id {
-        let profiles = agent_profiles::load(state.core.cwd())?;
+    let identity = if let Some(profile_id) = profile_id {
+        let profiles = agent_profiles::effective(&state.active_core())?;
         let profile = profiles
             .iter()
             .find(|profile| profile.id == profile_id)
@@ -12294,22 +12333,14 @@ async fn spawn_isolated_run(
                 profile.revision
             ));
         }
-        format!(
-            "[Named helper: {} | profile {} revision {}]\nPersonality: {}\nWorking style: {}\nUseful for: {}\nThese preferences affect communication only. They do not grant tools, authority, credentials, budget, or approval bypass.\n\nRequest:\n{}",
-            profile.name,
-            profile.id,
-            profile.revision,
-            profile.personality,
-            profile.behaviour,
-            profile.responsibilities,
-            prompt
-        )
+        Some(profile.identity())
     } else {
-        prompt.to_owned()
+        None
     };
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
         .map(|c| {
-            c.with_surface(vak_core::Surface::Background)
+            c.with_agent_identity(identity)
+                .with_surface(vak_core::Surface::Background)
                 // Unattended, and stamped BEFORE `start_session` composes and
                 // freezes the prompt. Stamping afterwards would be too late:
                 // the prompt would already have advertised a gated capability
@@ -12339,9 +12370,9 @@ async fn spawn_isolated_run(
         child_id.clone(),
         child_log,
         wt.path.clone(),
-        state.core.clone(),
+        child_core.clone(),
     );
-    begin_turn(&handle, &child_core, &prompt, false);
+    begin_turn(&handle, &child_core, prompt, false);
     Ok(child_id)
 }
 

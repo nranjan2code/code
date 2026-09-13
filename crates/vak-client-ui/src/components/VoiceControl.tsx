@@ -21,7 +21,9 @@ export default function VoiceControl(props: { sessionId?: string; onFinal(text: 
   // In-flight decode promises may resolve after stop/interrupt. Generation
   // guards prevent stale audio from starting a new playback session.
   let playbackGeneration = 0;
+  let voiceGeneration = 0;
   function stopVoice() {
+    voiceGeneration += 1;
     playbackGeneration += 1;
     capture?.stop(); capture = undefined;
     recognition?.stop(); recognition = undefined;
@@ -36,11 +38,12 @@ export default function VoiceControl(props: { sessionId?: string; onFinal(text: 
     if (connecting()) return;
     if (active()) { stopVoice(); return; }
     setConnecting(true);
+    const generation = ++voiceGeneration;
     try {
       socket = new VoiceSessionSocket({
         sessionId: props.sessionId,
         onReady: () => setStatus("Listening"),
-        onTranscript: (event) => { if (event.final) props.onFinal(event.text); },
+        onTranscript: (event) => { if (generation === voiceGeneration && event.final) props.onFinal(event.text); },
         onPlayback: (bytes, _utterance, interrupted) => {
           if (interrupted) { playbackGeneration += 1; playbackSource?.stop(); playbackSource = undefined; setStatus("Listening"); return; }
           if (!bytes.byteLength) return;
@@ -81,9 +84,12 @@ export default function VoiceControl(props: { sessionId?: string; onFinal(text: 
         onError: (message) => { setStatus(message); setActive(false); setConnecting(false); capture?.stop(); capture = undefined; recognition?.stop(); recognition = undefined; socket?.close(); socket = undefined; },
       });
       await socket.connect();
+      if (generation !== voiceGeneration || !socket) return;
       utterance = `voice-${Date.now()}`;
       socket.sendControl({ type: "speech_started", utterance_id: utterance });
-      capture = await startMicrophone((pcm) => { try { socket?.sendAudio(pcm); } catch (error) { setStatus((error as Error).message); } });
+      const startedCapture = await startMicrophone((pcm) => { if (generation !== voiceGeneration) return; try { socket?.sendAudio(pcm); } catch (error) { setStatus((error as Error).message); } });
+      if (generation !== voiceGeneration) { startedCapture.stop(); return; }
+      capture = startedCapture;
       setActive(true);
       setConnecting(false);
       const Recognition = (globalThis as any).SpeechRecognition ?? (globalThis as any).webkitSpeechRecognition;

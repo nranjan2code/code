@@ -2870,6 +2870,39 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   cursor: not-allowed;
 }
 
+/* ---- Persistent agent navigation ----------------------------------------- */
+.sb-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 10px;
+}
+.sb-agent-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.sb-agent-item:hover,
+.sb-agent-item.active {
+  border-color: var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.sb-agent-item .agent-glyph { flex: 0 0 auto; }
+.sb-agent-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-agent-item:disabled { cursor: wait; opacity: 0.6; }
+.sb-agent-history { margin: 12px; overflow: auto; }
+.sb-agent-history summary { cursor: pointer; color: var(--muted); padding: 8px; }
+
 /* ---- Subagents dock panel ------------------------------------------------ */
 
 .subagents-panel {
