@@ -144,6 +144,7 @@ pub fn record_with_result(
 /// Append a notification only once for a stable source/destination identity.
 /// The check and append are serialized by the inbox file lock, so delivery
 /// retries cannot create duplicate unread entries.
+#[allow(clippy::too_many_arguments)]
 pub fn record_with_result_and_key(
     home: &Path,
     kind: Kind,
@@ -159,13 +160,12 @@ pub fn record_with_result_and_key(
     } else {
         None
     };
-    if let Some(key) = dedupe_key {
-        if let Some(existing) = list(home, MAX_SCAN)
+    if let Some(key) = dedupe_key
+        && let Some(existing) = list(home, MAX_SCAN)
             .into_iter()
             .find(|entry| entry.dedupe_key.as_deref() == Some(key))
-        {
-            return Ok(existing);
-        }
+    {
+        return Ok(existing);
     }
     let path = inbox_path(home);
     let ts = Utc::now();
