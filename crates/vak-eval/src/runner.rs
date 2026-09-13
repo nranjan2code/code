@@ -344,13 +344,24 @@ async fn run_case_with_tools(
     }
 
     let header = SessionHeader {
-        agent: None,
+        agent: Some(vak_session::types::AgentIdentity {
+            id: "vak".into(),
+            revision: 1,
+            name: "Vak".into(),
+            personality: String::new(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+        }),
         session_id: format!("eval-{}", case.id),
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: Some(vak_session::ConversationContext::local(
+            format!("eval-{}", case.id),
+            "eval",
+        )),
         contract: FrozenContract {
             app_version: env!("CARGO_PKG_VERSION").into(),
             provider: "eval-scripted".into(),

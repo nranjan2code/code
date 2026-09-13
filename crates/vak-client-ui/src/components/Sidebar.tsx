@@ -6,7 +6,7 @@ import { host } from "../host";
 import Icon from "./Icon";
 
 export default function Sidebar() {
-  const [agents, setAgents] = createSignal<api.AgentProfile[]>([]);
+  const [agents, setAgents] = createSignal<api.Agent[]>([]);
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
   const [searching, setSearching] = createSignal(false);
@@ -19,8 +19,8 @@ export default function Sidebar() {
     let disposed = false;
     const refresh = async () => {
       try {
-        const result = await api.listAgentProfiles();
-        if (!disposed && cwd === backend().cwd) { setAgents(result.profiles); setError(""); }
+        const result = await api.listAgents();
+        if (!disposed && cwd === backend().cwd) { setAgents(result.agents); setError(""); }
       } catch (e) { if (!disposed) setError(e instanceof Error ? e.message : String(e)); }
     };
     void refresh();

@@ -140,6 +140,7 @@ fn build_agent(
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),

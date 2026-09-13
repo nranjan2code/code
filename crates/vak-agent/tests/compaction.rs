@@ -85,6 +85,7 @@ async fn overflow_triggers_compaction_then_run_completes() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -200,6 +201,7 @@ async fn still_over_after_compaction_fails_closed() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -349,6 +351,7 @@ mod pair_boundary_and_reuse {
             parent_session_id: None,
             contract_id: None,
             work_item_id: None,
+            conversation: None,
             contract: FrozenContract {
                 app_version: "0".into(),
                 provider: "tagged".into(),

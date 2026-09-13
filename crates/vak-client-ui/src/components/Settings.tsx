@@ -27,7 +27,7 @@ import Icon, { type IconName } from "./Icon";
 import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
-import AgentProfilesPanel from "./AgentProfilesPanel";
+import AgentsPanel from "./AgentsPanel";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
@@ -1196,7 +1196,7 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header><h1>Agent</h1><p>Configure the model used when starting new tasks.</p></header>
-              <AgentProfilesPanel />
+              <AgentsPanel />
               <div class="settings-callout"><Icon name="spark" /><div><strong>Saved workspace defaults</strong><span>Applied changes are persisted to this workspace and take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>

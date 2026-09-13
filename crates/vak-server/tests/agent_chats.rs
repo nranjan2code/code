@@ -13,6 +13,7 @@ use vak_llm::{
     EventStream, LlmError, Provider, stream,
     types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage},
 };
+use vak_session::{Entry, EntryPayload, SessionPath};
 
 #[derive(Default)]
 struct Capture(Mutex<Vec<ChatRequest>>);
@@ -108,7 +109,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     core.set_provider_instance(capture.clone());
     let app = vak_server::router(core.clone());
     let profiles =
-        json!({"profiles":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"});
+        json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"});
     assert_eq!(
         call(&app, "PUT", "/config/agents", profiles).await.0,
         StatusCode::OK
@@ -125,6 +126,28 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     );
     let (_, a) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     let sid = a["session_id"].as_str().unwrap().to_owned();
+    let ledger = SessionPath::new_session_file(&core.sessions_home(), &cwd, &sid);
+    let first = std::fs::read_to_string(ledger)
+        .unwrap()
+        .lines()
+        .next()
+        .map(|line| serde_json::from_str::<Entry>(line).unwrap())
+        .unwrap();
+    let EntryPayload::Header(header) = first.payload else {
+        panic!("agent admission ledger must begin with a header");
+    };
+    let context = header
+        .conversation
+        .expect("Agent admission must stamp conversation context");
+    assert_eq!(context.conversation_id, "agent:newsy:local");
+    assert_eq!(context.audience_id, "local");
+    assert_eq!(
+        context
+            .origin
+            .as_ref()
+            .map(|origin| origin.surface.as_str()),
+        Some("desktop")
+    );
     let (_, again) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     assert_eq!(
         again["session_id"], sid,
@@ -180,7 +203,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
             !last
                 .messages
                 .iter()
-                .any(|m| m.text_content().contains("Use my helper"))
+                .any(|m| m.text_content().contains("Use my Agent"))
         );
     }
     let (_, transcript) = call(
@@ -196,7 +219,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         &app,
         "PUT",
         "/config/agents",
-        json!({"profiles":[profile("newsy","Renamed"),profile("other","Other")]}),
+        json!({"agents":[profile("newsy","Renamed"),profile("other","Other")]}),
     )
     .await;
     let (_, frozen) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
@@ -207,12 +230,19 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         &app,
         "PUT",
         "/config/agents",
-        json!({"scope":"user","profiles":[profile("shared-helper","Shared helper")]}),
+        json!({"scope":"user","agents":[profile("shared-helper","Shared helper")]}),
     )
     .await;
     let (_, project_layer) = call(&app, "GET", "/config/agents?scope=workspace", json!({})).await;
+    assert!(
+        project_layer
+            .get("agents")
+            .and_then(|v| v.as_array())
+            .is_some()
+    );
     assert!(!project_layer.to_string().contains("shared-helper"));
     let (_, effective) = call(&app, "GET", "/agents", json!({})).await;
+    assert!(effective.get("agents").and_then(|v| v.as_array()).is_some());
     assert!(effective.to_string().contains("shared-helper"));
     // Same identity in another workspace has a separate ledger.
     let other_dir = temp.path().join("other-workspace");
@@ -225,7 +255,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         &other_app,
         "PUT",
         "/config/agents",
-        json!({"profiles":[profile("newsy","Newsy")]}),
+        json!({"agents":[profile("newsy","Newsy")]}),
     )
     .await;
     let (_, isolated) = call(&other_app, "POST", "/agents/newsy/open", json!({})).await;
@@ -254,7 +284,7 @@ async fn browser_fixture() {
         &app,
         "PUT",
         "/config/agents",
-        json!({"profiles":[profile("newsy","Newsy"),profile("other","Other")]}),
+        json!({"agents":[profile("newsy","Newsy"),profile("other","Other")]}),
     )
     .await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

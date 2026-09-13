@@ -1,11 +1,13 @@
-use crate::{AppState, agent_profiles, register_handle};
+use crate::{AppState, agents, register_handle};
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use vak_session::types::{AgentIdentity, Entry, EntryPayload, SessionHeader};
+use vak_session::types::{
+    AgentIdentity, ConversationContext, ConversationOrigin, Entry, EntryPayload, SessionHeader,
+};
 
 pub(crate) fn header(path: &std::path::Path) -> Result<SessionHeader, String> {
     use std::io::BufRead;
@@ -33,8 +35,8 @@ fn error(status: StatusCode, message: impl ToString) -> Response {
 }
 
 pub(crate) async fn list(State(state): State<AppState>) -> Response {
-    match agent_profiles::effective(&state.active_core()) {
-        Ok(profiles) => Json(serde_json::json!({"profiles": profiles})).into_response(),
+    match agents::effective(&state.active_core()) {
+        Ok(agents) => Json(serde_json::json!({"agents": agents})).into_response(),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }
@@ -53,16 +55,32 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             responsibilities: String::new(),
         }
     } else {
-        let profiles = match agent_profiles::effective(&core) {
+        let profiles = match agents::effective(&core) {
             Ok(profiles) => profiles,
             Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
         };
         let Some(profile) = profiles.into_iter().find(|p| p.id == id) else {
             return error(StatusCode::NOT_FOUND, "This agent is no longer available.");
         };
+        if !profile.is_admissible() {
+            return error(StatusCode::CONFLICT, "This Agent is paused or archived.");
+        }
         profile.identity()
     };
     let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    // The desktop surface has one durable conversation per selected Agent.
+    // This is deliberately derived from the Agent identity, not from browser
+    // storage or a transient session id, so reopening the same Agent resumes
+    // the same conversation while another Agent gets an independent ledger.
+    let conversation = ConversationContext {
+        conversation_id: format!("agent:{}:local", identity.id),
+        audience_id: "local".into(),
+        origin: Some(ConversationOrigin {
+            surface: "desktop".into(),
+            address: "local".into(),
+            bot_id: None,
+        }),
+    };
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
@@ -101,6 +119,7 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         if h.cwd == *core.cwd()
             && h.parent_session_id.is_none()
             && h.agent.as_ref().is_some_and(|a| a.id == identity.id)
+            && h.conversation.as_ref() == Some(&conversation)
         {
             candidates.push(h);
         }
@@ -124,7 +143,9 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         return Json(serde_json::json!({"session_id": sid, "agent": h.agent, "cwd": core.cwd()}))
             .into_response();
     }
-    let core = core.with_agent_identity(Some(identity.clone()));
+    let core = core
+        .with_agent_identity(Some(identity.clone()))
+        .with_conversation_context(Some(conversation));
     let session = match core.start_session().await {
         Ok(session) => session,
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),

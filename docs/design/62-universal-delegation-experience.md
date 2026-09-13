@@ -1,6 +1,6 @@
 # 62 — Universal delegation experience
 
-Status: **proposal — implementation handoff; no phase is claimed shipped by this document.**
+Status: **superseded — the Agent-owned platform contract in docs/design/64-agent-owned-platform.md is authoritative; this document is retained only as historical design context.**
 
 Date: 2026-09-13
 
@@ -138,8 +138,8 @@ Delegation rules:
   personality and working-style text. An unknown helper fails closed; profile
   selection never widens role, tools, permissions, credentials, budget, or
   approval behaviour.
-- Durable scheduled tasks carry the same `agent_profile_id` and
-  `agent_profile_revision` provenance fields. A background result can therefore
+- Durable scheduled tasks carry the same `agent_id` and
+  `agent_revision` provenance fields. A background result can therefore
   identify the helper personality that created it even after the helper is
   edited or removed. The scheduler treats this as provenance, never as a
   permission or model pin.

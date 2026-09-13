@@ -246,13 +246,17 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
         HEARTBEAT_SESSION_ID,
     );
     let header = SessionHeader {
-        agent: None,
+        agent: Some(vak_core::vak_agent_identity()),
         session_id: HEARTBEAT_SESSION_ID.to_string(),
         created_at: chrono::Utc::now(),
         cwd: core.cwd().clone(),
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: Some(vak_session::ConversationContext::local(
+            HEARTBEAT_SESSION_ID,
+            "background",
+        )),
         contract: vak_session::FrozenContract {
             app_version: vak_core::APP_VERSION.to_string(),
             provider: core.effective_provider(),

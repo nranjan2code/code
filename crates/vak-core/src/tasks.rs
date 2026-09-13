@@ -232,11 +232,11 @@ pub struct TaskDef {
     /// never escalates.
     #[serde(default)]
     pub model_pin: Option<String>,
-    /// Saved helper identity used when this task was created.
+    /// Agent identity selected when this task was created.
     #[serde(default)]
-    pub agent_profile_id: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default)]
-    pub agent_profile_revision: Option<u64>,
+    pub agent_revision: Option<u64>,
 }
 
 fn default_interval() -> u64 {
@@ -689,8 +689,8 @@ mod tests {
             schedule: None,
             script: None,
             model_pin: None,
-            agent_profile_id: None,
-            agent_profile_revision: None,
+            agent_id: None,
+            agent_revision: None,
         }
     }
 

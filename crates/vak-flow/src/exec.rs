@@ -79,6 +79,9 @@ pub struct ExecutorDeps {
     pub parent_session_id: String,
     /// Where the run-state ledger is persisted.
     pub state_path: PathBuf,
+    /// Parent Agent/conversation ownership carried into dynamic flow nodes.
+    pub agent_identity: Option<vak_session::types::AgentIdentity>,
+    pub conversation_context: Option<vak_session::ConversationContext>,
     pub work: Option<FlowWorkContext>,
 }
 
@@ -515,13 +518,26 @@ async fn execute_node(
                     .as_nanos()
             );
             let header = vak_session::types::SessionHeader {
-                agent: None,
+                agent: deps.agent_identity.clone().or_else(|| {
+                    Some(vak_session::types::AgentIdentity {
+                        id: "vak".into(),
+                        revision: 1,
+                        name: "Vak".into(),
+                        personality: String::new(),
+                        behaviour: String::new(),
+                        responsibilities: String::new(),
+                    })
+                }),
                 session_id: session_id.clone(),
                 created_at: chrono::Utc::now(),
                 cwd: deps.cwd.clone(),
                 parent_session_id: Some(deps.parent_session_id.clone()),
                 contract_id: None,
                 work_item_id: None,
+                conversation: deps
+                    .conversation_context
+                    .clone()
+                    .or_else(|| Some(vak_session::ConversationContext::local(&session_id, "flow"))),
                 contract: vak_session::types::FrozenContract {
                     app_version: env!("CARGO_PKG_VERSION").into(),
                     provider: deps.provider.name().into(),

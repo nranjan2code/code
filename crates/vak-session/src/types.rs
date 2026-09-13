@@ -123,7 +123,55 @@ pub struct SessionHeader {
     pub contract_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_item_id: Option<String>,
+    /// Durable conversation ownership and ingress provenance. This is
+    /// optional only while the baseline checker identifies pre-contract
+    /// ledgers; every newly admitted session receives it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<ConversationContext>,
     pub contract: FrozenContract,
+}
+
+/// The audience and conversation that are allowed to see a session. A
+/// transport address is not itself a person: `audience_id` is the verified
+/// principal/group identity, while `origin` records where this request arrived
+/// for delivery and audit purposes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationContext {
+    pub conversation_id: String,
+    pub audience_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ConversationOrigin>,
+}
+
+impl ConversationContext {
+    /// The private local default used when an embedding surface has not
+    /// supplied a remote audience. The conversation id is intentionally the
+    /// newly admitted session id, so independent CLI/background admissions do
+    /// not accidentally share history.
+    pub fn local(conversation_id: impl Into<String>, surface: impl Into<String>) -> Self {
+        let surface = surface.into();
+        Self {
+            conversation_id: conversation_id.into(),
+            audience_id: "local".into(),
+            origin: Some(ConversationOrigin {
+                surface: if surface.trim().is_empty() {
+                    "local".into()
+                } else {
+                    surface
+                },
+                address: "local".into(),
+                bot_id: None,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationOrigin {
+    pub surface: String,
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

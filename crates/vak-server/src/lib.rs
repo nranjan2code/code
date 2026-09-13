@@ -77,7 +77,7 @@ pub(crate) fn pin_test_data_home() {
 mod admin;
 mod admin_ui;
 mod agent_chats;
-mod agent_profiles;
+mod agents;
 mod bus;
 mod channels;
 mod client_ui;
@@ -764,10 +764,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config/prompts/roles", get(list_prompt_roles))
         .route("/agents", get(agent_chats::list))
         .route("/agents/{agent}/open", post(agent_chats::open))
-        .route(
-            "/config/agents",
-            get(get_agent_profiles).put(put_agent_profiles),
-        )
+        .route("/config/agents", get(get_agents).put(put_agents))
         .route(
             "/config/hooks/global",
             get(get_global_hooks).put(put_global_hooks),
@@ -3374,7 +3371,13 @@ pub(crate) fn register_handle(
     cwd: PathBuf,
     core: Core,
 ) -> Arc<SessionHandle> {
-    let core = core.with_agent_identity(session.header().and_then(|header| header.agent.clone()));
+    let core = core
+        .with_agent_identity(session.header().and_then(|header| header.agent.clone()))
+        .with_conversation_context(
+            session
+                .header()
+                .and_then(|header| header.conversation.clone()),
+        );
     let durable_home = core.sessions_home();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
@@ -3704,9 +3707,10 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         }
         // Header-only sessions are abandoned drafts (for example, creating a
         // task and immediately switching away). Keep the ledger append-only,
-        // but do not let empty drafts accumulate in the task switcher.
+        // but do not let empty drafts accumulate in the task switcher. This
+        // applies equally to built-in and user-created Agents.
         let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
-        if entry_count <= 1 && agent.is_none() {
+        if entry_count <= 1 {
             continue;
         }
         let running = state.get(&session_id).is_some_and(|handle| {
@@ -10933,7 +10937,7 @@ async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::
     Json(prompt_effective_payload(&state.core)).into_response()
 }
 
-async fn get_agent_profiles(
+async fn get_agents(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -10953,8 +10957,8 @@ async fn get_agent_profiles(
                 .into_response();
         }
     };
-    match agent_profiles::load(&root) {
-        Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
+    match agents::load(&root) {
+        Ok(agents) => Json(serde_json::json!({ "agents": agents })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error })),
@@ -10963,23 +10967,22 @@ async fn get_agent_profiles(
     }
 }
 
-async fn put_agent_profiles(
+async fn put_agents(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let Some(raw) = body.get("profiles") else {
+    let Some(raw) = body.get("agents") else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "profiles is required" })),
+            Json(serde_json::json!({ "error": "agents is required" })),
         )
             .into_response();
     };
-    let Ok(profiles) = serde_json::from_value::<Vec<agent_profiles::AgentProfile>>(raw.clone())
-    else {
+    let Ok(agents) = serde_json::from_value::<Vec<agents::AgentDefinition>>(raw.clone()) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "invalid agent profiles" })),
+            Json(serde_json::json!({ "error": "invalid agents" })),
         )
             .into_response();
     };
@@ -10998,9 +11001,9 @@ async fn put_agent_profiles(
                 .into_response();
         }
     };
-    match agent_profiles::save(&root, &profiles) {
-        Ok(saved_profiles) => {
-            Json(serde_json::json!({ "saved": true, "profiles": saved_profiles })).into_response()
+    match agents::save(&root, &agents) {
+        Ok(saved_agents) => {
+            Json(serde_json::json!({ "saved": true, "agents": saved_agents })).into_response()
         }
         Err(error) => (
             StatusCode::BAD_REQUEST,
@@ -12316,20 +12319,23 @@ async fn spawn_isolated_run(
     wt: &vak_core::worktree::Worktree,
     prompt: &str,
     model_pin: Option<&str>,
-    profile_id: Option<&str>,
-    profile_revision: Option<u64>,
+    agent_id: Option<&str>,
+    agent_revision: Option<u64>,
 ) -> Result<String, String> {
-    let identity = if let Some(profile_id) = profile_id {
-        let profiles = agent_profiles::effective(&state.active_core())?;
+    let identity = if let Some(agent_id) = agent_id {
+        let profiles = agents::effective(&state.active_core())?;
         let profile = profiles
             .iter()
-            .find(|profile| profile.id == profile_id)
-            .ok_or_else(|| format!("agent profile '{profile_id}' no longer exists"))?;
-        if let Some(expected) = profile_revision
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| format!("Agent '{agent_id}' no longer exists"))?;
+        if !profile.is_admissible() {
+            return Err(format!("Agent '{agent_id}' is paused or archived"));
+        }
+        if let Some(expected) = agent_revision
             && expected != profile.revision
         {
             return Err(format!(
-                "agent profile '{profile_id}' changed from revision {expected} to {}",
+                "Agent '{agent_id}' changed from revision {expected} to {}",
                 profile.revision
             ));
         }
@@ -12911,9 +12917,9 @@ struct TaskCreateBody {
     #[serde(default)]
     model_pin: Option<String>,
     #[serde(default)]
-    agent_profile_id: Option<String>,
+    agent_id: Option<String>,
     #[serde(default)]
-    agent_profile_revision: Option<u64>,
+    agent_revision: Option<u64>,
 }
 
 fn task_default_interval() -> u64 {
@@ -12972,8 +12978,8 @@ async fn create_task(
         schedule: body.schedule.filter(|s| !s.trim().is_empty()),
         script: body.script.filter(|s| !s.trim().is_empty()),
         model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
-        agent_profile_id: body.agent_profile_id.filter(|m| !m.trim().is_empty()),
-        agent_profile_revision: body.agent_profile_revision,
+        agent_id: body.agent_id.filter(|m| !m.trim().is_empty()),
+        agent_revision: body.agent_revision,
     };
     if let Err((status, payload)) = validate_task_fields(&task) {
         return (status, Json(payload)).into_response();
@@ -12998,6 +13004,12 @@ struct TaskPatchBody {
     script: OptionalStr,
     #[serde(default)]
     model_pin: OptionalStr,
+    /// Tri-state Agent selection: absent = keep, null/empty = clear, string = set.
+    #[serde(default)]
+    agent_id: OptionalStr,
+    /// Absent = keep, null = clear, number = set.
+    #[serde(default)]
+    agent_revision: Option<Option<u64>>,
 }
 
 /// Distinguishes an absent JSON field from an explicit `null` (which plain
@@ -13090,6 +13102,17 @@ async fn patch_task(
                 OptionalStr::Keep => {}
                 OptionalStr::Clear => candidate.model_pin = None,
                 OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
+            }
+            match body.agent_id {
+                OptionalStr::Keep => {}
+                OptionalStr::Clear => {
+                    candidate.agent_id = None;
+                    candidate.agent_revision = None;
+                }
+                OptionalStr::Set(ref s) => candidate.agent_id = Some(s.clone()),
+            }
+            if let Some(revision) = body.agent_revision {
+                candidate.agent_revision = revision;
             }
             if let Err((status, payload)) = validate_task_fields(&candidate) {
                 return Err((status, payload));
@@ -13289,8 +13312,8 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         &wt,
         &snapshot.prompt,
         snapshot.model_pin.as_deref(),
-        snapshot.agent_profile_id.as_deref(),
-        snapshot.agent_profile_revision,
+        snapshot.agent_id.as_deref(),
+        snapshot.agent_revision,
     )
     .await
     .ok()?;
@@ -14177,8 +14200,8 @@ mod scheduler_pure_tests {
             schedule: None,
             script: None,
             model_pin: None,
-            agent_profile_id: None,
-            agent_profile_revision: None,
+            agent_id: None,
+            agent_revision: None,
         };
         let mut tasks = HashMap::from([
             ("running".into(), make("running", Some("working"))),

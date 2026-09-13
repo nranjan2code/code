@@ -73,6 +73,7 @@ fn build(
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -235,6 +236,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "hung".into(),

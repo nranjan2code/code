@@ -1095,6 +1095,7 @@ fn allowlist_entry_json(state: &AppState, e: &crate::gateway::AllowlistEntry) ->
         "key": e.key,
         "status": e.status,
         "workspace": e.workspace,
+        "agent_id": e.agent_id,
         "route": e.route,
         "permission_mode": e.permission_mode,
         "workspace_permission_mode": resolved.workspace_mode,
@@ -1142,6 +1143,9 @@ pub(crate) async fn list_gateway_allowlist(
 pub(crate) struct AllowlistApproveBody {
     #[serde(default)]
     workspace: Option<String>,
+    /// Optional Agent slug. Omitting it binds the endpoint to built-in Vak.
+    #[serde(default)]
+    agent_id: Option<String>,
     #[serde(default)]
     route: Option<GatewayRoutePatch>,
     /// Optional per-channel permission mode, riding along in the same
@@ -1280,6 +1284,11 @@ pub(crate) async fn approve_gateway_allowlist(
         &state.core,
         &key,
         workspace,
+        body.agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned),
         route,
         permission_mode,
         body.policy.unwrap_or_default(),
@@ -2169,6 +2178,7 @@ mod tests {
             &state.core,
             "telegram:66",
             ws.path().to_path_buf(),
+            None,
             None,
             Some(vak_config::PermissionMode::ReadOnly),
             vak_config::ChannelPolicy::default(),

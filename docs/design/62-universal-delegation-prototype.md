@@ -1,6 +1,6 @@
 # 62 — Universal delegation visual prototype
 
-Status: **implemented reference — production shell treatment**
+Status: **superseded — use docs/design/64-agent-owned-platform.md for the Agent-owned contract; retained as historical visual context.**
 
 This is the reviewable visual reference for the universal Vak experience. It
 describes the production components and their state mapping; fictional examples

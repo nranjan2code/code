@@ -237,6 +237,8 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             sessions_home: self.core.sessions_home().clone(),
             parent_session_id,
             state_path,
+            agent_identity: self.core.agent_identity().cloned(),
+            conversation_context: self.core.conversation_context().cloned(),
             work: Some(vak_flow::FlowWorkContext {
                 session,
                 contract_id: contract_id.into(),
@@ -556,6 +558,20 @@ pub struct CapabilityRoot {
 
 pub const PERMISSIONS_LOCAL_FILE: &str = ".vak/permissions.local.toml";
 
+/// The built-in Agent is an explicit identity. New sessions must never rely
+/// on a missing `SessionHeader.agent` to mean Vak; absence is retained only
+/// while old ledgers are being inspected by the baseline guard.
+pub fn vak_agent_identity() -> vak_session::types::AgentIdentity {
+    vak_session::types::AgentIdentity {
+        id: "vak".into(),
+        revision: 1,
+        name: "Vak".into(),
+        personality: String::new(),
+        behaviour: String::new(),
+        responsibilities: String::new(),
+    }
+}
+
 #[derive(serde::Deserialize, Default)]
 struct PermissionsLocal {
     #[serde(default)]
@@ -583,6 +599,7 @@ pub struct Core {
     /// sub-layer. Set for subagents spawned with an explicit role.
     prompt_role: Option<String>,
     agent_identity: Option<vak_session::types::AgentIdentity>,
+    conversation_context: Option<vak_session::types::ConversationContext>,
     /// Prompt layers the caller supplies rather than the filesystem: the
     /// gateway's bot and chat tiers. `Arc` because `Core` is cloned per
     /// turn and this is almost always empty.
@@ -906,7 +923,8 @@ impl Core {
             default_deliver_to: None,
             surface: Surface::Unknown,
             prompt_role: None,
-            agent_identity: None,
+            agent_identity: Some(vak_agent_identity()),
+            conversation_context: None,
             prompt_overlays: Arc::new(Vec::new()),
             approver_answerable: true,
             inner: Arc::new(CoreInner {
@@ -2693,8 +2711,30 @@ impl Core {
     }
 
     pub fn with_agent_identity(mut self, agent: Option<vak_session::types::AgentIdentity>) -> Self {
-        self.agent_identity = agent;
+        // `None` means the built-in Agent at every new admission. Keeping a
+        // concrete identity here prevents background, gateway, and resumed
+        // sessions from silently reverting to the old missing-header state.
+        self.agent_identity = Some(agent.unwrap_or_else(vak_agent_identity));
         self
+    }
+
+    /// Bind a Core clone to one authorized conversation before admission.
+    /// This is deliberately clone-local: pooled workspace state must never
+    /// acquire one chat's audience or delivery destination.
+    pub fn with_conversation_context(
+        mut self,
+        context: Option<vak_session::types::ConversationContext>,
+    ) -> Self {
+        self.conversation_context = context;
+        self
+    }
+
+    pub fn conversation_context(&self) -> Option<&vak_session::types::ConversationContext> {
+        self.conversation_context.as_ref()
+    }
+
+    pub fn agent_identity(&self) -> Option<&vak_session::types::AgentIdentity> {
+        self.agent_identity.as_ref()
     }
 
     /// Attach caller-owned prompt layers (the gateway's bot and chat tiers).
@@ -4179,6 +4219,12 @@ impl Core {
         let capabilities = self.admitted_capabilities().await;
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
+        let conversation = self.conversation_context.clone().or_else(|| {
+            Some(vak_session::ConversationContext::local(
+                &session_id,
+                self.surface.slug(),
+            ))
+        });
         let header = SessionHeader {
             agent: self.agent_identity.clone(),
             session_id,
@@ -4187,6 +4233,7 @@ impl Core {
             parent_session_id: None,
             contract_id: None,
             work_item_id: None,
+            conversation,
             contract: FrozenContract {
                 app_version: APP_VERSION.into(),
                 provider,
@@ -4912,6 +4959,15 @@ impl Core {
                 sessions_home: self.sessions_home(),
                 cwd: self.inner.cwd.clone(),
                 exclude_session_id: exclude,
+                agent_id: session
+                    .header()
+                    .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone())),
+                audience_id: session.header().and_then(|header| {
+                    header
+                        .conversation
+                        .as_ref()
+                        .map(|context| context.audience_id.clone())
+                }),
             }));
         }
         // Scheduling from a plain-language request ("remind me every
@@ -8085,6 +8141,32 @@ mod route_control_tests {
         assert_eq!(contract.provider, "channel-provider");
         assert_eq!(contract.model, "channel-model");
         assert_eq!(core.effective_route(), default);
+    }
+
+    #[tokio::test]
+    async fn every_new_core_session_gets_local_conversation_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let session = core.start_session().await.unwrap();
+        let header = session.header().unwrap();
+        let context = header
+            .conversation
+            .as_ref()
+            .expect("conversation admission");
+        assert_eq!(context.conversation_id, header.session_id);
+        assert_eq!(context.audience_id, "local");
+        assert_eq!(
+            context
+                .origin
+                .as_ref()
+                .map(|origin| origin.surface.as_str()),
+            Some("local")
+        );
+        assert_eq!(
+            header.agent.as_ref().map(|agent| agent.id.as_str()),
+            Some("vak")
+        );
     }
 }
 

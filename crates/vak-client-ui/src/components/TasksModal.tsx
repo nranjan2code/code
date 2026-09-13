@@ -65,8 +65,8 @@ export default function TasksModal() {
   const [schedule, setSchedule] = createSignal("");
   const [script, setScript] = createSignal("");
   const [modelPin, setModelPin] = createSignal("");
-  const [agentProfiles, setAgentProfiles] = createSignal<api.AgentProfile[]>([]);
-  const [agentProfileId, setAgentProfileId] = createSignal("");
+  const [agents, setAgents] = createSignal<api.Agent[]>([]);
+  const [agentId, setAgentId] = createSignal("");
 
   const refresh = async () => {
     try {
@@ -79,7 +79,7 @@ export default function TasksModal() {
   createEffect(() => {
     if (!tasksOpen()) return;
     void refresh();
-    void api.listAgentProfiles().then((result) => setAgentProfiles(result.profiles)).catch(() => { /* helper selection is optional */ });
+    void api.listAgents().then((result) => setAgents(result.agents)).catch(() => { /* Agent selection is optional */ });
     const t = setInterval(() => void refresh(), 15_000);
     onCleanup(() => clearInterval(t));
   });
@@ -99,7 +99,7 @@ export default function TasksModal() {
     setSchedule("");
     setScript("");
     setModelPin("");
-    setAgentProfileId("");
+    setAgentId("");
     setMinutes(60);
   };
 
@@ -113,8 +113,8 @@ export default function TasksModal() {
         schedule: schedule().trim() || null,
         script: script().trim() || null,
         model_pin: modelPin().trim() || null,
-        agent_profile_id: agentProfileId() || null,
-        agent_profile_revision: agentProfiles().find((profile) => profile.id === agentProfileId())?.revision ?? null,
+        agent_id: agentId() || null,
+        agent_revision: agents().find((agent) => agent.id === agentId())?.revision ?? null,
       });
       setError(null);
       resetForm();
@@ -207,8 +207,8 @@ export default function TasksModal() {
                     <Show when={t.model_pin}>
                       <span class="badge" title={`Pinned model — never escalates`}>{t.model_pin}</span>
                     </Show>
-                    <Show when={t.agent_profile_id}>
-                      <span class="badge" title={`Helper profile revision ${t.agent_profile_revision ?? 1}`}>helper · {agentProfiles().find((profile) => profile.id === t.agent_profile_id)?.name ?? "saved helper"}{(() => { const current = agentProfiles().find((profile) => profile.id === t.agent_profile_id); return current && t.agent_profile_revision && current.revision !== t.agent_profile_revision ? " · updated" : ""; })()}</span>
+                    <Show when={t.agent_id}>
+                      <span class="badge" title={`Agent revision ${t.agent_revision ?? 1}`}>Agent · {agents().find((agent) => agent.id === t.agent_id)?.name ?? "saved Agent"}{(() => { const current = agents().find((agent) => agent.id === t.agent_id); return current && t.agent_revision && current.revision !== t.agent_revision ? " · updated" : ""; })()}</span>
                     </Show>
                     {!t.enabled && <span class="badge">off</span>}
                   </div>
@@ -323,10 +323,10 @@ export default function TasksModal() {
                     value={modelPin()}
                     onInput={(e) => setModelPin(e.currentTarget.value)}
                   />
-                  <Show when={agentProfiles().length > 0}>
-                    <select class="model-pin-input" aria-label="Helper for this task" value={agentProfileId()} onChange={(e) => setAgentProfileId(e.currentTarget.value)}>
-                      <option value="">helper: Vak decides</option>
-                      <For each={agentProfiles()}>{(profile) => <option value={profile.id}>{profile.name}{agentProfiles().filter((candidate) => candidate.name.toLowerCase() === profile.name.toLowerCase()).length > 1 ? ` · ${profile.id.slice(0, 6)}` : ""}</option>}</For>
+                  <Show when={agents().length > 0}>
+                    <select class="model-pin-input" aria-label="Agent for this task" value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
+                    <option value="">Agent: Vak decides</option>
+                      <For each={agents()}>{(agent) => <option value={agent.id}>{agent.name}{agents().filter((candidate) => candidate.name.toLowerCase() === agent.name.toLowerCase()).length > 1 ? ` · ${agent.id.slice(0, 6)}` : ""}</option>}</For>
                     </select>
                   </Show>
                 </div>

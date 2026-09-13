@@ -455,12 +455,17 @@ pub(crate) async fn render_response(
     markdown: String,
     requested: Option<&RequestedCapabilities>,
     outcome_metadata: Option<std::collections::BTreeMap<String, String>>,
+    provenance: Option<std::collections::BTreeMap<String, String>>,
+    bot_id: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
-        target: format!("{surface}:{chat}"),
+        target: bot_id
+            .filter(|id| !id.trim().is_empty())
+            .map(|id| format!("{surface}:{chat}:{id}"))
+            .unwrap_or_else(|| format!("{surface}:{chat}")),
         kind: DeliveryKind::Assistant,
         content: DeliveryContent::Answer({
             let artifact_suffix = session_id
@@ -472,6 +477,10 @@ pub(crate) async fn render_response(
             if let Some(metadata) = outcome_metadata {
                 answer.metadata.extend(metadata.clone());
                 answer.document.metadata.extend(metadata);
+            }
+            if let Some(provenance) = provenance {
+                answer.metadata.extend(provenance.clone());
+                answer.document.metadata.extend(provenance);
             }
             answer
         }),
@@ -491,6 +500,7 @@ pub(crate) async fn deliver(
     let _serial = runtime.serial.lock().await;
     let (adapter, _) = runtime.adapters.resolve(target)?;
     let profile = apply_preferences(core, adapter.profile());
+    let content = enrich_provenance(core, content);
     // Posture decides WHEN a packet goes out, never what it says.
     // Held packets (HoldUntilComplete / HoldForDigest) are enqueued to the
     // outbox and delivered later by the replay loop or turn-completion flush.
@@ -534,6 +544,56 @@ pub(crate) async fn deliver(
             presentation: None,
         })
     }
+}
+
+/// Attach the immutable ownership envelope before a generic task, schedule, or
+/// approval packet enters the durable outbox. Gateway rendering supplies a
+/// request id as well; this common path guarantees that packets emitted by
+/// internal machinery still identify the Agent and authorized audience.
+fn enrich_provenance(core: &Core, mut content: DeliveryContent) -> DeliveryContent {
+    let DeliveryContent::Answer(answer) = &mut content else {
+        return content;
+    };
+    if let Some(agent) = core.agent_identity() {
+        answer.metadata.insert("agent_id".into(), agent.id.clone());
+        answer
+            .document
+            .metadata
+            .insert("agent_id".into(), agent.id.clone());
+    }
+    if let Some(context) = core.conversation_context() {
+        for (key, value) in [
+            ("audience_id", context.audience_id.clone()),
+            ("conversation_id", context.conversation_id.clone()),
+        ] {
+            answer.metadata.insert(key.into(), value.clone());
+            answer.document.metadata.insert(key.into(), value);
+        }
+        if let Some(origin) = &context.origin {
+            answer
+                .metadata
+                .insert("origin_surface".into(), origin.surface.clone());
+            answer
+                .document
+                .metadata
+                .insert("origin_surface".into(), origin.surface.clone());
+            answer
+                .metadata
+                .insert("origin_address".into(), origin.address.clone());
+            answer
+                .document
+                .metadata
+                .insert("origin_address".into(), origin.address.clone());
+            if let Some(bot_id) = &origin.bot_id {
+                answer.metadata.insert("bot_id".into(), bot_id.clone());
+                answer
+                    .document
+                    .metadata
+                    .insert("bot_id".into(), bot_id.clone());
+            }
+        }
+    }
+    content
 }
 
 pub(crate) async fn deliver_feed_intents(
@@ -1013,6 +1073,61 @@ mod tests {
     #[test]
     fn typed_verdict_prompt_is_absent_without_actions() {
         assert!(typed_verdict_prompt(&[]).is_none());
+    }
+
+    #[test]
+    fn generic_answer_delivery_carries_agent_conversation_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf())
+            .unwrap()
+            .with_agent_identity(Some(vak_session::types::AgentIdentity {
+                id: "support".into(),
+                revision: 2,
+                name: "Support".into(),
+                personality: String::new(),
+                behaviour: String::new(),
+                responsibilities: String::new(),
+            }))
+            .with_conversation_context(Some(vak_session::ConversationContext {
+                conversation_id: "conv-1".into(),
+                audience_id: "aud-1".into(),
+                origin: Some(vak_session::ConversationOrigin {
+                    surface: "telegram".into(),
+                    address: "chat-1".into(),
+                    bot_id: Some("support-bot".into()),
+                }),
+            }));
+        let content = enrich_provenance(
+            &core,
+            DeliveryContent::Answer(AnswerDraft::from_markdown("result")),
+        );
+        let DeliveryContent::Answer(answer) = content else {
+            panic!("answer content expected");
+        };
+        assert_eq!(
+            answer.metadata.get("agent_id").map(String::as_str),
+            Some("support")
+        );
+        assert_eq!(
+            answer.metadata.get("audience_id").map(String::as_str),
+            Some("aud-1")
+        );
+        assert_eq!(
+            answer.metadata.get("conversation_id").map(String::as_str),
+            Some("conv-1")
+        );
+        assert_eq!(
+            answer.metadata.get("bot_id").map(String::as_str),
+            Some("support-bot")
+        );
+        assert_eq!(
+            answer
+                .document
+                .metadata
+                .get("origin_surface")
+                .map(String::as_str),
+            Some("telegram")
+        );
     }
 
     #[test]

@@ -69,6 +69,8 @@ pub struct InboundRequest {
     /// already had.
     #[serde(default)]
     pub bot_id: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
 }
 
 impl InboundRequest {
@@ -103,6 +105,7 @@ impl InboundRequest {
             attachments: Vec::new(),
             wait: false,
             bot_id: None,
+            request_id: None,
         })
     }
 
@@ -137,6 +140,13 @@ impl InboundRequest {
     /// any (see the `bot_id` field doc).
     pub fn with_bot_id(mut self, bot_id: Option<String>) -> Self {
         self.bot_id = bot_id;
+        self
+    }
+
+    /// Attach the bridge's durable idempotency key when the upstream
+    /// transport provides one (Telegram update id, webhook event id, etc.).
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.request_id = request_id;
         self
     }
 }
@@ -212,6 +222,10 @@ pub struct AllowlistEntry {
     pub status: AllowlistStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
+    /// Agent selected for this endpoint. Missing values are normalized to the
+    /// reserved Vak identity when loading older allowlist rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<AllowlistRoute>,
     /// Voice/persona override for this chat. `None` inherits the bound
@@ -500,6 +514,7 @@ impl GatewayState {
                                 key: key.clone(),
                                 status: AllowlistStatus::Allowed,
                                 workspace: None,
+                                agent_id: Some("vak".into()),
                                 route: None,
                                 voice: None,
                                 permission_mode: None,
@@ -620,12 +635,28 @@ impl GatewayState {
             (None, None) => None,
         };
 
-        self.core_pool.resolve_at_with_policy(
+        let resolved = self.core_pool.resolve_at_with_policy(
             &workspace,
             permission_override,
             policy,
             std::time::Instant::now(),
-        )
+        )?;
+        let selected_agent = allowed_entry
+            .and_then(|entry| entry.agent_id.as_deref())
+            .unwrap_or("vak");
+        let identity = if selected_agent == "vak" {
+            vak_core::vak_agent_identity()
+        } else {
+            let profiles = crate::agents::effective(&resolved)
+                .map_err(|error| format!("agent catalog unavailable: {error}"))?;
+            profiles
+                .into_iter()
+                .find(|profile| profile.id == selected_agent)
+                .filter(|profile| profile.is_admissible())
+                .map(|profile| profile.identity())
+                .ok_or_else(|| format!("configured Agent '{selected_agent}' is unavailable"))?
+        };
+        Ok(resolved.with_agent_identity(Some(identity)))
     }
 
     pub(crate) fn workspace_for_entry(&self, default_core: &Core, key: &str) -> PathBuf {
@@ -1067,6 +1098,7 @@ impl GatewayState {
                             key: key.to_string(),
                             status: AllowlistStatus::Pending,
                             workspace: None,
+                            agent_id: Some("vak".into()),
                             route: None,
                             voice: None,
                             permission_mode: None,
@@ -1099,6 +1131,7 @@ impl GatewayState {
         core: &Core,
         key: &str,
         workspace: PathBuf,
+        agent_id: Option<String>,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
         policy: vak_config::ChannelPolicy,
@@ -1115,6 +1148,7 @@ impl GatewayState {
                 key: key.to_string(),
                 status: AllowlistStatus::Allowed,
                 workspace: Some(workspace),
+                agent_id: agent_id.or_else(|| Some("vak".into())),
                 route,
                 voice: None,
                 permission_mode,
@@ -1144,6 +1178,7 @@ impl GatewayState {
                 key: key.to_string(),
                 status: AllowlistStatus::Denied,
                 workspace: None,
+                agent_id: Some("vak".into()),
                 route: None,
                 voice: None,
                 permission_mode: None,
@@ -1684,6 +1719,10 @@ struct InboundBody {
     /// See [`InboundRequest::bot_id`].
     #[serde(default)]
     bot_id: Option<String>,
+    /// Caller-provided idempotency key. Repeating it returns the original
+    /// admission without dispatching a second model turn.
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2066,6 +2105,21 @@ async fn gateway_inbound(
         }
     };
 
+    // Admission owns the conversation context. Stamp it before creating or
+    // reopening the bound session so the ledger, prompt contract, and every
+    // later delivery can identify the authorized audience and originating
+    // transport without reverse-engineering mutable gateway state.
+    let conversation_context = vak_session::ConversationContext {
+        conversation_id: key.clone(),
+        audience_id: key.clone(),
+        origin: Some(vak_session::ConversationOrigin {
+            surface: body.surface.trim().to_string(),
+            address: body.chat.trim().to_string(),
+            bot_id: body.bot_id.clone(),
+        }),
+    };
+    let core = core.with_conversation_context(Some(conversation_context));
+
     let handle = match resolve_session(&state, &core, &key).await {
         Ok(h) => h,
         Err(e) => {
@@ -2076,6 +2130,77 @@ async fn gateway_inbound(
                 .into_response();
         }
     };
+
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("gateway-{}", uuid::Uuid::now_v7()));
+    let already_admitted = handle
+        .admissions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&request_id)
+        || handle
+            .session
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|log| log.has_request_admission(&request_id))
+            })
+            .unwrap_or(false);
+    if already_admitted {
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "request_id": request_id,
+                "state": "already_admitted",
+                "decision": "duplicate",
+                "session_id": binding_session(&state, &key),
+            })),
+        )
+            .into_response();
+    }
+    handle
+        .admissions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(request_id.clone());
+    let mut admission_data = std::collections::BTreeMap::from([
+        ("request_id".into(), request_id.clone()),
+        ("sender".into(), body.sender.clone().unwrap_or_default()),
+        ("origin_surface".into(), body.surface.trim().to_string()),
+        ("origin_address".into(), body.chat.trim().to_string()),
+        (
+            "agent_id".into(),
+            core.agent_identity()
+                .map(|agent| agent.id.clone())
+                .unwrap_or_else(|| "vak".into()),
+        ),
+    ]);
+    if let Some(context) = core.conversation_context() {
+        admission_data.insert("audience_id".into(), context.audience_id.clone());
+        admission_data.insert("conversation_id".into(), context.conversation_id.clone());
+        if let Some(origin) = &context.origin {
+            admission_data.insert("bot_id".into(), origin.bot_id.clone().unwrap_or_default());
+        }
+    }
+    crate::record_activity_or_buffer(
+        &handle,
+        vak_session::ActivityRecord {
+            activity_id: format!("admission-{request_id}"),
+            turn: None,
+            kind: vak_session::ActivityKind::Run,
+            status: vak_session::ActivityStatus::Running,
+            label: "Gateway request accepted".into(),
+            detail: Some(text.clone()),
+            data: admission_data,
+        },
+    );
 
     // Busy? Queue as logged steering input; the running loop consumes it
     // between model steps, and any leftovers run as a continuation turn.
@@ -2231,9 +2356,9 @@ async fn gateway_inbound(
         );
     }
     // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)
-    // to the chat it's actually running in, in the plain `<surface>:<chat>`
-    // shape `deliver_to` already uses everywhere — not the possibly
-    // bot-scoped three-part `key` used for allowlist/session lookups above.
+    // to the exact chat/bot destination it is running in. Chat surfaces use
+    // the three-part target whenever a bot identity is known; this prevents a
+    // scheduled result from falling back to another bot's credentials.
     // So "remind me every morning at 8" typed (or spoken, via Gemini Live
     // transcription feeding the same turn) into this chat reports back into
     // this same chat unless the model is told to route it elsewhere.
@@ -2244,9 +2369,14 @@ async fn gateway_inbound(
     let core_for_turn = core
         .clone()
         .with_default_deliver_to(Some(format!(
-            "{}:{}",
+            "{}:{}{}",
             body.surface.trim(),
-            body.chat.trim()
+            body.chat.trim(),
+            body.bot_id
+                .as_deref()
+                .filter(|id| !id.trim().is_empty())
+                .map(|id| format!(":{id}"))
+                .unwrap_or_default()
         )))
         .with_surface(vak_core::Surface::Chat {
             channel: body.surface.trim().to_string(),
@@ -2268,7 +2398,7 @@ async fn gateway_inbound(
     if !want_reply {
         return (
             StatusCode::ACCEPTED,
-            Json(serde_json::json!({ "state": "started" })),
+            Json(serde_json::json!({ "state": "started", "request_id": request_id })),
         )
             .into_response();
     }
@@ -2299,6 +2429,24 @@ async fn gateway_inbound(
                 text.clone(),
                 body.capabilities.as_ref(),
                 outcome_metadata,
+                Some(std::collections::BTreeMap::from([
+                    ("request_id".into(), request_id.clone()),
+                    ("agent_id".into(),
+                        core.agent_identity()
+                            .map(|agent| agent.id.clone())
+                            .unwrap_or_else(|| "vak".into())),
+                    ("audience_id".into(),
+                        core.conversation_context()
+                            .map(|context| context.audience_id.clone())
+                            .unwrap_or_else(|| key.clone())),
+                    ("conversation_id".into(),
+                        core.conversation_context()
+                            .map(|context| context.conversation_id.clone())
+                            .unwrap_or_else(|| key.clone())),
+                    ("origin".into(), format!("{}:{}", body.surface.trim(), body.chat.trim())),
+                    ("bot_id".into(), body.bot_id.clone().unwrap_or_default()),
+                ])),
+                body.bot_id.as_deref(),
                 session_id.as_deref(),
             )
             .await
@@ -2307,6 +2455,7 @@ async fn gateway_inbound(
                     StatusCode::OK,
                     Json(serde_json::json!({
                         "state": "completed",
+                        "request_id": request_id,
                         "text": text,
                         "session_id": session_id,
                         "delivery": delivery,
@@ -2317,6 +2466,7 @@ async fn gateway_inbound(
                     StatusCode::OK,
                     Json(serde_json::json!({
                         "state": "completed",
+                        "request_id": request_id,
                         "text": text,
                         "session_id": session_id,
                         "delivery_error": error,
@@ -2327,13 +2477,14 @@ async fn gateway_inbound(
         }
         Ok(Err(_)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "turn chain ended without a reply"})),
+            Json(serde_json::json!({"error": "turn chain ended without a reply", "request_id": request_id})),
         )
             .into_response(),
         Err(_) => (
             StatusCode::GATEWAY_TIMEOUT,
             Json(serde_json::json!({
                 "error": "turn did not finish in time; poll /sessions/{id}/transcript"
+                ,"request_id": request_id
             })),
         )
             .into_response(),
@@ -2346,6 +2497,11 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
         .snapshot()
         .into_iter()
         .map(|(target, binding)| {
+            let agent_id = state
+                .gateway
+                .allowlist_get(&target)
+                .and_then(|entry| entry.agent_id)
+                .unwrap_or_else(|| "vak".into());
             let paused = binding
                 .session_id
                 .as_deref()
@@ -2353,6 +2509,7 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
                 .is_some_and(|handle| handle.steering.is_paused());
             serde_json::json!({
                 "target": target,
+                "agent_id": agent_id,
                 "session_id": binding.session_id,
                 "provider": binding.provider,
                 "model": binding.model,
@@ -2428,6 +2585,9 @@ fn session_matches_route(
         header.cwd.as_path() == core.cwd().as_path()
             && header.contract.provider == provider
             && header.contract.model == model
+            && core
+                .conversation_context()
+                .is_none_or(|expected| header.conversation.as_ref() == Some(expected))
         // Prompt layers and capabilities are live session state. They are
         // refreshed at the next turn boundary; the ledger retains the
         // immutable contract used by each historical turn.
@@ -3361,6 +3521,7 @@ mod tests {
             core.cwd().clone(),
             None,
             None,
+            None,
             Default::default(),
             Some("support".into()),
             true,
@@ -3555,6 +3716,81 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_route_resolves_the_configured_agent_identity() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        std::fs::write(
+            core.cwd().join(".vak/agents.json"),
+            serde_json::json!([{
+                "id": "support",
+                "revision": 3,
+                "name": "Support",
+                "character": "orb",
+                "personality": "calm",
+                "behaviour": "helpful",
+                "responsibilities": "support",
+                "animation": "off",
+                "voice": "default"
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let gw = GatewayState::load(&core, true);
+        gw.allowlist_approve(
+            &core,
+            "telegram:agent",
+            core.cwd().clone(),
+            Some("support".into()),
+            None,
+            None,
+            Default::default(),
+            None,
+            true,
+            "test",
+        );
+        let resolved = gw.core_for_entry(&core, "telegram:agent").unwrap();
+        assert_eq!(
+            resolved.agent_identity().map(|agent| agent.id.as_str()),
+            Some("support")
+        );
+    }
+
+    #[test]
+    fn paused_agent_route_fails_closed_before_core_creation() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        std::fs::write(
+            core.cwd().join(".vak/agents.json"),
+            serde_json::json!([{
+                "id": "paused",
+                "revision": 1,
+                "lifecycle": "paused",
+                "name": "Paused",
+                "character": "orb",
+                "personality": "calm",
+                "behaviour": "helpful",
+                "responsibilities": "support",
+                "animation": "off",
+                "voice": "default"
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let gw = GatewayState::load(&core, true);
+        gw.allowlist_approve(
+            &core,
+            "telegram:paused",
+            core.cwd().clone(),
+            Some("paused".into()),
+            None,
+            None,
+            Default::default(),
+            None,
+            true,
+            "test",
+        );
+        assert!(gw.core_for_entry(&core, "telegram:paused").is_err());
+    }
+
+    #[test]
     fn allowlist_open_flag_does_not_seed_pending_entries() {
         // An explicit (non-empty) project `chat_allowlist` always overrides
         // whatever a developer's own global config.toml might set, so this
@@ -3582,6 +3818,7 @@ mod tests {
             &core,
             "telegram:7",
             core.cwd().clone(),
+            None,
             Some(AllowlistRoute {
                 provider: "anthropic".into(),
                 model: "sonnet".into(),
@@ -3594,6 +3831,7 @@ mod tests {
         );
         assert_eq!(approved.status, AllowlistStatus::Allowed);
         assert_eq!(approved.workspace.as_deref(), Some(core.cwd().as_path()));
+        assert_eq!(approved.agent_id.as_deref(), Some("vak"));
         assert_eq!(approved.route.as_ref().unwrap().provider, "anthropic");
 
         // Persisted to disk atomically.
@@ -3749,6 +3987,7 @@ mod tests {
             &core,
             "telegram:100",
             core.cwd().clone(),
+            None,
             None,
             None,
             vak_config::ChannelPolicy::default(),

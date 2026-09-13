@@ -697,7 +697,8 @@ async fn task_api_validates_schedule_script_and_pin_fields() {
         .post(format!("{}/tasks", srv.base))
         .json(&serde_json::json!({
             "name": "goodcron", "script": "true",
-            "interval_secs": 3600, "schedule": "*/5 * * * *"
+            "interval_secs": 3600, "schedule": "*/5 * * * *",
+            "agent_id": "vak", "agent_revision": 1
         }))
         .send()
         .await
@@ -706,6 +707,8 @@ async fn task_api_validates_schedule_script_and_pin_fields() {
     let list = srv.get_json("/tasks").await;
     let good = &list["tasks"][0];
     assert_eq!(good["schedule"], "*/5 * * * *");
+    assert_eq!(good["agent_id"], "vak");
+    assert_eq!(good["agent_revision"], 1);
 
     // PATCH to an invalid schedule is rejected and leaves state untouched.
     let res = client
@@ -740,6 +743,22 @@ async fn task_api_validates_schedule_script_and_pin_fields() {
     let list = srv.get_json("/tasks").await;
     assert_eq!(list["tasks"][0]["prompt"], "now an agent task");
     assert!(list["tasks"][0]["script"].is_null());
+
+    // Agent ownership is patchable and clearing it also clears its revision.
+    let res = client
+        .patch(format!(
+            "{}/tasks/{}",
+            srv.base,
+            good["id"].as_str().unwrap()
+        ))
+        .json(&serde_json::json!({ "agent_id": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let list = srv.get_json("/tasks").await;
+    assert!(list["tasks"][0]["agent_id"].is_null());
+    assert!(list["tasks"][0]["agent_revision"].is_null());
 
     // Unknown task id on PATCH is a typed 404.
     let res = client

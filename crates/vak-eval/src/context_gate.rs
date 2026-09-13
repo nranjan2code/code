@@ -80,13 +80,21 @@ fn build_fixture_log(
 ) -> Result<SessionLog, String> {
     let cwd = dir.to_path_buf();
     let header = vak_session::types::SessionHeader {
-        agent: None,
+        agent: Some(vak_session::types::AgentIdentity {
+            id: "vak".into(),
+            revision: 1,
+            name: "Vak".into(),
+            personality: String::new(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+        }),
         session_id: session_id.to_string(),
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: Some(vak_session::ConversationContext::local(session_id, "eval")),
         contract: vak_session::types::FrozenContract {
             app_version: "0".into(),
             provider: "fixture".into(),

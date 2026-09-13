@@ -103,6 +103,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0.1.0".into(),
             provider: "scripted".into(),

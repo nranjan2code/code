@@ -69,13 +69,24 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
 
 fn header_for(id: &str, cwd: &Path) -> SessionHeader {
     SessionHeader {
-        agent: None,
+        agent: Some(vak_session::types::AgentIdentity {
+            id: "vak".into(),
+            revision: 1,
+            name: "Vak".into(),
+            personality: String::new(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+        }),
         session_id: id.to_string(),
         created_at: chrono::Utc::now(),
         cwd: cwd.to_path_buf(),
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: Some(vak_session::types::ConversationContext::local(
+            format!("conversation:{id}"),
+            "local",
+        )),
         contract: FrozenContract {
             app_version: "test".into(),
             provider: "scripted".into(),

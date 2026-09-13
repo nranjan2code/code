@@ -129,6 +129,8 @@ fn make_executor_with_outcome(
         sessions_home: home,
         parent_session_id: "flow-parent".into(),
         state_path,
+        agent_identity: None,
+        conversation_context: None,
         work: None,
     })
 }

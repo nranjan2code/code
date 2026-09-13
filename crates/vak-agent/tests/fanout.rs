@@ -152,6 +152,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),

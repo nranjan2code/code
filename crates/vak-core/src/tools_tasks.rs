@@ -52,8 +52,8 @@ fn render_task(t: &TaskDef) -> Value {
         "interval_secs": if t.schedule.is_none() { Some(t.interval_secs) } else { None },
         "deliver_to": t.deliver_to,
         "model_pin": t.model_pin,
-        "agent_profile_id": t.agent_profile_id,
-        "agent_profile_revision": t.agent_profile_revision,
+        "agent_id": t.agent_id,
+        "agent_revision": t.agent_revision,
         "last_run_at": t.last_run_at,
         "last_summary": t.last_summary,
         "last_result_id": t.last_result_id,
@@ -130,7 +130,7 @@ impl vak_tools::Tool for TasksTool {
                 },
                 "agent": {
                     "type": "string",
-                    "description": "Optional saved helper name or id; records helper provenance for future runs"
+                    "description": "Optional saved Agent name or id; records Agent provenance for future runs"
                 }
             },
             "required": ["action"]
@@ -189,9 +189,9 @@ impl vak_tools::Tool for TasksTool {
                     }
                 };
                 let deliver_to = str_arg("deliver_to").or_else(|| self.default_deliver_to.clone());
-                let agent_profile_id = str_arg("agent");
-                let agent_profile_revision = agent_profile_id.as_ref().and_then(|id| {
-                    std::fs::read_to_string(self.cwd.join(".vak/agent-profiles.json"))
+                let agent_id = str_arg("agent");
+                let agent_revision = agent_id.as_ref().and_then(|id| {
+                    std::fs::read_to_string(self.cwd.join(".vak/agents.json"))
                         .ok()
                         .and_then(|raw| serde_json::from_str::<Vec<Value>>(&raw).ok())
                         .and_then(|profiles| {
@@ -231,8 +231,8 @@ impl vak_tools::Tool for TasksTool {
                     schedule: cron,
                     script,
                     model_pin: str_arg("model_pin"),
-                    agent_profile_id,
-                    agent_profile_revision,
+                    agent_id,
+                    agent_revision,
                 };
                 if let Err(e) = task.validate() {
                     return vak_tools::ToolOutput::error(task_error_message(e));

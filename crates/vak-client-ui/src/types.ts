@@ -445,8 +445,8 @@ export interface TaskDef {
   script?: string | null;
   /** Pinned model id; a pinned task never escalates. */
   model_pin?: string | null;
-  agent_profile_id?: string | null;
-  agent_profile_revision?: number | null;
+  agent_id?: string | null;
+  agent_revision?: number | null;
   next_run_at?: string | null;
   timezone?: string | null;
 }

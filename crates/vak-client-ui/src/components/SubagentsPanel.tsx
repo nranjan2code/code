@@ -14,11 +14,11 @@ export default function SubagentsPanel(props: { sessionId: string | null }): JSX
   const [children, setChildren] = createSignal<ActiveSubagent[]>([]);
   const [drafts, setDrafts] = createSignal<Record<string, string>>({});
   const [error, setError] = createSignal<string | null>(null);
-  const [profiles, setProfiles] = createSignal<api.AgentProfile[]>([]);
+  const [profiles, setProfiles] = createSignal<api.Agent[]>([]);
   let timer: number | undefined;
-  onMount(() => { void api.listAgentProfiles().then((res) => setProfiles(res.profiles)).catch(() => { /* optional enhancement */ }); });
+  onMount(() => { void api.listAgents().then((res) => setProfiles(res.agents)).catch(() => { /* optional enhancement */ }); });
   const profileFor = (label: string) => profiles().find((profile) => profile.name.toLowerCase() === label.toLowerCase());
-  const profileForChild = (child: ActiveSubagent) => profiles().find((profile) => profile.id === child.profile_id) ?? profileFor(child.label);
+  const profileForChild = (child: ActiveSubagent) => profiles().find((profile) => profile.id === child.agent_id) ?? profileFor(child.label);
   const glyphFor = (character: string | undefined) => ({ orb: "◌", leaf: "◒", sun: "☼", wave: "〰", spark: "✦" }[character ?? "orb"] ?? "◌");
 
   const refresh = async () => {
@@ -89,7 +89,7 @@ export default function SubagentsPanel(props: { sessionId: string | null }): JSX
             {(child) => (
               <div class="subagent-card">
                 <div class="subagent-head">
-                  <span class="subagent-identity"><span class={`agent-glyph ${profileForChild(child)?.character ?? "orb"} ${profileForChild(child)?.animation ?? "subtle"}`}>{glyphFor(profileForChild(child)?.character)}</span><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.profile_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
+                  <span class="subagent-identity"><span class={`agent-glyph ${profileForChild(child)?.character ?? "orb"} ${profileForChild(child)?.animation ?? "subtle"}`}>{glyphFor(profileForChild(child)?.character)}</span><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.agent_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
                   <span class="subagent-elapsed">{child.elapsed_secs}s</span>
                   <button
                     class="subagent-stop"

@@ -350,9 +350,10 @@ export function getPromptEffective(): Promise<{ text: string; fingerprint: strin
   return req("/config/prompts/effective");
 }
 
-export interface AgentProfile {
+export interface Agent {
   id: string;
   revision: number;
+  lifecycle: "active" | "paused" | "archived";
   name: string;
   character: "orb" | "leaf" | "sun" | "wave" | "spark";
   personality: string;
@@ -362,15 +363,15 @@ export interface AgentProfile {
   voice: string;
 }
 
-export function listAgentProfiles(scope?: "user" | "workspace"): Promise<{ profiles: AgentProfile[] }> {
+export function listAgents(scope?: "user" | "workspace"): Promise<{ agents: Agent[] }> {
   return req(scope ? `/config/agents?scope=${scope}` : "/agents");
 }
 
-export function saveAgentProfiles(profiles: AgentProfile[], scope: "user" | "workspace" = "workspace"): Promise<{ saved: boolean; profiles: AgentProfile[] }> {
-  return req("/config/agents", { method: "PUT", body: JSON.stringify({ profiles, scope }) });
+export function saveAgents(agents: Agent[], scope: "user" | "workspace" = "workspace"): Promise<{ saved: boolean; agents: Agent[] }> {
+  return req("/config/agents", { method: "PUT", body: JSON.stringify({ agents, scope }) });
 }
 
-export function openAgent(id: string): Promise<{session_id: string; cwd: string; agent: AgentProfile}> {
+export function openAgent(id: string): Promise<{session_id: string; cwd: string; agent: Agent}> {
   return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: "{}"});
 }
 
@@ -504,8 +505,8 @@ export type RoutingEnvelope = {
 export interface ActiveSubagent {
   id: string;
   label: string;
-  profile_id?: string | null;
-  profile_revision?: number | null;
+  agent_id?: string | null;
+  agent_revision?: number | null;
   elapsed_secs: number;
   parent_session_id: string;
 }
@@ -1057,8 +1058,8 @@ export interface TaskDraft {
   schedule?: string | null;
   script?: string | null;
   model_pin?: string | null;
-  agent_profile_id?: string | null;
-  agent_profile_revision?: number | null;
+  agent_id?: string | null;
+  agent_revision?: number | null;
 }
 
 export function createTask(draft: TaskDraft): Promise<unknown> {

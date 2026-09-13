@@ -94,6 +94,7 @@ fn setup(
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "ok".into(),
@@ -217,6 +218,7 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "ok".into(),

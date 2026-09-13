@@ -85,6 +85,7 @@ async fn third_identical_call_is_blocked_with_reason() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -176,6 +177,7 @@ async fn different_args_are_not_counted_together() {
         parent_session_id: None,
         contract_id: None,
         work_item_id: None,
+        conversation: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),

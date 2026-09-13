@@ -10,6 +10,7 @@ use vak_core::Core;
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
+use vak_session::{Entry, EntryPayload, SessionPath};
 
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,
@@ -215,13 +216,39 @@ async fn inbound_wait_roundtrip_reuses_binding() {
         .unwrap();
     assert_eq!(res.status(), 401);
 
-    let res = inbound(&client, &base, msg("hello from chat")).await;
+    let mut first = msg("hello from chat");
+    first["request_id"] = serde_json::json!("gateway-req-1");
+    let res = inbound(&client, &base, first.clone()).await;
     assert_eq!(res.status(), 200, "wait roundtrip must complete");
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["state"], "completed");
     assert_eq!(body["text"], "gateway hello");
     let sid = body["session_id"].as_str().unwrap().to_string();
     assert!(!sid.is_empty());
+
+    let ledger = SessionPath::new_session_file(&home.join("home"), &home, &sid);
+    let raw_ledger = std::fs::read_to_string(ledger).unwrap();
+    assert!(raw_ledger.lines().any(|line| {
+        serde_json::from_str::<Entry>(line)
+            .ok()
+            .and_then(|entry| match entry.payload {
+                EntryPayload::Activity(activity) => Some(activity.data),
+                _ => None,
+            })
+            .is_some_and(|data| {
+                data.get("request_id").map(String::as_str) == Some("gateway-req-1")
+                    && data.get("agent_id").map(String::as_str) == Some("vak")
+                    && data.get("audience_id").map(String::as_str) == Some("webhook:ci")
+            })
+    }));
+
+    // Retries with the same id are acknowledged as duplicates and do not
+    // consume another provider response or append a second user turn.
+    let duplicate = inbound(&client, &base, first).await;
+    assert_eq!(duplicate.status(), 202);
+    let duplicate_body: serde_json::Value = duplicate.json().await.unwrap();
+    assert_eq!(duplicate_body["decision"], "duplicate");
+    assert_eq!(duplicate_body["request_id"], "gateway-req-1");
 
     // Binding table knows the route; ledger holds the exchange.
     let status: serde_json::Value = client
@@ -242,7 +269,9 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     assert!(raw.contains("webhook:ci") && raw.contains(&sid));
 
     // Second message resumes the SAME session.
-    let res = inbound(&client, &base, msg("again")).await;
+    let mut second = msg("again");
+    second["request_id"] = serde_json::json!("gateway-req-2");
+    let res = inbound(&client, &base, second).await;
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["text"], "second reply");

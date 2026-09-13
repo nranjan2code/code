@@ -14,6 +14,50 @@ pub struct SessionSearchTool {
     pub cwd: PathBuf,
     /// Usually the running session: its content is already in context.
     pub exclude_session_id: String,
+    /// Optional audience scope. When set, transcript hits must carry the same
+    /// frozen Agent and conversation audience in their header; an unscoped or
+    /// legacy ledger is rejected rather than treated as shared data.
+    pub agent_id: Option<String>,
+    pub audience_id: Option<String>,
+}
+
+fn session_in_scope(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    session_id: &str,
+    agent_id: Option<&str>,
+    audience_id: Option<&str>,
+) -> bool {
+    if agent_id.is_none() && audience_id.is_none() {
+        return true;
+    }
+    let path = vak_session::SessionPath::new_session_file(home, cwd, session_id);
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::BufRead;
+    let Some(Ok(line)) = std::io::BufReader::new(file).lines().next() else {
+        return false;
+    };
+    let Ok(entry) = serde_json::from_str::<vak_session::Entry>(&line) else {
+        return false;
+    };
+    let vak_session::EntryPayload::Header(header) = entry.payload else {
+        return false;
+    };
+    let agent_matches = agent_id.is_none_or(|wanted| {
+        header
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.id == wanted)
+    });
+    let audience_matches = audience_id.is_none_or(|wanted| {
+        header
+            .conversation
+            .as_ref()
+            .is_some_and(|context| context.audience_id == wanted)
+    });
+    agent_matches && audience_matches
 }
 
 fn tag_suffix(tag: &str) -> String {
@@ -74,11 +118,24 @@ impl vak_tools::Tool for SessionSearchTool {
         let cwd = self.cwd.clone();
         let query = query.to_string();
         let exclude = self.exclude_session_id.clone();
+        let agent_id = self.agent_id.clone();
+        let audience_id = self.audience_id.clone();
         // Curated memory participates in recall and outranks transcripts
         // (docs/design/26-learning.md). The global profile tier joins the
         // same extras ranking so user-level memories follow them across
         // projects (docs/design/29-personal-os.md P1).
-        let notes = crate::memory::list_notes(&home, &cwd);
+        let notes = crate::memory::list_notes(&home, &cwd)
+            .into_iter()
+            .filter(|note| {
+                session_in_scope(
+                    &home,
+                    &cwd,
+                    &note.session_id,
+                    agent_id.as_deref(),
+                    audience_id.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut extras: Vec<ExternalDoc> = notes
             .iter()
             .map(|n| {
@@ -95,7 +152,14 @@ impl vak_tools::Tool for SessionSearchTool {
                 }
             })
             .collect();
-        let profile_ids: std::collections::HashSet<String> =
+        // A remote audience does not inherit the local user's global profile
+        // merely because it selected the same Agent. Account linking must
+        // explicitly grant that scope; local sessions (including the new
+        // explicit `audience_id = "local"` admission) may receive these entries.
+        let profile_note_ids: std::collections::HashSet<String> = if audience_id
+            .as_deref()
+            .is_none_or(|audience| audience == "local")
+        {
             crate::memory::list_profile_notes(&home)
                 .iter()
                 .map(|n| {
@@ -113,9 +177,35 @@ impl vak_tools::Tool for SessionSearchTool {
                     });
                     id
                 })
-                .collect();
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
         let result = tokio::task::spawn_blocking(move || {
-            search_extended(&home, &cwd, &query, limit, Some(&exclude), &extras)
+            let mut hits = search_extended(
+                &home,
+                &cwd,
+                &query,
+                // Filter after a larger ranked window so an unrelated Agent's
+                // hits cannot consume the caller's small result limit.
+                limit.max(DEFAULT_LIMIT).min(50).saturating_mul(2).min(50),
+                Some(&exclude),
+                &extras,
+            )?;
+            if agent_id.is_some() || audience_id.is_some() {
+                hits.retain(|hit| {
+                    hit.entry_id.is_empty()
+                        || session_in_scope(
+                            &home,
+                            &cwd,
+                            &hit.session_id,
+                            agent_id.as_deref(),
+                            audience_id.as_deref(),
+                        )
+                });
+                hits.truncate(limit.clamp(1, 50));
+            }
+            Ok::<Vec<vak_session::SessionHit>, vak_session::SearchError>(hits)
         })
         .await;
 
@@ -128,7 +218,7 @@ impl vak_tools::Tool for SessionSearchTool {
                 // re-tag the profile-tier subset so surfaces can tell
                 // global profile recall apart from workspace memory.
                 for h in &mut hits {
-                    if profile_ids.contains(&h.session_id) {
+                    if profile_note_ids.contains(&h.session_id) {
                         h.role = "profile".into();
                     }
                 }
@@ -196,6 +286,8 @@ mod tests {
             sessions_home: home.to_path_buf(),
             cwd: cwd.clone(),
             exclude_session_id: "current".into(),
+            agent_id: None,
+            audience_id: None,
         };
         let ctx = vak_tools::ToolContext {
             cwd,
@@ -231,6 +323,8 @@ mod tests {
             sessions_home: dir.path().to_path_buf(),
             cwd: cwd.clone(),
             exclude_session_id: String::new(),
+            agent_id: None,
+            audience_id: None,
         };
         let ctx = vak_tools::ToolContext {
             cwd,
@@ -244,5 +338,81 @@ mod tests {
             .await;
         assert!(!out.is_error);
         assert!(out.content.contains("No past session matches"));
+    }
+
+    #[tokio::test]
+    async fn transcript_recall_is_scoped_to_agent_and_audience() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = dir.path().join("workspace");
+        std::fs::create_dir_all(&cwd).unwrap();
+        for (id, agent, audience) in [
+            ("one", "researcher", "telegram:one"),
+            ("two", "writer", "telegram:two"),
+        ] {
+            let path = vak_session::SessionPath::new_session_file(&home, &cwd, id);
+            let header = vak_session::SessionHeader {
+                agent: Some(vak_session::types::AgentIdentity {
+                    id: agent.into(),
+                    revision: 1,
+                    name: agent.into(),
+                    personality: String::new(),
+                    behaviour: String::new(),
+                    responsibilities: String::new(),
+                }),
+                session_id: id.into(),
+                created_at: chrono::Utc::now(),
+                cwd: cwd.clone(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: Some(vak_session::ConversationContext {
+                    conversation_id: id.into(),
+                    audience_id: audience.into(),
+                    origin: None,
+                }),
+                contract: vak_session::FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            };
+            let mut log = vak_session::SessionLog::create(path, header).unwrap();
+            log.append_message(vak_session::MessageRecord {
+                message: vak_llm::Message::user_text("private launch plan"),
+                meta: None,
+            })
+            .unwrap();
+        }
+        let tool = SessionSearchTool {
+            sessions_home: home,
+            cwd,
+            exclude_session_id: String::new(),
+            agent_id: Some("researcher".into()),
+            audience_id: Some("telegram:one".into()),
+        };
+        let ctx = vak_tools::ToolContext {
+            cwd: dir.path().join("workspace"),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            limits: Default::default(),
+            sandbox: None,
+            sandbox_sink: None,
+        };
+        let out = tool
+            .execute(
+                &serde_json::json!({"query": "private launch plan", "limit": 10}),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("one"), "{}", out.content);
+        assert!(!out.content.contains("two"), "{}", out.content);
     }
 }

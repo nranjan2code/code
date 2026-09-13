@@ -1,6 +1,6 @@
 # 63 — Agent-first conversations
 
-Status: **implemented and audited — September 13, 2026**
+Status: **superseded and implemented — September 13, 2026; docs/design/64-agent-owned-platform.md is now authoritative for the Agent-owned contract.**
 
 This document is the product and engineering contract for the agent-first
 desktop and web experience. The user chooses an agent and talks to that agent;

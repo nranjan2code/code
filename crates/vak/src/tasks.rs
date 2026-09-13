@@ -190,8 +190,8 @@ pub fn build_task_def(
             .map(str::trim)
             .filter(|m| !m.is_empty())
             .map(str::to_string),
-        agent_profile_id: None,
-        agent_profile_revision: None,
+        agent_id: None,
+        agent_revision: None,
         prompt,
     })
 }

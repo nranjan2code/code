@@ -975,6 +975,8 @@ async fn run_flow_exec(
         sessions_home: core.sessions_home().clone(),
         parent_session_id,
         state_path: state_path.clone(),
+        agent_identity: core.agent_identity().cloned(),
+        conversation_context: core.conversation_context().cloned(),
         work: None,
     };
     let executor = vak_flow::Executor::new(deps);
@@ -1813,6 +1815,8 @@ async fn run_plan(
         sessions_home: core.sessions_home().clone(),
         parent_session_id,
         state_path: core.sessions_home().join("flow-runs/plan"),
+        agent_identity: core.agent_identity().cloned(),
+        conversation_context: core.conversation_context().cloned(),
         work: None,
     };
 
