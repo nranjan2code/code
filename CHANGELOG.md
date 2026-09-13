@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.83 — 2026-09-13
+
+- Harden universal prompt layering and additive custom Agent instructions.
+- Preserve Agent and flow prompt provenance through delegated sessions.
+- Add UTC/local temporal context, IANA timezone cron schedules, and one-shot
+  task due times.
+- Add source/event-aware evidence freshness evaluation and delivery posture
+  mapping for unattended work.
+- Rebuild the committed client bundle and refresh release metadata.
+
 ## 3.0.82 — 2026-09-13
 
 - Preserve and read existing presentation stores written with the prior

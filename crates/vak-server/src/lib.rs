@@ -12268,6 +12268,7 @@ async fn start_bestofn(
             None,
             None,
             None,
+            true,
         )
         .await
         {
@@ -12321,6 +12322,7 @@ async fn spawn_isolated_run(
     model_pin: Option<&str>,
     agent_id: Option<&str>,
     agent_revision: Option<u64>,
+    start_turn: bool,
 ) -> Result<String, String> {
     let identity = if let Some(agent_id) = agent_id {
         let profiles = agents::effective(&state.active_core())?;
@@ -12378,7 +12380,9 @@ async fn spawn_isolated_run(
         wt.path.clone(),
         child_core.clone(),
     );
-    begin_turn(&handle, &child_core, prompt, false);
+    if start_turn {
+        begin_turn(&handle, &child_core, prompt, false);
+    }
     Ok(child_id)
 }
 
@@ -13339,6 +13343,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         snapshot.model_pin.as_deref(),
         snapshot.agent_id.as_deref(),
         snapshot.agent_revision,
+        false,
     )
     .await
     .ok()?;
@@ -13440,6 +13445,10 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                 }
             }
         });
+        // Subscribe the completion watcher before starting the turn so fast
+        // scripted/provider responses cannot publish RunFinished into a void.
+        tokio::task::yield_now().await;
+        begin_turn(&h, &h.core, &scheduled_prompt, false);
     }
     Some(child_id)
 }

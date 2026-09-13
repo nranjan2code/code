@@ -111,6 +111,7 @@ fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
         "cannot",
         "can't",
         "unable to",
+        "unavailable",
         "issue",
         "problem",
         "exit code",
@@ -233,7 +234,7 @@ impl StopPolicy {
 
     /// True when the prompt itself asks for executed verification or sandbox execution.
     fn demands_verification(prompt: &str) -> bool {
-        const DEMANDS: [&str; 11] = [
+        const DEMANDS: [&str; 13] = [
             "must pass",
             "tests pass",
             "run it",
@@ -245,6 +246,8 @@ impl StopPolicy {
             "show in sandbox",
             "run in sandbox",
             "execute in sandbox",
+            "verify the",
+            "verify that",
         ];
         let p = prompt.to_ascii_lowercase();
         if DEMANDS.iter().any(|d| p.contains(d)) {

@@ -105,6 +105,7 @@ fn make_executor_with_outcome(
     std::fs::create_dir_all(&home).unwrap();
     std::mem::forget(dir);
     Executor::new(ExecutorDeps {
+        prompt_layers: Vec::new(),
         provider,
         system_prompt: "sys".into(),
         model: "test-model".into(),

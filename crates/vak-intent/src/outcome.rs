@@ -458,8 +458,7 @@ pub fn evaluate_requirements_with_receipt(
 ) -> Vec<RequirementEvaluation> {
     let state = receipt
         .map(|value| {
-            let max_age =
-                chrono::Duration::seconds(spec.evidence_max_age_secs.unwrap_or(86_400) as i64);
+            let max_age = chrono::Duration::seconds(spec.evidence_max_age_secs.unwrap_or(86_400));
             evidence_state_from_receipt(now, value, max_age)
         })
         .unwrap_or(EvidenceState::None);
@@ -584,6 +583,7 @@ impl OutcomeSpec {
         self.requirements.iter().any(|r| {
             r.kind == RequirementKind::Deliverable
                 && (r.description.contains("modify")
+                    || r.description.contains("author")
                     || r.description.contains("operate")
                     || r.description.contains("govern")
                     || r.description.contains("orchestrate"))
@@ -787,6 +787,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn evidence_receipt_keeps_observation_and_source_times_distinct() {
         let observed = chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
             .expect("timestamp")

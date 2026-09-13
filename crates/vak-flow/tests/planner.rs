@@ -118,6 +118,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
     std::fs::create_dir_all(&home).unwrap();
     std::mem::forget(dir);
     Arc::new(ExecutorDeps {
+        prompt_layers: Vec::new(),
         provider,
         system_prompt: "sys".into(),
         model: "test-model".into(),
