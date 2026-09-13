@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.79 — 2026-09-13
+
+- Make user-facing conversations agent-first, with Vak and named agents available directly in the main UI.
+- Give each agent a durable, independent conversation with frozen identity and revision continuity across reloads.
+- Keep internal tasks, delegation, tools, sandbox work, and subagent details behind the agent conversation.
+- Add agent admission, profile-scope handling, concurrency protection, end-to-end coverage, and release documentation.
+
 ## 3.0.78 — 2026-09-13
 
 - Add universal delegation with named helper profiles, character styles, personalities, behaviours, animation, and voice settings.
