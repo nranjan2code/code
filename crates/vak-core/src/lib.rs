@@ -11,6 +11,7 @@ pub mod commitments;
 pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
+pub mod doc_reader;
 pub mod digest;
 pub mod entities;
 pub mod files;
@@ -3005,6 +3006,7 @@ impl Core {
             if name.is_empty() {
                 continue;
             }
+            let mut found_on_disk = false;
             for root in [&vak_config::paths::default_workspace(), &self.inner.cwd] {
                 let Some(dir) = prompts::sub_layer_dir(root, kind, &name) else {
                     continue;
@@ -3019,11 +3021,30 @@ impl Core {
                         continue;
                     }
                 }
+                found_on_disk = true;
                 layers.push(prompts::LayerInput::new(
                     layer,
                     Some(dir.display().to_string()),
                     content,
                 ));
+            }
+            if !found_on_disk && kind == "agents" {
+                let builtin_text = match name.as_str() {
+                    "analyst" => Some("You are the Data Analyst specialist. Focus on quantitative rigor, tabular transformations with data_query, mathematical accuracy, and living dataframe output."),
+                    "operator" => Some("You are the Operations & Strategy specialist. Focus on trade-off evaluations, milestone scheduling, risk mitigation, and comparison decision matrices."),
+                    "researcher" => Some("You are the Research Analyst specialist. Focus on empirical verification, numbered citations [1], [2] linked to sources, counter-evidence, and epistemic uncertainty."),
+                    "writer" => Some("You are the Communications & Writing specialist. Focus on rhetorical clarity, tone adaptation, structural hierarchy, and compelling audience communication."),
+                    _ => None,
+                };
+                if let Some(text) = builtin_text {
+                    let mut content = prompts::LayerContent::default();
+                    content.instructions = Some(text.to_string());
+                    layers.push(prompts::LayerInput::new(
+                        prompts::PromptLayer::Agent,
+                        Some(format!("builtin-role:{name}")),
+                        content,
+                    ));
+                }
             }
         }
 
@@ -3069,6 +3090,11 @@ impl Core {
                 {
                     names.push(name);
                 }
+            }
+        }
+        for builtin in ["analyst", "operator", "researcher", "writer"] {
+            if !names.contains(&builtin.to_string()) {
+                names.push(builtin.to_string());
             }
         }
         names.sort();
@@ -5068,6 +5094,7 @@ impl Core {
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
+        tools.push(Arc::new(doc_reader::DocReaderTool));
         if self.effective_memory_skill_proposals() {
             tools.push(Arc::new(learning::ProposeSkillTool {
                 sessions_home: self.sessions_home(),
@@ -8412,5 +8439,24 @@ mod spend_gate_persistence_tests {
 
         // Forgetting a session with no cached gate must be a harmless no-op.
         core.forget_spend_gate("never-seen");
+    }
+
+    #[test]
+    fn builtin_domain_roles_admitted_in_role_prompts() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let roles = core.prompt_role_names();
+        assert!(roles.contains(&"analyst".to_string()));
+        assert!(roles.contains(&"operator".to_string()));
+        assert!(roles.contains(&"researcher".to_string()));
+        assert!(roles.contains(&"writer".to_string()));
+
+        let prompts = core.role_prompts(&[]);
+        assert!(prompts.contains_key("analyst"));
+        assert!(prompts.contains_key("operator"));
+        assert!(prompts.contains_key("researcher"));
+        assert!(prompts.contains_key("writer"));
+        assert!(prompts["analyst"].contains("Data Analyst"));
+        assert!(prompts["researcher"].contains("Research Analyst"));
     }
 }

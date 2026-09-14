@@ -30,7 +30,7 @@ fn builtin_domains(name: &str) -> Serves {
     use Domain::*;
     let domains: &[Domain] = match name {
         "read" | "glob" | "grep" => &[Filesystem],
-        "write" | "edit" | "data_query" => &[Documents],
+        "write" | "edit" | "data_query" | "doc_read" => &[Documents],
         "bash" => &[CodeExec],
         "webfetch" => &[Web, LiveData],
         "browse" => &[Web, LiveData],

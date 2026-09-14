@@ -231,6 +231,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<EntitiesAction>,
     },
+    /// Manage persistent agent specialists and domain templates: list / templates / init
+    Agents {
+        #[command(subcommand)]
+        action: Option<AgentsAction>,
+    },
     /// Export session transcript or living outcome canvas to standalone HTML or markdown
     Export {
         /// Session ID to export
@@ -750,6 +755,33 @@ pub(crate) enum EntitiesAction {
 }
 
 #[derive(Subcommand, Debug)]
+pub(crate) enum AgentsAction {
+    /// List configured agent specialists
+    List {
+        /// Target the global agents tier (~/vak-home/.vak/agents.json)
+        #[arg(long)]
+        global: bool,
+    },
+    /// List available built-in domain specialist templates (researcher, writer, operator, analyst)
+    Templates,
+    /// Instantiate a new specialist agent from a domain template
+    Init {
+        /// Template ID to instantiate: researcher | writer | operator | analyst
+        #[arg(long)]
+        template: String,
+        /// Unique ID for the new agent (e.g. 'data-lead')
+        #[arg(long)]
+        id: String,
+        /// Optional custom display name
+        #[arg(long)]
+        name: Option<String>,
+        /// Target the global agents tier (~/vak-home/.vak/agents.json)
+        #[arg(long)]
+        global: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub(crate) enum FlowAction {
     /// List discovered flows
     List,
@@ -1195,6 +1227,43 @@ mod tests {
                 assert_eq!(session_id, "sess-1234");
                 assert!(html);
                 assert!(out.is_none());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        assert!(matches!(
+            parse(&["agents"]),
+            Command::Agents { action: None }
+        ));
+        assert!(matches!(
+            parse(&["agents", "templates"]),
+            Command::Agents {
+                action: Some(AgentsAction::Templates)
+            }
+        ));
+        match parse(&[
+            "agents",
+            "init",
+            "--template",
+            "researcher",
+            "--id",
+            "research-lead",
+            "--name",
+            "Dr. Lead",
+        ]) {
+            Command::Agents {
+                action:
+                    Some(AgentsAction::Init {
+                        template,
+                        id,
+                        name,
+                        global,
+                    }),
+            } => {
+                assert_eq!(template, "researcher");
+                assert_eq!(id, "research-lead");
+                assert_eq!(name.as_deref(), Some("Dr. Lead"));
+                assert!(!global);
             }
             other => panic!("unexpected: {other:?}"),
         }

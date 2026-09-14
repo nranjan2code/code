@@ -77,7 +77,7 @@ pub(crate) fn pin_test_data_home() {
 mod admin;
 mod admin_ui;
 mod agent_chats;
-mod agents;
+pub mod agents;
 mod bus;
 mod channels;
 mod client_ui;
@@ -845,6 +845,9 @@ fn router_with_state(state: AppState) -> Router {
             "/entities/{id}",
             get(get_entity_route).delete(delete_entity_route),
         )
+        .route("/agents/templates", get(list_agent_templates))
+        .route("/agents/instantiate", post(instantiate_agent_template))
+        .route("/canvas/preview", post(canvas_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
         .route("/commitments", get(list_commitments))
@@ -11171,6 +11174,81 @@ async fn get_agents(
         )
             .into_response(),
     }
+}
+
+async fn list_agent_templates() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    Json(serde_json::json!({
+        "templates": agents::builtin_templates()
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct InstantiateTemplateRequest {
+    template_id: String,
+    agent_id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn instantiate_agent_template(
+    State(state): State<AppState>,
+    Json(body): Json<InstantiateTemplateRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(template) = agents::find_template(&body.template_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("template '{}' not found", body.template_id) })),
+        )
+            .into_response();
+    };
+
+    let new_agent = template.to_agent_definition(&body.agent_id, body.name.as_deref());
+    let root = match body.scope.as_deref().unwrap_or("workspace") {
+        "user" => vak_config::paths::default_workspace(),
+        _ => state.active_core().cwd().clone(),
+    };
+
+    let mut existing = agents::load(&root).unwrap_or_default();
+    if existing.iter().any(|a| a.id == new_agent.id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": format!("agent '{}' already exists", new_agent.id) })),
+        )
+            .into_response();
+    }
+    existing.push(new_agent.clone());
+    match agents::save(&root, &existing) {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "created": true, "agent": new_agent })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": err })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CanvasPreviewRequest {
+    #[serde(default)]
+    title: Option<String>,
+    content: String,
+}
+
+async fn canvas_preview(
+    Json(body): Json<CanvasPreviewRequest>,
+) -> axum::response::Response {
+    let title = body.title.as_deref().unwrap_or("Outcome Canvas");
+    let html = vak_presentation::transcode_to_html(title, &body.content);
+    html_response(html)
 }
 
 async fn put_agents(

@@ -376,6 +376,36 @@ export function openAgent(id: string): Promise<{session_id: string; cwd: string;
   return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: "{}"});
 }
 
+export interface AgentTemplate {
+  template_id: string;
+  domain: string;
+  name: string;
+  description: string;
+  character: "orb" | "leaf" | "sun" | "wave" | "spark";
+  personality: string;
+  behaviour: string;
+  responsibilities: string;
+  instructions: string;
+  animation: "subtle" | "expressive" | "off";
+  voice: string;
+}
+
+export function listAgentTemplates(): Promise<{ templates: AgentTemplate[] }> {
+  return req("/agents/templates");
+}
+
+export function instantiateAgentTemplate(
+  template_id: string,
+  agent_id: string,
+  name?: string,
+  scope: "user" | "workspace" = "workspace",
+): Promise<{ created: boolean; agent: Agent }> {
+  return req("/agents/instantiate", {
+    method: "POST",
+    body: JSON.stringify({ template_id, agent_id, name, scope }),
+  });
+}
+
 export function getHooks(): Promise<{ hooks: HookConfig[] }> {
   return req("/config/hooks");
 }
@@ -464,6 +494,24 @@ export function openPresentationStream(
 /** Markdown export (shared renderer with the TUI); text, not JSON. */
 export async function transcriptMarkdown(id: string): Promise<string> {
   const res = await authFetch(`/sessions/${encodeURIComponent(id)}/transcript.md`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+/** Interactive HTML Outcome Canvas export. */
+export async function transcriptHtml(id: string): Promise<string> {
+  const res = await authFetch(`/sessions/${encodeURIComponent(id)}/transcript.md?format=html`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+/** Render content to interactive living canvas HTML preview. */
+export async function previewCanvas(content: string, title?: string): Promise<string> {
+  const res = await authFetch("/canvas/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, title }),
+  });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.text();
 }

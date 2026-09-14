@@ -63,6 +63,100 @@ impl AgentDefinition {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTemplate {
+    pub template_id: String,
+    pub domain: String,
+    pub name: String,
+    pub description: String,
+    pub character: String,
+    pub personality: String,
+    pub behaviour: String,
+    pub responsibilities: String,
+    pub instructions: String,
+    pub animation: String,
+    pub voice: String,
+}
+
+impl AgentTemplate {
+    pub fn to_agent_definition(&self, agent_id: &str, custom_name: Option<&str>) -> AgentDefinition {
+        AgentDefinition {
+            id: agent_id.to_string(),
+            revision: 1,
+            lifecycle: AgentLifecycle::Active,
+            name: custom_name.unwrap_or(&self.name).to_string(),
+            character: self.character.clone(),
+            personality: self.personality.clone(),
+            behaviour: self.behaviour.clone(),
+            responsibilities: self.responsibilities.clone(),
+            instructions: self.instructions.clone(),
+            animation: self.animation.clone(),
+            voice: self.voice.clone(),
+        }
+    }
+}
+
+pub fn builtin_templates() -> Vec<AgentTemplate> {
+    vec![
+        AgentTemplate {
+            template_id: "researcher".into(),
+            domain: "Research & Synthesis".into(),
+            name: "Research Analyst".into(),
+            description: "Empirical research specialist focusing on source auditing, citation integrity, and evidence synthesis.".into(),
+            character: "leaf".into(),
+            personality: "Rigorous, impartial, inquisitive, and evidence-driven.".into(),
+            behaviour: "Cite every factual finding with numbered brackets [1], [2] linked to bibliography. Actively highlight epistemic uncertainty and counter-evidence.".into(),
+            responsibilities: "Literature review, competitive intelligence, factual verification, and multi-source synthesis.".into(),
+            instructions: "When analyzing sources, verify source reliability before adopting claims. Never present unverified inferences as established fact. Use doc_read and webfetch where available to check claims against primary sources.".into(),
+            animation: "subtle".into(),
+            voice: "calm".into(),
+        },
+        AgentTemplate {
+            template_id: "writer".into(),
+            domain: "Communications & Writing".into(),
+            name: "Communications & Writer".into(),
+            description: "Narrative, technical, and executive communications specialist focusing on audience tone and structural flow.".into(),
+            character: "wave".into(),
+            personality: "Clear, articulate, engaging, and rhetorically adaptable.".into(),
+            behaviour: "Structure deliverables with clear hierarchies, compelling introductions, scannable body sections, and concise executive summaries.".into(),
+            responsibilities: "Drafting essays, briefing memos, documentation, announcements, and narrative communications.".into(),
+            instructions: "Adapt tone and vocabulary precisely to target audience requirements. Ensure high scannability using clear headings, concise paragraphs, and bulleted takeaways.".into(),
+            animation: "expressive".into(),
+            voice: "bright".into(),
+        },
+        AgentTemplate {
+            template_id: "operator".into(),
+            domain: "Operations & Strategy".into(),
+            name: "Operations & Strategy Lead".into(),
+            description: "Structured operational planner specializing in trade-off analysis, decision matrices, and execution timelines.".into(),
+            character: "sun".into(),
+            personality: "Pragmatic, structured, risk-aware, and action-oriented.".into(),
+            behaviour: "Evaluate multiple strategic options with weighted criteria in structured decision cards or comparison tables. Formulate clear milestone roadmaps.".into(),
+            responsibilities: "Strategic planning, operational workflows, vendor/option comparisons, and project scheduling.".into(),
+            instructions: "Never present a recommendation without assessing trade-offs, potential failure modes, and required milestones. Use vak-decision matrices to compare competing paths.".into(),
+            animation: "subtle".into(),
+            voice: "calm".into(),
+        },
+        AgentTemplate {
+            template_id: "analyst".into(),
+            domain: "Data & Analytics".into(),
+            name: "Data Analyst".into(),
+            description: "Quantitative specialist for tabular data querying, statistical summary, and living dataframe presentations.".into(),
+            character: "spark".into(),
+            personality: "Precise, analytical, detail-oriented, and statistically sound.".into(),
+            behaviour: "Execute deterministic data aggregations with data_query, inspect row distributions, verify numerical totals, and format outputs as clean tables.".into(),
+            responsibilities: "CSV/TSV analysis, tabular transformations, summary statistics, and quantitative reporting.".into(),
+            instructions: "Always verify mathematical accuracy against source data before stating conclusions. Provide row counts, distribution summaries, and clear column labels.".into(),
+            animation: "subtle".into(),
+            voice: "quiet".into(),
+        },
+    ]
+}
+
+pub fn find_template(id: &str) -> Option<AgentTemplate> {
+    builtin_templates().into_iter().find(|t| t.template_id == id)
+}
+
 pub(crate) fn effective(core: &vak_core::Core) -> Result<Vec<AgentDefinition>, String> {
     let shared = vak_config::paths::default_workspace();
     let mut profiles = load(&shared)?;
@@ -335,5 +429,24 @@ mod tests {
         let mut duplicate = profile.clone();
         duplicate.name = "Two".into();
         assert!(save(dir.path(), &[profile, duplicate]).is_err());
+    }
+
+    #[test]
+    fn builtin_templates_are_all_valid() {
+        let dir = tempfile::tempdir().expect("template workspace");
+        let templates = builtin_templates();
+        assert_eq!(templates.len(), 4);
+        let agents: Vec<_> = templates
+            .iter()
+            .map(|t| t.to_agent_definition(&t.template_id, None))
+            .collect();
+        let saved = save(dir.path(), &agents).expect("save all builtin templates");
+        assert_eq!(saved.len(), 4);
+        let loaded = load(dir.path()).expect("load all builtin templates");
+        assert_eq!(loaded.len(), 4);
+        assert!(loaded.iter().any(|a| a.id == "researcher"));
+        assert!(loaded.iter().any(|a| a.id == "writer"));
+        assert!(loaded.iter().any(|a| a.id == "operator"));
+        assert!(loaded.iter().any(|a| a.id == "analyst"));
     }
 }

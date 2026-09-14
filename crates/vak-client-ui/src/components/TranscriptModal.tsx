@@ -62,6 +62,52 @@ export default function TranscriptModal() {
             <span class="badge">{count()} events</span>
           </Show>
           <span class="badge">read-only</span>
+          <button
+            class="icon-button subtle"
+            style={{ "font-size": "11px", padding: "3px 7px" }}
+            onClick={async () => {
+              const id = transcriptViewId();
+              if (!id) return;
+              try {
+                const html = await api.transcriptHtml(id);
+                const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `session-${id}.html`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (err) {
+                console.error("Failed to export HTML:", err);
+              }
+            }}
+            title="Export interactive HTML canvas"
+          >
+            HTML
+          </button>
+          <button
+            class="icon-button subtle"
+            style={{ "font-size": "11px", padding: "3px 7px" }}
+            onClick={async () => {
+              const id = transcriptViewId();
+              if (!id) return;
+              try {
+                const md = await api.transcriptMarkdown(id);
+                const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `session-${id}.md`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (err) {
+                console.error("Failed to export Markdown:", err);
+              }
+            }}
+            title="Export clean Markdown transcript"
+          >
+            MD
+          </button>
           <button class="icon-button subtle" aria-label="Close transcript" onClick={() => setTranscriptViewId(null)}>
             <Icon name="close" size={14} />
           </button>
