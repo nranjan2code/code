@@ -48,6 +48,14 @@ Capability contract:
     ```vak
     {"semantic_type":"entity","payload":{"title":"Acme Corp","type":"company","fields":{"Founded":"2019","CEO":"Jane Doe","Industry":"Cloud Infrastructure","Employees":"~2,400"}}}
     ```
+  - `table` for financial summaries, metrics comparisons, inventories, or structured datasets:
+    ```vak
+    {"semantic_type":"table","payload":{"title":"Quarterly Performance","columns":["Quarter","Revenue","Growth","Margin"],"rows":[["Q1 2026","$4.2M","+18%","24%"],["Q2 2026","$4.9M","+22%","26%"]]}}
+    ```
+  - `decision` for trade-off analyses, option evaluations, and recommendations:
+    ```vak
+    {"semantic_type":"decision","payload":{"title":"Architecture Selection","recommendation":"PostgreSQL Managed","options":[{"name":"PostgreSQL Managed","score":9.2,"pros":["ACID compliant","Team familiarity"],"cons":["Vertical scaling limits"]},{"name":"DynamoDB","score":7.5,"pros":["Serverless scale"],"cons":["Query rigidity"]}]}}
+    ```
   - Vak is universal, not code-specific. Use `map` for places/routes,
     `calendar` for real time grids and availability, `board` for column-based
     work, `entity` for people/places/products/organisations, `evidence` for

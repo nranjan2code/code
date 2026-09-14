@@ -77,6 +77,8 @@ const UNIVERSAL: &[(&str, &str)] = &[
     ("evidence", "evidence"),
     ("decision-analysis", "decision_analysis"),
     ("document", "document"),
+    ("table", "table"),
+    ("dataframe", "dataframe"),
     ("graph", "graph"),
     ("form", "form"),
     ("action", "action"),
@@ -109,12 +111,13 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "graph" => Primitive::Graph,
         "form" => Primitive::Form,
         "action" => Primitive::Row,
-        "transaction" => Primitive::Table,
+        "transaction" | "table" | "dataframe" => Primitive::Table,
+        "document" => Primitive::Section,
         "alert" => Primitive::Alert,
         "conversation" => Primitive::Stack,
         "simulation" => Primitive::Chart,
         "checklist" | "shopping_list" | "reading_list" | "habit_plan" => Primitive::Checklist,
-        "comparison" | "comparison_table" | "pros_cons" | "scorecard" => Primitive::Comparison,
+        "decision" | "decision_analysis" | "comparison" | "comparison_table" | "pros_cons" | "scorecard" => Primitive::Comparison,
         "budget" | "finance_summary" | "invoice_summary" | "inventory" => Primitive::Table,
         "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
         "progress" | "status" => Primitive::Progress,
@@ -212,7 +215,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 70);
+        assert_eq!(pack.len(), 72);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()

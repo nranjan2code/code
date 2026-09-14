@@ -485,8 +485,17 @@ pub fn evaluate_requirements_with_state(
         .iter()
         .any(|prefix| normalized.starts_with(prefix))
     });
-    let has_reference =
-        response.is_some_and(|text| text.contains("http://") || text.contains("https://"));
+    let has_structured_evidence = response.is_some_and(|text| {
+        text.contains("\"semantic_type\":\"research.synthesis\"")
+            || text.contains("\"semantic_type\": \"research.synthesis\"")
+            || text.contains("\"semantic_type\":\"evidence\"")
+            || text.contains("\"semantic_type\": \"evidence\"")
+    });
+    let has_reference = response.is_some_and(|text| {
+        text.contains("http://")
+            || text.contains("https://")
+            || text.contains("[^")
+    }) || has_structured_evidence;
     spec.requirements
         .iter()
         .map(|requirement| {

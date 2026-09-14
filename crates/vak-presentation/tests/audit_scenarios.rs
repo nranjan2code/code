@@ -2219,8 +2219,8 @@ fn audit_revisions() {
 fn audit_seeds() {
     let mut scenarios: Vec<Scenario> = vec![];
 
-    scenarios.push(tc("seed_pack_has_70", || {
-        assert_eq!(seeds::built_in_seed_pack().len(), 70);
+    scenarios.push(tc("seed_pack_has_72", || {
+        assert_eq!(seeds::built_in_seed_pack().len(), 72);
     }));
 
     scenarios.push(tc("seed_pack_all_disabled", || {
