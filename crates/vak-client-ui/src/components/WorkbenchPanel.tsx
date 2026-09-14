@@ -9,6 +9,8 @@ import {
   activeId,
   requestedArtifact,
   setRequestedArtifact,
+  openArtifactCanvas,
+  openArtifactPathInCanvas,
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
@@ -663,16 +665,29 @@ export default function WorkbenchPanel() {
                         <div class="artifacts-grid">
                           <For each={exec().artifacts}>
                             {(art) => (
-                              <button
-                                class="artifact-card"
-                                onClick={() => inspectArtifact(art.path)}
-                              >
-                                <Icon name="file" size={14} />
-                                <span class="artifact-path">{art.path}</span>
-                                <span class="artifact-meta">
-                                  {art.mimeType} · {formatBytes(art.sizeBytes)}
-                                </span>
-                              </button>
+                              <div class="artifact-card-row">
+                                <button
+                                  class="artifact-card"
+                                  onClick={() => inspectArtifact(art.path)}
+                                >
+                                  <Icon name="file" size={14} />
+                                  <span class="artifact-path">{art.path}</span>
+                                  <span class="artifact-meta">
+                                    {art.mimeType} · {formatBytes(art.sizeBytes)}
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="artifact-card-popout-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openArtifactPathInCanvas(art.path);
+                                  }}
+                                  title="Open in Artifact Canvas"
+                                >
+                                  <Icon name="preview" size={12} />
+                                </button>
+                              </div>
                             )}
                           </For>
                         </div>
@@ -705,21 +720,35 @@ export default function WorkbenchPanel() {
                   {(art) => {
                     const isSelected = () => selectedArtifact() === art.path;
                     return (
-                      <button
-                        class="artifact-sidebar-item"
-                        aria-pressed={isSelected()}
-                        aria-label={`Preview artifact ${art.path}`}
-                        classList={{ selected: isSelected() }}
-                        onClick={() => inspectArtifact(art.path)}
-                      >
-                        <Icon name="file" size={14} />
-                        <div class="art-info">
-                          <span class="art-name">{art.path.split("/").pop()}</span>
-                          <span class="art-sub">
-                            {art.mimeType} · {formatBytes(art.sizeBytes)}
-                          </span>
-                        </div>
-                      </button>
+                      <div class="artifact-sidebar-item-row">
+                        <button
+                          class="artifact-sidebar-item"
+                          aria-pressed={isSelected()}
+                          aria-label={`Preview artifact ${art.path}`}
+                          classList={{ selected: isSelected() }}
+                          onClick={() => inspectArtifact(art.path)}
+                        >
+                          <Icon name="file" size={14} />
+                          <div class="art-info">
+                            <span class="art-name">{art.path.split("/").pop()}</span>
+                            <span class="art-sub">
+                              {art.mimeType} · {formatBytes(art.sizeBytes)}
+                            </span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          class="artifact-popout-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openArtifactPathInCanvas(art.path);
+                          }}
+                          title="Open in Artifact Canvas"
+                          aria-label={`Open ${art.path} in Artifact Canvas`}
+                        >
+                          <Icon name="preview" size={13} />
+                        </button>
+                      </div>
                     );
                   }}
                 </For>
@@ -741,6 +770,26 @@ export default function WorkbenchPanel() {
                   <Show when={loadingArtifact()}>
                     <span class="viewer-loading">Loading…</span>
                   </Show>
+                  <button
+                    type="button"
+                    class="pill-action-btn primary"
+                    onClick={() => {
+                      const p = selectedArtifact();
+                      if (p) {
+                        openArtifactCanvas({
+                          id: p,
+                          title: p.split("/").pop() || "Artifact Preview",
+                          artifactPath: p,
+                          html: artifactContent() || undefined,
+                          timestamp: Date.now(),
+                        });
+                      }
+                    }}
+                    title="Open in full/split Artifact Canvas"
+                    style={{ "margin-left": "auto" }}
+                  >
+                    <Icon name="preview" size={12} /> Open in Canvas
+                  </button>
                 </div>
                 <div class="viewer-content">
                   <Show when={artifactError()}>

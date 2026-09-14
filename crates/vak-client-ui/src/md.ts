@@ -26,7 +26,12 @@ function inline(s: string): string {
   out = out.replace(/`([^`\n]+)`/g, (_m, code: string) => {
     const isPath =
       /^[\w@.-]+(\/[\w@.-]+)+$/.test(code) || /^\.[\w/-]+$/.test(code) || /\.\w{1,6}$/.test(code);
-    return `<code class="ic"${isPath ? ' data-path="true" title="open in editor"' : ""}>${code}</code>`;
+    const isPreviewable = isPath && (
+      /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico)$/i.test(code) ||
+      code.includes(".vak/scratch/")
+    );
+    const title = isPreviewable ? "open in Artifact Canvas" : "open in editor";
+    return `<code class="ic"${isPath ? ` data-path="true" data-previewable="${isPreviewable ? 'true' : 'false'}" title="${title}"` : ""}>${code}</code>`;
   });
   // bold then italic then strikethrough (order matters: bold before italic so
   // `**x**` isn't first read as two adjacent `*x*` italics)

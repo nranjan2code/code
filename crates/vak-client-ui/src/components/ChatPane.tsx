@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, agentForSession, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
@@ -372,6 +372,16 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
       <Show when={filePath()}>
         {(path) => (
           <div class="tool-actions">
+            <Show when={isPreviewableArtifact(path())}>
+              <button
+                type="button"
+                class="tool-open"
+                onClick={() => openArtifactPathInCanvas(path())}
+                title={`Open ${path()} in Artifact Canvas`}
+              >
+                <Icon name="preview" size={12} /> Open Canvas
+              </button>
+            </Show>
             {/* One action, routed for you: a changed file opens as a diff,
                 a new one opens in the editor. Inline dumps do not scale
                 past the first file. */}
@@ -570,6 +580,28 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     const parts = () => content.parts;
     const displayText = () => parts().filter((part) => part.type === "text").map((part) => part.text).join("\n\n");
 
+    const mentionedDeliverables = createMemo(() => {
+      if (props.item.streaming) return [];
+      const text = props.item.text;
+      const seen = new Set<string>();
+      const results: Array<{ name: string; path: string }> = [];
+      const re = /(?:`([^`\n]+)`|\[(?:[^\]]*)\]\(([^)\n]+)\)|(?:\.vak\/scratch\/[^\s,;'")\]]+)|(?:[\w./-]+\.(?:html|htm|pdf|svg|png|jpe?g|webp)))/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const raw = (m[1] || m[2] || m[0] || "").trim();
+        if (
+          raw &&
+          isPreviewableArtifact(raw) &&
+          !raw.includes(" ") &&
+          !raw.startsWith("http") &&
+          !seen.has(raw)
+        ) {
+          seen.add(raw);
+          results.push({ name: raw.split("/").pop() || raw, path: raw });
+        }
+      }
+      return results;
+    });
 
     return (
       <div class="msg assistant">
@@ -588,6 +620,29 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
           <For each={parts()}>{(part) => part.type === "text"
             ? <Markdown text={part.text} streaming={props.item.streaming} />
             : <StructuredView output={part.output} fallback={part.source} sessionId={props.sessionId ?? undefined} />}</For>
+          <Show when={!props.item.streaming && mentionedDeliverables().length > 0}>
+            <div class="turn-artifacts-container">
+              <For each={mentionedDeliverables()}>
+                {(art) => (
+                  <div class="turn-artifact-chip">
+                    <span class="artifact-chip-icon"><Icon name="preview" size={14} /></span>
+                    <div class="artifact-chip-details">
+                      <span class="artifact-chip-name">{art.name}</span>
+                      <span class="artifact-chip-path">{art.path}</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="artifact-chip-btn"
+                      onClick={() => openArtifactPathInCanvas(art.path)}
+                      title={`Open ${art.path} in Artifact Canvas`}
+                    >
+                      <Icon name="preview" size={12} /> Open Canvas
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <Show when={props.item.streaming && !displayText()}>
             <span class="caret" />
           </Show>

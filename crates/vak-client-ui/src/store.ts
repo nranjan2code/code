@@ -306,6 +306,38 @@ export function toggleCanvasMode() {
   setCanvasMode((m) => (m === "split" ? "focused" : "split"));
 }
 
+/** Determine whether a file path points to an artifact previewable in the Artifact Canvas. */
+export function isPreviewableArtifact(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const p = path.toLowerCase().trim();
+  return (
+    p.endsWith(".html") ||
+    p.endsWith(".htm") ||
+    p.endsWith(".xhtml") ||
+    p.endsWith(".svg") ||
+    p.endsWith(".pdf") ||
+    p.endsWith(".png") ||
+    p.endsWith(".jpg") ||
+    p.endsWith(".jpeg") ||
+    p.endsWith(".gif") ||
+    p.endsWith(".webp") ||
+    p.endsWith(".ico") ||
+    p.includes(".vak/scratch/")
+  );
+}
+
+/** Open any artifact path directly in the Artifact Canvas. */
+export function openArtifactPathInCanvas(path: string, html?: string) {
+  const filename = path.split("/").pop() || "Artifact Preview";
+  openArtifactCanvas({
+    id: path,
+    title: filename,
+    artifactPath: path,
+    html,
+    timestamp: Date.now(),
+  });
+}
+
 /**
  * Goal mode (docs/design/27 Phase H): an objective + criteria armed for the
  * *next* prompt, consumed once and cleared. `sessionId: null` means armed

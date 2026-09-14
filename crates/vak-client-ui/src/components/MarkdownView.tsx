@@ -1,6 +1,6 @@
 import { createEffect, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
-import { openInEditor, uiPreferences } from "../store";
+import { openInEditor, uiPreferences, isPreviewableArtifact, openArtifactPathInCanvas } from "../store";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 
@@ -84,7 +84,12 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     }
     const code = target.closest("code.ic[data-path]");
     if (code && /^[\w@.-]+(\/[\w@.-]+)+$|^\.[\w/-]+$/.test(code.textContent ?? "")) {
-      openInEditor(code.textContent ?? "");
+      const p = (code.textContent ?? "").trim();
+      if (isPreviewableArtifact(p)) {
+        openArtifactPathInCanvas(p);
+      } else {
+        openInEditor(p);
+      }
     }
   };
 

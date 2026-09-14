@@ -7,7 +7,7 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { activeId, agentForSession, openInEditor, openWorkbenchArtifact, uiPreferences } from "../store";
+import { activeId, agentForSession, openInEditor, openWorkbenchArtifact, uiPreferences, isPreviewableArtifact, openArtifactPathInCanvas } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
@@ -75,18 +75,27 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
             return <s><InlineSequence nodes={node.content} /></s>;
           case "code": {
             const pathLike = /^[\w@.-]+(\/[\w@.-]+)+$|^\.[\w/-]+$/.test(node.code);
+            const isPreview = pathLike && isPreviewableArtifact(node.code);
+            const handleAction = () => {
+              if (!pathLike) return;
+              if (isPreview) {
+                openArtifactPathInCanvas(node.code);
+              } else {
+                openInEditor(node.code);
+              }
+            };
             return (
               <code
                 class="ic"
-                classList={{ "semantic-path": pathLike }}
+                classList={{ "semantic-path": pathLike, "semantic-previewable": isPreview }}
                 tabIndex={pathLike ? 0 : undefined}
                 role={pathLike ? "button" : undefined}
-                aria-label={pathLike ? `Open ${node.code} in editor` : undefined}
-                onClick={() => pathLike && openInEditor(node.code)}
+                aria-label={pathLike ? (isPreview ? `Open ${node.code} in Artifact Canvas` : `Open ${node.code} in editor`) : undefined}
+                onClick={handleAction}
                 onKeyDown={(event) => {
                   if (pathLike && (event.key === "Enter" || event.key === " ")) {
                     event.preventDefault();
-                    openInEditor(node.code);
+                    handleAction();
                   }
                 }}
               >
@@ -472,7 +481,23 @@ function Artifact(props: { item: OutputItem }) {
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
-      <Show when={path()}>{(value) => <button type="button" class="artifact-open" onClick={() => openWorkbenchArtifact(value())}>{/\.html?$/i.test(value()) ? "Open preview" : "Open"}</button>}</Show>
+      <Show when={path()}>
+        {(value) => (
+          <button
+            type="button"
+            class="artifact-open"
+            onClick={() => {
+              if (isPreviewableArtifact(value())) {
+                openArtifactPathInCanvas(value());
+              } else {
+                openWorkbenchArtifact(value());
+              }
+            }}
+          >
+            {isPreviewableArtifact(value()) ? "Open Canvas" : "Open"}
+          </button>
+        )}
+      </Show>
     </article>
   );
 }
