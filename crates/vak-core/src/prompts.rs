@@ -308,6 +308,10 @@ pub struct RuntimeSections {
     /// The tool/skill/MCP boundary. Not advice — a factual description of
     /// this turn's callable interface.
     pub capability_contract: String,
+    /// Sandbox-specific contract (bash, .vak/scratch/, live preview).
+    /// Only populated when `bash` is in the admitted tools; empty otherwise
+    /// so channel bots that lack execution get a cleaner, shorter prompt.
+    pub sandbox_contract: String,
     /// The generated `Surface:` line. A `surface_note` block is appended
     /// after it; nothing can replace it.
     pub surface: String,
@@ -508,7 +512,11 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     );
 
     let mut text = String::new();
-    for section in [identity.trim(), runtime.capability_contract.trim()] {
+    for section in [
+        identity.trim(),
+        runtime.capability_contract.trim(),
+        runtime.sandbox_contract.trim(),
+    ] {
         if !section.is_empty() {
             text.push_str(section);
             text.push_str("\n\n");
@@ -635,20 +643,22 @@ pub fn render_guardrails(rules: &[String]) -> String {
 /// One file rather than four so the default prompt stays reviewable as a
 /// whole — doc 07 treats prompt churn as a reviewable event, which is much
 /// harder across scattered fragments.
-pub fn seed(version: &str) -> (LayerContent, String) {
+pub fn seed(version: &str) -> (LayerContent, String, String) {
     parse_seed(&crate::DEFAULT_SYSTEM_PROMPT.replace("{{version}}", version))
 }
 
-fn parse_seed(text: &str) -> (LayerContent, String) {
+fn parse_seed(text: &str) -> (LayerContent, String, String) {
     let mut content = LayerContent::default();
     let mut capability_contract = String::new();
+    let mut sandbox_contract = String::new();
     let mut current: Option<String> = None;
     let mut buffer = String::new();
 
     let flush = |name: &Option<String>,
                  buffer: &mut String,
                  content: &mut LayerContent,
-                 contract: &mut String| {
+                 contract: &mut String,
+                 sandbox: &mut String| {
         let Some(name) = name else {
             buffer.clear();
             return;
@@ -660,6 +670,7 @@ fn parse_seed(text: &str) -> (LayerContent, String) {
             "operating_rules" | "operating-rules" => content.operating_rules = Some(body),
             "guardrails" => content.guardrails = parse_guardrails(&body),
             "capability_contract" | "capability-contract" => *contract = body,
+            "sandbox_contract" | "sandbox-contract" => *sandbox = body,
             _ => {}
         }
     };
@@ -675,6 +686,7 @@ fn parse_seed(text: &str) -> (LayerContent, String) {
                 &mut buffer,
                 &mut content,
                 &mut capability_contract,
+                &mut sandbox_contract,
             );
             current = Some(rest.trim().to_string());
             continue;
@@ -687,8 +699,9 @@ fn parse_seed(text: &str) -> (LayerContent, String) {
         &mut buffer,
         &mut content,
         &mut capability_contract,
+        &mut sandbox_contract,
     );
-    (content, capability_contract)
+    (content, capability_contract, sandbox_contract)
 }
 
 // --------------------------------------------------------------- store ---
@@ -773,7 +786,7 @@ mod tests {
 
     #[test]
     fn seed_splits_into_blocks_and_contract() {
-        let (content, contract) = seed("9.9.9");
+        let (content, contract, sandbox) = seed("9.9.9");
         assert!(
             content.identity.as_deref().unwrap().contains("You are vak"),
             "identity block missing"
@@ -787,6 +800,10 @@ mod tests {
                 .contains("Look before you act")
         );
         assert!(contract.contains("attached tool schemas"));
+        assert!(
+            sandbox.contains("execution sandbox"),
+            "sandbox_contract block missing"
+        );
         assert!(
             content.guardrails.len() >= 4,
             "seed guardrails: {:?}",

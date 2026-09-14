@@ -29,7 +29,7 @@ fn audit_confirms_untrusted_guardrail_promotes_arbitrary_instruction() {
         ..Default::default()
     };
     layer.demote_untrusted();
-    let (seed, contract) = prompts::seed("audit");
+    let (seed, contract, sandbox) = prompts::seed("audit");
     let result = prompts::resolve(
         &[
             prompts::LayerInput::new(prompts::PromptLayer::Seed, None, seed),
@@ -37,6 +37,7 @@ fn audit_confirms_untrusted_guardrail_promotes_arbitrary_instruction() {
         ],
         &prompts::RuntimeSections {
             capability_contract: contract,
+            sandbox_contract: sandbox,
             ..Default::default()
         },
     );

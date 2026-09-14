@@ -2826,7 +2826,7 @@ impl Core {
         // is the single place any surface waits for the registry, so the
         // packet handed to this function is already as resolved as it is
         // going to get. Rendering is pure: same packet in, same prompt out.
-        let (seed, capability_contract) = prompts::seed(APP_VERSION);
+        let (seed, capability_contract, sandbox_contract) = prompts::seed(APP_VERSION);
         // Advertise only what the composed policy will actually run. A
         // server listed here that dispatch refuses is the exact mismatch
         // this reconciliation exists to remove, so blocked servers move out
@@ -2865,13 +2865,18 @@ impl Core {
                 standing.push('\n');
             }
         }
+        let has_bash = capabilities
+            .iter()
+            .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash");
         let runtime = prompts::RuntimeSections {
             capability_contract,
+            sandbox_contract: if has_bash {
+                sandbox_contract
+            } else {
+                String::new()
+            },
             surface: self.surface.prompt_section(),
-            runtime: if capabilities
-                .iter()
-                .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash")
-            {
+            runtime: if has_bash {
                 vak_tools::bash::runtime_capability_summary()
             } else {
                 String::new()
@@ -6126,19 +6131,43 @@ mod channel_mcp_network_tests {
             "You are vak, a general-purpose agent",
             "and ordinary questions are all equally",
             "The `Surface:` line below names the one this turn is running",
+            // Domain-parity: every named workflow must be present so the
+            // prompt cannot regress to an engineering-only agent.
+            "Engineering and build",
+            "Research and analysis",
+            "Writing and drafting",
+            "Operations and data",
         ] {
             assert!(
                 crate::DEFAULT_SYSTEM_PROMPT.contains(phrase),
                 "default prompt lost required contract phrase: {phrase}"
             );
         }
-        for banned in ["coding agent", "code agent", "in the user's terminal"] {
+        for banned in [
+            "coding agent",
+            "code agent",
+            "in the user's terminal",
+            // The old code-only rule: must not return as a standalone rule.
+            "For code, analysis, UI, and build tasks, use the write",
+        ] {
             assert!(
                 !crate::DEFAULT_SYSTEM_PROMPT.contains(banned),
                 "default prompt narrowed vak back to a coding/terminal-only \
                  agent: {banned}"
             );
         }
+        // The sandbox contract must be a separate block, not inlined in
+        // the capability contract, so it can be conditionally omitted
+        // for turns that lack bash.
+        let (_, contract, sandbox) = crate::prompts::seed(crate::APP_VERSION);
+        assert!(
+            !contract.contains("execution sandbox"),
+            "sandbox text must live in sandbox_contract, not capability_contract"
+        );
+        assert!(
+            sandbox.contains("execution sandbox"),
+            "sandbox_contract block must describe the sandbox"
+        );
     }
 
     /// The prompt's own text promises a `Surface:` line, so every surface —
