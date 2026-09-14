@@ -840,7 +840,10 @@ fn router_with_state(state: AppState) -> Router {
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
         )
-        .route("/entities", get(list_entities_route).post(upsert_entity_route))
+        .route(
+            "/entities",
+            get(list_entities_route).post(upsert_entity_route),
+        )
         .route(
             "/entities/{id}",
             get(get_entity_route).delete(delete_entity_route),
@@ -2406,9 +2409,7 @@ async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value
     }))
 }
 
-async fn consolidate_memory_route(
-    State(state): State<AppState>,
-) -> axum::response::Response {
+async fn consolidate_memory_route(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
     match state.core.consolidate_memory() {
         Ok(report) => (
@@ -2450,7 +2451,11 @@ async fn list_entities_route(
     } else {
         vak_core::entities::list_entities(&home, cwd)
     };
-    (StatusCode::OK, Json(serde_json::json!({ "entities": entities }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "entities": entities })),
+    )
+        .into_response()
 }
 
 async fn get_entity_route(
@@ -2566,11 +2571,7 @@ async fn delete_entity_route(
         Some(cwd_buf.as_path())
     };
     match vak_core::entities::delete_entity(&home, cwd, &id) {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "deleted": true })),
-        )
-            .into_response(),
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "deleted": true }))).into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "deleted": false, "error": "entity not found" })),
@@ -6493,7 +6494,9 @@ async fn transcript_markdown(
         let Some(s) = guard.as_ref() else {
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
-        Some(vak_core::transcript_md::render_markdown(&s.derive_messages()))
+        Some(vak_core::transcript_md::render_markdown(
+            &s.derive_messages(),
+        ))
     } else {
         open_historical_session(&state, &id)
             .map(|s| vak_core::transcript_md::render_markdown(&s.derive_messages()))
@@ -6502,7 +6505,10 @@ async fn transcript_markdown(
     match md_opt {
         Some(md) => {
             if format_html {
-                html_response(vak_presentation::transcode_to_html(&format!("Session {id}"), &md))
+                html_response(vak_presentation::transcode_to_html(
+                    &format!("Session {id}"),
+                    &md,
+                ))
             } else {
                 markdown_response(md)
             }
@@ -11219,7 +11225,9 @@ async fn instantiate_agent_template(
     if existing.iter().any(|a| a.id == new_agent.id) {
         return (
             StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": format!("agent '{}' already exists", new_agent.id) })),
+            Json(
+                serde_json::json!({ "error": format!("agent '{}' already exists", new_agent.id) }),
+            ),
         )
             .into_response();
     }
@@ -11315,9 +11323,7 @@ struct CanvasPreviewRequest {
     content: String,
 }
 
-async fn canvas_preview(
-    Json(body): Json<CanvasPreviewRequest>,
-) -> axum::response::Response {
+async fn canvas_preview(Json(body): Json<CanvasPreviewRequest>) -> axum::response::Response {
     let title = body.title.as_deref().unwrap_or("Outcome Canvas");
     let html = vak_presentation::transcode_to_html(title, &body.content);
     html_response(html)

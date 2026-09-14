@@ -1236,9 +1236,20 @@ mod tests {
             Command::Entities { action: None }
         ));
 
-        match parse(&["entities", "search", "postgres", "--entity-type", "database"]) {
+        match parse(&[
+            "entities",
+            "search",
+            "postgres",
+            "--entity-type",
+            "database",
+        ]) {
             Command::Entities {
-                action: Some(EntitiesAction::Search { query, entity_type, global }),
+                action:
+                    Some(EntitiesAction::Search {
+                        query,
+                        entity_type,
+                        global,
+                    }),
             } => {
                 assert_eq!(query, "postgres");
                 assert_eq!(entity_type.as_deref(), Some("database"));
@@ -1248,7 +1259,11 @@ mod tests {
         }
 
         match parse(&["export", "sess-1234", "--html"]) {
-            Command::Export { session_id, html, out } => {
+            Command::Export {
+                session_id,
+                html,
+                out,
+            } => {
                 assert_eq!(session_id, "sess-1234");
                 assert!(html);
                 assert!(out.is_none());

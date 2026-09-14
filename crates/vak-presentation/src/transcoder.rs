@@ -308,12 +308,18 @@ fn transcode_body(content: &str) -> String {
 
         // Blockquotes
         if let Some(rest) = trimmed.strip_prefix("> ") {
-            out.push_str(&format!("<blockquote>{}</blockquote>\n", render_inline(rest)));
+            out.push_str(&format!(
+                "<blockquote>{}</blockquote>\n",
+                render_inline(rest)
+            ));
             continue;
         }
 
         // Unordered Lists
-        if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
             out.push_str(&format!("<ul><li>{}</li></ul>\n", render_inline(rest)));
             continue;
         }
@@ -341,7 +347,11 @@ fn render_inline(text: &str) -> String {
         let after = &rest[start..];
         if let Some(end) = after.find(']') {
             let tag = &after[..end + 1];
-            res.push_str(&format!("<a class=\"citation-sup\" href=\"#{}\">{}</a>", html_escape(tag), html_escape(tag)));
+            res.push_str(&format!(
+                "<a class=\"citation-sup\" href=\"#{}\">{}</a>",
+                html_escape(tag),
+                html_escape(tag)
+            ));
             rest = &after[end + 1..];
         } else {
             res.push_str(after);
@@ -354,7 +364,10 @@ fn render_inline(text: &str) -> String {
 }
 
 fn render_vak_table(v: &Value) -> String {
-    let title = v.get("title").and_then(Value::as_str).unwrap_or("Data Table");
+    let title = v
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Data Table");
     let cols = v.get("columns").and_then(Value::as_array);
     let rows = v.get("rows").and_then(Value::as_array);
 
@@ -366,7 +379,10 @@ fn render_vak_table(v: &Value) -> String {
     if let Some(cols) = cols {
         for c in cols {
             let col_name = c.as_str().unwrap_or("");
-            out.push_str(&format!("        <th>{} <span class=\"sort-icon\">▲▼</span></th>\n", html_escape(col_name)));
+            out.push_str(&format!(
+                "        <th>{} <span class=\"sort-icon\">▲▼</span></th>\n",
+                html_escape(col_name)
+            ));
         }
     }
     out.push_str("      </tr></thead>\n      <tbody>\n");
@@ -395,8 +411,16 @@ fn render_vak_decision(v: &Value) -> String {
     let mut out = String::from("<div class=\"decision-grid\">\n");
     if let Some(options) = v.get("options").and_then(Value::as_array) {
         for opt in options {
-            let label = opt.get("label").or_else(|| opt.get("name")).and_then(Value::as_str).unwrap_or("Option");
-            let summary = opt.get("summary").or_else(|| opt.get("description")).and_then(Value::as_str).unwrap_or("");
+            let label = opt
+                .get("label")
+                .or_else(|| opt.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("Option");
+            let summary = opt
+                .get("summary")
+                .or_else(|| opt.get("description"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
             out.push_str(&format!(
                 "  <div class=\"decision-card\">\n    <div class=\"decision-title\">{}</div>\n    <div class=\"decision-summary\">{}</div>\n",
                 html_escape(label),
@@ -406,7 +430,10 @@ fn render_vak_decision(v: &Value) -> String {
             if let Some(pros) = opt.get("pros").and_then(Value::as_array) {
                 out.push_str("    <ul class=\"pro-list\">\n");
                 for p in pros {
-                    out.push_str(&format!("      <li>+ {}</li>\n", html_escape(p.as_str().unwrap_or(""))));
+                    out.push_str(&format!(
+                        "      <li>+ {}</li>\n",
+                        html_escape(p.as_str().unwrap_or(""))
+                    ));
                 }
                 out.push_str("    </ul>\n");
             }
@@ -414,7 +441,10 @@ fn render_vak_decision(v: &Value) -> String {
             if let Some(cons) = opt.get("cons").and_then(Value::as_array) {
                 out.push_str("    <ul class=\"con-list\">\n");
                 for c in cons {
-                    out.push_str(&format!("      <li>- {}</li>\n", html_escape(c.as_str().unwrap_or(""))));
+                    out.push_str(&format!(
+                        "      <li>- {}</li>\n",
+                        html_escape(c.as_str().unwrap_or(""))
+                    ));
                 }
                 out.push_str("    </ul>\n");
             }

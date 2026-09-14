@@ -11,8 +11,8 @@ pub mod commitments;
 pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
-pub mod doc_reader;
 pub mod digest;
+pub mod doc_reader;
 pub mod entities;
 pub mod files;
 pub mod finops;
@@ -3030,10 +3030,18 @@ impl Core {
             }
             if !found_on_disk && kind == "agents" {
                 let builtin_text = match name.as_str() {
-                    "analyst" => Some("You are the Data Analyst specialist. Focus on quantitative rigor, tabular transformations with data_query, mathematical accuracy, and living dataframe output."),
-                    "operator" => Some("You are the Operations & Strategy specialist. Focus on trade-off evaluations, milestone scheduling, risk mitigation, and comparison decision matrices."),
-                    "researcher" => Some("You are the Research Analyst specialist. Focus on empirical verification, numbered citations [1], [2] linked to sources, counter-evidence, and epistemic uncertainty."),
-                    "writer" => Some("You are the Communications & Writing specialist. Focus on rhetorical clarity, tone adaptation, structural hierarchy, and compelling audience communication."),
+                    "analyst" => Some(
+                        "You are the Data Analyst specialist. Focus on quantitative rigor, tabular transformations with data_query, mathematical accuracy, and living dataframe output.",
+                    ),
+                    "operator" => Some(
+                        "You are the Operations & Strategy specialist. Focus on trade-off evaluations, milestone scheduling, risk mitigation, and comparison decision matrices.",
+                    ),
+                    "researcher" => Some(
+                        "You are the Research Analyst specialist. Focus on empirical verification, numbered citations [1], [2] linked to sources, counter-evidence, and epistemic uncertainty.",
+                    ),
+                    "writer" => Some(
+                        "You are the Communications & Writing specialist. Focus on rhetorical clarity, tone adaptation, structural hierarchy, and compelling audience communication.",
+                    ),
                     _ => None,
                 };
                 if let Some(text) = builtin_text {

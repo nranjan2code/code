@@ -8,17 +8,17 @@ use vak_agent::{AgentEvent, TurnOutcome};
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 
+mod agents_cli;
 mod backup;
 mod cli;
 mod digest;
 mod doctor;
+mod entities_cli;
 mod format;
 mod inbox;
 mod install;
 mod intent;
 mod memory;
-mod entities_cli;
-mod agents_cli;
 mod plugins;
 mod prompts;
 mod setup;
@@ -462,7 +462,11 @@ async fn main() {
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::Entities { action }) => entities_cli::run_entities(cwd, action),
         Some(Command::Agents { action }) => agents_cli::run_agents(cwd, action),
-        Some(Command::Export { session_id, html, out }) => run_export(cwd, session_id, html, out),
+        Some(Command::Export {
+            session_id,
+            html,
+            out,
+        }) => run_export(cwd, session_id, html, out),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Skills { action }) => run_skills(cwd, action),
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),

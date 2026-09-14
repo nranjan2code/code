@@ -117,7 +117,8 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "conversation" => Primitive::Stack,
         "simulation" => Primitive::Chart,
         "checklist" | "shopping_list" | "reading_list" | "habit_plan" => Primitive::Checklist,
-        "decision" | "decision_analysis" | "comparison" | "comparison_table" | "pros_cons" | "scorecard" => Primitive::Comparison,
+        "decision" | "decision_analysis" | "comparison" | "comparison_table" | "pros_cons"
+        | "scorecard" => Primitive::Comparison,
         "budget" | "finance_summary" | "invoice_summary" | "inventory" => Primitive::Table,
         "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
         "progress" | "status" => Primitive::Progress,

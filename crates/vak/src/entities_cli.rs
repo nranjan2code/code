@@ -18,7 +18,11 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
 
     match action.unwrap_or(crate::cli::EntitiesAction::List { global: false }) {
         crate::cli::EntitiesAction::List { global } => {
-            let cwd_opt = if global { None } else { Some(workspace.as_path()) };
+            let cwd_opt = if global {
+                None
+            } else {
+                Some(workspace.as_path())
+            };
             let list = entities::list_entities(&home, cwd_opt);
             if list.is_empty() {
                 println!(
@@ -33,10 +37,16 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
                 list.len()
             );
             for e in list {
-                println!("- [{}] {} (`{}`): {}", e.entity_type, e.name, e.id, e.summary);
+                println!(
+                    "- [{}] {} (`{}`): {}",
+                    e.entity_type, e.name, e.id, e.summary
+                );
                 if !e.attributes.is_empty() {
-                    let attrs: Vec<_> =
-                        e.attributes.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    let attrs: Vec<_> = e
+                        .attributes
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect();
                     println!("    attrs: {}", attrs.join(", "));
                 }
                 if !e.relations.is_empty() {
@@ -55,7 +65,11 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
             entity_type,
             global,
         } => {
-            let cwd_opt = if global { None } else { Some(workspace.as_path()) };
+            let cwd_opt = if global {
+                None
+            } else {
+                Some(workspace.as_path())
+            };
             let mut results = entities::search_entities(&home, cwd_opt, &query);
             if let Some(filter) = entity_type {
                 results.retain(|e| e.entity_type.eq_ignore_ascii_case(&filter));
@@ -66,12 +80,19 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
             }
             println!("Found {} matching entities:\n", results.len());
             for e in results {
-                println!("- [{}] {} (`{}`): {}", e.entity_type, e.name, e.id, e.summary);
+                println!(
+                    "- [{}] {} (`{}`): {}",
+                    e.entity_type, e.name, e.id, e.summary
+                );
             }
             0
         }
         crate::cli::EntitiesAction::Get { id, global } => {
-            let cwd_opt = if global { None } else { Some(workspace.as_path()) };
+            let cwd_opt = if global {
+                None
+            } else {
+                Some(workspace.as_path())
+            };
             match entities::get_entity(&home, cwd_opt, &id) {
                 Some(e) => {
                     println!("ID:          {}", e.id);
@@ -100,7 +121,11 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
             }
         }
         crate::cli::EntitiesAction::Delete { id, global } => {
-            let cwd_opt = if global { None } else { Some(workspace.as_path()) };
+            let cwd_opt = if global {
+                None
+            } else {
+                Some(workspace.as_path())
+            };
             match entities::delete_entity(&home, cwd_opt, &id) {
                 Ok(true) => {
                     println!("deleted entity '{id}'");

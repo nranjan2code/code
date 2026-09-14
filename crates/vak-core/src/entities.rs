@@ -218,18 +218,28 @@ impl vak_tools::Tool for EntityRecordTool {
         })
     }
 
-    async fn execute(&self, args: &serde_json::Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(
+        &self,
+        args: &serde_json::Value,
+        _ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
         let Some(name) = args.get("name").and_then(|v| v.as_str()).map(str::trim) else {
             return vak_tools::ToolOutput::error("missing required argument 'name'");
         };
-        let Some(entity_type) = args.get("entity_type").and_then(|v| v.as_str()).map(str::trim) else {
+        let Some(entity_type) = args
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+        else {
             return vak_tools::ToolOutput::error("missing required argument 'entity_type'");
         };
         let Some(summary) = args.get("summary").and_then(|v| v.as_str()).map(str::trim) else {
             return vak_tools::ToolOutput::error("missing required argument 'summary'");
         };
         if name.is_empty() || entity_type.is_empty() || summary.is_empty() {
-            return vak_tools::ToolOutput::error("'name', 'entity_type', and 'summary' must not be empty");
+            return vak_tools::ToolOutput::error(
+                "'name', 'entity_type', and 'summary' must not be empty",
+            );
         }
 
         let id = match args.get("id").and_then(|v| v.as_str()).map(str::trim) {
@@ -240,7 +250,11 @@ impl vak_tools::Tool for EntityRecordTool {
                     .chars()
                     .map(|c| if c.is_alphanumeric() { c } else { '-' })
                     .collect();
-                let deduped = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+                let deduped = slug
+                    .split('-')
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("-");
                 if deduped.is_empty() {
                     format!("ent-{}", hash_cwd(Path::new(name)))
                 } else {
@@ -341,10 +355,22 @@ impl vak_tools::Tool for EntityQueryTool {
         })
     }
 
-    async fn execute(&self, args: &serde_json::Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(
+        &self,
+        args: &serde_json::Value,
+        _ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-        let entity_type_filter = args.get("entity_type").and_then(|v| v.as_str()).map(|s| s.to_ascii_lowercase());
-        let limit = args.get("limit").and_then(|v| v.as_u64()).map(|l| l as usize).unwrap_or(10).min(50);
+        let entity_type_filter = args
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_ascii_lowercase());
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|l| l as usize)
+            .unwrap_or(10)
+            .min(50);
 
         let mut results = search_entities(&self.sessions_home, Some(&self.cwd), query);
         if let Some(ref filter) = entity_type_filter {
@@ -358,7 +384,10 @@ impl vak_tools::Tool for EntityQueryTool {
 
         let mut out = format!("Found {} entities:\n\n", results.len());
         for e in results {
-            out.push_str(&format!("### [{}] {} (`{}`)\n", e.entity_type, e.name, e.id));
+            out.push_str(&format!(
+                "### [{}] {} (`{}`)\n",
+                e.entity_type, e.name, e.id
+            ));
             out.push_str(&format!("{}\n", e.summary));
             if !e.attributes.is_empty() {
                 out.push_str("Attributes:\n");
@@ -485,24 +514,42 @@ mod tests {
         });
         let rec_out = record_tool.execute(&record_args, &ctx).await;
         assert!(!rec_out.is_error, "{}", rec_out.content);
-        assert!(rec_out.content.contains("recorded entity 'auth-gateway'"), "{}", rec_out.content);
+        assert!(
+            rec_out.content.contains("recorded entity 'auth-gateway'"),
+            "{}",
+            rec_out.content
+        );
 
         // Query entity via tool
         let query_args = serde_json::json!({ "query": "JWT" });
         let q_out = query_tool.execute(&query_args, &ctx).await;
         assert!(!q_out.is_error, "{}", q_out.content);
         assert!(q_out.content.contains("Auth Gateway"), "{}", q_out.content);
-        assert!(q_out.content.contains("depends_on -> `redis-session-store`"), "{}", q_out.content);
+        assert!(
+            q_out
+                .content
+                .contains("depends_on -> `redis-session-store`"),
+            "{}",
+            q_out.content
+        );
 
         // Filter query by entity_type
         let type_args = serde_json::json!({ "entity_type": "service" });
         let type_out = query_tool.execute(&type_args, &ctx).await;
         assert!(!type_out.is_error, "{}", type_out.content);
-        assert!(type_out.content.contains("Auth Gateway"), "{}", type_out.content);
+        assert!(
+            type_out.content.contains("Auth Gateway"),
+            "{}",
+            type_out.content
+        );
 
         let none_args = serde_json::json!({ "entity_type": "database" });
         let none_out = query_tool.execute(&none_args, &ctx).await;
         assert!(!none_out.is_error, "{}", none_out.content);
-        assert!(none_out.content.contains("no matching entities"), "{}", none_out.content);
+        assert!(
+            none_out.content.contains("no matching entities"),
+            "{}",
+            none_out.content
+        );
     }
 }

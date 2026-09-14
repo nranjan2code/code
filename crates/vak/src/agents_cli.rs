@@ -11,7 +11,11 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
 
     match action.unwrap_or(AgentsAction::List { global: false }) {
         AgentsAction::List { global } => {
-            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let root = if global {
+                shared.as_path()
+            } else {
+                cwd.as_path()
+            };
             let list = match agents::load(root) {
                 Ok(l) => l,
                 Err(e) => {
@@ -24,7 +28,9 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
                     "No agents configured in {} scope.",
                     if global { "global" } else { "workspace" }
                 );
-                println!("Hint: run 'vak agents templates' or 'vak agents init --template <name> --id <id>' to create one.");
+                println!(
+                    "Hint: run 'vak agents templates' or 'vak agents init --template <name> --id <id>' to create one."
+                );
                 return 0;
             }
             println!(
@@ -45,16 +51,24 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
         }
         AgentsAction::Templates => {
             let templates = agents::builtin_templates();
-            println!("Available Universal Domain Specialist Templates ({} total):\n", templates.len());
+            println!(
+                "Available Universal Domain Specialist Templates ({} total):\n",
+                templates.len()
+            );
             for t in templates {
                 println!("- `{}` — {} [Domain: {}]", t.template_id, t.name, t.domain);
                 println!("    {}", t.description);
-                println!("    Character: {} | Voice: {} | Animation: {}", t.character, t.voice, t.animation);
+                println!(
+                    "    Character: {} | Voice: {} | Animation: {}",
+                    t.character, t.voice, t.animation
+                );
                 println!("    Focus: {}", t.responsibilities);
                 println!();
             }
             println!("To instantiate an agent from a template:");
-            println!("  vak agents init --template <template_id> --id <unique_agent_id> [--name <display_name>] [--global]");
+            println!(
+                "  vak agents init --template <template_id> --id <unique_agent_id> [--name <display_name>] [--global]"
+            );
             0
         }
         AgentsAction::Init {
@@ -69,7 +83,11 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
                 return 1;
             };
 
-            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let root = if global {
+                shared.as_path()
+            } else {
+                cwd.as_path()
+            };
             let mut existing = match agents::load(root) {
                 Ok(l) => l,
                 Err(e) => {
@@ -79,7 +97,10 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
             };
 
             if existing.iter().any(|a| a.id == id) {
-                eprintln!("error: agent with id '{id}' already exists in {} scope", if global { "global" } else { "workspace" });
+                eprintln!(
+                    "error: agent with id '{id}' already exists in {} scope",
+                    if global { "global" } else { "workspace" }
+                );
                 return 1;
             }
 
@@ -103,7 +124,11 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
             }
         }
         AgentsAction::Runs { id, limit, global } => {
-            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let root = if global {
+                shared.as_path()
+            } else {
+                cwd.as_path()
+            };
             let runs = match agents::list_runs(root, Some(&id), limit) {
                 Ok(r) => r,
                 Err(e) => {
@@ -142,7 +167,11 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
             prompt,
             global,
         } => {
-            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let root = if global {
+                shared.as_path()
+            } else {
+                cwd.as_path()
+            };
             let schedule = agents::AgentSchedule {
                 cron_or_interval: cron.clone(),
                 prompt: prompt.clone(),

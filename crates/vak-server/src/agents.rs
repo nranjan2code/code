@@ -112,7 +112,11 @@ pub struct AgentTemplate {
 }
 
 impl AgentTemplate {
-    pub fn to_agent_definition(&self, agent_id: &str, custom_name: Option<&str>) -> AgentDefinition {
+    pub fn to_agent_definition(
+        &self,
+        agent_id: &str,
+        custom_name: Option<&str>,
+    ) -> AgentDefinition {
         AgentDefinition {
             id: agent_id.to_string(),
             revision: 1,
@@ -188,7 +192,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
 }
 
 pub fn find_template(id: &str) -> Option<AgentTemplate> {
-    builtin_templates().into_iter().find(|t| t.template_id == id)
+    builtin_templates()
+        .into_iter()
+        .find(|t| t.template_id == id)
 }
 
 pub(crate) fn effective(core: &vak_core::Core) -> Result<Vec<AgentDefinition>, String> {
@@ -339,7 +345,11 @@ pub fn record_run(cwd: &Path, record: &AgentRunRecord) -> Result<(), String> {
     Ok(())
 }
 
-pub fn list_runs(cwd: &Path, agent_id: Option<&str>, limit: usize) -> Result<Vec<AgentRunRecord>, String> {
+pub fn list_runs(
+    cwd: &Path,
+    agent_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AgentRunRecord>, String> {
     let path = runs_path(cwd);
     if !path.exists() {
         return Ok(Vec::new());
@@ -573,7 +583,13 @@ mod tests {
             }),
         )
         .expect("update schedule");
-        assert_eq!(updated.schedule.as_ref().map(|s| s.cron_or_interval.as_str()), Some("daily"));
+        assert_eq!(
+            updated
+                .schedule
+                .as_ref()
+                .map(|s| s.cron_or_interval.as_str()),
+            Some("daily")
+        );
 
         let run = AgentRunRecord {
             run_id: "run-1".into(),

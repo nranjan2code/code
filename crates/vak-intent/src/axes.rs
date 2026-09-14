@@ -669,10 +669,7 @@ mod tests {
             );
         }
         for stance in EpistemicStance::ALL {
-            assert_eq!(
-                EpistemicStance::parse(stance.as_str()),
-                Some(stance)
-            );
+            assert_eq!(EpistemicStance::parse(stance.as_str()), Some(stance));
             assert!(!stance.guideline_prompt().is_empty());
         }
     }

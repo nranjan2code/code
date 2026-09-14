@@ -18,7 +18,11 @@ struct TableData {
 
 impl TableData {
     fn from_csv(text: &str) -> Result<Self, String> {
-        let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
         if lines.is_empty() {
             return Err("empty CSV data".into());
         }
@@ -40,9 +44,14 @@ impl TableData {
     }
 
     fn from_json(val: &Value) -> Result<Self, String> {
-        let arr = val.as_array().ok_or_else(|| "JSON data must be an array of objects".to_string())?;
+        let arr = val
+            .as_array()
+            .ok_or_else(|| "JSON data must be an array of objects".to_string())?;
         if arr.is_empty() {
-            return Ok(TableData { headers: Vec::new(), rows: Vec::new() });
+            return Ok(TableData {
+                headers: Vec::new(),
+                rows: Vec::new(),
+            });
         }
         let mut header_set = Vec::new();
         for item in arr {
@@ -69,7 +78,10 @@ impl TableData {
             }
             rows.push(row);
         }
-        Ok(TableData { headers: header_set, rows })
+        Ok(TableData {
+            headers: header_set,
+            rows,
+        })
     }
 
     fn from_markdown(text: &str) -> Result<Self, String> {
@@ -111,7 +123,9 @@ impl TableData {
     }
 
     fn col_index(&self, name: &str) -> Option<usize> {
-        self.headers.iter().position(|h| h.eq_ignore_ascii_case(name))
+        self.headers
+            .iter()
+            .position(|h| h.eq_ignore_ascii_case(name))
     }
 
     fn to_markdown(&self) -> String {
@@ -293,7 +307,9 @@ impl vak_tools::Tool for DataQueryTool {
                     match op {
                         "eq" => cell.eq_ignore_ascii_case(target_val),
                         "neq" => !cell.eq_ignore_ascii_case(target_val),
-                        "contains" => cell.to_ascii_lowercase().contains(&target_val.to_ascii_lowercase()),
+                        "contains" => cell
+                            .to_ascii_lowercase()
+                            .contains(&target_val.to_ascii_lowercase()),
                         "gt" => match (cell_num, target_num) {
                             (Some(c), Some(t)) => c > t,
                             _ => cell > target_val,
@@ -316,19 +332,30 @@ impl vak_tools::Tool for DataQueryTool {
             let agg_fn = agg.get("fn").and_then(Value::as_str).unwrap_or("count");
             let agg_idx = match table.col_index(agg_col) {
                 Some(i) => i,
-                None => return vak_tools::ToolOutput::error(format!("aggregate column '{agg_col}' not found")),
+                None => {
+                    return vak_tools::ToolOutput::error(format!(
+                        "aggregate column '{agg_col}' not found"
+                    ));
+                }
             };
 
             if let Some(group_by_col) = args.get("group_by").and_then(Value::as_str) {
                 let group_idx = match table.col_index(group_by_col) {
                     Some(i) => i,
-                    None => return vak_tools::ToolOutput::error(format!("group_by column '{group_by_col}' not found")),
+                    None => {
+                        return vak_tools::ToolOutput::error(format!(
+                            "group_by column '{group_by_col}' not found"
+                        ));
+                    }
                 };
 
                 let mut groups: BTreeMap<String, Vec<f64>> = BTreeMap::new();
                 for row in &table.rows {
                     let key = row.get(group_idx).cloned().unwrap_or_default();
-                    let val = row.get(agg_idx).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                    let val = row
+                        .get(agg_idx)
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
                     groups.entry(key).or_default().push(val);
                 }
 
@@ -337,12 +364,21 @@ impl vak_tools::Tool for DataQueryTool {
                     let result = match agg_fn {
                         "count" => vals.len() as f64,
                         "sum" => vals.iter().sum(),
-                        "avg" => if vals.is_empty() { 0.0 } else { vals.iter().sum::<f64>() / vals.len() as f64 },
+                        "avg" => {
+                            if vals.is_empty() {
+                                0.0
+                            } else {
+                                vals.iter().sum::<f64>() / vals.len() as f64
+                            }
+                        }
                         "min" => vals.iter().cloned().fold(f64::INFINITY, f64::min),
                         "max" => vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
                         _ => vals.len() as f64,
                     };
-                    agg_rows.push(vec![k, format!("{result:.2}").trim_end_matches(".00").to_string()]);
+                    agg_rows.push(vec![
+                        k,
+                        format!("{result:.2}").trim_end_matches(".00").to_string(),
+                    ]);
                 }
 
                 table.headers = vec![group_by_col.to_string(), format!("{agg_fn}_{agg_col}")];
@@ -351,25 +387,40 @@ impl vak_tools::Tool for DataQueryTool {
                 let vals: Vec<f64> = table
                     .rows
                     .iter()
-                    .map(|r| r.get(agg_idx).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0))
+                    .map(|r| {
+                        r.get(agg_idx)
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0)
+                    })
                     .collect();
                 let result = match agg_fn {
                     "count" => vals.len() as f64,
                     "sum" => vals.iter().sum(),
-                    "avg" => if vals.is_empty() { 0.0 } else { vals.iter().sum::<f64>() / vals.len() as f64 },
+                    "avg" => {
+                        if vals.is_empty() {
+                            0.0
+                        } else {
+                            vals.iter().sum::<f64>() / vals.len() as f64
+                        }
+                    }
                     "min" => vals.iter().cloned().fold(f64::INFINITY, f64::min),
                     "max" => vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
                     _ => vals.len() as f64,
                 };
                 table.headers = vec![format!("{agg_fn}_{agg_col}")];
-                table.rows = vec![vec![format!("{result:.2}").trim_end_matches(".00").to_string()]];
+                table.rows = vec![vec![
+                    format!("{result:.2}").trim_end_matches(".00").to_string(),
+                ]];
             }
         }
 
         // 3. Sorting
         if let Some(sort) = args.get("sort_by") {
             if let Some(sort_col) = sort.get("column").and_then(Value::as_str) {
-                let desc = sort.get("descending").and_then(Value::as_bool).unwrap_or(false);
+                let desc = sort
+                    .get("descending")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if let Some(idx) = table.col_index(sort_col) {
                     table.rows.sort_by(|a, b| {
                         let val_a = a.get(idx).map(|s| s.as_str()).unwrap_or("");
@@ -377,7 +428,9 @@ impl vak_tools::Tool for DataQueryTool {
                         let num_a = val_a.parse::<f64>().ok();
                         let num_b = val_b.parse::<f64>().ok();
                         let ord = match (num_a, num_b) {
-                            (Some(na), Some(nb)) => na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal),
+                            (Some(na), Some(nb)) => {
+                                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+                            }
                             _ => val_a.cmp(val_b),
                         };
                         if desc { ord.reverse() } else { ord }
@@ -390,7 +443,8 @@ impl vak_tools::Tool for DataQueryTool {
         if let Some(select_cols) = args.get("select").and_then(Value::as_array) {
             let requested: Vec<&str> = select_cols.iter().filter_map(Value::as_str).collect();
             if !requested.is_empty() {
-                let indices: Vec<Option<usize>> = requested.iter().map(|c| table.col_index(c)).collect();
+                let indices: Vec<Option<usize>> =
+                    requested.iter().map(|c| table.col_index(c)).collect();
                 let mut new_rows = Vec::new();
                 for row in &table.rows {
                     let new_row = indices
@@ -470,6 +524,10 @@ mod tests {
         let agg_out = tool.execute(&agg_args, &ctx).await;
         assert!(!agg_out.is_error, "{}", agg_out.content);
         assert!(agg_out.content.contains("Eng"), "{}", agg_out.content);
-        assert!(agg_out.content.contains("123333.33") || agg_out.content.contains("123333"), "{}", agg_out.content);
+        assert!(
+            agg_out.content.contains("123333.33") || agg_out.content.contains("123333"),
+            "{}",
+            agg_out.content
+        );
     }
 }

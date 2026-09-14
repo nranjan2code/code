@@ -488,7 +488,8 @@ pub fn general_tabular_oracle() -> EvalCase {
     );
     c.files = vec![(
         "sales.csv".into(),
-        "region,units,price\nnorth,100,15.50\nsouth,250,12.00\neast,80,20.00\nwest,150,18.00\n".into(),
+        "region,units,price\nnorth,100,15.50\nsouth,250,12.00\neast,80,20.00\nwest,150,18.00\n"
+            .into(),
     )];
     c.prompt = "Calculate total units and total revenue from sales.csv and write summary.json with keys total_units and total_revenue.".into();
     c.script = vec![
@@ -588,8 +589,14 @@ pub fn general_multi_agent_collaboration() -> EvalCase {
     ];
     c.prompt = "Synthesize data/energy_sources.csv and docs/research_notes.md into report.md. Include quantitative efficiency findings, cite sources [1] and [2], and conclude with strategic recommendations.".into();
     c.script = vec![
-        ScriptedTurn::tool("read", serde_json::json!({"path": "data/energy_sources.csv"})),
-        ScriptedTurn::tool("read", serde_json::json!({"path": "docs/research_notes.md"})),
+        ScriptedTurn::tool(
+            "read",
+            serde_json::json!({"path": "data/energy_sources.csv"}),
+        ),
+        ScriptedTurn::tool(
+            "read",
+            serde_json::json!({"path": "docs/research_notes.md"}),
+        ),
         ScriptedTurn::tool(
             "write",
             serde_json::json!({

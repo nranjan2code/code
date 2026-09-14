@@ -328,7 +328,8 @@ impl Engagement {
                 },
                 stop: self.posture.stop,
                 context: self.posture.context,
-                epistemic_stance: if other.posture.epistemic_stance != EpistemicStance::DirectAnswer {
+                epistemic_stance: if other.posture.epistemic_stance != EpistemicStance::DirectAnswer
+                {
                     other.posture.epistemic_stance
                 } else {
                     self.posture.epistemic_stance

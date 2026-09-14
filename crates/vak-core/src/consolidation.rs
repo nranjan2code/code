@@ -177,7 +177,10 @@ fn extract_entity_pattern(text: &str) -> Option<(String, String, String)> {
             let is_idx = pos + marker.find(" is ").unwrap_or(0);
             let name_part = text[..is_idx].trim();
             let rest = text[is_idx + 4..].trim();
-            if !name_part.is_empty() && !rest.is_empty() && name_part.split_whitespace().count() <= 6 {
+            if !name_part.is_empty()
+                && !rest.is_empty()
+                && name_part.split_whitespace().count() <= 6
+            {
                 let name = name_part
                     .trim_start_matches("The ")
                     .trim_start_matches("the ")
@@ -213,8 +216,24 @@ mod tests {
         .unwrap();
 
         // 2. Conflicting preference notes under same tag "formatting"
-        memory::append_note(&home, &cwd, "preference", "formatting", "sess-1", "use tabs for indentation").unwrap();
-        memory::append_note(&home, &cwd, "preference", "formatting", "sess-2", "use spaces for indentation").unwrap();
+        memory::append_note(
+            &home,
+            &cwd,
+            "preference",
+            "formatting",
+            "sess-1",
+            "use tabs for indentation",
+        )
+        .unwrap();
+        memory::append_note(
+            &home,
+            &cwd,
+            "preference",
+            "formatting",
+            "sess-2",
+            "use spaces for indentation",
+        )
+        .unwrap();
 
         // 3. Structured fact describing an entity
         memory::append_note(
@@ -232,7 +251,10 @@ mod tests {
 
         // Verify invariant promotion
         assert_eq!(report.promoted_invariants.len(), 1);
-        assert!(report.promoted_invariants[0].contains("always verify database migration rollback plan"));
+        assert!(
+            report.promoted_invariants[0]
+                .contains("always verify database migration rollback plan")
+        );
 
         // Verify conflict detection
         assert_eq!(report.detected_conflicts.len(), 1);

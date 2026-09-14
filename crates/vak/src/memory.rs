@@ -31,31 +31,38 @@ pub fn run_memory(cwd: PathBuf, action: Option<crate::cli::MemoryAction>) -> i32
             list(&home, &workspace, profile);
             0
         }
-        crate::cli::MemoryAction::Consolidate => {
-            match core.consolidate_memory() {
-                Ok(report) => {
-                    println!("Memory consolidation complete:");
-                    println!("  Examined notes:        {}", report.total_notes_examined);
-                    println!("  Promoted invariants:   {}", report.promoted_invariants.len());
-                    for inv in &report.promoted_invariants {
-                        println!("    + Invariant: \"{inv}\"");
-                    }
-                    println!("  Detected conflicts:    {}", report.detected_conflicts.len());
-                    for conf in &report.detected_conflicts {
-                        println!("    ! Conflict: {conf}");
-                    }
-                    println!("  Distilled entities:    {}", report.distilled_entities.len());
-                    for ent in &report.distilled_entities {
-                        println!("    * Entity: {ent}");
-                    }
-                    0
+        crate::cli::MemoryAction::Consolidate => match core.consolidate_memory() {
+            Ok(report) => {
+                println!("Memory consolidation complete:");
+                println!("  Examined notes:        {}", report.total_notes_examined);
+                println!(
+                    "  Promoted invariants:   {}",
+                    report.promoted_invariants.len()
+                );
+                for inv in &report.promoted_invariants {
+                    println!("    + Invariant: \"{inv}\"");
                 }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    1
+                println!(
+                    "  Detected conflicts:    {}",
+                    report.detected_conflicts.len()
+                );
+                for conf in &report.detected_conflicts {
+                    println!("    ! Conflict: {conf}");
                 }
+                println!(
+                    "  Distilled entities:    {}",
+                    report.distilled_entities.len()
+                );
+                for ent in &report.distilled_entities {
+                    println!("    * Entity: {ent}");
+                }
+                0
             }
-        }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        },
         crate::cli::MemoryAction::Add {
             text,
             kind,

@@ -97,8 +97,16 @@ impl Tool for DocReaderTool {
             Err(e) => return ToolOutput::error(format!("failed to read file: {e}")),
         };
 
-        let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
-        let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(100).min(500) as usize;
+        let offset = args
+            .get("offset")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .max(1) as usize;
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .min(500) as usize;
         let section = args.get("section").and_then(Value::as_str).map(str::trim);
         let view = args.get("view").and_then(Value::as_str).unwrap_or("text");
 
@@ -131,7 +139,9 @@ fn summarize_document(path: &Path, content: &str, ext: &str) -> String {
 
     let mut out = format!(
         "Document: {}\nFormat: {}\nLines: {}\nWords: {}\nBytes: {}\n\n",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("document"),
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document"),
         if ext.is_empty() { "plaintext" } else { ext },
         line_count,
         word_count,
@@ -154,20 +164,39 @@ fn outline_document(content: &str, ext: &str) -> String {
                 return "Empty tabular dataset".into();
             }
             let sep = if ext == "tsv" { '\t' } else { ',' };
-            let headers = lines[0].split(sep).map(str::trim).collect::<Vec<_>>().join(" | ");
-            format!("Columns ({}): {}\nTotal Rows: {}", lines[0].split(sep).count(), headers, lines.len().saturating_sub(1))
+            let headers = lines[0]
+                .split(sep)
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!(
+                "Columns ({}): {}\nTotal Rows: {}",
+                lines[0].split(sep).count(),
+                headers,
+                lines.len().saturating_sub(1)
+            )
         }
         "json" => {
             if let Ok(val) = serde_json::from_str::<Value>(content) {
                 match val {
                     Value::Array(arr) => {
-                        let sample_keys = arr.first().and_then(|item| item.as_object()).map(|obj| {
-                            obj.keys().cloned().collect::<Vec<_>>().join(", ")
-                        }).unwrap_or_else(|| "primitive values".into());
-                        format!("JSON Array with {} elements.\nObject Keys: [{}]", arr.len(), sample_keys)
+                        let sample_keys = arr
+                            .first()
+                            .and_then(|item| item.as_object())
+                            .map(|obj| obj.keys().cloned().collect::<Vec<_>>().join(", "))
+                            .unwrap_or_else(|| "primitive values".into());
+                        format!(
+                            "JSON Array with {} elements.\nObject Keys: [{}]",
+                            arr.len(),
+                            sample_keys
+                        )
                     }
                     Value::Object(obj) => {
-                        let keys = obj.keys().map(|k| format!("- {k}")).collect::<Vec<_>>().join("\n");
+                        let keys = obj
+                            .keys()
+                            .map(|k| format!("- {k}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         format!("JSON Object with keys:\n{keys}")
                     }
                     _ => "Primitive JSON scalar".into(),
@@ -183,11 +212,16 @@ fn outline_document(content: &str, ext: &str) -> String {
                     for (k, v) in tbl {
                         match v {
                             toml::Value::Table(_) => sections.push(format!("- [{k}] (table)")),
-                            toml::Value::Array(arr) => sections.push(format!("- [[{k}]] (array of {} items)", arr.len())),
+                            toml::Value::Array(arr) => {
+                                sections.push(format!("- [[{k}]] (array of {} items)", arr.len()))
+                            }
                             _ => sections.push(format!("- {k}")),
                         }
                     }
-                    format!("TOML Configuration sections & keys:\n{}", sections.join("\n"))
+                    format!(
+                        "TOML Configuration sections & keys:\n{}",
+                        sections.join("\n")
+                    )
                 } else {
                     "TOML Document".into()
                 }
@@ -199,7 +233,11 @@ fn outline_document(content: &str, ext: &str) -> String {
             let mut keys = Vec::new();
             for line in content.lines() {
                 let trimmed = line.trim();
-                if !trimmed.starts_with('#') && trimmed.contains(':') && !line.starts_with(' ') && !line.starts_with('\t') {
+                if !trimmed.starts_with('#')
+                    && trimmed.contains(':')
+                    && !line.starts_with(' ')
+                    && !line.starts_with('\t')
+                {
                     if let Some((k, _)) = trimmed.split_once(':') {
                         let clean_k = k.trim().trim_start_matches('-').trim();
                         if !clean_k.is_empty() {
@@ -221,14 +259,22 @@ fn outline_document(content: &str, ext: &str) -> String {
                 let trimmed = line.trim();
                 if trimmed.starts_with('[') && trimmed.ends_with(']') {
                     sections.push(trimmed.to_string());
-                } else if !trimmed.starts_with('#') && !trimmed.starts_with(';') && (trimmed.contains('=') || trimmed.contains(':')) {
+                } else if !trimmed.starts_with('#')
+                    && !trimmed.starts_with(';')
+                    && (trimmed.contains('=') || trimmed.contains(':'))
+                {
                     key_count += 1;
                 }
             }
             if sections.is_empty() {
                 format!("Key-Value configuration with {key_count} entries.")
             } else {
-                format!("Config with {} sections and {} keys:\n{}", sections.len(), key_count, sections.join("\n"))
+                format!(
+                    "Config with {} sections and {} keys:\n{}",
+                    sections.len(),
+                    key_count,
+                    sections.join("\n")
+                )
             }
         }
         "html" | "htm" | "xml" => {
@@ -245,7 +291,11 @@ fn outline_document(content: &str, ext: &str) -> String {
                         };
                         let clean = text.trim();
                         if !clean.is_empty() {
-                            headings.push(format!("{}: {}", tag.trim_matches(&['<', '>'][..]), clean));
+                            headings.push(format!(
+                                "{}: {}",
+                                tag.trim_matches(&['<', '>'][..]),
+                                clean
+                            ));
                         }
                     }
                 }
@@ -347,12 +397,17 @@ fn render_json_table(content: &str, offset: usize, limit: usize) -> String {
 
     let mut rows = Vec::new();
     for item in &arr[start_idx..end_idx] {
-        let cells: Vec<String> = header_keys.iter().map(|k| {
-            item.get(k).map(|v| match v {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            }).unwrap_or_default()
-        }).collect();
+        let cells: Vec<String> = header_keys
+            .iter()
+            .map(|k| {
+                item.get(k)
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
         rows.push(format!("| {} |", cells.join(" | ")));
     }
 
@@ -421,9 +476,13 @@ fn render_html_table(content: &str, offset: usize, limit: usize) -> String {
 
     while let Some(tr_start) = lower[cursor..].find("<tr") {
         let abs_tr_start = cursor + tr_start;
-        let Some(tr_close) = lower[abs_tr_start..].find('>') else { break; };
+        let Some(tr_close) = lower[abs_tr_start..].find('>') else {
+            break;
+        };
         let content_start = abs_tr_start + tr_close + 1;
-        let Some(tr_end) = lower[content_start..].find("</tr>") else { break; };
+        let Some(tr_end) = lower[content_start..].find("</tr>") else {
+            break;
+        };
         let row_html = &content[content_start..content_start + tr_end];
         cursor = content_start + tr_end + 5;
 
@@ -441,15 +500,25 @@ fn render_html_table(content: &str, offset: usize, limit: usize) -> String {
                 (None, None) => None,
             };
 
-            let Some((cell_start_rel, close_tag)) = next_cell else { break; };
+            let Some((cell_start_rel, close_tag)) = next_cell else {
+                break;
+            };
             let abs_cell_start = cell_cursor + cell_start_rel;
-            let Some(open_tag_close) = row_lower[abs_cell_start..].find('>') else { break; };
+            let Some(open_tag_close) = row_lower[abs_cell_start..].find('>') else {
+                break;
+            };
             let val_start = abs_cell_start + open_tag_close + 1;
-            let val_end = row_lower[val_start..].find(close_tag).map(|idx| val_start + idx).unwrap_or(row_html.len());
+            let val_end = row_lower[val_start..]
+                .find(close_tag)
+                .map(|idx| val_start + idx)
+                .unwrap_or(row_html.len());
 
             // Clean inner tags
             let raw_text = &row_html[val_start..val_end];
-            let clean_text = strip_html_tags(raw_text).replace('|', "\\|").trim().to_string();
+            let clean_text = strip_html_tags(raw_text)
+                .replace('|', "\\|")
+                .trim()
+                .to_string();
             cells.push(clean_text);
             cell_cursor = val_end + close_tag.len();
         }
@@ -500,15 +569,29 @@ fn strip_html_tags(s: &str) -> String {
     out
 }
 
-fn extract_section(content: &str, target_section: &str, ext: &str, offset: usize, limit: usize) -> String {
+fn extract_section(
+    content: &str,
+    target_section: &str,
+    ext: &str,
+    offset: usize,
+    limit: usize,
+) -> String {
     match ext {
         "ini" | "toml" | "conf" => extract_bracket_section(content, target_section, offset, limit),
         _ => extract_heading_section(content, target_section, offset, limit),
     }
 }
 
-fn extract_bracket_section(content: &str, target_section: &str, offset: usize, limit: usize) -> String {
-    let clean_target = target_section.trim().trim_matches(&['[', ']'][..]).to_ascii_lowercase();
+fn extract_bracket_section(
+    content: &str,
+    target_section: &str,
+    offset: usize,
+    limit: usize,
+) -> String {
+    let clean_target = target_section
+        .trim()
+        .trim_matches(&['[', ']'][..])
+        .to_ascii_lowercase();
     let lines: Vec<&str> = content.lines().collect();
 
     let mut in_section = false;
@@ -547,8 +630,17 @@ fn extract_bracket_section(content: &str, target_section: &str, offset: usize, l
     }
 }
 
-fn extract_heading_section(content: &str, target_section: &str, offset: usize, limit: usize) -> String {
-    let clean_target = target_section.trim().trim_start_matches('#').trim().to_ascii_lowercase();
+fn extract_heading_section(
+    content: &str,
+    target_section: &str,
+    offset: usize,
+    limit: usize,
+) -> String {
+    let clean_target = target_section
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .to_ascii_lowercase();
     let lines: Vec<&str> = content.lines().collect();
 
     let mut in_section = false;
@@ -656,7 +748,9 @@ mod tests {
             {"id": "usr-2", "name": "Bob", "active": false}
         ]"#;
         let rendered = render_table_view(json_data, "json", 1, 10);
-        assert!(rendered.contains("id") && rendered.contains("name") && rendered.contains("active"));
+        assert!(
+            rendered.contains("id") && rendered.contains("name") && rendered.contains("active")
+        );
         assert!(rendered.contains("Alice") && rendered.contains("usr-1"));
         assert!(rendered.contains("Bob") && rendered.contains("usr-2"));
         assert!(rendered.contains("Showing rows 1..2 of 2 total rows"));
@@ -681,7 +775,8 @@ mod tests {
 
     #[test]
     fn test_extract_bracket_section_toml() {
-        let toml_doc = "[gateway]\nport = 3000\n[agent]\nname = \"Research\"\nrole = \"researcher\"\n";
+        let toml_doc =
+            "[gateway]\nport = 3000\n[agent]\nname = \"Research\"\nrole = \"researcher\"\n";
         let extracted = extract_section(toml_doc, "agent", "toml", 1, 20);
         assert!(extracted.contains("name = \"Research\""));
         assert!(extracted.contains("role = \"researcher\""));
@@ -698,4 +793,3 @@ mod tests {
         assert!(!extracted.contains("delta"));
     }
 }
-

@@ -452,7 +452,10 @@ pub fn evaluate_requirements_with_evidence(
 /// Structural oracle for tabular data (markdown tables or vak-table/vak-dataframe blocks).
 pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
     // Check vak-table or vak-dataframe
-    if let Some(start) = text.find("```vak-table").or_else(|| text.find("```vak-dataframe")) {
+    if let Some(start) = text
+        .find("```vak-table")
+        .or_else(|| text.find("```vak-dataframe"))
+    {
         let after = &text[start..];
         if let Some(nl) = after.find('\n') {
             let json_part = &after[nl + 1..];
@@ -500,14 +503,13 @@ pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
 
     if table_lines.len() >= 2 {
         fn parse_markdown_row(l: &str) -> Vec<&str> {
-            l.trim_matches('|')
-                .split('|')
-                .map(|c| c.trim())
-                .collect()
+            l.trim_matches('|').split('|').map(|c| c.trim()).collect()
         }
         let header = parse_markdown_row(table_lines[0]);
         let sep = parse_markdown_row(table_lines[1]);
-        let is_sep = sep.iter().all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'));
+        let is_sep = sep
+            .iter()
+            .all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'));
         if is_sep && header.len() == sep.len() && !header.is_empty() {
             let expected_cols = header.len();
             for (i, row_str) in table_lines.iter().skip(2).enumerate() {
@@ -532,7 +534,10 @@ pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
 
 /// Structural oracle for decision/comparison matrices.
 pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
-    if let Some(start) = text.find("```vak-decision").or_else(|| text.find("```vak-comparison")) {
+    if let Some(start) = text
+        .find("```vak-decision")
+        .or_else(|| text.find("```vak-comparison"))
+    {
         let after = &text[start..];
         if let Some(nl) = after.find('\n') {
             let json_part = &after[nl + 1..];
@@ -541,14 +546,21 @@ pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if let Some(options) = v.get("options").and_then(|o| o.as_array()) {
                         if options.len() < 2 {
-                            return Some(Err("decision matrix requires at least 2 options to compare".into()));
+                            return Some(Err(
+                                "decision matrix requires at least 2 options to compare".into(),
+                            ));
                         }
                         for (idx, opt) in options.iter().enumerate() {
                             if opt.get("label").or_else(|| opt.get("name")).is_none() {
-                                return Some(Err(format!("option {idx} is missing a label or name")));
+                                return Some(Err(format!(
+                                    "option {idx} is missing a label or name"
+                                )));
                             }
                         }
-                        return Some(Ok(format!("decision matrix verified: {} options compared", options.len())));
+                        return Some(Ok(format!(
+                            "decision matrix verified: {} options compared",
+                            options.len()
+                        )));
                     }
                 }
             }
@@ -556,11 +568,18 @@ pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
     }
 
     let lower = text.to_ascii_lowercase();
-    if lower.contains("decision matrix") || lower.contains("comparison matrix") || lower.contains("tradeoff analysis") {
+    if lower.contains("decision matrix")
+        || lower.contains("comparison matrix")
+        || lower.contains("tradeoff analysis")
+    {
         if let Some(tab_res) = verify_tabular_data(text) {
             return match tab_res {
-                Ok(msg) => Some(Ok(format!("decision matrix verified via tabular layout ({msg})"))),
-                Err(err) => Some(Err(format!("decision matrix tabular structure malformed: {err}"))),
+                Ok(msg) => Some(Ok(format!(
+                    "decision matrix verified via tabular layout ({msg})"
+                ))),
+                Err(err) => Some(Err(format!(
+                    "decision matrix tabular structure malformed: {err}"
+                ))),
             };
         }
     }
@@ -600,13 +619,23 @@ pub fn verify_claim_citations(text: &str) -> Option<Result<String, String>> {
         return None;
     }
 
-    let mut unlinked: Vec<_> = refs.iter().filter(|r| !defs.contains(*r)).map(|s| s.as_str()).collect();
+    let mut unlinked: Vec<_> = refs
+        .iter()
+        .filter(|r| !defs.contains(*r))
+        .map(|s| s.as_str())
+        .collect();
     unlinked.sort();
 
     if unlinked.is_empty() {
-        Some(Ok(format!("claim citations verified: {} citations linked", refs.len())))
+        Some(Ok(format!(
+            "claim citations verified: {} citations linked",
+            refs.len()
+        )))
     } else {
-        Some(Err(format!("unlinked footnote citations: {}", unlinked.join(", "))))
+        Some(Err(format!(
+            "unlinked footnote citations: {}",
+            unlinked.join(", ")
+        )))
     }
 }
 
@@ -654,9 +683,7 @@ pub fn evaluate_requirements_with_state(
             || text.contains("\"semantic_type\": \"evidence\"")
     });
     let has_reference = response.is_some_and(|text| {
-        text.contains("http://")
-            || text.contains("https://")
-            || text.contains("[^")
+        text.contains("http://") || text.contains("https://") || text.contains("[^")
     }) || has_structured_evidence;
     spec.requirements
         .iter()
@@ -1182,18 +1209,25 @@ mod tests {
         let valid_block = "```vak-table\n{\"columns\": [\"A\", \"B\"], \"rows\": [[\"1\", \"2\"], [\"3\", \"4\"]]}\n```";
         assert!(verify_tabular_data(valid_block).unwrap().is_ok());
 
-        let invalid_block = "```vak-table\n{\"columns\": [\"A\", \"B\"], \"rows\": [[\"1\"], [\"3\", \"4\"]]}\n```";
+        let invalid_block =
+            "```vak-table\n{\"columns\": [\"A\", \"B\"], \"rows\": [[\"1\"], [\"3\", \"4\"]]}\n```";
         assert!(verify_tabular_data(invalid_block).unwrap().is_err());
 
         // Decision matrix vak block
         let valid_matrix = "```vak-decision\n{\"options\": [{\"label\": \"Option A\"}, {\"label\": \"Option B\"}]}\n```";
         assert!(verify_decision_matrix(valid_matrix).unwrap().is_ok());
 
-        let single_option_matrix = "```vak-decision\n{\"options\": [{\"label\": \"Option A\"}]}\n```";
-        assert!(verify_decision_matrix(single_option_matrix).unwrap().is_err());
+        let single_option_matrix =
+            "```vak-decision\n{\"options\": [{\"label\": \"Option A\"}]}\n```";
+        assert!(
+            verify_decision_matrix(single_option_matrix)
+                .unwrap()
+                .is_err()
+        );
 
         // Claim citations
-        let valid_citations = "According to study[^1] and report[^2].\n\n[^1]: Reference one\n[^2]: Reference two";
+        let valid_citations =
+            "According to study[^1] and report[^2].\n\n[^1]: Reference one\n[^2]: Reference two";
         assert!(verify_claim_citations(valid_citations).unwrap().is_ok());
 
         let unlinked_citations = "According to study[^1] and missing[^3].\n\n[^1]: Reference one";
@@ -1201,14 +1235,29 @@ mod tests {
 
         // RequirementKind::Integrity evaluation
         let mut spec = OutcomeSpec::from_reading("produce analysis", &Reading::general(), 1);
-        spec.merge_declared_requirement("integ-1", "integrity", "verify data integrity", "must", None).unwrap();
+        spec.merge_declared_requirement(
+            "integ-1",
+            "integrity",
+            "verify data integrity",
+            "must",
+            None,
+        )
+        .unwrap();
 
-        let good_eval = evaluate_requirements_with_state(&spec, Some(valid_table), EvidenceState::None);
-        let integ_eval = good_eval.iter().find(|e| e.requirement_id == "integ-1").unwrap();
+        let good_eval =
+            evaluate_requirements_with_state(&spec, Some(valid_table), EvidenceState::None);
+        let integ_eval = good_eval
+            .iter()
+            .find(|e| e.requirement_id == "integ-1")
+            .unwrap();
         assert_eq!(integ_eval.status, RequirementStatus::Met);
 
-        let bad_eval = evaluate_requirements_with_state(&spec, Some(ragged_table), EvidenceState::None);
-        let bad_integ = bad_eval.iter().find(|e| e.requirement_id == "integ-1").unwrap();
+        let bad_eval =
+            evaluate_requirements_with_state(&spec, Some(ragged_table), EvidenceState::None);
+        let bad_integ = bad_eval
+            .iter()
+            .find(|e| e.requirement_id == "integ-1")
+            .unwrap();
         assert_eq!(bad_integ.status, RequirementStatus::Unmet);
     }
 }
