@@ -2958,6 +2958,17 @@ impl Core {
         {
             project.identity = Some(text.trim().to_string());
         }
+        // Learned procedural invariants from memory automatically accumulate into guardrails.
+        // This closes the self-evolution loop: an invariant persisted via reflection or remember
+        // becomes an active, immutable operational constraint in all future turns.
+        for note in memory::list_notes(&self.sessions_home(), self.cwd()) {
+            if note.kind == "invariant" || note.kind == "procedural" {
+                let trimmed = note.text.trim();
+                if !trimmed.is_empty() && !project.guardrails.iter().any(|g| g == trimmed) {
+                    project.guardrails.push(trimmed.to_string());
+                }
+            }
+        }
         if !project.is_empty() {
             // The fix for the hole this design opened with: a project layer
             // is untrusted config until the user says otherwise, exactly
@@ -6137,6 +6148,42 @@ mod channel_mcp_network_tests {
                 .any(|n| matches!(n.as_str(), "remember" | "propose_skill" | "session_search"))
         );
         assert!(!core.channel_tool_allowed("remember"));
+    }
+
+    #[tokio::test]
+    async fn learned_invariants_from_memory_become_prompt_guardrails() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = dir.path().join("workspace");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let core = Core::new_with_trust(cwd.clone(), true).unwrap();
+        core.set_sessions_home(home.clone());
+
+        // Persist an invariant note to memory.
+        crate::memory::append_note(
+            &home,
+            &cwd,
+            "invariant",
+            "safety",
+            "sess-1",
+            "always verify database schema before migration",
+        )
+        .unwrap();
+
+        let (seed, _, _) = crate::prompts::seed(crate::APP_VERSION);
+        let layers = core.prompt_layers(seed);
+        let workspace_layer = layers
+            .iter()
+            .find(|l| l.layer == crate::prompts::PromptLayer::Workspace)
+            .expect("workspace layer should be present from learned invariant");
+        assert!(
+            workspace_layer
+                .content
+                .guardrails
+                .contains(&"always verify database schema before migration".into()),
+            "learned invariant must appear in workspace guardrails"
+        );
     }
 
     #[test]

@@ -143,9 +143,9 @@ fn append_block(
 ) -> Result<NoteBlock, String> {
     if !matches!(
         kind,
-        "fact" | "decision" | "preference" | "reference" | "note"
+        "fact" | "decision" | "preference" | "reference" | "note" | "invariant" | "procedural"
     ) {
-        return Err("unknown note kind; expected fact, decision, preference, or reference".into());
+        return Err("unknown note kind; expected fact, decision, preference, reference, invariant, or procedural".into());
     }
     validate_field("kind", kind, 32)?;
     validate_field("tag", tag, 96)?;
