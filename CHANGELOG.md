@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.87 — 2026-09-14
+
+- Directory path navigation: routed directory and folder paths (e.g. `.vak/scratch/`, workspace directories) away from Artifact Canvas directly into the Workbench Files panel (`openWorkbenchFolder()`), displaying generated sandbox files, sizes, and previews.
+- Explicit folder vs deliverable classification: added `isDirectoryPath` and `isScratchDirectory` checks to ensure folder paths ending with `/` or without extensions are never classified as previewable artifact files in chat markdown or presentation blocks.
+- Reactive Workbench tab synchronization: lifted `workbenchTab` into shared store state, enabling one-click deep linking into the Files/Artifacts viewer or Terminal execution viewer from any markdown or presentation action.
+
 ## 3.0.86 — 2026-09-14
 
 - Universal sandbox & authentic deliverable resolution: eliminated dummy `dashboard.html` and code-specific bias from system prompt and contracts. The execution sandbox is universal across research, data analysis, writing, operations, engineering, and media (spreadsheets, PDFs, charts, data files, prototypes).
