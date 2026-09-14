@@ -74,14 +74,19 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
           case "strikethrough":
             return <s><InlineSequence nodes={node.content} /></s>;
           case "code": {
-            const pathLike = /^[\w@.-]+(\/[\w@.-]+)+$|^\.[\w/-]+$/.test(node.code);
-            const isPreview = pathLike && isPreviewableArtifact(node.code);
+            const raw = node.code.trim();
+            const clean = raw.replace(/[.,;:!?)]'"`]+$/, "").trim();
+            const pathLike =
+              /^[\w@.-]+(\/[\w@.-]+)+$/.test(clean) ||
+              /^\.[\w/-]+$/.test(clean) ||
+              /\.\w{1,6}$/.test(clean);
+            const isPreview = pathLike && isPreviewableArtifact(clean);
             const handleAction = () => {
               if (!pathLike) return;
               if (isPreview) {
-                openArtifactPathInCanvas(node.code);
+                openArtifactPathInCanvas(clean);
               } else {
-                openInEditor(node.code);
+                openInEditor(clean);
               }
             };
             return (

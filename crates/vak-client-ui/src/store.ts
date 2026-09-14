@@ -309,7 +309,7 @@ export function toggleCanvasMode() {
 /** Determine whether a file path points to an artifact previewable in the Artifact Canvas. */
 export function isPreviewableArtifact(path: string | null | undefined): boolean {
   if (!path) return false;
-  const p = path.toLowerCase().trim();
+  const p = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim().toLowerCase();
   return (
     p.endsWith(".html") ||
     p.endsWith(".htm") ||
@@ -322,17 +322,34 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
     p.endsWith(".gif") ||
     p.endsWith(".webp") ||
     p.endsWith(".ico") ||
+    p.endsWith(".bmp") ||
     p.includes(".vak/scratch/")
   );
 }
 
 /** Open any artifact path directly in the Artifact Canvas. */
 export function openArtifactPathInCanvas(path: string, html?: string) {
-  const filename = path.split("/").pop() || "Artifact Preview";
+  let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+  const executions = workbenchExecutions();
+  // Check if there is an execution artifact matching this filename or ending with this path
+  for (const exec of executions) {
+    const match = exec.artifacts.find(
+      (a) =>
+        a.path === clean ||
+        a.path.endsWith("/" + clean) ||
+        clean.endsWith("/" + a.path) ||
+        a.path.split("/").pop() === clean.split("/").pop()
+    );
+    if (match) {
+      clean = match.path;
+      break;
+    }
+  }
+  const filename = clean.split("/").pop() || "Artifact Preview";
   openArtifactCanvas({
-    id: path,
+    id: clean,
     title: filename,
-    artifactPath: path,
+    artifactPath: clean,
     html,
     timestamp: Date.now(),
   });

@@ -23,15 +23,17 @@ function esc(s: string): string {
 function inline(s: string): string {
   let out = esc(s);
   // inline code; path-looking spans become clickable editor links
-  out = out.replace(/`([^`\n]+)`/g, (_m, code: string) => {
+  out = out.replace(/`([^`\n]+)`/g, (_m, rawCode: string) => {
+    const code = rawCode.trim();
+    const cleanPath = code.replace(/[.,;:!?)]'"`]+$/, "").trim();
     const isPath =
-      /^[\w@.-]+(\/[\w@.-]+)+$/.test(code) || /^\.[\w/-]+$/.test(code) || /\.\w{1,6}$/.test(code);
+      /^[\w@.-]+(\/[\w@.-]+)+$/.test(cleanPath) || /^\.[\w/-]+$/.test(cleanPath) || /\.\w{1,6}$/.test(cleanPath);
     const isPreviewable = isPath && (
-      /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico)$/i.test(code) ||
-      code.includes(".vak/scratch/")
+      /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp)$/i.test(cleanPath) ||
+      cleanPath.includes(".vak/scratch/")
     );
     const title = isPreviewable ? "open in Artifact Canvas" : "open in editor";
-    return `<code class="ic"${isPath ? ` data-path="true" data-previewable="${isPreviewable ? 'true' : 'false'}" title="${title}"` : ""}>${code}</code>`;
+    return `<code class="ic"${isPath ? ` data-path="true" data-previewable="${isPreviewable ? 'true' : 'false'}" data-clean-path="${cleanPath}" title="${title}"` : ""}>${code}</code>`;
   });
   // bold then italic then strikethrough (order matters: bold before italic so
   // `**x**` isn't first read as two adjacent `*x*` italics)

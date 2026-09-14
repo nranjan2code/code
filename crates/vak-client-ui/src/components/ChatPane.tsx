@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
@@ -23,6 +23,7 @@ function stripVakFence(text: string): string {
   }
   return trimmed || text;
 }
+
 
 
 /**
@@ -580,26 +581,71 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     const parts = () => content.parts;
     const displayText = () => parts().filter((part) => part.type === "text").map((part) => part.text).join("\n\n");
 
-    const mentionedDeliverables = createMemo(() => {
+    const turnDeliverables = createMemo(() => {
       if (props.item.streaming) return [];
-      const text = props.item.text;
-      const seen = new Set<string>();
+      const sid = props.sessionId ?? activeId();
+      const allItems = sid ? itemsOf(sid) : [];
+      const myIdx = allItems.findIndex((it) => it.kind === "assistant" && (it as any).key === props.item.key);
+
+      // Gather all tool IDs belonging to this turn (from previous user turn to this assistant turn)
+      const turnToolIds = new Set<string>();
+      if (myIdx > 0) {
+        for (let i = myIdx - 1; i >= 0; i--) {
+          const prev = allItems[i];
+          if (prev.kind === "user") break;
+          if (prev.kind === "tool" && prev.id) {
+            turnToolIds.add(prev.id);
+          }
+        }
+      }
+
       const results: Array<{ name: string; path: string }> = [];
-      const re = /(?:`([^`\n]+)`|\[(?:[^\]]*)\]\(([^)\n]+)\)|(?:\.vak\/scratch\/[^\s,;'")\]]+)|(?:[\w./-]+\.(?:html|htm|pdf|svg|png|jpe?g|webp)))/gi;
+      const seenPaths = new Set<string>();
+      const executions = workbenchExecutions();
+
+      // 1. Add actual artifacts from executions that ran in this turn
+      for (const exec of executions) {
+        if (turnToolIds.has(exec.id) || (turnToolIds.size === 0 && (!exec.ownerSessionId || exec.ownerSessionId === sid))) {
+          for (const art of exec.artifacts) {
+            if (isPreviewableArtifact(art.path) && !seenPaths.has(art.path)) {
+              seenPaths.add(art.path);
+              results.push({
+                name: art.path.split("/").pop() || art.path,
+                path: art.path,
+              });
+            }
+          }
+        }
+      }
+
+      // 2. Extract referenced deliverables from prose, stripping trailing punctuation
+      const text = props.item.text;
+      const re = /(?:`([^`\n]+)`|\[(?:[^\]]*)\]\(([^)\n]+)\)|(?:\.vak\/scratch\/[^\s,;'")\]]+)|(?:[\w./-]+\.(?:html|htm|pdf|svg|png|jpe?g|webp|bmp)))/gi;
       let m: RegExpExecArray | null;
       while ((m = re.exec(text)) !== null) {
-        const raw = (m[1] || m[2] || m[0] || "").trim();
+        let raw = (m[1] || m[2] || m[0] || "").trim();
+        raw = raw.replace(/[.,;:!?)]'"`]+$/, "").trim();
         if (
           raw &&
           isPreviewableArtifact(raw) &&
           !raw.includes(" ") &&
-          !raw.startsWith("http") &&
-          !seen.has(raw)
+          !raw.startsWith("http")
         ) {
-          seen.add(raw);
-          results.push({ name: raw.split("/").pop() || raw, path: raw });
+          // If this matches an existing execution artifact basename, resolve to full artifact path
+          const matchingExecArt = executions
+            .flatMap((e) => e.artifacts)
+            .find((a) => a.path === raw || a.path.endsWith("/" + raw) || a.path.split("/").pop() === raw.split("/").pop());
+          const finalPath = matchingExecArt ? matchingExecArt.path : raw;
+          if (!seenPaths.has(finalPath)) {
+            seenPaths.add(finalPath);
+            results.push({
+              name: matchingExecArt ? (matchingExecArt.path.split("/").pop() || finalPath) : (raw.split("/").pop() || raw),
+              path: finalPath,
+            });
+          }
         }
       }
+
       return results;
     });
 
@@ -620,9 +666,9 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
           <For each={parts()}>{(part) => part.type === "text"
             ? <Markdown text={part.text} streaming={props.item.streaming} />
             : <StructuredView output={part.output} fallback={part.source} sessionId={props.sessionId ?? undefined} />}</For>
-          <Show when={!props.item.streaming && mentionedDeliverables().length > 0}>
+          <Show when={!props.item.streaming && turnDeliverables().length > 0}>
             <div class="turn-artifacts-container">
-              <For each={mentionedDeliverables()}>
+              <For each={turnDeliverables()}>
                 {(art) => (
                   <div class="turn-artifact-chip">
                     <span class="artifact-chip-icon"><Icon name="preview" size={14} /></span>

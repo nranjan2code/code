@@ -83,12 +83,14 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
       return;
     }
     const code = target.closest("code.ic[data-path]");
-    if (code && /^[\w@.-]+(\/[\w@.-]+)+$|^\.[\w/-]+$/.test(code.textContent ?? "")) {
-      const p = (code.textContent ?? "").trim();
-      if (isPreviewableArtifact(p)) {
-        openArtifactPathInCanvas(p);
-      } else {
-        openInEditor(p);
+    if (code) {
+      const p = code.getAttribute("data-clean-path") || (code.textContent ?? "").trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+      if (p) {
+        if (isPreviewableArtifact(p)) {
+          openArtifactPathInCanvas(p);
+        } else {
+          openInEditor(p);
+        }
       }
     }
   };

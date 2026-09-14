@@ -2,10 +2,10 @@
 
 ## 3.0.86 — 2026-09-14
 
-- Seamless one-click Artifact Canvas access: added proactive outcome deliverable chips directly in chat under assistant turns that create or reference previewable files (`.vak/scratch/`, HTML, SVG, PDF, images).
-- Smart markdown link handling: clicking previewable artifact paths in chat prose or code tags immediately launches the full/split Artifact Canvas instead of routing to the raw text editor dock.
-- Workbench Canvas pop-out: added "Open in Canvas" actions to Workbench preview header, sidebar lists, and execution artifact rows, eliminating cramped sidebar previews.
-- Prompt contract alignment: updated system prompt and sandbox contract with `ui.preview` presentation recipes and Artifact Canvas delivery instructions.
+- Universal sandbox & authentic deliverable resolution: eliminated dummy `dashboard.html` and code-specific bias from system prompt and contracts. The execution sandbox is universal across research, data analysis, writing, operations, engineering, and media (spreadsheets, PDFs, charts, data files, prototypes).
+- Dynamic execution artifact discovery: chat outcome chips now derive directly from real execution events and workbench records with authentic filenames, sizes, and MIME types rather than brittle prose regexes.
+- Robust path and punctuation normalization: server-side `resolve_confined_file` and client canvas loaders now automatically sanitize trailing punctuation (e.g. trailing periods) and resolve relative or bare filenames directly to execution scratch subdirectories (`.vak/scratch/<execution_id>/...`).
+- Seamless one-click Artifact Canvas access: proactive outcome deliverable chips under chat turns, smart markdown link navigation routing previewable artifacts to Canvas, and Workbench viewer popout actions.
 - Presentation store migration fix: resolved presentation store revision conflict on built-in presentation seeds during fresh app installation.
 
 ## 3.0.85 — 2026-09-14

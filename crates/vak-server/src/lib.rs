@@ -8581,8 +8581,61 @@ fn confined_path(cwd: &std::path::Path, input: &str) -> Option<std::path::PathBu
 }
 
 fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::PathBuf> {
+    let clean = input
+        .trim()
+        .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '\'', '"']);
     let active = state.active_core();
-    confined_path(active.cwd(), input).or_else(|| confined_path(state.core.cwd(), input))
+
+    // 1. Direct workspace check
+    if let Some(p) = confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean)) {
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Quarantine scratch check: if file is in .vak/scratch/<subdirs>
+    for cwd in [active.cwd(), state.core.cwd()] {
+        let scratch_dir = cwd.join(".vak").join("scratch");
+        if scratch_dir.is_dir() {
+            let rel = clean
+                .strip_prefix("./")
+                .unwrap_or(clean)
+                .strip_prefix(".vak/scratch/")
+                .unwrap_or_else(|| clean.strip_prefix("scratch/").unwrap_or(clean));
+
+            let direct = scratch_dir.join(rel);
+            if direct.is_file() {
+                if let Some(canon) = confined_path(cwd, &direct.display().to_string()) {
+                    return Some(canon);
+                }
+            }
+
+            // Search execution subdirectories under .vak/scratch
+            if let Ok(entries) = std::fs::read_dir(&scratch_dir) {
+                for entry in entries.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let sub_path = entry.path().join(rel);
+                        if sub_path.is_file() {
+                            if let Some(canon) = confined_path(cwd, &sub_path.display().to_string()) {
+                                return Some(canon);
+                            }
+                        }
+                        if let Some(filename) = std::path::Path::new(rel).file_name() {
+                            let by_name = entry.path().join(filename);
+                            if by_name.is_file() {
+                                if let Some(canon) = confined_path(cwd, &by_name.display().to_string()) {
+                                    return Some(canon);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: standard confined_path even if not yet on disk (needed for write_file)
+    confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
 }
 
 async fn read_file(
