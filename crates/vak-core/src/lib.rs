@@ -10,6 +10,7 @@ pub mod checkpoints;
 pub mod commitments;
 pub mod custom_commands;
 pub mod digest;
+pub mod entities;
 pub mod files;
 pub mod finops;
 pub mod health;

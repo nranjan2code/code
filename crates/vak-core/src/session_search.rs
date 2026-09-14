@@ -181,6 +181,32 @@ impl vak_tools::Tool for SessionSearchTool {
         } else {
             std::collections::HashSet::new()
         };
+        for entity in crate::entities::list_entities(&home, Some(&cwd)) {
+            extras.push(ExternalDoc {
+                id: format!("entity/{}", entity.id),
+                text: format!(
+                    "[entity:{}] {} — {}{}",
+                    entity.entity_type,
+                    entity.name,
+                    entity.summary,
+                    if entity.attributes.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " ({})",
+                            entity
+                                .attributes
+                                .iter()
+                                .map(|(k, v)| format!("{k}: {v}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                ),
+                ts: Some(entity.updated_at),
+                role: Some("entity".into()),
+            });
+        }
         let result = tokio::task::spawn_blocking(move || {
             let mut hits = search_extended(
                 &home,
@@ -415,5 +441,57 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("one"), "{}", out.content);
         assert!(!out.content.contains("two"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn entities_recalled_via_session_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = dir.path().join("workspace");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        // Create an entity in this workspace.
+        crate::entities::upsert_entity(
+            &home,
+            Some(&cwd),
+            crate::entities::EntityRecord {
+                id: "ent-apollo-11".into(),
+                name: "Project Apollo".into(),
+                entity_type: "mission".into(),
+                summary: "Lunar landing mission targeting Sea of Tranquility".into(),
+                attributes: Default::default(),
+                relations: Default::default(),
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .unwrap();
+
+        let tool = SessionSearchTool {
+            sessions_home: home,
+            cwd: cwd.clone(),
+            exclude_session_id: String::new(),
+            agent_id: None,
+            audience_id: None,
+        };
+        let ctx = vak_tools::ToolContext {
+            cwd,
+            cancel: tokio_util::sync::CancellationToken::new(),
+            limits: Default::default(),
+            sandbox: None,
+            sandbox_sink: None,
+        };
+        let out = tool
+            .execute(
+                &serde_json::json!({"query": "Sea of Tranquility", "limit": 5}),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("Project Apollo") && out.content.contains("mission"),
+            "{}",
+            out.content
+        );
     }
 }
