@@ -70,7 +70,9 @@ pub use authority::{
     ApprovalCeiling, Authority, Autonomy, CapabilityDecision, CapabilityKind, CapabilityRequest,
     Envelope, Escalation, GateFallback, PermissionCeiling,
 };
-pub use axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Satisfaction, Stakes};
+pub use axes::{
+    Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Satisfaction, Stakes,
+};
 pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
     OutputShape, Posture, StopProfile, Urgency, derive,

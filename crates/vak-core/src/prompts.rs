@@ -326,6 +326,8 @@ pub struct RuntimeSections {
     pub standing: String,
     /// Live, code-owned inventory of the sandbox runtime.
     pub runtime: String,
+    /// Per-turn epistemic cognitive stance and guidelines derived from intent.
+    pub epistemic_stance: String,
     /// Per-turn clock context; calendar reasoning must not rely on stale history.
     pub temporal: String,
 }
@@ -560,6 +562,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
         &runtime.skills,
         &runtime.mcp,
         &runtime.standing,
+        &runtime.epistemic_stance,
         &runtime.temporal,
     ] {
         if !section.trim().is_empty() {
@@ -1097,5 +1100,19 @@ mod tests {
             &runtime,
         );
         assert_ne!(base.fingerprint(), edited.fingerprint());
+    }
+
+    #[test]
+    fn epistemic_stance_splices_cleanly_into_prompt() {
+        let runtime = RuntimeSections {
+            epistemic_stance: "\nEpistemic stance: analytical\n- Scrutinize claims objectively. Separate verified facts from inferences.".into(),
+            ..Default::default()
+        };
+        let out = resolve(
+            &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
+            &runtime,
+        );
+        assert!(out.text.contains("Epistemic stance: analytical"));
+        assert!(out.text.contains("Scrutinize claims objectively"));
     }
 }

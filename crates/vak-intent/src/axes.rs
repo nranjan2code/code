@@ -518,6 +518,103 @@ impl Attendance {
     }
 }
 
+/// The epistemic cognitive stance for this turn — how the model postures its reasoning,
+/// evidence evaluation, and communication across any domain of work.
+///
+/// While `Act` describes *what* action is being requested, `EpistemicStance` defines
+/// *how to think, inquire, and communicate*. This is completely domain-neutral:
+/// it governs financial modeling, legal research, scientific synthesis, creative writing,
+/// system operations, data analysis, and software engineering with equal fidelity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum EpistemicStance {
+    /// Social, relational, or conversational. Low cognitive ceremony, direct and friendly.
+    Conversational,
+    /// Direct explanation or recall from existing knowledge. Clear and concise.
+    #[default]
+    DirectAnswer,
+    /// Critical evaluation, synthesis, and deduction. Claims are separated from verified
+    /// facts, counter-hypotheses are evaluated, and assertions require citations.
+    Analytical,
+    /// Breadth-first mapping, discovery, and search. Systematically surveys options,
+    /// trade-offs, and unknowns without premature closure.
+    Exploratory,
+    /// High-density synthesis, creation, or composition (prose, plans, designs, code, briefs).
+    /// Focuses on tone alignment, structural elegance, and publication-ready finish.
+    Generative,
+    /// State-changing action, execution, or environment mutation. Emphasizes inspecting
+    /// state first, minimal blast radius, invariant verification, and rollback awareness.
+    Operational,
+    /// Root-cause investigation, discrepancy audit, or debugging. Isolates underlying causes
+    /// before proposing repairs; tests hypotheses against observed evidence.
+    Diagnostic,
+}
+
+impl EpistemicStance {
+    pub const ALL: [EpistemicStance; 7] = [
+        EpistemicStance::Conversational,
+        EpistemicStance::DirectAnswer,
+        EpistemicStance::Analytical,
+        EpistemicStance::Exploratory,
+        EpistemicStance::Generative,
+        EpistemicStance::Operational,
+        EpistemicStance::Diagnostic,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EpistemicStance::Conversational => "conversational",
+            EpistemicStance::DirectAnswer => "direct-answer",
+            EpistemicStance::Analytical => "analytical",
+            EpistemicStance::Exploratory => "exploratory",
+            EpistemicStance::Generative => "generative",
+            EpistemicStance::Operational => "operational",
+            EpistemicStance::Diagnostic => "diagnostic",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<EpistemicStance> {
+        EpistemicStance::ALL
+            .into_iter()
+            .find(|s| s.as_str() == value.trim().to_ascii_lowercase())
+    }
+
+    /// Concise, universal operating guidelines for this stance.
+    /// Free of domain-specific jargon; applies equally across all disciplines.
+    pub fn guideline_prompt(self) -> &'static str {
+        match self {
+            EpistemicStance::Conversational => {
+                "Engage directly and naturally. Keep replies concise and conversational; \
+                 do not force structured workflows or unprompted actions when simple dialogue is requested."
+            }
+            EpistemicStance::DirectAnswer => {
+                "Provide a clear, direct answer to the question. Avoid unnecessary meta-commentary, \
+                 unsolicited execution plans, or unwarranted tool calls when knowledge in context suffices."
+            }
+            EpistemicStance::Analytical => {
+                "Scrutinize claims objectively. Separate verified facts from inferences, evaluate \
+                 counter-arguments or alternative explanations, and cite sources for every factual assertion."
+            }
+            EpistemicStance::Exploratory => {
+                "Map the landscape systematically. Prioritize breadth, surface key trade-offs, \
+                 and report gaps, uncertainties, or negative findings honestly without forcing premature conclusions."
+            }
+            EpistemicStance::Generative => {
+                "Focus on polished, high-density craftsmanship. Align voice and tone to the audience, \
+                 eliminate filler and boilerplate, and deliver complete, publication-ready outputs."
+            }
+            EpistemicStance::Operational => {
+                "Inspect existing state before acting. Minimize blast radius, verify outcomes \
+                 immediately after each step, and ensure changes can be safely understood or reversed."
+            }
+            EpistemicStance::Diagnostic => {
+                "Isolate root causes before applying fixes. Form explicit hypotheses, test them \
+                 against observed evidence, and verify edge cases before concluding an issue is resolved."
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -570,6 +667,13 @@ mod tests {
                 Satisfaction::parse(satisfaction.as_str()),
                 Some(satisfaction)
             );
+        }
+        for stance in EpistemicStance::ALL {
+            assert_eq!(
+                EpistemicStance::parse(stance.as_str()),
+                Some(stance)
+            );
+            assert!(!stance.guideline_prompt().is_empty());
         }
     }
 

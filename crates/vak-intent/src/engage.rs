@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{Authority, Autonomy, GateFallback};
-use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Stakes};
+use crate::axes::{Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Stakes};
 use crate::limits::Limits;
 use crate::reading::Reading;
 
@@ -241,6 +241,9 @@ pub struct Posture {
     pub demand: DemandHint,
     pub stop: StopProfile,
     pub context: ContextProfile,
+    /// The epistemic cognitive stance for this turn.
+    #[serde(default)]
+    pub epistemic_stance: EpistemicStance,
     /// The code-owned block this engagement contributes to the prompt.
     /// `None` when there is nothing worth spending tokens to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -278,6 +281,7 @@ impl Engagement {
                 },
                 stop: StopProfile::Message,
                 context: ContextProfile::Recall,
+                epistemic_stance: EpistemicStance::DirectAnswer,
                 note: None,
             },
         }
@@ -324,6 +328,11 @@ impl Engagement {
                 },
                 stop: self.posture.stop,
                 context: self.posture.context,
+                epistemic_stance: if other.posture.epistemic_stance != EpistemicStance::DirectAnswer {
+                    other.posture.epistemic_stance
+                } else {
+                    self.posture.epistemic_stance
+                },
                 note: self.posture.note.clone().or(other.posture.note.clone()),
             },
         }
@@ -513,10 +522,40 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
         },
         stop: derive_stop(reading),
         context: derive_context(reading),
+        epistemic_stance: derive_epistemic_stance(reading),
         note: derive_note(reading, hil),
     };
 
     Engagement { limits, posture }
+}
+
+/// Derive the appropriate epistemic cognitive stance from the reading.
+///
+/// Ensures the model adopts the right operational and intellectual posture
+/// across any domain of work without domain-specific stereotyping.
+pub fn derive_epistemic_stance(reading: &Reading) -> EpistemicStance {
+    match reading.act {
+        Act::Converse => EpistemicStance::Conversational,
+        Act::Answer => {
+            if reading.evidence.rank() >= Evidence::Cited.rank() {
+                EpistemicStance::Analytical
+            } else {
+                EpistemicStance::DirectAnswer
+            }
+        }
+        Act::Locate => EpistemicStance::Exploratory,
+        Act::Analyze => EpistemicStance::Analytical,
+        Act::Author => EpistemicStance::Generative,
+        Act::Modify | Act::Operate | Act::Govern => EpistemicStance::Operational,
+        Act::Verify => EpistemicStance::Diagnostic,
+        Act::Orchestrate => {
+            if reading.acts().iter().any(|act| act.is_effectful()) {
+                EpistemicStance::Operational
+            } else {
+                EpistemicStance::Exploratory
+            }
+        }
+    }
 }
 
 fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {

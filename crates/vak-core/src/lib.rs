@@ -2816,6 +2816,15 @@ impl Core {
     /// The full composition, with the per-layer descriptors the ledger and
     /// the editing surfaces need (docs/design/45-prompt-layers.md).
     pub fn resolve_prompt(&self, capabilities: &[CapabilityDescriptor]) -> prompts::Resolution {
+        self.resolve_prompt_with_stance(capabilities, None)
+    }
+
+    /// Compose the prompt, optionally informing the runtime of the epistemic cognitive stance.
+    pub fn resolve_prompt_with_stance(
+        &self,
+        capabilities: &[CapabilityDescriptor],
+        stance: Option<vak_intent::EpistemicStance>,
+    ) -> prompts::Resolution {
         let server_caps = capabilities
             .iter()
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
@@ -2868,6 +2877,14 @@ impl Core {
         let has_bash = capabilities
             .iter()
             .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash");
+        let epistemic_stance = match stance {
+            Some(s) => format!(
+                "\nEpistemic stance: {}\n- {}",
+                s.as_str(),
+                s.guideline_prompt()
+            ),
+            None => String::new(),
+        };
         let runtime = prompts::RuntimeSections {
             capability_contract,
             sandbox_contract: if has_bash {
@@ -2884,6 +2901,7 @@ impl Core {
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,
+            epistemic_stance,
             temporal: format!(
                 "\nTemporal context: current UTC instant {}; local date/time {} (system timezone {}). Treat relative dates as ambiguous unless the user's timezone is known.",
                 chrono::Utc::now().to_rfc3339(),
@@ -4730,7 +4748,12 @@ impl Core {
         // Prompt text is a projection of the same selected descriptor set as
         // the schemas. This is deliberately after intent/policy filtering so
         // a removed or withheld capability cannot remain in prose.
-        cfg.system_prompt = self.resolve_prompt(&turn_capabilities.descriptors).text;
+        cfg.system_prompt = self
+            .resolve_prompt_with_stance(
+                &turn_capabilities.descriptors,
+                Some(engagement.posture.epistemic_stance),
+            )
+            .text;
 
         let work_config = self.effective_work();
         // Managed-ness follows from the reading's horizon rather than from a

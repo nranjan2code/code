@@ -30,8 +30,8 @@ fn builtin_domains(name: &str) -> Serves {
     use Domain::*;
     let domains: &[Domain] = match name {
         "read" | "glob" | "grep" => &[Filesystem],
-        "write" | "edit" => &[Filesystem, Documents],
-        "bash" => &[CodeExec, Filesystem],
+        "write" | "edit" => &[Documents],
+        "bash" => &[CodeExec],
         "webfetch" => &[Web, LiveData],
         "browse" => &[Web, LiveData],
         // The broker to every external integration. Claiming `live-data`
