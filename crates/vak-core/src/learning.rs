@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::memory;
 
-const KINDS: [&str; 4] = ["fact", "decision", "preference", "reference"];
+const KINDS: [&str; 5] = ["fact", "decision", "preference", "reference", "invariant"];
 
 // ---- remember ---------------------------------------------------------------
 
@@ -39,7 +39,7 @@ impl vak_tools::Tool for RememberTool {
             "properties": {
                 "note": {"type": "string", "description": "The content to persist"},
                 "kind": {"type": "string", "enum": KINDS.to_vec(),
-                         "description": "One of fact/decision/preference/reference (default fact)"},
+                         "description": "One of fact/decision/preference/reference/invariant (default fact)"},
                 "tag":  {"type": "string", "description": "Short slug for grouping, e.g. 'deploy-rollbacks'"}
             },
             "required": ["note"]
