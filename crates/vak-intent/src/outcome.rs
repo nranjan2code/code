@@ -198,6 +198,7 @@ pub enum RequirementKind {
     Deliverable,
     Evidence,
     Constraint,
+    Integrity,
 }
 
 /// A checkable expectation attached to one outcome.
@@ -448,6 +449,167 @@ pub fn evaluate_requirements_with_evidence(
     )
 }
 
+/// Structural oracle for tabular data (markdown tables or vak-table/vak-dataframe blocks).
+pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
+    // Check vak-table or vak-dataframe
+    if let Some(start) = text.find("```vak-table").or_else(|| text.find("```vak-dataframe")) {
+        let after = &text[start..];
+        if let Some(nl) = after.find('\n') {
+            let json_part = &after[nl + 1..];
+            if let Some(end) = json_part.find("```") {
+                let json_str = json_part[..end].trim();
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(cols) = v.get("columns").and_then(|c| c.as_array()) {
+                        let col_count = cols.len();
+                        if let Some(rows) = v.get("rows").and_then(|r| r.as_array()) {
+                            for (idx, row) in rows.iter().enumerate() {
+                                if let Some(cells) = row.as_array() {
+                                    if cells.len() != col_count {
+                                        return Some(Err(format!(
+                                            "tabular row {idx} has {} cells, expected {col_count}",
+                                            cells.len()
+                                        )));
+                                    }
+                                }
+                            }
+                            return Some(Ok(format!(
+                                "structured table verified: {col_count} columns, {} rows",
+                                rows.len()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check markdown tables
+    let mut table_lines = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1 {
+            table_lines.push(trimmed);
+        } else if !table_lines.is_empty() {
+            if table_lines.len() >= 2 {
+                break;
+            } else {
+                table_lines.clear();
+            }
+        }
+    }
+
+    if table_lines.len() >= 2 {
+        fn parse_markdown_row(l: &str) -> Vec<&str> {
+            l.trim_matches('|')
+                .split('|')
+                .map(|c| c.trim())
+                .collect()
+        }
+        let header = parse_markdown_row(table_lines[0]);
+        let sep = parse_markdown_row(table_lines[1]);
+        let is_sep = sep.iter().all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'));
+        if is_sep && header.len() == sep.len() && !header.is_empty() {
+            let expected_cols = header.len();
+            for (i, row_str) in table_lines.iter().skip(2).enumerate() {
+                let cells = parse_markdown_row(row_str);
+                if cells.len() != expected_cols {
+                    return Some(Err(format!(
+                        "markdown table row {} has {} columns, expected {expected_cols}",
+                        i + 1,
+                        cells.len()
+                    )));
+                }
+            }
+            return Some(Ok(format!(
+                "markdown table verified: {expected_cols} columns, {} rows",
+                table_lines.len() - 2
+            )));
+        }
+    }
+
+    None
+}
+
+/// Structural oracle for decision/comparison matrices.
+pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
+    if let Some(start) = text.find("```vak-decision").or_else(|| text.find("```vak-comparison")) {
+        let after = &text[start..];
+        if let Some(nl) = after.find('\n') {
+            let json_part = &after[nl + 1..];
+            if let Some(end) = json_part.find("```") {
+                let json_str = json_part[..end].trim();
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(options) = v.get("options").and_then(|o| o.as_array()) {
+                        if options.len() < 2 {
+                            return Some(Err("decision matrix requires at least 2 options to compare".into()));
+                        }
+                        for (idx, opt) in options.iter().enumerate() {
+                            if opt.get("label").or_else(|| opt.get("name")).is_none() {
+                                return Some(Err(format!("option {idx} is missing a label or name")));
+                            }
+                        }
+                        return Some(Ok(format!("decision matrix verified: {} options compared", options.len())));
+                    }
+                }
+            }
+        }
+    }
+
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("decision matrix") || lower.contains("comparison matrix") || lower.contains("tradeoff analysis") {
+        if let Some(tab_res) = verify_tabular_data(text) {
+            return match tab_res {
+                Ok(msg) => Some(Ok(format!("decision matrix verified via tabular layout ({msg})"))),
+                Err(err) => Some(Err(format!("decision matrix tabular structure malformed: {err}"))),
+            };
+        }
+    }
+
+    None
+}
+
+/// Structural oracle for claim-to-citation integrity.
+pub fn verify_claim_citations(text: &str) -> Option<Result<String, String>> {
+    let mut refs = std::collections::HashSet::new();
+    let mut defs = std::collections::HashSet::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[^") {
+            if let Some(colon_pos) = trimmed.find("]:") {
+                let tag = &trimmed[..colon_pos + 1];
+                defs.insert(tag.to_string());
+            }
+        }
+        let mut rest = line;
+        while let Some(pos) = rest.find("[^") {
+            let after = &rest[pos..];
+            if let Some(end_pos) = after.find(']') {
+                let tag = &after[..end_pos + 1];
+                if !tag.ends_with("]:") {
+                    refs.insert(tag.to_string());
+                }
+                rest = &after[end_pos + 1..];
+            } else {
+                break;
+            }
+        }
+    }
+
+    if refs.is_empty() {
+        return None;
+    }
+
+    let mut unlinked: Vec<_> = refs.iter().filter(|r| !defs.contains(*r)).map(|s| s.as_str()).collect();
+    unlinked.sort();
+
+    if unlinked.is_empty() {
+        Some(Ok(format!("claim citations verified: {} citations linked", refs.len())))
+    } else {
+        Some(Err(format!("unlinked footnote citations: {}", unlinked.join(", "))))
+    }
+}
+
 /// Evaluate requirements using a concrete evidence receipt and its
 /// requirement freshness window. Retrieval success alone is insufficient.
 pub fn evaluate_requirements_with_receipt(
@@ -532,6 +694,35 @@ pub fn evaluate_requirements_with_state(
                 RequirementKind::Constraint => (
                     RequirementStatus::Unknown,
                     "constraint applicability requires a linked result".into(),
+                ),
+                RequirementKind::Integrity if is_refusal => (
+                    RequirementStatus::Unknown,
+                    "response is a refusal; domain integrity check bypassed".into(),
+                ),
+                RequirementKind::Integrity if has_response => {
+                    let text = response.unwrap_or_default();
+                    let mut checks = Vec::new();
+                    if let Some(tab) = verify_tabular_data(text) {
+                        checks.push(tab);
+                    }
+                    if let Some(dec) = verify_decision_matrix(text) {
+                        checks.push(dec);
+                    }
+                    if let Some(cit) = verify_claim_citations(text) {
+                        checks.push(cit);
+                    }
+                    if checks.is_empty() {
+                        (RequirementStatus::Met, "no structured domain violations found".into())
+                    } else if checks.iter().all(|c| c.is_ok()) {
+                        (RequirementStatus::Met, "all structured domain integrity checks passed".into())
+                    } else {
+                        let violations: Vec<_> = checks.into_iter().filter_map(|c| c.err()).collect();
+                        (RequirementStatus::Unmet, format!("domain integrity check failed: {}", violations.join("; ")))
+                    }
+                }
+                RequirementKind::Integrity => (
+                    RequirementStatus::Unmet,
+                    "no response content was produced to verify domain integrity".into(),
                 ),
             };
             RequirementEvaluation {
@@ -650,6 +841,7 @@ impl OutcomeSpec {
             "deliverable" => RequirementKind::Deliverable,
             "evidence" => RequirementKind::Evidence,
             "constraint" => RequirementKind::Constraint,
+            "integrity" => RequirementKind::Integrity,
             other => return Err(format!("unsupported outcome requirement kind: {other}")),
         };
         let importance = match importance {
@@ -974,5 +1166,49 @@ mod tests {
         let evaluation = evaluate_intervention(request);
         assert_eq!(evaluation.decision, InterventionDecision::RequiresHuman);
         assert!(!evaluation.creates_revision);
+    }
+
+    #[test]
+    fn domain_verification_oracles_validate_tables_matrices_citations() {
+        // Tabular markdown: well-formed
+        let valid_table = "| Col A | Col B |\n| --- | --- |\n| Val 1 | Val 2 |\n| Val 3 | Val 4 |";
+        assert!(verify_tabular_data(valid_table).unwrap().is_ok());
+
+        // Tabular markdown: ragged (col count mismatch)
+        let ragged_table = "| Col A | Col B |\n| --- | --- |\n| Val 1 |\n| Val 3 | Val 4 |";
+        assert!(verify_tabular_data(ragged_table).unwrap().is_err());
+
+        // Tabular vak block
+        let valid_block = "```vak-table\n{\"columns\": [\"A\", \"B\"], \"rows\": [[\"1\", \"2\"], [\"3\", \"4\"]]}\n```";
+        assert!(verify_tabular_data(valid_block).unwrap().is_ok());
+
+        let invalid_block = "```vak-table\n{\"columns\": [\"A\", \"B\"], \"rows\": [[\"1\"], [\"3\", \"4\"]]}\n```";
+        assert!(verify_tabular_data(invalid_block).unwrap().is_err());
+
+        // Decision matrix vak block
+        let valid_matrix = "```vak-decision\n{\"options\": [{\"label\": \"Option A\"}, {\"label\": \"Option B\"}]}\n```";
+        assert!(verify_decision_matrix(valid_matrix).unwrap().is_ok());
+
+        let single_option_matrix = "```vak-decision\n{\"options\": [{\"label\": \"Option A\"}]}\n```";
+        assert!(verify_decision_matrix(single_option_matrix).unwrap().is_err());
+
+        // Claim citations
+        let valid_citations = "According to study[^1] and report[^2].\n\n[^1]: Reference one\n[^2]: Reference two";
+        assert!(verify_claim_citations(valid_citations).unwrap().is_ok());
+
+        let unlinked_citations = "According to study[^1] and missing[^3].\n\n[^1]: Reference one";
+        assert!(verify_claim_citations(unlinked_citations).unwrap().is_err());
+
+        // RequirementKind::Integrity evaluation
+        let mut spec = OutcomeSpec::from_reading("produce analysis", &Reading::general(), 1);
+        spec.merge_declared_requirement("integ-1", "integrity", "verify data integrity", "must", None).unwrap();
+
+        let good_eval = evaluate_requirements_with_state(&spec, Some(valid_table), EvidenceState::None);
+        let integ_eval = good_eval.iter().find(|e| e.requirement_id == "integ-1").unwrap();
+        assert_eq!(integ_eval.status, RequirementStatus::Met);
+
+        let bad_eval = evaluate_requirements_with_state(&spec, Some(ragged_table), EvidenceState::None);
+        let bad_integ = bad_eval.iter().find(|e| e.requirement_id == "integ-1").unwrap();
+        assert_eq!(bad_integ.status, RequirementStatus::Unmet);
     }
 }
