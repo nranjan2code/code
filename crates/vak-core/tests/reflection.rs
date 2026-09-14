@@ -108,3 +108,12 @@ async fn reflection_writes_once_and_dedups_repeats() {
     // queue dedup is the human reviewer's call.
     assert!(!queued2 || !learning::list_proposals(&home, &cwd).is_empty(),);
 }
+
+#[test]
+fn parser_accepts_invariant_notes() {
+    let reply = r#"{"notes":[{"note":"always inspect schema before writing migration scripts","kind":"invariant","tag":"schema"}]}"#;
+    let p = parse_proposals(reply);
+    assert_eq!(p.notes.len(), 1);
+    assert_eq!(p.notes[0].kind, "invariant");
+    assert_eq!(p.notes[0].tag, "schema");
+}

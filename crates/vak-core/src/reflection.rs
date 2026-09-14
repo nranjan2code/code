@@ -184,7 +184,7 @@ pub fn parse_proposals(reply: &str) -> Proposals {
             out.notes.push(NoteProposal {
                 note,
                 kind: match n["kind"].as_str().unwrap_or("fact") {
-                    "decision" | "preference" | "reference" => {
+                    "decision" | "preference" | "reference" | "invariant" | "procedural" => {
                         n["kind"].as_str().unwrap_or("fact").to_string()
                     }
                     _ => "fact".into(),
@@ -226,9 +226,9 @@ pub fn parse_proposals(reply: &str) -> Proposals {
 pub fn system_prompt() -> String {
     "You are the reflection stage of a general-purpose agent. Given a recent \
      conversation, decide what is worth persisting across future sessions. \
-     Be extremely selective: only durable decisions, facts or preferences — \
+     Be extremely selective: only durable decisions, facts, preferences, or procedural invariants — \
      not task chatter. Reply with ONLY minified JSON of shape \
-     {\"notes\":[{\"note\":\"...\",\"kind\":\"fact|decision|preference|reference\",\"tag\":\"kebab-tag\"}],\
+     {\"notes\":[{\"note\":\"...\",\"kind\":\"fact|decision|preference|reference|invariant\",\"tag\":\"kebab-tag\"}],\
      \"skill\":{\"name\":\"kebab-name\",\"description\":\"one line\",\
      \"instructions\":\"markdown\"}} — at most 2 notes; omit \"notes\" or \
      \"skill\" when nothing qualifies. Reply {} when nothing is worth keeping."
