@@ -236,6 +236,7 @@ export function resetWorkbenchExecutions() {
   setActiveExecutionId(null);
   setRequestedArtifact(null);
   setActiveComponentPreview(null);
+  closeArtifactCanvas();
 }
 
 export interface ActiveComponentPreview {
@@ -247,12 +248,62 @@ export interface ActiveComponentPreview {
   timestamp?: number;
   sandbox?: string;
   connectSrc?: string;
+  serverName?: string;
+  serverUrl?: string;
 }
 export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
 
 export function openComponentPreview(preview: ActiveComponentPreview) {
   setActiveComponentPreview(preview);
   setDockTab("preview");
+}
+
+// ---------------------------------------------------------------------------
+// Artifact Canvas — immersive overlay preview (docs/design/61 compliant:
+// user-activated only, never auto-opens from tool/sandbox events).
+// ---------------------------------------------------------------------------
+
+export type CanvasMode = "split" | "focused";
+export type CanvasDevice = "desktop" | "tablet" | "mobile";
+
+export interface ArtifactCanvasState {
+  /** The artifact being previewed; null when canvas is closed. */
+  artifact: ActiveComponentPreview | null;
+  /** Layout mode: split (chat + canvas) or focused (full-width canvas). */
+  mode: CanvasMode;
+  /** Viewport device simulation mode. */
+  device: CanvasDevice;
+}
+
+const [canvasArtifact, setCanvasArtifact] = createSignal<ActiveComponentPreview | null>(null);
+const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
+const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
+
+export { canvasArtifact, canvasMode, canvasDevice, setCanvasDevice };
+
+/** Backward-compatible compound state getter. */
+export const canvasState = (): ArtifactCanvasState => ({
+  artifact: canvasArtifact(),
+  mode: canvasMode(),
+  device: canvasDevice(),
+});
+
+/** Whether the artifact canvas overlay is currently open. */
+export const canvasOpen = () => canvasArtifact() !== null;
+
+/** Open the artifact canvas with a smooth slide-in. User-initiated only. */
+export function openArtifactCanvas(preview: ActiveComponentPreview) {
+  setCanvasArtifact(preview);
+}
+
+/** Close the artifact canvas. */
+export function closeArtifactCanvas() {
+  setCanvasArtifact(null);
+}
+
+/** Toggle between split and focused canvas modes. */
+export function toggleCanvasMode() {
+  setCanvasMode((m) => (m === "split" ? "focused" : "split"));
 }
 
 /**

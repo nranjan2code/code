@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.85 — 2026-09-14
+
+- Immersive polyglot Artifact Canvas: user-activated slide-over overlay (`ArtifactCanvas`) supporting rich polyglot deliverables (sandboxed HTML prototypes, live localhost dev servers, PDFs via authenticated blob streams, responsive raster/vector images, and formatted syntax-highlighted code).
+- Dual split and focused display modes: interactive split screen (`68%` width) keeping chat fully functional with pass-through backdrop (`pointer-events: none`) alongside responsive viewport simulation (100% desktop, 768px tablet, 375px mobile) and full-screen focused presentation.
+- Automated dev-server lifecycle management: dynamic acquisition, listening port discovery, and graceful shutdown on canvas dismiss or artifact switch via `api.startLaunch`/`api.stopLaunch`.
+- Reactivity decoupling & hardening: decoupled store signals (`canvasArtifact`, `canvasMode`, `canvasDevice`) preventing unnecessary iframe reloads during UI mode toggles.
+- Deep review edge case hardening: resolved race conditions across dev-server port binding and rapid close-animation re-opening, enabled view-mode auto-reset by artifact type, ensured CSP parameter parity in inline cards, and added text/code standalone popout support.
+
 ## 3.0.84 — 2026-09-14
 
 - Living outcome canvas: every markdown table in chat is now an interactive surface (`InteractiveTable`) with inline search filtering, column sorting, and instant CSV export.

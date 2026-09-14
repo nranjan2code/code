@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.84 — Universal & adaptable platform shipped: semantic entity knowledge graph memory, living outcome canvas with interactive in-chat tables, polyglot document ingestion (doc_read), domain archetypes (researcher, writer, operator, analyst), multi-agent collaboration evals, and agent scheduling are implemented and repository-verified.**
+**Status: v3.0.85 — Immersive polyglot Artifact Canvas shipped: user-activated slide-over overlay with dual split/focused view modes, responsive device simulation (100%/768px/375px), automated dev-server lifecycle management, reactive atom decoupling, and hardened polyglot format rendering (HTML, dev-servers, PDF, images, syntax-highlighted code). Universal platform features (semantic entity memory distillation, living outcome canvas with interactive in-chat tables, polyglot doc_read, domain archetypes, and agent scheduling) remain active and repository-verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`

@@ -3,7 +3,7 @@ import { sandboxedSrcdoc } from "./safeUrl";
 
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
-export async function artifactPreviewHtml(path: string, html: string): Promise<string> {
+export async function artifactPreviewHtml(path: string, html: string, connectSrc?: string): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {
@@ -56,5 +56,5 @@ export async function artifactPreviewHtml(path: string, html: string): Promise<s
       element.removeAttribute("srcset");
     }
   }
-  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`);
+  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`, connectSrc);
 }

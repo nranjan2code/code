@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import Icon from "../Icon";
-import { openComponentPreview } from "../../store";
+import { openComponentPreview, openArtifactCanvas } from "../../store";
 import * as api from "../../api";
 import { sandboxedSrcdoc } from "../../safeUrl";
 import { artifactPreviewHtml } from "../../artifactPreview";
@@ -37,7 +37,9 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
     try {
       const html = inline ?? (p ? (await api.readFile(p)).content : undefined);
       if (html === undefined) throw new Error("Preview file is unavailable. Reload to try again.");
-      const prepared = p ? await artifactPreviewHtml(p, html) : sandboxedSrcdoc(html);
+      const prepared = p
+        ? await artifactPreviewHtml(p, html, props.data.connect_src)
+        : sandboxedSrcdoc(html, props.data.connect_src ?? "'none'");
       if (generation !== request) return;
       setHtmlContent(html);
       setPreviewHtml(prepared);
@@ -57,17 +59,23 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
     void loadContent();
   };
 
+  const previewPayload = () => ({
+    id: props.data.preview_id ?? path(),
+    title: props.data.title ?? "Component Preview",
+    artifactPath: path(),
+    html: props.data.html || (htmlContent().trim().length > 0 ? htmlContent() : undefined),
+    previewId: props.data.preview_id,
+    sandbox: props.data.sandbox,
+    connectSrc: props.data.connect_src,
+    timestamp: Date.now(),
+  });
+
+  const openInCanvas = () => {
+    openArtifactCanvas(previewPayload());
+  };
+
   const openInDock = () => {
-    openComponentPreview({
-      id: props.data.preview_id ?? path(),
-      title: props.data.title ?? "Component Preview",
-      artifactPath: path(),
-      html: htmlContent(),
-      previewId: props.data.preview_id,
-      sandbox: props.data.sandbox,
-      connectSrc: props.data.connect_src,
-      timestamp: Date.now(),
-    });
+    openComponentPreview(previewPayload());
   };
 
   const handleCopySource = async () => {
@@ -110,11 +118,17 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
           </button>
           <button
             class="pill-action-btn"
-            style="background: color-mix(in srgb, var(--accent-bright) 16%, transparent); color: var(--accent-bright); border-color: color-mix(in srgb, var(--accent-bright) 30%, transparent);"
             onClick={openInDock}
-            title="Open larger preview"
+            title="Open in dock panel"
           >
-            <Icon name="preview" size={12} /> Expand
+            Dock
+          </button>
+          <button
+            class="open-canvas-btn"
+            onClick={openInCanvas}
+            title="Open immersive canvas preview"
+          >
+            <Icon name="preview" size={14} /> Open Canvas
           </button>
         </div>
       </div>
@@ -140,7 +154,7 @@ export default function UIPreviewCard(props: { data: UIPreviewData }) {
             <iframe
               srcdoc={previewHtml()}
               title={title()}
-              sandbox="allow-scripts"
+              sandbox={props.data.sandbox ?? "allow-scripts"}
               style="width: 100%; height: 100%; border: 0; display: block;"
             />
           </div>

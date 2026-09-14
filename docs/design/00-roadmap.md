@@ -74,6 +74,7 @@ applies to every item.
 | Sandboxed workspace execution runtime (2026 unified `bash` execution engine with streaming events, ANSI line folding, real-time process telemetry, live stdout/stderr Workbench visibility, quarantined scratch containment under `.vak/scratch/`, and package tracking) | shipped in 3.0.22 |
 | Distributed Event & Message Fabric (`crates/vak-bus`, NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, Dead-Letter Queues) | shipped in 3.0.22 (doc 53) |
 | Universal & adaptable platform: semantic entity memory distillation, interactive living outcome canvas, polyglot document ingestion (`doc_read`), specialist domain archetypes, collaborative delegation evals, and agent scheduling | shipped in 3.0.84 (doc 65) |
+| Immersive polyglot Artifact Canvas: dual split/focused overlay, responsive device simulation (100%/768px/375px), automated dev-server lifecycle (`start_launch`/`stop_launch`), CSP sandboxing, and reactive atom decoupling | shipped in 3.0.85 (doc 66) |
 | Multi-user cloud (per-principal data homes, pooled Cores, quotas) | **explicitly out of scope** (doc 48 §8 E). A deployment is one operator's vak, and the token is a password to the whole box; the route shapes leave the seams open, nothing more |
 | Windows platform support | S11 |
 

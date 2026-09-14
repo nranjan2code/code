@@ -99,6 +99,7 @@ import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
 const PreviewPane = lazy(() => import("./components/PreviewPane"));
+const ArtifactCanvas = lazy(() => import("./components/ArtifactCanvas"));
 const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
 const SubagentsPanel = lazy(() => import("./components/SubagentsPanel"));
 const CommitmentsPanel = lazy(() => import("./components/CommitmentsPanel"));
@@ -1378,6 +1379,7 @@ export default function App() {
           <SearchModal />
           <FeedsModal />
           <WorkspacePickerModal />
+          <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>
           </Show>
