@@ -102,5 +102,68 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
                 }
             }
         }
+        AgentsAction::Runs { id, limit, global } => {
+            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let runs = match agents::list_runs(root, Some(&id), limit) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error reading agent runs: {e}");
+                    return 1;
+                }
+            };
+            if runs.is_empty() {
+                println!(
+                    "No past runs recorded for agent '{id}' in {} scope.",
+                    if global { "global" } else { "workspace" }
+                );
+                return 0;
+            }
+            println!("Recent runs for agent '{}' ({} total):\n", id, runs.len());
+            for r in runs {
+                println!("- Run [{}] — Status: {}", r.run_id, r.status);
+                println!("    Started: {}", r.started_at);
+                if let Some(comp) = &r.completed_at {
+                    println!("    Completed: {comp}");
+                }
+                println!("    Prompt: {}", r.prompt);
+                if let Some(sum) = &r.summary {
+                    println!("    Summary: {sum}");
+                }
+                if let Some(err) = &r.error {
+                    println!("    Error: {err}");
+                }
+                println!();
+            }
+            0
+        }
+        AgentsAction::Schedule {
+            id,
+            cron,
+            prompt,
+            global,
+        } => {
+            let root = if global { shared.as_path() } else { cwd.as_path() };
+            let schedule = agents::AgentSchedule {
+                cron_or_interval: cron.clone(),
+                prompt: prompt.clone(),
+                enabled: true,
+                last_run_at: None,
+                last_status: None,
+            };
+            match agents::update_schedule(root, &id, Some(schedule)) {
+                Ok(agent) => {
+                    println!(
+                        "Scheduled agent '{}' ({}) with frequency: '{}'",
+                        agent.id, agent.name, cron
+                    );
+                    println!("Prompt: '{}'", prompt);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error updating agent schedule: {e}");
+                    1
+                }
+            }
+        }
     }
 }

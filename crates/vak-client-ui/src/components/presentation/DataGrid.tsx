@@ -73,6 +73,9 @@ export default function DataGrid(props: { data: DataGridData }) {
         <div class="card-title-group">
           <span class="card-badge badge-indigo">Data Grid</span>
           <span class="card-subtitle">{props.data?.title ?? "Dataset Records"}</span>
+          <span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
+            {filteredAndSortedRows().length} of {rows().length} rows
+          </span>
         </div>
         <div class="card-actions">
           <input

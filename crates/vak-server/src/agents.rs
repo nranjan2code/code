@@ -39,6 +39,39 @@ pub struct AgentDefinition {
     pub instructions: String,
     pub animation: String,
     pub voice: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AgentSchedule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSchedule {
+    pub cron_or_interval: String,
+    pub prompt: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunRecord {
+    pub run_id: String,
+    pub agent_id: String,
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    pub status: String,
+    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn default_revision() -> u64 {
@@ -92,6 +125,7 @@ impl AgentTemplate {
             instructions: self.instructions.clone(),
             animation: self.animation.clone(),
             voice: self.voice.clone(),
+            schedule: None,
         }
     }
 }
@@ -249,6 +283,7 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
                 || profile.responsibilities != old.responsibilities
                 || profile.animation != old.animation
                 || profile.voice != old.voice
+                || profile.schedule != old.schedule
             {
                 profile.revision = old.revision.saturating_add(1);
             } else {
@@ -285,6 +320,69 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
     Ok(next)
 }
 
+pub fn runs_path(cwd: &Path) -> PathBuf {
+    cwd.join(".vak").join("agents_runs.jsonl")
+}
+
+pub fn record_run(cwd: &Path, record: &AgentRunRecord) -> Result<(), String> {
+    let dir = cwd.join(".vak");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = runs_path(cwd);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    use std::io::Write;
+    let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
+    writeln!(file, "{line}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn list_runs(cwd: &Path, agent_id: Option<&str>, limit: usize) -> Result<Vec<AgentRunRecord>, String> {
+    let path = runs_path(cwd);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut records: Vec<AgentRunRecord> = Vec::new();
+    for line in content.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(rec) = serde_json::from_str::<AgentRunRecord>(trimmed) {
+            if let Some(target_id) = agent_id {
+                if rec.agent_id != target_id {
+                    continue;
+                }
+            }
+            records.push(rec);
+            if records.len() >= limit {
+                break;
+            }
+        }
+    }
+    Ok(records)
+}
+
+pub fn update_schedule(
+    cwd: &Path,
+    agent_id: &str,
+    schedule: Option<AgentSchedule>,
+) -> Result<AgentDefinition, String> {
+    let mut profiles = load(cwd)?;
+    let Some(profile) = profiles.iter_mut().find(|a| a.id == agent_id) else {
+        return Err(format!("agent '{agent_id}' not found"));
+    };
+    profile.schedule = schedule;
+    let saved = save(cwd, &profiles)?;
+    saved
+        .into_iter()
+        .find(|a| a.id == agent_id)
+        .ok_or_else(|| "agent disappeared after save".to_string())
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -305,6 +403,7 @@ mod tests {
             instructions: String::new(),
             animation: "subtle".into(),
             voice: "default".into(),
+            schedule: None,
         }];
         save(dir.path(), &profiles).expect("save profiles");
         assert_eq!(load(dir.path()).expect("load profiles")[0].name, "Pip");
@@ -337,6 +436,7 @@ mod tests {
             instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
+            schedule: None,
         };
         assert!(save(dir.path(), &[profile]).is_err());
     }
@@ -356,6 +456,7 @@ mod tests {
             instructions: String::new(),
             animation: "off".into(),
             voice: "unknown".into(),
+            schedule: None,
         };
         assert!(save(dir.path(), &[profile]).is_err());
     }
@@ -375,6 +476,7 @@ mod tests {
             instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
+            schedule: None,
         };
         save(dir.path(), &[agent.clone()]).expect("save paused agent");
         agent = load(dir.path()).expect("load paused agent").remove(0);
@@ -397,6 +499,7 @@ mod tests {
             instructions: String::new(),
             animation: "subtle".into(),
             voice: "default".into(),
+            schedule: None,
         };
         let mut untouched = profile.clone();
         untouched.id = "atlas".into();
@@ -425,6 +528,7 @@ mod tests {
             instructions: String::new(),
             animation: "off".into(),
             voice: "default".into(),
+            schedule: None,
         };
         let mut duplicate = profile.clone();
         duplicate.name = "Two".into();
@@ -448,5 +552,44 @@ mod tests {
         assert!(loaded.iter().any(|a| a.id == "writer"));
         assert!(loaded.iter().any(|a| a.id == "operator"));
         assert!(loaded.iter().any(|a| a.id == "analyst"));
+    }
+
+    #[test]
+    fn schedule_and_run_records_persist_and_load() {
+        let dir = tempfile::tempdir().expect("agent workspace");
+        let template = builtin_templates().remove(0);
+        let agent = template.to_agent_definition("researcher", None);
+        save(dir.path(), &[agent]).expect("save agent");
+
+        let updated = update_schedule(
+            dir.path(),
+            "researcher",
+            Some(AgentSchedule {
+                cron_or_interval: "daily".into(),
+                prompt: "run daily literature check".into(),
+                enabled: true,
+                last_run_at: None,
+                last_status: None,
+            }),
+        )
+        .expect("update schedule");
+        assert_eq!(updated.schedule.as_ref().map(|s| s.cron_or_interval.as_str()), Some("daily"));
+
+        let run = AgentRunRecord {
+            run_id: "run-1".into(),
+            agent_id: "researcher".into(),
+            started_at: "2026-09-14T10:00:00Z".into(),
+            completed_at: Some("2026-09-14T10:00:05Z".into()),
+            status: "succeeded".into(),
+            prompt: "run daily literature check".into(),
+            summary: Some("Found 3 new papers".into()),
+            error: None,
+        };
+        record_run(dir.path(), &run).expect("record run");
+
+        let runs = list_runs(dir.path(), Some("researcher"), 10).expect("list runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, "run-1");
+        assert_eq!(runs[0].status, "succeeded");
     }
 }

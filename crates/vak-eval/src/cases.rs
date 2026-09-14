@@ -139,6 +139,7 @@ pub fn general_suite() -> Vec<EvalCase> {
         general_tabular_oracle(),
         general_citation_integrity(),
         general_entity_knowledge_capture(),
+        general_multi_agent_collaboration(),
     ]
 }
 
@@ -566,6 +567,39 @@ pub fn general_entity_knowledge_capture() -> EvalCase {
         ScriptedTurn::Text("extracted".into()),
     ];
     c.verify = "grep -q '\"id\":\"aris-thorne\"' entities.jsonl && grep -q '\"target_entity_id\":\"solis-genomics\"' entities.jsonl".into();
+    c
+}
+
+/// Multi-agent collaborative workflow: cross-domain research synthesis, quantitative metrics, and final briefing.
+pub fn general_multi_agent_collaboration() -> EvalCase {
+    let mut c = base(
+        "general-multi-agent-collaboration",
+        "collaborative cross-domain workflow combining research citations, quantitative metrics, and synthesis",
+    );
+    c.files = vec![
+        (
+            "data/energy_sources.csv".into(),
+            "source,capex_per_kw,opex_per_kw_yr,efficiency_pct\nsolar_pv,1100,15,22\nwind_turbine,1600,35,45\nbattery_storage,800,20,88\n".into(),
+        ),
+        (
+            "docs/research_notes.md".into(),
+            "# Research Notes\n\n[1] Microgrid Resilience Study (2025): Hybrid solar and battery systems reduce downtime by 94%.\n[2] NREL Technical Review: Levelized cost of storage has fallen 40% since 2020.\n".into(),
+        ),
+    ];
+    c.prompt = "Synthesize data/energy_sources.csv and docs/research_notes.md into report.md. Include quantitative efficiency findings, cite sources [1] and [2], and conclude with strategic recommendations.".into();
+    c.script = vec![
+        ScriptedTurn::tool("read", serde_json::json!({"path": "data/energy_sources.csv"})),
+        ScriptedTurn::tool("read", serde_json::json!({"path": "docs/research_notes.md"})),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "report.md",
+                "content": "# Renewable Energy Microgrid Assessment\n\n## Executive Summary\nModern microgrids combining solar PV and battery storage achieve significant resilience improvements while optimizing lifecycle costs.\n\n## Quantitative Benchmark\n| Source | CAPEX ($/kW) | OPEX ($/kW-yr) | Efficiency | \n| --- | --- | --- | --- |\n| Solar PV | 1100 | 15 | 22% |\n| Wind Turbine | 1600 | 35 | 45% |\n| Battery Storage | 800 | 20 | 88% |\n\n## Research Evidence\nAs demonstrated by recent field studies, hybrid solar and battery installations reduce downtime by up to 94% [1]. Furthermore, storage cost declines of 40% enable rapid capital recovery [2].\n\n## Strategic Recommendations\n1. Deploy hybrid solar PV paired with high-efficiency (88%) battery storage.\n2. Prioritize modular storage expansion based on levelized cost dynamics.\n\n## References\n- [1] Microgrid Resilience Study (2025)\n- [2] NREL Technical Review\n"
+            }),
+        ),
+        ScriptedTurn::Text("report produced".into()),
+    ];
+    c.verify = "grep -q '88%' report.md && grep -q '\\[1\\]' report.md && grep -q '\\[2\\]' report.md && grep -q '## References' report.md".into();
     c
 }
 

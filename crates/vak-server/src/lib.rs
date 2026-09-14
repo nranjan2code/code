@@ -847,6 +847,8 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
+        .route("/agents/{id}/schedule", post(update_agent_schedule_route))
+        .route("/agents/{id}/runs", get(list_agent_runs_route))
         .route("/canvas/preview", post(canvas_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
@@ -11230,6 +11232,76 @@ async fn instantiate_agent_template(
             .into_response(),
         Err(err) => (
             StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": err })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateScheduleRequest {
+    cron_or_interval: String,
+    prompt: String,
+    #[serde(default = "default_schedule_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+fn default_schedule_enabled() -> bool {
+    true
+}
+
+async fn update_agent_schedule_route(
+    State(state): State<AppState>,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    Json(body): Json<UpdateScheduleRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let root = match body.scope.as_deref().unwrap_or("workspace") {
+        "user" => vak_config::paths::default_workspace(),
+        _ => state.active_core().cwd().clone(),
+    };
+    let sched = agents::AgentSchedule {
+        cron_or_interval: body.cron_or_interval,
+        prompt: body.prompt,
+        enabled: body.enabled,
+        last_run_at: None,
+        last_status: None,
+    };
+    match agents::update_schedule(&root, &agent_id, Some(sched)) {
+        Ok(agent) => Json(serde_json::json!({ "updated": true, "agent": agent })).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": err })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ListRunsQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn list_agent_runs_route(
+    State(state): State<AppState>,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ListRunsQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let root = match query.scope.as_deref().unwrap_or("workspace") {
+        "user" => vak_config::paths::default_workspace(),
+        _ => state.active_core().cwd().clone(),
+    };
+    let limit = query.limit.unwrap_or(20).min(100);
+    match agents::list_runs(&root, Some(&agent_id), limit) {
+        Ok(runs) => Json(serde_json::json!({ "runs": runs })).into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": err })),
         )
             .into_response(),

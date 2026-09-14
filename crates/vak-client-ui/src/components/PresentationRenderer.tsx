@@ -20,6 +20,7 @@ import DiffInspector from "./presentation/DiffInspector";
 import TestMatrix from "./presentation/TestMatrix";
 import UniversalChart from "./presentation/UniversalChart";
 import DataGrid, { type DataGridData, type DataGridColumn } from "./presentation/DataGrid";
+import { downloadCsv } from "./presentation/data";
 import TerminalConsole from "./presentation/TerminalConsole";
 import RecipeCard, { type RecipeData } from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
@@ -175,6 +176,170 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   );
 }
 
+function inlineToText(nodes: InlineNode[]): string {
+  let s = "";
+  for (const n of nodes) {
+    if (n.type === "text") s += n.text;
+    else if ("content" in n && Array.isArray((n as any).content)) s += inlineToText((n as any).content);
+    else if ("code" in n) s += (n as any).code;
+    else if ("label" in n && Array.isArray((n as any).label)) s += inlineToText((n as any).label);
+  }
+  return s;
+}
+
+function InteractiveTable(props: {
+  header: InlineNode[][];
+  rows: InlineNode[][][];
+  alignments: string[];
+}) {
+  const [search, setSearch] = createSignal("");
+  const [sortCol, setSortCol] = createSignal<number | null>(null);
+  const [sortAsc, setSortAsc] = createSignal<boolean>(true);
+  const [downloaded, setDownloaded] = createSignal(false);
+
+  const headerTexts = createMemo(() => props.header.map((cell) => inlineToText(cell)));
+
+  const handleSort = (colIndex: number) => {
+    if (sortCol() === colIndex) {
+      if (sortAsc()) {
+        setSortAsc(false);
+      } else {
+        setSortCol(null);
+        setSortAsc(true);
+      }
+    } else {
+      setSortCol(colIndex);
+      setSortAsc(true);
+    }
+  };
+
+  const processedRows = createMemo(() => {
+    let list = props.rows.map((row, originalIndex) => {
+      const texts = row.map((cell) => inlineToText(cell));
+      return { row, texts, originalIndex };
+    });
+
+    const q = search().toLowerCase().trim();
+    if (q) {
+      list = list.filter((item) =>
+        item.texts.some((t) => t.toLowerCase().includes(q))
+      );
+    }
+
+    const col = sortCol();
+    if (col !== null) {
+      list.sort((a, b) => {
+        const textA = a.texts[col] ?? "";
+        const textB = b.texts[col] ?? "";
+        const numA = Number(textA.replace(/[$,%]/g, "").trim());
+        const numB = Number(textB.replace(/[$,%]/g, "").trim());
+        if (!Number.isNaN(numA) && !Number.isNaN(numB)) {
+          return sortAsc() ? numA - numB : numB - numA;
+        }
+        return sortAsc()
+          ? textA.localeCompare(textB)
+          : textB.localeCompare(textA);
+      });
+    }
+
+    return list;
+  });
+
+  const handleDownloadCsv = () => {
+    const headers = headerTexts();
+    const rows = processedRows().map((r) => r.texts);
+    downloadCsv("table.csv", [headers, ...rows]);
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 1200);
+  };
+
+  const isInteractive = () => props.rows.length >= 2 || props.header.length >= 3;
+
+  return (
+    <div class="semantic-table-wrap interactive-table-wrap">
+      <Show when={isInteractive()}>
+        <div class="table-toolbar" style={{ display: "flex", "align-items": "center", "justify-content": "space-between", "margin-bottom": "6px", gap: "8px" }}>
+          <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+            <input
+              type="text"
+              class="grid-search-input"
+              placeholder="Filter table..."
+              style={{ "font-size": "11px", padding: "3px 8px", width: "160px", "border-radius": "4px" }}
+              value={search()}
+              onInput={(e) => setSearch(e.currentTarget.value)}
+              aria-label="Filter table rows"
+            />
+            <span style={{ "font-size": "11px", opacity: "0.7" }}>
+              {processedRows().length} of {props.rows.length} rows
+            </span>
+          </div>
+          <button
+            type="button"
+            class="pill-action-btn"
+            style={{ "font-size": "11px", padding: "2px 8px" }}
+            onClick={handleDownloadCsv}
+          >
+            {downloaded() ? "Downloaded" : "CSV"}
+          </button>
+        </div>
+      </Show>
+      <table class="semantic-table">
+        <thead>
+          <tr>
+            <For each={props.header}>
+              {(cell, index) => (
+                <th
+                  style={{
+                    "text-align":
+                      props.alignments[index()] === "right"
+                        ? "right"
+                        : props.alignments[index()] === "center"
+                        ? "center"
+                        : "left",
+                    cursor: "pointer",
+                    "user-select": "none",
+                  }}
+                  onClick={() => handleSort(index())}
+                  title="Click to sort"
+                >
+                  <InlineSequence nodes={cell} />
+                  <span style={{ "font-size": "10px", "margin-left": "4px", opacity: "0.6" }}>
+                    {sortCol() === index() ? (sortAsc() ? " ▲" : " ▼") : " ↕"}
+                  </span>
+                </th>
+              )}
+            </For>
+          </tr>
+        </thead>
+        <tbody>
+          <For each={processedRows()}>
+            {(item) => (
+              <tr>
+                <For each={item.row}>
+                  {(cell, index) => (
+                    <td
+                      style={{
+                        "text-align":
+                          props.alignments[index()] === "right"
+                            ? "right"
+                            : props.alignments[index()] === "center"
+                            ? "center"
+                            : "left",
+                      }}
+                    >
+                      <InlineSequence nodes={cell} />
+                    </td>
+                  )}
+                </For>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Element {
   return (
     <For each={props.blocks}>
@@ -190,12 +355,11 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           }
           case "table": {
             return (
-              <div class="semantic-table-wrap">
-                <table class="semantic-table">
-                  <thead><tr><For each={block.header}>{(cell, index) => <th style={{ "text-align": block.alignments[index()] === "right" ? "right" : block.alignments[index()] === "center" ? "center" : "left" }}><InlineSequence nodes={cell} /></th>}</For></tr></thead>
-                  <tbody><For each={block.rows}>{(row) => <tr><For each={row}>{(cell, index) => <td style={{ "text-align": block.alignments[index()] === "right" ? "right" : block.alignments[index()] === "center" ? "center" : "left" }}><InlineSequence nodes={cell} /></td>}</For></tr>}</For></tbody>
-                </table>
-              </div>
+              <InteractiveTable
+                header={block.header}
+                rows={block.rows}
+                alignments={block.alignments}
+              />
             );
           }
           case "quote":
@@ -777,6 +941,9 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "pros_cons": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Pros & Cons")} />,
   "inventory": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Inventory")} />,
   "scorecard": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Scorecard")} />,
+  "decision_matrix": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Decision Matrix")} />,
+  "criteria_matrix": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Criteria Matrix")} />,
+  "tradeoff_analysis": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Tradeoff Analysis")} />,
 
   // 5. Financial Summaries & Budgets
   "budget": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Budget Breakdown")} />,
@@ -831,6 +998,11 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // 9. Visualizations & Charts
   "chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
   "telemetry.chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "trend": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "timeseries": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "metric_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  "bar_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={{ ...data, chart_type: "bar" }} /> : <></>,
+  "comparison_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
 
   // 10. Media & Links
   "link.preview": ({ data }) => (
