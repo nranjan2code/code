@@ -260,23 +260,12 @@ impl StopPolicy {
         {
             return true;
         }
-        const RUN_PHRASES: [&str; 14] = [
-            "run test",
-            "run tests",
-            "run the test",
-            "run the tests",
-            "run command",
-            "run the command",
-            "run script",
-            "run the script",
-            "run check",
-            "run the check",
-            "run app",
-            "run the app",
-            "run code",
-            "run the code",
-        ];
-        RUN_PHRASES.iter().any(|target| p.contains(target))
+        p.contains("run ")
+            && [
+                "test", "tests", "command", "script", "check", "app", "code", "python", "cargo",
+            ]
+            .iter()
+            .any(|word| p.contains(word))
     }
 
     /// True when the assistant response claims execution or emits shell scripts without tool calls having run.
