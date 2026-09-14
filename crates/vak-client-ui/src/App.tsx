@@ -79,6 +79,9 @@ import {
   setConnection,
   setArmedGoal,
   goalAppliesTo,
+  openWorkbenchFolder,
+  isScratchDirectory,
+  isDirectoryPath,
   type ReplyTarget,
 } from "./store";
 import type { SessionSummary } from "./types";
@@ -878,7 +881,12 @@ async function init() {
  * which one currently holds their file.
  */
 export async function openFileSmart(path: string) {
-  setEditorPath(path);
+  const clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+  if (isScratchDirectory(clean) || (isDirectoryPath(clean) && clean.includes(".vak/scratch"))) {
+    openWorkbenchFolder(clean);
+    return;
+  }
+  setEditorPath(clean);
   const id = diffTarget() ?? activeId();
   if (!id) {
     setDockTab("editor");
@@ -887,7 +895,7 @@ export async function openFileSmart(path: string) {
   try {
     const d = await api.readDiff(id);
     const diff = `${d.diff ?? ""}\n${d.staged_diff ?? ""}`;
-    setDockTab(diffCoversPath(diff, path) ? "diff" : "editor");
+    setDockTab(diffCoversPath(diff, clean) ? "diff" : "editor");
   } catch {
     setDockTab("editor");
   }

@@ -7,7 +7,18 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { activeId, agentForSession, openInEditor, openWorkbenchArtifact, uiPreferences, isPreviewableArtifact, openArtifactPathInCanvas } from "../store";
+import {
+  activeId,
+  agentForSession,
+  openInEditor,
+  openWorkbenchArtifact,
+  openWorkbenchFolder,
+  isScratchDirectory,
+  isDirectoryPath,
+  uiPreferences,
+  isPreviewableArtifact,
+  openArtifactPathInCanvas,
+} from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
@@ -76,26 +87,43 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
           case "code": {
             const raw = node.code.trim();
             const clean = raw.replace(/[.,;:!?)]'"`]+$/, "").trim();
+            const isDir = isDirectoryPath(clean);
+            const isScratch = isScratchDirectory(clean);
             const pathLike =
+              isDir ||
               /^[\w@.-]+(\/[\w@.-]+)+$/.test(clean) ||
               /^\.[\w/-]+$/.test(clean) ||
               /\.\w{1,6}$/.test(clean);
-            const isPreview = pathLike && isPreviewableArtifact(clean);
+            const isPreview = !isDir && pathLike && isPreviewableArtifact(clean);
             const handleAction = () => {
               if (!pathLike) return;
-              if (isPreview) {
+              if (isScratch || (isDir && clean.includes(".vak/scratch"))) {
+                openWorkbenchFolder(clean);
+              } else if (isPreview) {
                 openArtifactPathInCanvas(clean);
               } else {
-                openInEditor(clean);
+                void openFileSmart(clean);
               }
             };
+            const label = pathLike
+              ? (isScratch
+                  ? `Open ${node.code} in Workbench folder view`
+                  : isPreview
+                    ? `Open ${node.code} in Artifact Canvas`
+                    : `Open ${node.code} in editor`)
+              : undefined;
             return (
               <code
                 class="ic"
-                classList={{ "semantic-path": pathLike, "semantic-previewable": isPreview }}
+                classList={{
+                  "semantic-path": pathLike,
+                  "semantic-previewable": isPreview,
+                  "semantic-dir": isDir,
+                }}
                 tabIndex={pathLike ? 0 : undefined}
                 role={pathLike ? "button" : undefined}
-                aria-label={pathLike ? (isPreview ? `Open ${node.code} in Artifact Canvas` : `Open ${node.code} in editor`) : undefined}
+                aria-label={label}
+                title={label}
                 onClick={handleAction}
                 onKeyDown={(event) => {
                   if (pathLike && (event.key === "Enter" || event.key === " ")) {

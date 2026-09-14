@@ -26,14 +26,29 @@ function inline(s: string): string {
   out = out.replace(/`([^`\n]+)`/g, (_m, rawCode: string) => {
     const code = rawCode.trim();
     const cleanPath = code.replace(/[.,;:!?)]'"`]+$/, "").trim();
+    const isDir =
+      cleanPath.endsWith("/") ||
+      cleanPath === ".vak/scratch" ||
+      cleanPath.endsWith("/.vak/scratch") ||
+      cleanPath === ".vak";
     const isPath =
-      /^[\w@.-]+(\/[\w@.-]+)+$/.test(cleanPath) || /^\.[\w/-]+$/.test(cleanPath) || /\.\w{1,6}$/.test(cleanPath);
-    const isPreviewable = isPath && (
-      /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp)$/i.test(cleanPath) ||
-      cleanPath.includes(".vak/scratch/")
-    );
-    const title = isPreviewable ? "open in Artifact Canvas" : "open in editor";
-    return `<code class="ic"${isPath ? ` data-path="true" data-previewable="${isPreviewable ? 'true' : 'false'}" data-clean-path="${cleanPath}" title="${title}"` : ""}>${code}</code>`;
+      isDir ||
+      /^[\w@.-]+(\/[\w@.-]+)+$/.test(cleanPath) ||
+      /^\.[\w/-]+$/.test(cleanPath) ||
+      /\.\w{1,6}$/.test(cleanPath);
+    const isScratch =
+      cleanPath === ".vak/scratch" ||
+      cleanPath === ".vak/scratch/" ||
+      cleanPath.includes(".vak/scratch/");
+    const isPreviewable =
+      !isDir &&
+      isPath &&
+      (/\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp|csv|tsv)$/i.test(cleanPath) ||
+        (isScratch && /\.\w{1,6}$/.test(cleanPath)));
+    const title = isDir
+      ? (isScratch ? "open in Workbench folder view" : "open in editor")
+      : (isPreviewable ? "open in Artifact Canvas" : "open in editor");
+    return `<code class="ic"${isPath ? ` data-path="true" data-dir="${isDir ? 'true' : 'false'}" data-scratch="${isScratch ? 'true' : 'false'}" data-previewable="${isPreviewable ? 'true' : 'false'}" data-clean-path="${cleanPath}" title="${title}"` : ""}>${code}</code>`;
   });
   // bold then italic then strikethrough (order matters: bold before italic so
   // `**x**` isn't first read as two adjacent `*x*` italics)

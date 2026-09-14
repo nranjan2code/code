@@ -167,7 +167,10 @@ export function setActiveExecutionId(value: string | null) {
   else localStorage.removeItem("vak.activeExecutionId");
 }
 
+export const [workbenchTab, setWorkbenchTab] = createSignal<"execution" | "artifacts">("execution");
+
 export function openWorkbenchExecution(execId?: string) {
+  setWorkbenchTab("execution");
   if (execId) {
     setActiveExecutionId(execId);
   }
@@ -176,7 +179,15 @@ export function openWorkbenchExecution(execId?: string) {
 
 export const [requestedArtifact, setRequestedArtifact] = createSignal<string | null>(null);
 export function openWorkbenchArtifact(path: string) {
-  setRequestedArtifact(path);
+  setWorkbenchTab("artifacts");
+  if (path) {
+    setRequestedArtifact(path);
+  }
+  setDockTab("workbench");
+}
+
+export function openWorkbenchFolder(_path?: string) {
+  setWorkbenchTab("artifacts");
   setDockTab("workbench");
 }
 
@@ -306,11 +317,39 @@ export function toggleCanvasMode() {
   setCanvasMode((m) => (m === "split" ? "focused" : "split"));
 }
 
+/** Check whether a path represents a directory or folder. */
+export function isDirectoryPath(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const p = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim().toLowerCase();
+  return (
+    p.endsWith("/") ||
+    p === ".vak/scratch" ||
+    p === ".vak" ||
+    p.endsWith("/.vak/scratch") ||
+    p === "." ||
+    p === ".."
+  );
+}
+
+/** Check whether a path specifically refers to the sandboxed scratch directory. */
+export function isScratchDirectory(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const p = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim().toLowerCase();
+  return (
+    p === ".vak/scratch" ||
+    p === ".vak/scratch/" ||
+    p.endsWith("/.vak/scratch") ||
+    p.endsWith("/.vak/scratch/")
+  );
+}
+
 /** Determine whether a file path points to an artifact previewable in the Artifact Canvas. */
 export function isPreviewableArtifact(path: string | null | undefined): boolean {
   if (!path) return false;
   const p = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim().toLowerCase();
-  return (
+  if (isDirectoryPath(p)) return false;
+
+  const hasExt =
     p.endsWith(".html") ||
     p.endsWith(".htm") ||
     p.endsWith(".xhtml") ||
@@ -323,8 +362,19 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
     p.endsWith(".webp") ||
     p.endsWith(".ico") ||
     p.endsWith(".bmp") ||
-    p.includes(".vak/scratch/")
-  );
+    p.endsWith(".csv") ||
+    p.endsWith(".tsv");
+
+  if (hasExt) return true;
+
+  if (p.includes(".vak/scratch/")) {
+    const filename = p.split("/").pop();
+    if (filename && filename.includes(".") && !filename.startsWith(".")) {
+      return /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp|csv|tsv|json|md|txt)$/i.test(filename);
+    }
+  }
+
+  return false;
 }
 
 /** Open any artifact path directly in the Artifact Canvas. */

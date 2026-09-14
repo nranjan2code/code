@@ -1,6 +1,14 @@
 import { createEffect, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
-import { openInEditor, uiPreferences, isPreviewableArtifact, openArtifactPathInCanvas } from "../store";
+import {
+  openInEditor,
+  uiPreferences,
+  isPreviewableArtifact,
+  openArtifactPathInCanvas,
+  openWorkbenchFolder,
+  isScratchDirectory,
+} from "../store";
+import { openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 
@@ -85,11 +93,15 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     const code = target.closest("code.ic[data-path]");
     if (code) {
       const p = code.getAttribute("data-clean-path") || (code.textContent ?? "").trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+      const isDir = code.getAttribute("data-dir") === "true";
+      const isScratch = code.getAttribute("data-scratch") === "true" || isScratchDirectory(p);
       if (p) {
-        if (isPreviewableArtifact(p)) {
+        if (isScratch || (isDir && p.includes(".vak/scratch"))) {
+          openWorkbenchFolder(p);
+        } else if (!isDir && isPreviewableArtifact(p)) {
           openArtifactPathInCanvas(p);
         } else {
-          openInEditor(p);
+          void openFileSmart(p);
         }
       }
     }

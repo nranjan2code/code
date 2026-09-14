@@ -11,6 +11,8 @@ import {
   setRequestedArtifact,
   openArtifactCanvas,
   openArtifactPathInCanvas,
+  workbenchTab,
+  setWorkbenchTab,
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
@@ -116,7 +118,8 @@ function renderAnsiToHtml(rawText: string): string {
 }
 
 export default function WorkbenchPanel() {
-  const [tab, setTab] = createSignal<"execution" | "artifacts">("execution");
+  const tab = workbenchTab;
+  const setTab = setWorkbenchTab;
   const [selectedArtifact, setSelectedArtifact] = createSignal<string | null>(null);
   const [artifactPreview, setArtifactPreview] = createSignal("");
   const [artifactContent, setArtifactContent] = createSignal<string | null>(null);
