@@ -318,6 +318,10 @@ impl PresentationLibrary {
         let key = (stored.spec.id.clone(), stored.spec.revision);
         if let Some(existing) = self.specs.get(&key) {
             if existing.digest != stored.digest {
+                if stored.origin.owner == "builtin" && existing.origin.owner == "builtin" {
+                    self.specs.insert(key, stored);
+                    return Ok(());
+                }
                 return Err(PresentationError::RevisionConflict(stored.spec.id));
             }
             return Ok(());

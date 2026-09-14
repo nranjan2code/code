@@ -3122,10 +3122,16 @@ fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
     );
     let mut library = store.load().map_err(|error| error.to_string())?;
     let before = library.definitions().count();
+    let mut changed = false;
     for seed in vak_presentation::seeds::built_in_seed_pack() {
+        if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision) {
+            if existing.digest != seed.digest {
+                changed = true;
+            }
+        }
         library.register(seed).map_err(|error| error.to_string())?;
     }
-    if library.definitions().count() != before {
+    if changed || library.definitions().count() != before {
         store.save(&library).map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -7826,12 +7832,18 @@ async fn list_presentations(State(state): State<AppState>) -> axum::response::Re
     let store = presentation_store(&state);
     match store.load().and_then(|mut library| {
         let before = library.definitions().count();
+        let mut changed = false;
         for seed in vak_presentation::seeds::built_in_seed_pack() {
+            if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision) {
+                if existing.digest != seed.digest {
+                    changed = true;
+                }
+            }
             library.register(seed).map_err(|error| {
                 vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
             })?;
         }
-        if library.definitions().count() != before {
+        if changed || library.definitions().count() != before {
             store.save(&library)?;
         }
         Ok(library)
