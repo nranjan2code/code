@@ -3045,8 +3045,10 @@ impl Core {
                     _ => None,
                 };
                 if let Some(text) = builtin_text {
-                    let mut content = prompts::LayerContent::default();
-                    content.instructions = Some(text.to_string());
+                    let content = prompts::LayerContent {
+                        instructions: Some(text.to_string()),
+                        ..Default::default()
+                    };
                     layers.push(prompts::LayerInput::new(
                         prompts::PromptLayer::Agent,
                         Some(format!("builtin-role:{name}")),

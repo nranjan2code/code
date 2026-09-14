@@ -23,6 +23,7 @@ pub struct ConsolidationReport {
 }
 
 /// Analyze episodic notes for this workspace and consolidate them.
+#[allow(clippy::collapsible_if)]
 pub fn consolidate_memory(home: &Path, cwd: &Path) -> Result<ConsolidationReport, String> {
     let notes = memory::list_notes(home, cwd);
     let total_notes_examined = notes.len();
@@ -194,6 +195,7 @@ fn extract_entity_pattern(text: &str) -> Option<(String, String, String)> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]

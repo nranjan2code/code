@@ -156,6 +156,7 @@ fn summarize_document(path: &Path, content: &str, ext: &str) -> String {
     out
 }
 
+#[allow(clippy::collapsible_if)]
 fn outline_document(content: &str, ext: &str) -> String {
     match ext {
         "csv" | "tsv" => {
@@ -710,6 +711,7 @@ fn extract_text_lines(content: &str, offset: usize, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]

@@ -362,10 +362,8 @@ pub fn list_runs(
             continue;
         }
         if let Ok(rec) = serde_json::from_str::<AgentRunRecord>(trimmed) {
-            if let Some(target_id) = agent_id {
-                if rec.agent_id != target_id {
-                    continue;
-                }
+            if agent_id.is_some_and(|target_id| rec.agent_id != target_id) {
+                continue;
             }
             records.push(rec);
             if records.len() >= limit {
@@ -394,7 +392,7 @@ pub fn update_schedule(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

@@ -268,6 +268,7 @@ impl vak_tools::Tool for DataQueryTool {
         })
     }
 
+    #[allow(clippy::collapsible_if)]
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(raw_data) = args.get("data").and_then(Value::as_str).map(str::trim) else {
             return vak_tools::ToolOutput::error("missing required argument 'data'");
@@ -487,6 +488,7 @@ impl vak_tools::Tool for DataQueryTool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use vak_tools::Tool;
 

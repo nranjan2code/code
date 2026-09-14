@@ -245,7 +245,7 @@ fn transcode_body(content: &str) -> String {
         // 1. Check for structured vak code blocks
         if trimmed.starts_with("```vak-table") || trimmed.starts_with("```vak-dataframe") {
             let mut json_str = String::new();
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == "```" {
                     break;
                 }
@@ -260,7 +260,7 @@ fn transcode_body(content: &str) -> String {
 
         if trimmed.starts_with("```vak-decision") || trimmed.starts_with("```vak-comparison") {
             let mut json_str = String::new();
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == "```" {
                     break;
                 }
@@ -277,7 +277,7 @@ fn transcode_body(content: &str) -> String {
         if trimmed.starts_with("```") {
             let lang = trimmed.trim_start_matches('`').trim();
             let mut code_str = String::new();
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == "```" {
                     break;
                 }

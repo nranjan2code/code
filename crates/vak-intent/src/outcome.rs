@@ -450,6 +450,7 @@ pub fn evaluate_requirements_with_evidence(
 }
 
 /// Structural oracle for tabular data (markdown tables or vak-table/vak-dataframe blocks).
+#[allow(clippy::collapsible_if)]
 pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
     // Check vak-table or vak-dataframe
     if let Some(start) = text
@@ -533,6 +534,7 @@ pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
 }
 
 /// Structural oracle for decision/comparison matrices.
+#[allow(clippy::collapsible_if)]
 pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
     if let Some(start) = text
         .find("```vak-decision")
@@ -588,6 +590,7 @@ pub fn verify_decision_matrix(text: &str) -> Option<Result<String, String>> {
 }
 
 /// Structural oracle for claim-to-citation integrity.
+#[allow(clippy::collapsible_if)]
 pub fn verify_claim_citations(text: &str) -> Option<Result<String, String>> {
     let mut refs = std::collections::HashSet::new();
     let mut defs = std::collections::HashSet::new();
@@ -906,6 +909,7 @@ impl OutcomeSpec {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::{Act, Reading};
 
