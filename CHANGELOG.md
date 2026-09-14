@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.84 — 2026-09-14
+
+- Living outcome canvas: every markdown table in chat is now an interactive surface (`InteractiveTable`) with inline search filtering, column sorting, and instant CSV export.
+- Universal document ingestion (`doc_read`): token-bounded, workspace-confined inspection and section/table extraction across Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, and HTML/XML formats.
+- Specialist domain archetypes (`researcher`, `writer`, `operator`, `analyst`): standardized templates, prompts, and CLI (`vak agents`) / REST API surfaces with subagent role inheritance.
+- Semantic memory distillation: autonomous consolidation distills procedural constraints and domain entities during session compaction.
+- Cross-domain multi-agent collaboration evaluations: added `general_multi_agent_collaboration` verifying multi-role delegation across quantitative metrics, citations, and synthesis.
+- Proactive Agent operations: Agent-owned scheduled execution (`POST /agents/{id}/schedule`, `vak agents schedule`) and append-only execution run ledgers (`GET /agents/{id}/runs`, `vak agents runs`).
+
 ## 3.0.83 — 2026-09-13
 
 - Harden universal prompt layering and additive custom Agent instructions.
