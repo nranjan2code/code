@@ -30,7 +30,7 @@ fn builtin_domains(name: &str) -> Serves {
     use Domain::*;
     let domains: &[Domain] = match name {
         "read" | "glob" | "grep" => &[Filesystem],
-        "write" | "edit" => &[Documents],
+        "write" | "edit" | "data_query" => &[Documents],
         "bash" => &[CodeExec],
         "webfetch" => &[Web, LiveData],
         "browse" => &[Web, LiveData],
@@ -41,7 +41,7 @@ fn builtin_domains(name: &str) -> Serves {
         "skill" => &[Documents, Orchestration],
         "task" | "flow" | "tasks" => &[Orchestration],
         "session_search" => &[Memory],
-        "remember" | "propose_skill" => &[Memory],
+        "remember" | "propose_skill" | "entity_record" | "entity_query" => &[Memory],
         "commitments" => &[Memory, Orchestration],
         // A tool this build does not classify stays undeclared, which means
         // it is never sliced away. Failing open is correct here: slicing

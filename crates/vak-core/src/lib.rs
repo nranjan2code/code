@@ -8,7 +8,9 @@ pub mod baseline;
 pub mod capability;
 pub mod checkpoints;
 pub mod commitments;
+pub mod consolidation;
 pub mod custom_commands;
+pub mod data_engine;
 pub mod digest;
 pub mod entities;
 pub mod files;
@@ -5056,7 +5058,16 @@ impl Core {
                 cwd: self.inner.cwd.clone(),
                 session_id: current_session.clone(),
             }));
+            tools.push(Arc::new(entities::EntityRecordTool {
+                sessions_home: self.sessions_home(),
+                cwd: self.inner.cwd.clone(),
+            }));
         }
+        tools.push(Arc::new(entities::EntityQueryTool {
+            sessions_home: self.sessions_home(),
+            cwd: self.inner.cwd.clone(),
+        }));
+        tools.push(Arc::new(data_engine::DataQueryTool));
         if self.effective_memory_skill_proposals() {
             tools.push(Arc::new(learning::ProposeSkillTool {
                 sessions_home: self.sessions_home(),
@@ -6982,6 +6993,13 @@ impl Core {
                 reason: "apply-failed",
             },
         }
+    }
+
+    /// Run self-supervised memory consolidation across episodic notes:
+    /// promotes recurring procedures into immutable invariants, detects conflicts,
+    /// and distills structured entity records.
+    pub fn consolidate_memory(&self) -> Result<consolidation::ConsolidationReport, String> {
+        consolidation::consolidate_memory(&self.sessions_home(), self.cwd())
     }
 }
 

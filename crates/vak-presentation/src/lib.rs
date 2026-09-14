@@ -12,6 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 pub mod seeds;
+pub mod transcoder;
+
+pub use transcoder::transcode_to_html;
 
 pub const SPEC_SCHEMA_VERSION: u16 = 1;
 pub const RENDER_TREE_SCHEMA_VERSION: u16 = 1;
