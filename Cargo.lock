@@ -7086,6 +7086,7 @@ dependencies = [
  "vak-ops",
  "vak-permission",
  "vak-plugin",
+ "vak-presentation",
  "vak-server",
  "vak-session",
  "vak-terminal",

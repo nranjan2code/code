@@ -5814,6 +5814,9 @@ impl Core {
                 CompactOutcome::failed(format!("compaction write failed: {e}")),
             );
         }
+        // Semantic memory & entity distillation: distill learned invariants,
+        // domain procedural rules, and semantic entities before older history fades.
+        let _ = self.consolidate_memory();
         let _ = session.append_receipt(receipt);
         let after = vak_agent::context::estimate_tokens(
             &session.derive_messages(),

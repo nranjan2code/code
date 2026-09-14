@@ -136,6 +136,9 @@ pub fn general_suite() -> Vec<EvalCase> {
         general_error_adapts_noncode(),
         general_schedule(),
         general_decision_matrix(),
+        general_tabular_oracle(),
+        general_citation_integrity(),
+        general_entity_knowledge_capture(),
     ]
 }
 
@@ -472,6 +475,97 @@ pub fn general_error_adapts_noncode() -> EvalCase {
         ScriptedTurn::Text("recovered".into()),
     ];
     c.verify = "grep -q 'Roster: Maya' roster.md".into();
+    c
+}
+
+/// Tabular data oracle calculation: compute structured row sums and statistics
+/// and verify against exact expected tabular oracle calculations.
+pub fn general_tabular_oracle() -> EvalCase {
+    let mut c = base(
+        "general-tabular-oracle",
+        "calculate tabular sums, averages, and write verified tabular summary",
+    );
+    c.files = vec![(
+        "sales.csv".into(),
+        "region,units,price\nnorth,100,15.50\nsouth,250,12.00\neast,80,20.00\nwest,150,18.00\n".into(),
+    )];
+    c.prompt = "Calculate total units and total revenue from sales.csv and write summary.json with keys total_units and total_revenue.".into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "bash",
+            serde_json::json!({"command": "awk -F, 'NR>1 {units+=$2; rev+=($2*$3)} END {print units, rev}' sales.csv"}),
+        ),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "summary.json",
+                "content": "{\"total_units\": 580, \"total_revenue\": 8850.00}\n"
+            }),
+        ),
+        ScriptedTurn::Text("calculated".into()),
+    ];
+    c.verify = "grep -q '\"total_units\": 580' summary.json && grep -q '\"total_revenue\": 8850.00' summary.json".into();
+    c
+}
+
+/// Citation integrity: synthesize findings with verifiable numeric citations [1], [2].
+pub fn general_citation_integrity() -> EvalCase {
+    let mut c = base(
+        "general-citation-integrity",
+        "synthesize research with strict numeric citations and bibliography",
+    );
+    c.files = vec![
+        (
+            "sources/source1.txt".into(),
+            "Title: Global Solar Capacity 2025\nFinding: Installed photovoltaic capacity reached 2.1 terawatts globally in 2024.\n".into(),
+        ),
+        (
+            "sources/source2.txt".into(),
+            "Title: Grid Battery Storage Index\nFinding: Utility-scale battery storage grew by 125% year-over-year in North America.\n".into(),
+        ),
+    ];
+    c.prompt = "Synthesize findings from sources/ into synthesis.md. Every claim must have a [1] or [2] citation and a References section at the end.".into();
+    c.script = vec![
+        ScriptedTurn::tool_calls(vec![
+            ("read", serde_json::json!({"path": "sources/source1.txt"})),
+            ("read", serde_json::json!({"path": "sources/source2.txt"})),
+        ]),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "synthesis.md",
+                "content": "# Clean Energy Transition\n\nGlobal photovoltaic capacity reached 2.1 terawatts in 2024 [1]. Concurrently, utility-scale battery deployment surged 125% in North America [2].\n\n## References\n- [1] Global Solar Capacity 2025\n- [2] Grid Battery Storage Index\n"
+            }),
+        ),
+        ScriptedTurn::Text("synthesized".into()),
+    ];
+    c.verify = "grep -q '\\[1\\]' synthesis.md && grep -q '\\[2\\]' synthesis.md && grep -q '## References' synthesis.md".into();
+    c
+}
+
+/// Entity knowledge capture: extract structured entity graph records with attributes and relations.
+pub fn general_entity_knowledge_capture() -> EvalCase {
+    let mut c = base(
+        "general-entity-knowledge-capture",
+        "extract typed entities with attributes and relations into JSONL knowledge format",
+    );
+    c.files = vec![(
+        "interview.txt".into(),
+        "Interview with Dr. Aris Thorne, Lead Biologist at Solis Genomics. Solis Genomics was founded in 2021 by Dr. Thorne and operates in Boston.\n".into(),
+    )];
+    c.prompt = "Extract entities (Person, Organization) from interview.txt into entities.jsonl. Include id, name, entity_type, and relations.".into();
+    c.script = vec![
+        ScriptedTurn::tool("read", serde_json::json!({"path": "interview.txt"})),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "entities.jsonl",
+                "content": "{\"id\":\"aris-thorne\",\"name\":\"Dr. Aris Thorne\",\"entity_type\":\"Person\",\"summary\":\"Lead Biologist at Solis Genomics\",\"attributes\":{\"role\":\"Lead Biologist\"},\"relations\":[{\"relation\":\"founded\",\"target_entity_id\":\"solis-genomics\"}]}\n{\"id\":\"solis-genomics\",\"name\":\"Solis Genomics\",\"entity_type\":\"Organization\",\"summary\":\"Genomics company founded in 2021 in Boston\",\"attributes\":{\"founded\":\"2021\",\"location\":\"Boston\"},\"relations\":[]}\n"
+            }),
+        ),
+        ScriptedTurn::Text("extracted".into()),
+    ];
+    c.verify = "grep -q '\"id\":\"aris-thorne\"' entities.jsonl && grep -q '\"target_entity_id\":\"solis-genomics\"' entities.jsonl".into();
     c
 }
 

@@ -17,6 +17,7 @@ mod inbox;
 mod install;
 mod intent;
 mod memory;
+mod entities_cli;
 mod plugins;
 mod prompts;
 mod setup;
@@ -24,6 +25,43 @@ mod tasks;
 mod update_check;
 
 use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction, SkillsReviewAction};
+
+fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>) -> i32 {
+    let core = match Core::new(cwd) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let home = core.sessions_home();
+    let path = vak_session::SessionPath::new_session_file(&home, core.cwd(), &session_id);
+    let log = match vak_session::SessionLog::open(path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: could not open session '{session_id}': {e}");
+            return 1;
+        }
+    };
+    let msgs = log.derive_messages();
+    let md = vak_core::transcript_md::render_markdown(&msgs);
+    let content = if html {
+        vak_presentation::transcode_to_html(&format!("Session {session_id}"), &md)
+    } else {
+        md
+    };
+
+    if let Some(dest) = out {
+        if let Err(e) = std::fs::write(&dest, content) {
+            eprintln!("error writing to {}: {e}", dest.display());
+            return 1;
+        }
+        println!("Exported session to {}", dest.display());
+    } else {
+        print!("{content}");
+    }
+    0
+}
 
 fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
     let Some(core) = Core::new(cwd).ok() else {
@@ -421,6 +459,8 @@ async fn main() {
             },
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
+        Some(Command::Entities { action }) => entities_cli::run_entities(cwd, action),
+        Some(Command::Export { session_id, html, out }) => run_export(cwd, session_id, html, out),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Skills { action }) => run_skills(cwd, action),
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),

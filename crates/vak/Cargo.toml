@@ -20,6 +20,7 @@ vak-eval = { workspace = true }
 vak-flow = { workspace = true }
 vak-llm = { workspace = true }
 vak-server = { workspace = true }
+vak-presentation = { workspace = true }
 vak-session = { workspace = true }
 vak-terminal = { workspace = true }
 clap = { workspace = true }

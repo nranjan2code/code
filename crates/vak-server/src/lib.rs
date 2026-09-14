@@ -835,9 +835,15 @@ fn router_with_state(state: AppState) -> Router {
         .route("/voice/providers", get(list_voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))
+        .route("/memory/consolidate", post(consolidate_memory_route))
         .route(
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
+        )
+        .route("/entities", get(list_entities_route).post(upsert_entity_route))
+        .route(
+            "/entities/{id}",
+            get(get_entity_route).delete(delete_entity_route),
         )
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
@@ -2393,6 +2399,184 @@ async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value
         "removed_temps": report.removed_temps,
         "removed_empty_dirs": report.removed_empty_dirs,
     }))
+}
+
+async fn consolidate_memory_route(
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match state.core.consolidate_memory() {
+        Ok(report) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&report).unwrap_or_default()),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ListEntitiesQuery {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn list_entities_route(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let is_global = query.scope.as_deref() == Some("global");
+    let cwd_buf = state.core.cwd();
+    let cwd = if is_global {
+        None
+    } else {
+        Some(cwd_buf.as_path())
+    };
+    let entities = if let Some(ref q) = query.q {
+        vak_core::entities::search_entities(&home, cwd, q)
+    } else {
+        vak_core::entities::list_entities(&home, cwd)
+    };
+    (StatusCode::OK, Json(serde_json::json!({ "entities": entities }))).into_response()
+}
+
+async fn get_entity_route(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let is_global = query.scope.as_deref() == Some("global");
+    let cwd_buf = state.core.cwd();
+    let cwd = if is_global {
+        None
+    } else {
+        Some(cwd_buf.as_path())
+    };
+    if let Some(entity) = vak_core::entities::get_entity(&home, cwd, &id) {
+        (
+            StatusCode::OK,
+            Json(serde_json::to_value(&entity).unwrap_or_default()),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "entity not found" })),
+        )
+            .into_response()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UpsertEntityBody {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    entity_type: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    attributes: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    relations: Vec<vak_core::entities::EntityRelation>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn upsert_entity_route(
+    State(state): State<AppState>,
+    Json(body): Json<UpsertEntityBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let is_global = body.scope.as_deref() == Some("global");
+    let cwd_buf = state.core.cwd();
+    let cwd = if is_global {
+        None
+    } else {
+        Some(cwd_buf.as_path())
+    };
+    let id = body.id.unwrap_or_else(|| {
+        let slug = body
+            .name
+            .to_ascii_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        if slug.is_empty() {
+            uuid::Uuid::now_v7().to_string()
+        } else {
+            slug
+        }
+    });
+
+    let record = vak_core::entities::EntityRecord {
+        id,
+        name: body.name,
+        entity_type: body.entity_type,
+        summary: body.summary,
+        attributes: body.attributes,
+        relations: body.relations,
+        updated_at: chrono::Utc::now(),
+    };
+
+    match vak_core::entities::upsert_entity(&home, cwd, record) {
+        Ok(saved) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&saved).unwrap_or_default()),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_entity_route(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let is_global = query.scope.as_deref() == Some("global");
+    let cwd_buf = state.core.cwd();
+    let cwd = if is_global {
+        None
+    } else {
+        Some(cwd_buf.as_path())
+    };
+    match vak_core::entities::delete_entity(&home, cwd, &id) {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "deleted": true })),
+        )
+            .into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "deleted": false, "error": "entity not found" })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// Resolve a note id to the markdown store it lives in. The workspace tier/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
@@ -6291,9 +6475,12 @@ async fn transcript(
 async fn transcript_markdown(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if let Some(handle) = state.get(&id) {
+    let format_html = query.get("format").map(|s| s.as_str()) == Some("html");
+
+    let md_opt = if let Some(handle) = state.get(&id) {
         let guard = handle
             .session
             .lock()
@@ -6301,19 +6488,38 @@ async fn transcript_markdown(
         let Some(s) = guard.as_ref() else {
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
-        let md = vak_core::transcript_md::render_markdown(&s.derive_messages());
-        return markdown_response(md);
-    }
-    match open_historical_session(&state, &id) {
-        Some(s) => markdown_response(vak_core::transcript_md::render_markdown(
-            &s.derive_messages(),
-        )),
+        Some(vak_core::transcript_md::render_markdown(&s.derive_messages()))
+    } else {
+        open_historical_session(&state, &id)
+            .map(|s| vak_core::transcript_md::render_markdown(&s.derive_messages()))
+    };
+
+    match md_opt {
+        Some(md) => {
+            if format_html {
+                html_response(vak_presentation::transcode_to_html(&format!("Session {id}"), &md))
+            } else {
+                markdown_response(md)
+            }
+        }
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
         )
             .into_response(),
     }
+}
+
+fn html_response(html: String) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
+        html,
+    )
+        .into_response()
 }
 
 fn markdown_response(md: String) -> axum::response::Response {
