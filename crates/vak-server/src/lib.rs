@@ -13691,7 +13691,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
     let wt = vak_core::worktree::create(&snapshot.cwd, &rid).ok()?;
     let fired_at_utc = chrono::Utc::now();
     let scheduled_prompt = format!(
-        "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a fixed date.]",
+        "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a specific date.]",
         snapshot.prompt,
         fired_at_utc.to_rfc3339(),
         fired_at_utc.with_timezone(&chrono::Local).to_rfc3339(),

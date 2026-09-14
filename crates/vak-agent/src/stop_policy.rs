@@ -234,6 +234,11 @@ impl StopPolicy {
 
     /// True when the prompt itself asks for executed verification or sandbox execution.
     fn demands_verification(prompt: &str) -> bool {
+        let stripped = if let Some(idx) = prompt.find("[Scheduled-run context:") {
+            &prompt[..idx]
+        } else {
+            prompt
+        };
         const DEMANDS: [&str; 13] = [
             "must pass",
             "tests pass",
@@ -249,7 +254,7 @@ impl StopPolicy {
             "verify the",
             "verify that",
         ];
-        let p = prompt.to_ascii_lowercase();
+        let p = stripped.to_ascii_lowercase();
         if DEMANDS.iter().any(|d| p.contains(d)) {
             return true;
         }

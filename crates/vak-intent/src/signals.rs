@@ -604,6 +604,45 @@ fn token_position(tokens: &[String], word: &str) -> Option<usize> {
     tokens.iter().position(|token| stems(token).contains(&word))
 }
 
+/// Strip prompt scaffolding and runner control blocks before extracting intent.
+fn clean_request_text(raw: &str) -> String {
+    let mut text = raw.to_string();
+    let tags = [
+        "conversation_thread",
+        "context_summary",
+        "intent",
+        "work_contract",
+        "managed_work",
+        "context_packet",
+        "system_reminder",
+        "runtime_guidance",
+        "scratchpad",
+    ];
+    for tag in tags {
+        let open_pattern = format!("<{tag}");
+        let close_pattern = format!("</{tag}>");
+        while let Some(start) = text.find(&open_pattern) {
+            if let Some(end_offset) = text[start..].find(&close_pattern) {
+                let end = start + end_offset + close_pattern.len();
+                text.replace_range(start..end, "");
+            } else {
+                text.truncate(start);
+                break;
+            }
+        }
+    }
+    while let Some(start) = text.find("[Scheduled-run context:") {
+        if let Some(end_offset) = text[start..].find(']') {
+            let end = start + end_offset + 1;
+            text.replace_range(start..end, "");
+        } else {
+            text.truncate(start);
+            break;
+        }
+    }
+    text
+}
+
 /// Tier 1. A pure function of `request`.
 pub fn extract(request: &Request<'_>) -> Extraction {
     let mut out = Extraction {
@@ -612,8 +651,9 @@ pub fn extract(request: &Request<'_>) -> Extraction {
             .unwrap_or_else(|| request.surface.implied_attendance()),
         ..Extraction::default()
     };
-    let lower = request.text.to_ascii_lowercase();
-    let tokens = words(request.text);
+    let cleaned_text = clean_request_text(request.text);
+    let lower = cleaned_text.to_ascii_lowercase();
+    let tokens = words(&cleaned_text);
 
     out.signals.push(Signal::new(
         SignalKind::Surface,
@@ -694,7 +734,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     }
 
     // --- structural ----------------------------------------------------
-    let length = request.text.trim().len();
+    let length = cleaned_text.trim().len();
     if length <= 24 && !tokens.is_empty() {
         out.horizon.add(Horizon::Immediate, 0.6);
         out.signals.push(Signal::new(
@@ -712,7 +752,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
             format!("{length} chars ⇒ session"),
         ));
     }
-    if request.text.contains("```") {
+    if cleaned_text.contains("```") {
         out.act.add(Act::Modify, 0.3);
         out.signals.push(Signal::new(
             SignalKind::Structural,
@@ -730,8 +770,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
             "a URL to fetch",
         ));
     }
-    let path_like = request
-        .text
+    let path_like = cleaned_text
         .split_whitespace()
         .any(|w| w.contains('/') && w.contains('.') && !w.contains("://"));
     if path_like {
