@@ -231,12 +231,17 @@ function AttentionQueue(props: {
   degraded: boolean;
 }) {
   const bySeverity = (severity: Severity) => props.items.filter((item) => item.severity === severity).length;
-  // Nothing is hidden — the tally above always counts the whole queue and
-  // the rest is one click away. The cap exists so a bad day does not push
-  // spend, live work, and the event stream three screens down.
   const [expanded, setExpanded] = createSignal(false);
-  const shown = createMemo(() => (expanded() ? props.items : props.items.slice(0, QUEUE_VISIBLE)));
-  const hidden = createMemo(() => props.items.length - shown().length);
+  const [filter, setFilter] = createSignal<"all" | Severity>("all");
+
+  const filteredItems = createMemo(() => {
+    if (filter() === "all") return props.items;
+    return props.items.filter((item) => item.severity === filter());
+  });
+
+  const shown = createMemo(() => (expanded() ? filteredItems() : filteredItems().slice(0, QUEUE_VISIBLE)));
+  const hidden = createMemo(() => filteredItems().length - shown().length);
+
   return (
     <section class="panel home-attention" classList={{ "panel-alert": bySeverity("critical") > 0 }}>
       <div class="panel-title-row">
@@ -246,9 +251,40 @@ function AttentionQueue(props: {
           <p class="dim">Everything across vak that is blocked, asking, or drifting — in one order.</p>
         </div>
         <div class="home-severity-tally">
-          <span class="tally tone-bad">{bySeverity("critical")} blocking</span>
-          <span class="tally tone-warn">{bySeverity("warning")} to look at</span>
-          <span class="tally tone-info">{bySeverity("info")} to review</span>
+          <div class="home-queue-tabs">
+            <button
+              class={`home-queue-tab-btn ${filter() === "all" ? "active" : ""}`}
+              onClick={() => setFilter("all")}
+            >
+              All ({props.items.length})
+            </button>
+            <Show when={bySeverity("critical") > 0}>
+              <button
+                class={`home-queue-tab-btn ${filter() === "critical" ? "active" : ""}`}
+                style="color: var(--red); font-weight: 600"
+                onClick={() => setFilter("critical")}
+              >
+                Blocking ({bySeverity("critical")})
+              </button>
+            </Show>
+            <Show when={bySeverity("warning") > 0}>
+              <button
+                class={`home-queue-tab-btn ${filter() === "warning" ? "active" : ""}`}
+                style="color: var(--yellow)"
+                onClick={() => setFilter("warning")}
+              >
+                Needs look ({bySeverity("warning")})
+              </button>
+            </Show>
+            <Show when={bySeverity("info") > 0}>
+              <button
+                class={`home-queue-tab-btn ${filter() === "info" ? "active" : ""}`}
+                onClick={() => setFilter("info")}
+              >
+                Review ({bySeverity("info")})
+              </button>
+            </Show>
+          </div>
         </div>
       </div>
       <Show
@@ -1106,6 +1142,10 @@ export function Home() {
   };
 
   const blocking = createMemo(() => attention().filter((i) => i.severity === "critical").length);
+  const liveRate = createMemo(() => {
+    const now = Date.now();
+    return activity().filter((item) => now - item.ts < 60_000).length;
+  });
   const headline = createMemo(() => {
     if (opsFailed()) return "The control plane is not answering.";
     if (blocking() > 0) return `${blocking()} thing${blocking() === 1 ? "" : "s"} ${blocking() === 1 ? "is" : "are"} blocking work.`;
@@ -1140,16 +1180,24 @@ export function Home() {
           </div>
           <h2>{headline()}</h2>
           <Show when={snapshot()} fallback={<p>Reading the control plane…</p>}>
-            <ul class="home-facts">
-              <li><span>Working in</span><PathCell path={snapshot()!.server.cwd} budget={40} /></li>
-              <li>
-                <span>Answering with</span>
-                {providerLabel(config()?.provider ?? snapshot()!.health.provider)}
-                <em class="mono">{config()?.model ?? snapshot()!.health.model}</em>
-              </li>
-              <li><span>Allowed to</span>{modeLabel(config()?.permission_mode ?? snapshot()!.health.permission_mode)}</li>
-              <li><span>Contained by</span>{snapshot()!.health.sandbox}</li>
-            </ul>
+            <div class="home-masthead-tags">
+              <span class="home-tag">
+                <span>Workspace</span>
+                <PathCell path={snapshot()!.server.cwd} budget={32} />
+              </span>
+              <span class="home-tag">
+                <span>Route</span>
+                <span class="mono">{providerLabel(config()?.provider ?? snapshot()!.health.provider)} · {config()?.model ?? snapshot()!.health.model}</span>
+              </span>
+              <span class="home-tag">
+                <span>Permission</span>
+                <span>{modeLabel(config()?.permission_mode ?? snapshot()!.health.permission_mode)}</span>
+              </span>
+              <span class="home-tag">
+                <span>Sandbox</span>
+                <span>{snapshot()!.health.sandbox}</span>
+              </span>
+            </div>
           </Show>
         </div>
         <div class="home-masthead-side">
@@ -1157,6 +1205,73 @@ export function Home() {
           <button class="ghost small" onClick={() => navigate("#/operations")}>Operations Center</button>
         </div>
       </section>
+
+      <div class="home-kpi-strip">
+        <a href="#/operations/incidents" class="home-kpi-card" data-tone={failedChecks().length > 0 ? "bad" : "ok"}>
+          <span class="home-kpi-lbl">System Health</span>
+          <div class="home-kpi-val">
+            <span>{failedChecks().length > 0 ? `${failedChecks().length} Failing` : "Healthy"}</span>
+            <span class={`kpi-tag ${failedChecks().length > 0 ? "bad" : "ok"}`}>
+              {failedChecks().length > 0 ? "ALERT" : "OPERATIONAL"}
+            </span>
+          </div>
+          <span class="home-kpi-sub">
+            {subsystems().filter((s) => s.state === "ok").length} of {subsystems().filter((s) => s.state !== "off").length} probes passing
+          </span>
+        </a>
+
+        <a href="#/operations/runtime" class="home-kpi-card" data-tone={(snapshot()?.runs.length ?? 0) > 0 ? "ok" : undefined}>
+          <span class="home-kpi-lbl">Active Concurrency</span>
+          <div class="home-kpi-val">
+            <span>{snapshot()?.runs.length ?? 0}</span>
+            <Show when={(snapshot()?.runs.length ?? 0) > 0} fallback={<span class="kpi-tag info">IDLE</span>}>
+              <span class="kpi-tag ok">RUNNING</span>
+            </Show>
+          </div>
+          <span class="home-kpi-sub">
+            {snapshot()?.runs.length ?? 0} active · {snapshot()?.pool ? `${snapshot()!.pool.entries.length}/${snapshot()!.pool.max} pool` : "0 pool"}
+          </span>
+        </a>
+
+        <a href="#/inbox" class="home-kpi-card" data-tone={blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}>
+          <span class="home-kpi-lbl">Action Queue</span>
+          <div class="home-kpi-val">
+            <span>{attention().length}</span>
+            <span class={`kpi-tag ${blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}`}>
+              {blocking() > 0 ? `${blocking()} BLOCKING` : attention().length > 0 ? "ATTENTION" : "CLEAR"}
+            </span>
+          </div>
+          <span class="home-kpi-sub">
+            {blocking() > 0 ? `${blocking()} critical items` : "All automated runs clear"}
+          </span>
+        </a>
+
+        <a href="#/finops" class="home-kpi-card" data-tone={capShare() != null && capShare()! >= 100 ? "bad" : capShare() != null && capShare()! >= 80 ? "warn" : undefined}>
+          <span class="home-kpi-lbl">Spend Today</span>
+          <div class="home-kpi-val">
+            <span>{finops()?.day_usd != null ? money(finops()!.day_usd) : "$0.00"}</span>
+            <Show when={capShare() != null}>
+              <span class={`kpi-tag ${capShare()! >= 100 ? "bad" : capShare()! >= 80 ? "warn" : "info"}`}>
+                {capShare()!.toFixed(0)}%
+              </span>
+            </Show>
+          </div>
+          <span class="home-kpi-sub">
+            {capShare() != null ? `${capShare()!.toFixed(0)}% of daily cap` : "No daily cap configured"}
+          </span>
+        </a>
+
+        <a href="#/operations/runtime" class="home-kpi-card">
+          <span class="home-kpi-lbl">Live Rate</span>
+          <div class="home-kpi-val">
+            <span>{liveRate()} <small style="font-size: 13px; font-weight: 500; color: var(--muted)">ev/m</small></span>
+            <span class="kpi-tag info">{conn().toUpperCase()}</span>
+          </div>
+          <span class="home-kpi-sub">
+            {feed().length} live buffered events
+          </span>
+        </a>
+      </div>
 
       <div class="home-top">
         <ReadinessRing subsystems={subsystems()} sampledAt={snapshot()?.generated_at} />
@@ -1176,7 +1291,9 @@ export function Home() {
         <RightNow ops={snapshot()} error={opsFailed()} />
         <PulsePanel />
         <MoneyPanel finops={finops() ?? null} error={!finops.loading && finops() == null} />
+      </div>
 
+      <div class="home-bottom-grid">
         <section class="panel home-history">
           <div class="panel-title-row">
             <div>
