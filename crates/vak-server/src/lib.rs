@@ -11532,15 +11532,18 @@ async fn preview_prompt(
     Json(body): Json<PromptPreviewBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let surface = match body.surface.as_deref().map(str::trim).unwrap_or("") {
+    let raw_surface = body.surface.as_deref().map(str::trim).unwrap_or("");
+    let surface = match raw_surface.to_ascii_lowercase().as_str() {
         "" | "unknown" => vak_core::Surface::Unknown,
         "cli" => vak_core::Surface::Cli,
+        "terminal" => vak_core::Surface::Terminal,
         "desktop" => vak_core::Surface::Desktop,
         "server" => vak_core::Surface::Server,
+        "web" => vak_core::Surface::Web,
         "background" => vak_core::Surface::Background,
         "subagent" => vak_core::Surface::Subagent,
-        channel => vak_core::Surface::Chat {
-            channel: channel.to_string(),
+        _ => vak_core::Surface::Chat {
+            channel: raw_surface.to_string(),
         },
     };
     if let Some(role) = body.role.as_deref()

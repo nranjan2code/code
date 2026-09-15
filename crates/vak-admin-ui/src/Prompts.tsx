@@ -68,7 +68,14 @@ const LAYER_CSS_CLASS: Record<PromptLayerDescriptor["layer"], string> = {
   agent: "agent",
 };
 
-const SURFACES = ["cli", "desktop", "server", "background", "subagent", "telegram"] as const;
+const SURFACES = [
+  { id: "cli", label: "CLI" },
+  { id: "desktop", label: "Desktop" },
+  { id: "server", label: "Server" },
+  { id: "background", label: "Background" },
+  { id: "subagent", label: "Subagent" },
+  { id: "telegram", label: "Telegram" },
+] as const;
 
 /// Universal Agent templates (Research, Writing, Data, Operations, Life/Work Automation, Engineering)
 const UNIVERSAL_TEMPLATES: Record<PromptBlock, { label: string; snippet: string }[]> = {
@@ -205,8 +212,23 @@ export function PromptsSection(props: {
   // History list
   const [history, setHistory] = createSignal<PromptHistoryEntry[]>(loadHistory());
   const [showHistory, setShowHistory] = createSignal(false);
-  // Highlighted block in preview
-  const [highlightedBlock, setHighlightedBlock] = createSignal<PromptBlock | null>(null);
+  // Selected table block
+  const [selectedTableBlock, setSelectedTableBlock] = createSignal<string | null>(null);
+  // Preview view mode
+  const [previewViewMode, setPreviewViewMode] = createSignal<"full" | "sections">("full");
+  let promptPreRef: HTMLPreElement | undefined;
+
+  function scrollToSurface() {
+    if (previewViewMode() !== "full") {
+      setSelectedTableBlock("surface");
+      return;
+    }
+    setTimeout(() => {
+      if (promptPreRef) {
+        promptPreRef.scrollTop = promptPreRef.scrollHeight;
+      }
+    }, 40);
+  }
 
   const blockText = (block: PromptBlock): string | null => {
     const l = layer()?.layer;
@@ -218,13 +240,13 @@ export function PromptsSection(props: {
   };
 
   const inheritedText = (block: PromptBlock): string | null => {
-    const eff = effective();
+    const eff = preview() ?? effective();
     if (!eff) return null;
     return eff.blocks?.[block] ?? eff.seed_blocks?.[block] ?? null;
   };
 
   const contributors = (block: PromptBlock): PromptLayerDescriptor[] =>
-    (effective()?.layers ?? []).filter((d) => d.block === block);
+    ((preview() ?? effective())?.layers ?? []).filter((d) => d.block === block);
 
   async function save(block: PromptBlock) {
     setBusy(true);
@@ -235,7 +257,6 @@ export function PromptsSection(props: {
         "info",
         `${block} saved to ${scopeLabel(props.scope())}. Applies to new sessions.`,
       );
-      // Record history
       saveHistoryEntry({
         id: Date.now().toString(),
         timestamp: new Date().toLocaleTimeString(),
@@ -289,6 +310,25 @@ export function PromptsSection(props: {
 
   const renderedText = () => preview()?.text ?? effective()?.text ?? "";
 
+  // Dynamic extraction of what the chosen surface and role inject
+  const surfaceLine = createMemo(() => {
+    const text = renderedText();
+    const lines = text.split("\n");
+    const found = lines.find((l) => l.startsWith("Surface:"));
+    return found ?? `Surface: ${previewSurface()}`;
+  });
+
+  const roleInstruction = createMemo(() => {
+    const text = renderedText();
+    const idx = text.indexOf("Agent-specific instructions");
+    if (idx === -1) return null;
+    const slice = text.slice(idx);
+    const end = slice.indexOf("\n\n");
+    const section = end !== -1 ? slice.slice(0, end) : slice;
+    const lines = section.split("\n").filter((l) => l.startsWith("- "));
+    return lines.length ? lines.join("\n") : null;
+  });
+
   const searchMatches = createMemo(() => {
     const q = searchQuery().trim().toLowerCase();
     if (!q) return [];
@@ -299,12 +339,12 @@ export function PromptsSection(props: {
   });
 
   const totalBytes = createMemo(() => {
-    const layers = effective()?.layers ?? [];
+    const layers = (preview() ?? effective())?.layers ?? [];
     return layers.reduce((sum, d) => sum + d.bytes, 0) || 1;
   });
 
   const activeLayersCount = createMemo(() => {
-    const layers = effective()?.layers ?? [];
+    const layers = (preview() ?? effective())?.layers ?? [];
     const unique = new Set(layers.map((l) => l.layer));
     return unique.size;
   });
@@ -323,7 +363,6 @@ export function PromptsSection(props: {
     const baseline = inheritedText(block);
     setDraft(existing ?? baseline ?? "");
     setEditing(block);
-    setHighlightedBlock(block);
   }
 
   async function copyToClipboard(text: string, kind: "fingerprint" | "prompt") {
@@ -401,9 +440,9 @@ export function PromptsSection(props: {
             <span>Layer Composition</span>
             <span class="chip chip-kind">{activeLayersCount()} tiers active</span>
           </div>
-          <div class="prompt-kpi-val">{effective()?.layers.length ?? 0} slices</div>
+          <div class="prompt-kpi-val">{(preview() ?? effective())?.layers.length ?? 0} slices</div>
           <div class="prompt-kpi-detail">
-            {effective()?.layers.map((l) => LAYER_LABELS[l.layer]).slice(0, 3).join(" · ") || "Seed only"}
+            {(preview() ?? effective())?.layers.map((l) => LAYER_LABELS[l.layer]).slice(0, 3).join(" · ") || "Seed only"}
           </div>
         </div>
 
@@ -537,7 +576,6 @@ export function PromptsSection(props: {
                   <div
                     class={`prompt-block-card block-${block.id}`}
                     classList={{ editing: editing() === block.id }}
-                    onClick={() => setHighlightedBlock(block.id)}
                   >
                     <div class="prompt-block-card-head">
                       <h3>
@@ -746,86 +784,8 @@ export function PromptsSection(props: {
             </button>
           </div>
 
-          {/* Quick Target Section Jump Strip */}
-          <div class="prompt-jump-strip">
-            <span class="dim small" style="margin-right: 2px;">Jump:</span>
-            <For each={BLOCKS}>
-              {(b) => (
-                <button
-                  class="prompt-jump-btn"
-                  onClick={() => setSearchQuery(b.id === "operating-rules" ? "work in turns" : b.id === "guardrails" ? "guardrails:" : b.id === "surface-note" ? "surface:" : "you are vak")}
-                >
-                  <span class={`dot ${b.dotClass}`} style="margin-right: 4px;" />
-                  {b.label}
-                </button>
-              )}
-            </For>
-            <Show when={searchQuery()}>
-              <button class="ghost small" onClick={() => setSearchQuery("")}>Clear jump</button>
-            </Show>
-          </div>
-
-          <Show when={overBudget()}>
-            <p class="posture-warning small" style="margin-top: 6px;">
-              This prompt is injected on every turn of every session. Over ~1,500 tokens it
-              becomes a recurring context cost worth trimming.
-            </p>
-          </Show>
-
-          {/* Stacked Proportional Provenance Bar */}
-          <div class="prompt-provenance-stacked-bar" title="Prompt layer size distribution">
-            <For each={effective()?.layers ?? []}>
-              {(d) => {
-                const pct = Math.max(2, Math.round((d.bytes / totalBytes()) * 100));
-                return (
-                  <div
-                    class={`prompt-provenance-segment ${LAYER_CSS_CLASS[d.layer] || "seed"}`}
-                    style={{ width: `${pct}%` }}
-                    title={`${d.block} (${LAYER_LABELS[d.layer]}): ${d.bytes}B (${pct}%)`}
-                    onClick={() => setSearchQuery(d.block)}
-                  />
-                );
-              }}
-            </For>
-          </div>
-
-          {/* Provenance Table */}
-          <table class="table" style="margin-bottom: 14px;">
-            <thead>
-              <tr>
-                <th>Block</th>
-                <th>Layer Source</th>
-                <th>Bytes</th>
-                <th>Share</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={effective()?.layers ?? []}>
-                {(d) => {
-                  const pct = Math.round((d.bytes / totalBytes()) * 100);
-                  return (
-                    <tr
-                      style="cursor: pointer;"
-                      onClick={() => setSearchQuery(d.block === "operating-rules" ? "rules" : d.block)}
-                      title="Click to search and highlight in prompt preview"
-                    >
-                      <td><strong>{d.block}</strong></td>
-                      <td>
-                        <span class={`chip chip-tone-${d.layer === "seed" ? "neutral" : d.layer === "shared" ? "accent" : "info"}`} title={d.source ?? "built-in"}>
-                          {LAYER_LABELS[d.layer]}
-                        </span>
-                      </td>
-                      <td class="mono">{d.bytes}B</td>
-                      <td class="dim mono">{pct}%</td>
-                    </tr>
-                  );
-                }}
-              </For>
-            </tbody>
-          </table>
-
           {/* Surface & Role Switchers */}
-          <div class="panel-title-row" style="margin-top: 16px;">
+          <div class="panel-title-row" style="margin-top: 10px;">
             <div>
               <h3 style="margin: 0; font-size: 13px;">Preview Target</h3>
             </div>
@@ -851,70 +811,277 @@ export function PromptsSection(props: {
               {(s) => (
                 <button
                   class="prompt-surface-btn"
-                  classList={{ active: previewSurface() === s }}
-                  onClick={() => setPreviewSurface(s)}
+                  classList={{ active: previewSurface() === s.id }}
+                  onClick={() => {
+                    setPreviewSurface(s.id);
+                    scrollToSurface();
+                  }}
                 >
-                  {s}
+                  {s.label}
                 </button>
               )}
             </For>
           </div>
 
-          {/* In-Prompt Search Toolbar */}
-          <div class="prompt-preview-toolbar">
-            <div class="prompt-search-wrapper">
-              <input
-                type="text"
-                class="prompt-search-input"
-                placeholder="Filter or search in prompt…"
-                value={searchQuery()}
-                onInput={(e) => setSearchQuery(e.currentTarget.value)}
-              />
-              <Show when={searchQuery()}>
-                <button
-                  class="prompt-search-clear"
-                  onClick={() => setSearchQuery("")}
-                >
-                  Clear
-                </button>
+          {/* Prominent Live Target Injections Callout — Instantly updates on click! */}
+          <div class="preview-target-diff">
+            <div class="preview-target-diff-header">
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <span class="chip chip-tone-info">Active Surface: {SURFACES.find((s) => s.id === previewSurface())?.label ?? previewSurface()}</span>
+                <Show when={previewRole()}>
+                  <span class="chip chip-tone-accent">Role: {previewRole()}</span>
+                </Show>
+                <span class="dim small mono">{tokens()} tokens</span>
+              </div>
+              <button
+                class="ghost small"
+                onClick={scrollToSurface}
+                title="Scroll down to the injected Surface block in the prompt preview"
+              >
+                Jump to Surface line
+              </button>
+            </div>
+            <div class="preview-target-diff-body">
+              <div class="preview-diff-line">
+                <span class="preview-diff-tag">Injected Surface Line:</span>
+                <code>{surfaceLine()}</code>
+              </div>
+              <Show when={roleInstruction()}>
+                <div class="preview-diff-line">
+                  <span class="preview-diff-tag">Injected Role Directives:</span>
+                  <code>{roleInstruction()}</code>
+                </div>
               </Show>
             </div>
-            <Show when={searchQuery()}>
-              <span class="chip chip-kind">
-                {searchMatches().length} lines match
-              </span>
+          </div>
+
+          {/* Quick Target Section Jump Strip */}
+          <div class="prompt-jump-strip" style="margin-top: 12px;">
+            <span class="dim small" style="margin-right: 2px;">Section:</span>
+            <For each={BLOCKS}>
+              {(b) => (
+                <button
+                  class="prompt-jump-btn"
+                  classList={{ active: selectedTableBlock() === b.id }}
+                  onClick={() => {
+                    setSelectedTableBlock(b.id);
+                    setPreviewViewMode("sections");
+                  }}
+                >
+                  <span class={`dot ${b.dotClass}`} style="margin-right: 4px;" />
+                  {b.label}
+                </button>
+              )}
+            </For>
+            <button
+              class="prompt-jump-btn"
+              classList={{ active: selectedTableBlock() === "surface" }}
+              onClick={() => {
+                setSelectedTableBlock("surface");
+                setPreviewViewMode("sections");
+              }}
+            >
+              <span class="dot dot-surface" style="margin-right: 4px;" />
+              Surface Target
+            </button>
+            <button
+              class="prompt-jump-btn"
+              classList={{ active: previewViewMode() === "full" && selectedTableBlock() === null }}
+              onClick={() => {
+                setSelectedTableBlock(null);
+                setPreviewViewMode("full");
+                setSearchQuery("");
+                if (promptPreRef) {
+                  promptPreRef.scrollTop = 0;
+                }
+              }}
+            >
+              Full prompt
+            </button>
+          </div>
+
+          <Show when={overBudget()}>
+            <p class="posture-warning small" style="margin-top: 6px;">
+              This prompt is injected on every turn of every session. Over ~1,500 tokens it
+              becomes a recurring context cost worth trimming.
+            </p>
+          </Show>
+
+          {/* Stacked Proportional Provenance Bar */}
+          <div class="prompt-provenance-stacked-bar" title="Prompt layer size distribution">
+            <For each={(preview() ?? effective())?.layers ?? []}>
+              {(d) => {
+                const pct = Math.max(2, Math.round((d.bytes / totalBytes()) * 100));
+                return (
+                  <div
+                    class={`prompt-provenance-segment ${LAYER_CSS_CLASS[d.layer] || "seed"}`}
+                    style={{ width: `${pct}%` }}
+                    title={`${d.block} (${LAYER_LABELS[d.layer]}): ${d.bytes}B (${pct}%)`}
+                    onClick={() => {
+                      setSelectedTableBlock(d.block);
+                      setPreviewViewMode("sections");
+                    }}
+                  />
+                );
+              }}
+            </For>
+          </div>
+
+          {/* Provenance Table */}
+          <table class="table" style="margin-bottom: 14px;">
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Layer Source</th>
+                <th>Bytes</th>
+                <th>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={(preview() ?? effective())?.layers ?? []}>
+                {(d) => {
+                  const pct = Math.round((d.bytes / totalBytes()) * 100);
+                  const isSelected = () => selectedTableBlock() === d.block;
+                  return (
+                    <tr
+                      class={isSelected() ? "active-row" : ""}
+                      style="cursor: pointer;"
+                      onClick={() => {
+                        setSelectedTableBlock(d.block);
+                        setPreviewViewMode("sections");
+                      }}
+                      title="Click to view this block in section view"
+                    >
+                      <td>
+                        <strong>{d.block}</strong>
+                        <Show when={isSelected()}>
+                          <span class="chip chip-ok" style="margin-left: 6px; font-size: 10px;">viewing</span>
+                        </Show>
+                      </td>
+                      <td>
+                        <span class={`chip chip-tone-${d.layer === "seed" ? "neutral" : d.layer === "shared" ? "accent" : "info"}`} title={d.source ?? "built-in"}>
+                          {LAYER_LABELS[d.layer]}
+                        </span>
+                      </td>
+                      <td class="mono">{d.bytes}B</td>
+                      <td class="dim mono">{pct}%</td>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+
+          {/* View Mode Switcher */}
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; margin-bottom: 8px;">
+            <div class="preview-view-mode-tabs">
+              <button
+                class="preview-mode-btn"
+                classList={{ active: previewViewMode() === "full" }}
+                onClick={() => setPreviewViewMode("full")}
+              >
+                Full Assembled
+              </button>
+              <button
+                class="preview-mode-btn"
+                classList={{ active: previewViewMode() === "sections" }}
+                onClick={() => setPreviewViewMode("sections")}
+              >
+                By Sections
+              </button>
+            </div>
+            <Show when={previewViewMode() === "full"}>
+              <div class="prompt-search-wrapper" style="max-width: 220px;">
+                <input
+                  type="text"
+                  class="prompt-search-input"
+                  placeholder="Search in prompt…"
+                  value={searchQuery()}
+                  onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                />
+                <Show when={searchQuery()}>
+                  <button
+                    class="prompt-search-clear"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    Clear
+                  </button>
+                </Show>
+              </div>
             </Show>
           </div>
 
-          {/* Rendered Prompt Text */}
-          <Show
-            when={!searchQuery()}
-            fallback={
-              <div class="prompt-full mono" style="max-height: 460px; overflow-y: auto;">
-                <Show
-                  when={searchMatches().length > 0}
-                  fallback={<p class="dim" style="padding: 12px;">No lines match "{searchQuery()}".</p>}
-                >
-                  <For each={searchMatches()}>
-                    {(item) => (
-                      <div style="padding: 2px 0; border-bottom: 1px solid var(--border-soft);">
-                        <span class="dim" style="display: inline-block; width: 36px;">{item.num}:</span>
-                        <span>{item.line}</span>
+          {/* Section Breakdown View Mode */}
+          <Show when={previewViewMode() === "sections"}>
+            <div style="max-height: 480px; overflow-y: auto;">
+              <For each={BLOCKS}>
+                {(b) => {
+                  const content = () => (preview() ?? effective())?.blocks?.[b.id] ?? (preview() ?? effective())?.seed_blocks?.[b.id] ?? "";
+                  const isHighlighted = () => selectedTableBlock() === b.id;
+                  return (
+                    <div
+                      class={`preview-section-card block-${b.id}`}
+                      style={isHighlighted() ? { "border-color": "var(--accent)", "box-shadow": "0 0 0 1px var(--accent)" } : {}}
+                    >
+                      <div class="preview-section-card-head">
+                        <span><span class={`dot ${b.dotClass}`} style="margin-right: 5px;" />{b.label}</span>
+                        <span class="dim small mono">{content().length} chars · ~{Math.round(content().length / 4)} tokens</span>
                       </div>
-                    )}
-                  </For>
-                </Show>
+                      <pre>{content() || "(Not defined in this layer)"}</pre>
+                    </div>
+                  );
+                }}
+              </For>
+
+              {/* Surface Section */}
+              <div
+                class="preview-section-card block-surface-note"
+                style={selectedTableBlock() === "surface" || selectedTableBlock() === "surface-note" ? { "border-color": "var(--accent)", "box-shadow": "0 0 0 1px var(--accent)" } : {}}
+              >
+                <div class="preview-section-card-head">
+                  <span><span class="dot dot-surface" style="margin-right: 5px;" />Surface & Target Context</span>
+                  <span class="chip chip-tone-info">{SURFACES.find((s) => s.id === previewSurface())?.label ?? previewSurface()}</span>
+                </div>
+                <pre>{surfaceLine()}{roleInstruction() ? "\n\n" + roleInstruction() : ""}</pre>
               </div>
-            }
-          >
-            <pre class="mono prompt-full" style="max-height: 460px; overflow-y: auto;">
-              {renderedText()}
-            </pre>
+            </div>
+          </Show>
+
+          {/* Full Rendered Prompt Text */}
+          <Show when={previewViewMode() === "full"}>
+            <Show
+              when={!searchQuery()}
+              fallback={
+                <div class="prompt-full mono" style="max-height: 460px; overflow-y: auto;">
+                  <Show
+                    when={searchMatches().length > 0}
+                    fallback={<p class="dim" style="padding: 12px;">No lines match "{searchQuery()}".</p>}
+                  >
+                    <For each={searchMatches()}>
+                      {(item) => (
+                        <div style="padding: 2px 0; border-bottom: 1px solid var(--border-soft);">
+                          <span class="dim" style="display: inline-block; width: 36px;">{item.num}:</span>
+                          <span>{item.line}</span>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              }
+            >
+              <pre
+                ref={promptPreRef}
+                class="mono prompt-full"
+                style="max-height: 460px; overflow-y: auto; scroll-behavior: smooth;"
+              >
+                {renderedText()}
+              </pre>
+            </Show>
           </Show>
 
           <Show when={effective()}>
             <p class="dim small" style="margin-top: 10px;">
-              Fingerprint <code>{effective()!.fingerprint.slice(0, 16)}</code> · Changes apply to new sessions; active turns keep their admission prompt.
+              Fingerprint <code>{currentFingerprint().slice(0, 16)}</code> · Changes apply to new sessions; active turns keep their admission prompt.
             </p>
           </Show>
         </div>
