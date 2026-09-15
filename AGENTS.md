@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.87 — Directory path navigation, sandbox folder view routing, and explicit folder vs deliverable classification shipped: directory paths like `.vak/scratch/` and workspace folders route seamlessly to Workbench Files panel (`openWorkbenchFolder`), robust non-deliverable directory classification in markdown/presentation viewers, and synchronized workbench tabs across chat turns.**
+**Status: v3.0.88 — ArtifactCanvas layout responsiveness, automatic sidebar collapse, and multi-client shared session rehydration shipped: ArtifactCanvas auto-collapses sidebars and smoothly resizes chat without clipping, closing canvas leaves sidebar closed with full-width chat, and web client rehydrates desktop-active agent sessions read-only without lock collisions.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.88 — 2026-09-15
+
+- ArtifactCanvas layout & responsive behavior: opening ArtifactCanvas now automatically collapses the left navigation sidebar and docked panels, smoothly resizing the main chat to fit alongside the canvas (~65% canvas, ~35% chat). Closing ArtifactCanvas preserves the sidebar's closed state and expands the chat canvas to full 100% width.
+- Multi-client shared session rehydration: introduced `SessionLog::open_read_only` and `Core::open_session_read_only`, allowing the web client and gateway (`vak serve --gateway`) to open, view, and rehydrate canonical agent sessions without exclusive write-lock collisions when the desktop app (`vak-desktop`) is active.
+- Read-only turn protection & clippy cleanups: added lock upgrade checks on execution and collapsed nested `if` statements across server routing and delivery endpoints.
+
 ## 3.0.87 — 2026-09-14
 
 - Directory path navigation: routed directory and folder paths (e.g. `.vak/scratch/`, workspace directories) away from Artifact Canvas directly into the Workbench Files panel (`openWorkbenchFolder()`), displaying generated sandbox files, sizes, and previews.
