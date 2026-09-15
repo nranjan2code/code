@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.91 — 2026-09-15
+
+- Universal semantic card extraction: empowered `assistantParts()` in `vak-client-ui` to detect, parse, and extract `{ "semantic_type": ... }` JSON presentation blocks (metrics, weather, recipes, timelines, tables, diffs, etc.) from arbitrary assistant prose even when models omit markdown backtick fences or prepend `Vak` prefixes.
+- Presentation prompt hardening: updated system prompt to explicitly require markdown code fences (` ```vak\n{...}\n``` `) and forbid raw JSON or bare `Vak {` prefixes.
+- Delivery parser resilience: extended document block parser in `vak-delivery` to handle `Vak\n` and `Vak ` prefixes alongside lowercase variants.
+- Rebuilt client UI bundles: refreshed `dist/` (Tauri desktop) and `dist-web/` (server web) with updated presentation parser.
+
 ## 3.0.90 — 2026-09-15
 
 - Dynamic per-turn provider and model routing: decoupled provider and model selection from session admission, assembling the route ladder dynamically on every turn from the live evidence ledger, session belief state, and current effective route.

@@ -6,24 +6,95 @@ export type AssistantPart = { type: "text"; text: string } | { type: "card"; out
  * Unfinished vak fences wait for completion; invalid completed data remains inspectable. */
 export function assistantParts(text: string, streaming = false): AssistantPart[] {
   const parts: AssistantPart[] = [];
-  const append = (value: string) => {
+  const appendText = (value: string) => {
     const cleaned = cleanAssistantText(value);
     if (cleaned) parts.push({ type: "text", text: cleaned });
   };
+  const appendCard = (output: StructuredOutput, source: string) => {
+    parts.push({ type: "card", output, source });
+  };
+
+  const processSegment = (segment: string) => {
+    let idx = 0;
+    while (idx < segment.length) {
+      const openBrace = segment.indexOf("{", idx);
+      if (openBrace === -1) {
+        appendText(segment.slice(idx));
+        break;
+      }
+
+      if (!segment.slice(openBrace).includes('"semantic_type"')) {
+        appendText(segment.slice(idx));
+        break;
+      }
+
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let closeBrace = -1;
+
+      for (let i = openBrace; i < segment.length; i++) {
+        const ch = segment[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escape = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (!inString) {
+          if (ch === "{") depth++;
+          else if (ch === "}") {
+            depth--;
+            if (depth === 0) {
+              closeBrace = i;
+              break;
+            }
+          }
+        }
+      }
+
+      if (closeBrace === -1) {
+        if (streaming && segment.slice(openBrace).includes('"semantic_type"')) {
+          appendText(segment.slice(idx, openBrace));
+          return;
+        }
+        appendText(segment.slice(idx));
+        break;
+      }
+
+      const candidateJson = segment.slice(openBrace, closeBrace + 1);
+      if (candidateJson.includes('"semantic_type"')) {
+        const output = parseVakFence(candidateJson);
+        if (output) {
+          appendText(segment.slice(idx, openBrace));
+          appendCard(output, candidateJson);
+          idx = closeBrace + 1;
+          continue;
+        }
+      }
+
+      appendText(segment.slice(idx, openBrace + 1));
+      idx = openBrace + 1;
+    }
+  };
+
   const fences = /^```(\w*)[^\n]*\n([\s\S]*?)(^```[^\n]*(?:\n|$)|(?![\s\S]))/gm;
   let cursor = 0;
   for (const match of text.matchAll(fences)) {
-    append(text.slice(cursor, match.index));
+    processSegment(text.slice(cursor, match.index));
     const explicit = match[1] === "vak" || ((match[1] === "json" || !match[1]) && match[2].includes('"semantic_type"'));
     const output = explicit ? parseVakFence(match[2]) : null;
-    if (output) parts.push({ type: "card", output, source: match[2] });
-    else if (!(explicit && streaming && !match[3])) append(match[0]);
+    if (output) appendCard(output, match[2]);
+    else if (!(explicit && streaming && !match[3])) appendText(match[0]);
     cursor = match.index! + match[0].length;
   }
-  const tail = text.slice(cursor);
-  const output = parseVakFence(tail.trim().replace(/^vak\s+/, ""));
-  if (output) parts.push({ type: "card", output, source: tail });
-  else append(tail);
+  processSegment(text.slice(cursor));
   return parts;
 }
 

@@ -724,6 +724,8 @@ fn nodes_to_blocks(
                     let candidate = if let Some(rest) = trimmed
                         .strip_prefix("vak\n")
                         .or_else(|| trimmed.strip_prefix("vak "))
+                        .or_else(|| trimmed.strip_prefix("Vak\n"))
+                        .or_else(|| trimmed.strip_prefix("Vak "))
                     {
                         rest.trim()
                     } else {
@@ -762,6 +764,8 @@ fn nodes_to_blocks(
                     let candidate = if let Some(rest) = trimmed
                         .strip_prefix("vak\n")
                         .or_else(|| trimmed.strip_prefix("vak "))
+                        .or_else(|| trimmed.strip_prefix("Vak\n"))
+                        .or_else(|| trimmed.strip_prefix("Vak "))
                     {
                         rest.trim()
                     } else {
