@@ -717,7 +717,7 @@ mod brand_icon_tests {
         let src = flat_rgba_png(32, 32, [200, 100, 50, 255]);
         let (rgba, w, h) = decode_and_downsample(&src, 4).unwrap();
         assert_eq!((w, h), (4, 4));
-        for px in rgba.chunks_exact(4) {
+        for &px in rgba.as_chunks::<4>().0 {
             assert_eq!(px, [200, 100, 50, 255]);
         }
     }

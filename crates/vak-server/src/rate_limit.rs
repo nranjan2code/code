@@ -154,6 +154,7 @@ struct RateLimitResponse {
     retry_after_secs: u64,
 }
 
+#[allow(clippy::result_large_err)]
 pub async fn rate_limit_layer(
     State(limiter): State<RateLimiter>,
     req: axum::extract::Request,

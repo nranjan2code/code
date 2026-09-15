@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.88 — ArtifactCanvas layout responsiveness, automatic sidebar collapse, and multi-client shared session rehydration shipped: ArtifactCanvas auto-collapses sidebars and smoothly resizes chat without clipping, closing canvas leaves sidebar closed with full-width chat, and web client rehydrates desktop-active agent sessions read-only without lock collisions.**
+**Status: v3.0.89 — Full-stack local macOS distribution, LaunchAgent gateway integration, and release pipeline verification shipped: macOS application bundle `/Applications/Vak.app`, desktop client, delivery worker, persistent gateway LaunchAgent, and clean-room release gating verified.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`

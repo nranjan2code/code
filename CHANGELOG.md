@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.89 — 2026-09-15
+
+- Full-stack local macOS release & packaging: end-to-end verified build and install for macOS `/Applications/Vak.app`, `vak` CLI, `vak-desktop`, `vak-delivery-worker`, and embedded frontend bundles.
+- LaunchAgent gateway daemon integration: persistent background service activation via `~/Library/LaunchAgents/com.vak.gateway.plist` with canonical workspace and token management.
+- Release engineering & toolchain stabilization: clean-room isolated release staging, bundle manifest validation across desktop and web clients, and complete system health verification.
+
 ## 3.0.88 — 2026-09-15
 
 - ArtifactCanvas layout & responsive behavior: opening ArtifactCanvas now automatically collapses the left navigation sidebar and docked panels, smoothly resizing the main chat to fit alongside the canvas (~65% canvas, ~35% chat). Closing ArtifactCanvas preserves the sidebar's closed state and expands the chat canvas to full 100% width.

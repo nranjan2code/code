@@ -5569,9 +5569,7 @@ impl Core {
                         chrono::Utc::now(),
                         *recorded_at,
                         chrono::Duration::seconds(
-                            outcome_spec
-                                .evidence_max_age_secs
-                                .map_or(86_400, |seconds| seconds),
+                            outcome_spec.evidence_max_age_secs.unwrap_or(86_400),
                         ),
                     )
                 });
