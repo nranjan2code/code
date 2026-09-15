@@ -11,6 +11,7 @@ import { OperationsCenter } from "./OperationsCenter";
 import { Commitments } from "./Commitments";
 import { PromptsSection } from "./Prompts";
 import { SecurityCenter } from "./SecurityCenter";
+import { Inbox } from "./Inbox";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -3490,121 +3491,7 @@ function Security() {
   return <SecurityCenter scope={configScope} />;
 }
 
-// ---- Inbox -----------------------------------------------------------------
-
-// The tone names here have to be the ones `.chip-tone-*` actually defines
-// (warning / success / danger / info). `warn` and `alert` matched no rule, so
-// a denied approval and a budget alert — the two entries most worth catching
-// the eye — were rendering in the same muted grey as a heartbeat.
-const INBOX_KIND_TONE: Record<string, string> = {
-  task_summary: "",
-  approval_pending: "warning",
-  approval_denied: "danger",
-  budget_alert: "danger",
-  digest: "",
-  heartbeat: "",
-  proposal_opened: "info",
-};
-
-/// The ledger's own kind strings, said plainly. An unknown kind still falls
-/// back to its underscored id rather than vanishing.
-const INBOX_KIND_LABELS: Record<string, string> = {
-  task_summary: "scheduled task",
-  approval_pending: "needs approval",
-  approval_denied: "refused",
-  budget_alert: "budget",
-  digest: "digest",
-  heartbeat: "status",
-  proposal_opened: "new skill proposed",
-};
-
-function Inbox() {
-  const [unreadOnly, setUnreadOnly] = createSignal(false);
-  const [inbox, { refetch }] = createResource(unreadOnly, (u) => api.inbox(u));
-  const [acking, setAcking] = createSignal("");
-  const needsAction = (kind: string) => kind === "approval_pending" || kind === "budget_alert" || kind === "proposal_opened";
-
-  const ack = async (id: string) => {
-    setAcking(id);
-    try {
-      await api.inboxAck(id);
-      await refetch();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    } finally {
-      setAcking("");
-    }
-  };
-
-  return (
-    <div class="view">
-      <PageHeader title="Inbox" description="Needs action first, followed by results, budget warnings, and other updates from Vak." />
-      <div class="toolbar">
-        <label class="toggle">
-          <input
-            type="checkbox"
-            checked={unreadOnly()}
-            onChange={(e) => setUnreadOnly(e.currentTarget.checked)}
-          />
-          Unread only
-        </label>
-        <span class="spacer" />
-        <button class="ghost" onClick={() => refetch()}>Refresh</button>
-      </div>
-      <Show when={!inbox.loading} fallback={<div class="empty">Loading…</div>}>
-        <Show
-          when={(inbox()?.entries.length ?? 0) > 0}
-          fallback={<div class="empty">Nothing here. Inbox zero.</div>}
-        >
-          <Show when={inbox()!.entries.some((e) => needsAction(e.kind))}>
-            <h2 class="section-title">Needs action</h2>
-            <ul class="hit-list">
-            <For each={inbox()!.entries.filter((e) => needsAction(e.kind))}>
-              {(e) => (
-                <li class="inbox-item">
-                  <div class="hit-meta">
-                    <span class={`chip ${INBOX_KIND_TONE[e.kind] ? `chip-tone-${INBOX_KIND_TONE[e.kind]}` : ""}`}>
-                      {INBOX_KIND_LABELS[e.kind] ?? e.kind.replaceAll("_", " ")}
-                    </span>
-                    <strong>{e.title}</strong>
-                    <span class="when">{timeAgo(e.ts)}</span>
-                  </div>
-                  <div class="hit-snippet">{e.body}</div>
-                  <div class="row-gap" style="margin-top:8px">
-                    <Show when={e.session_id}>
-                      <button class="ghost small" onClick={() => navigate(`#/sessions/${e.session_id}`)}>
-                        View session
-                      </button>
-                    </Show>
-                    <span class="spacer" />
-                    <button class="ghost small" disabled={acking() === e.id} onClick={() => ack(e.id)}>
-                      Mark as read
-                    </button>
-                  </div>
-                </li>
-              )}
-            </For>
-            </ul>
-          </Show>
-          <Show when={inbox()!.entries.some((e) => !needsAction(e.kind))}>
-            <h2 class="section-title">Updates</h2>
-            <ul class="hit-list">
-            <For each={inbox()!.entries.filter((e) => !needsAction(e.kind))}>
-              {(e) => (
-                <li class="inbox-item">
-                  <div class="hit-meta"><span class={`chip ${INBOX_KIND_TONE[e.kind] ? `chip-tone-${INBOX_KIND_TONE[e.kind]}` : ""}`}>{INBOX_KIND_LABELS[e.kind] ?? e.kind.replaceAll("_", " ")}</span><strong>{e.title}</strong><span class="when">{timeAgo(e.ts)}</span></div>
-                  <div class="hit-snippet">{e.body}</div>
-                  <div class="row-gap" style="margin-top:8px"><Show when={e.session_id}><button class="ghost small" onClick={() => navigate(`#/sessions/${e.session_id}`)}>View session</button></Show><span class="spacer" /><button class="ghost small" disabled={acking() === e.id} onClick={() => ack(e.id)}>Mark as read</button></div>
-                </li>
-              )}
-            </For>
-            </ul>
-          </Show>
-        </Show>
-      </Show>
-    </div>
-  );
-}
+// ---- Inbox (delegated to Inbox.tsx suite) ----------------------------------
 
 // ---- Settings & Governance -------------------------------------------------
 

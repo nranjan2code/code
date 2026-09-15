@@ -4251,5 +4251,560 @@ a.tab-btn {
   }
 }
 
+/* ==========================================================================
+   Attention Inbox Suite (docs/design/29-personal-os.md P6)
+   ========================================================================== */
+
+.inbox-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* 1. Executive Posture Deck */
+.inbox-posture-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1024px) {
+  .inbox-posture-deck {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .inbox-posture-deck {
+    grid-template-columns: 1fr;
+  }
+}
+
+.inbox-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.inbox-stat-card:hover {
+  border-color: var(--border-strong, var(--accent));
+}
+.inbox-stat-card[data-tone="ok"] {
+  border-left: 3px solid #10b981;
+}
+.inbox-stat-card[data-tone="warn"] {
+  border-left: 3px solid #f59e0b;
+}
+.inbox-stat-card[data-tone="bad"] {
+  border-left: 3px solid #ef4444;
+}
+.inbox-stat-card[data-tone="info"] {
+  border-left: 3px solid #06b6d4;
+}
+.inbox-stat-card[data-tone="neutral"] {
+  border-left: 3px solid #64748b;
+}
+
+.inbox-stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inbox-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+}
+.inbox-stat-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.inbox-stat-pill.pill-ok {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+.inbox-stat-pill.pill-warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+.inbox-stat-pill.pill-bad {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.inbox-stat-pill.pill-cyan {
+  background: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+}
+.inbox-stat-pill.pill-slate {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+
+.inbox-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-feature-settings: "tnum" 1;
+}
+.inbox-stat-unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-soft);
+}
+.inbox-stat-sub {
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.35;
+}
+
+/* 2. Controls & Filter Toolbar */
+.inbox-toolbar-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.inbox-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.inbox-search-box {
+  flex: 1;
+  min-width: 220px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.inbox-search-box input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+.inbox-search-box input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.inbox-search-clear {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.inbox-search-clear:hover {
+  color: var(--text);
+}
+
+.inbox-scope-group {
+  display: flex;
+  align-items: center;
+}
+.inbox-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+.inbox-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Category Filter Chips Strip */
+.inbox-category-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.inbox-cat-chip {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  color: var(--text-soft);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+.inbox-cat-chip:hover {
+  border-color: var(--border-strong, var(--accent));
+  color: var(--text);
+}
+.inbox-cat-chip.active {
+  background: var(--accent-wash, rgba(99, 102, 241, 0.15));
+  border-color: var(--accent);
+  color: var(--accent-bright, #818cf8);
+  font-weight: 600;
+}
+.inbox-cat-chip.inbox-cat-action.active {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
+.inbox-cat-badge {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  font-feature-settings: "tnum" 1;
+}
+.inbox-cat-chip.active .inbox-cat-badge {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.inbox-cat-chip.inbox-cat-action.active .inbox-cat-badge {
+  background: #f59e0b;
+  color: #000;
+  border-color: transparent;
+}
+.inbox-cat-badge.badge-urgent {
+  background: #ef4444;
+  color: #fff;
+  border-color: transparent;
+}
+
+/* 3. Item Cards & Feed */
+.inbox-items-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inbox-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--card-accent, #64748b);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.inbox-card:hover {
+  border-color: var(--border-strong, var(--accent));
+}
+.inbox-card.inbox-card-urgent {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.03) 0%, var(--surface) 20%);
+}
+
+.inbox-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.inbox-card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.inbox-card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.inbox-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.inbox-card-when {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.inbox-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.inbox-card-snippet {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Metadata tag pills */
+.inbox-meta-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-meta-tag {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-family: var(--font-mono, monospace);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+button.inbox-meta-tag:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.meta-tag-label {
+  color: var(--faint);
+}
+.meta-tag-val {
+  color: var(--text);
+}
+
+/* Interactive Gate Box */
+.inbox-gate-box {
+  background: var(--surface-raised);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.inbox-gate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.inbox-gate-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #f59e0b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.inbox-gate-tool {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text);
+  background: rgba(245, 158, 11, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.inbox-gate-reason {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.inbox-gate-args {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 6px 8px;
+  max-height: 100px;
+  overflow-y: auto;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+.inbox-gate-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+/* Interactive Skill Box */
+.inbox-skill-box {
+  background: var(--surface-raised);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #c4b5fd;
+}
+
+/* Card Footer Actions */
+.inbox-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+  flex-wrap: wrap;
+}
+.inbox-card-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inbox-card-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* 4. Empty State: Inbox Zero */
+.inbox-zero-card {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+}
+.inbox-zero-dot {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.inbox-zero-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.inbox-zero-desc {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  max-width: 480px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* 5. Architecture Card */
+.inbox-architecture-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.inbox-arch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.inbox-arch-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--accent-wash, rgba(99, 102, 241, 0.15));
+  color: var(--accent-bright, #818cf8);
+}
+.inbox-arch-title {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.inbox-arch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .inbox-arch-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.inbox-arch-item {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inbox-arch-item strong {
+  font-size: 12px;
+  color: var(--text);
+}
+.inbox-arch-item p {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  line-height: 1.4;
+  margin: 0;
+}
+.inbox-arch-item code {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  background: var(--surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+
 
 
