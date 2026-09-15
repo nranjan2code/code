@@ -39,6 +39,9 @@ pub(crate) enum Command {
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,
+        /// Target a specific specialist agent (e.g. 'researcher', 'writer', or custom ID; defaults to built-in 'vak')
+        #[arg(long)]
+        agent: Option<String>,
         #[arg(long)]
         model: Option<String>,
         #[arg(long)]

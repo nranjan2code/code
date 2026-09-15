@@ -28,7 +28,7 @@ export default function Sidebar() {
     onCleanup(() => { disposed = true; window.clearInterval(timer); });
   });
   const shown = () => agents().filter((p) => p.name.toLocaleLowerCase().includes(query().toLocaleLowerCase()));
-  const history = () => sessions().filter((s) => (s.agent?.id ?? "vak") === activeAgentId());
+  const history = () => sessions().filter((s) => (s.agent?.id ?? "vak") === activeAgentId() && s.session_id !== activeId());
   return (
     <aside class="sidebar">
       <div class="sb-head">

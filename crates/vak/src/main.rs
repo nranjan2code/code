@@ -362,6 +362,7 @@ async fn main() {
         }
         Some(Command::Exec {
             prompt,
+            agent,
             accept_drift,
             model,
             provider,
@@ -384,6 +385,7 @@ async fn main() {
             run_exec(
                 cwd,
                 prompt,
+                agent,
                 model,
                 provider,
                 max_turns,
@@ -1126,6 +1128,7 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
 async fn run_exec(
     cwd: PathBuf,
     prompt: String,
+    agent: Option<String>,
     model: Option<String>,
     provider: Option<String>,
     max_turns: usize,
@@ -1156,7 +1159,7 @@ async fn run_exec(
             }
         }
     }
-    let core = match Core::new_with_trust(effective_cwd.clone(), trusted)
+    let mut core = match Core::new_with_trust(effective_cwd.clone(), trusted)
         .map(|c| with_cli_surface(c, yes))
     {
         Ok(c) => c,
@@ -1165,6 +1168,35 @@ async fn run_exec(
             return 2;
         }
     };
+    if let Some(agent_id) = &agent {
+        if agent_id != "vak" {
+            let profiles = match vak_server::agents::effective(&core) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: failed to load agents: {e}");
+                    return 2;
+                }
+            };
+            let Some(profile) = profiles
+                .into_iter()
+                .find(|p| p.id == *agent_id || p.name.eq_ignore_ascii_case(agent_id))
+            else {
+                eprintln!(
+                    "error: agent '{agent_id}' not found. Run 'vak agents list' to view configured agents."
+                );
+                return 2;
+            };
+            if !profile.is_admissible() {
+                eprintln!(
+                    "error: agent '{agent_id}' is {:?} and cannot execute runs",
+                    profile.lifecycle
+                );
+                return 2;
+            }
+            eprintln!("▸ agent: {} ({})", profile.name, profile.id);
+            core = core.with_agent_identity(Some(profile.identity()));
+        }
+    }
     print_config_warnings(&core);
     update_check::maybe_check_update(core.config());
     if provider.is_some() || model.is_some() {
@@ -1209,6 +1241,17 @@ async fn run_exec(
                          acknowledge, or start a new session to pick up the change."
                     );
                     return 2;
+                }
+                if let Some(agent_id) = &agent {
+                    if let Some(h_agent) = s.header().and_then(|h| h.agent.as_ref()) {
+                        if h_agent.id != *agent_id && *agent_id != "vak" {
+                            eprintln!(
+                                "error: session '{sid}' was created for agent '{}', but you requested agent '{agent_id}'",
+                                h_agent.id
+                            );
+                            return 2;
+                        }
+                    }
                 }
                 eprintln!("▸ resuming session {sid}");
                 s

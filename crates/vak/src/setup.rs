@@ -600,6 +600,7 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
             FIRST_TASK_PROMPT.to_string(),
             None,
             None,
+            None,
             // Matches `exec`'s own default rather than inventing a
             // second number the two could drift apart on.
             40,

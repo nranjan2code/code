@@ -83,7 +83,7 @@ impl AgentDefinition {
         self.lifecycle == AgentLifecycle::Active
     }
 
-    pub(crate) fn identity(&self) -> vak_session::types::AgentIdentity {
+    pub fn identity(&self) -> vak_session::types::AgentIdentity {
         vak_session::types::AgentIdentity {
             id: self.id.clone(),
             revision: self.revision,
@@ -197,7 +197,7 @@ pub fn find_template(id: &str) -> Option<AgentTemplate> {
         .find(|t| t.template_id == id)
 }
 
-pub(crate) fn effective(core: &vak_core::Core) -> Result<Vec<AgentDefinition>, String> {
+pub fn effective(core: &vak_core::Core) -> Result<Vec<AgentDefinition>, String> {
     let shared = vak_config::paths::default_workspace();
     let mut profiles = load(&shared)?;
     if core.cwd() != &shared && core.project_config_trusted() {
