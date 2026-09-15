@@ -971,6 +971,75 @@ pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
     structured_outputs_from_text_with(text, &built_in_skill_registry())
 }
 
+/// Locate byte spans `(start, end)` of candidate JSON objects containing
+/// `"semantic_type"` within arbitrary text.
+pub(crate) fn find_semantic_json_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let marker = b"\"semantic_type\"";
+    let marker_len = marker.len();
+
+    let mut search_start = 0;
+    while search_start + marker_len <= len {
+        let Some(rel_pos) = text[search_start..].find("\"semantic_type\"") else {
+            break;
+        };
+        let marker_pos = search_start + rel_pos;
+
+        let mut candidate = None;
+        for i in (0..=marker_pos).rev() {
+            if bytes[i] == b'{' {
+                let mut depth = 0;
+                let mut in_str = false;
+                let mut escape = false;
+                let mut closed_at = None;
+                for j in i..len {
+                    let b = bytes[j];
+                    if escape {
+                        escape = false;
+                        continue;
+                    }
+                    if b == b'\\' && in_str {
+                        escape = true;
+                        continue;
+                    }
+                    if b == b'"' {
+                        in_str = !in_str;
+                        continue;
+                    }
+                    if !in_str {
+                        if b == b'{' {
+                            depth += 1;
+                        } else if b == b'}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                closed_at = Some(j);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(end_idx) = closed_at {
+                    if end_idx >= marker_pos {
+                        candidate = Some((i, end_idx + 1));
+                    }
+                }
+            }
+        }
+
+        if let Some((start, end)) = candidate {
+            if !spans.iter().any(|(s, e)| *s == start && *e == end) {
+                spans.push((start, end));
+            }
+            search_start = end;
+        } else {
+            search_start = marker_pos + marker_len;
+        }
+    }
+    spans
+}
+
 /// Like [`structured_outputs_from_text`] but validates against a
 /// plugin-extended skill registry. The Core passes its merged registry
 /// (builtins + plugin skills) so that plugin-declared semantic types are
@@ -1000,6 +1069,16 @@ pub fn structured_outputs_from_text_with(
             outputs.push(output);
         }
         remainder = &body[end + 3..];
+    }
+    for (start, end) in find_semantic_json_spans(text) {
+        let candidate = &text[start..end];
+        if let Ok(output) = parse_fragment_with(candidate, skills)
+            && !outputs
+                .iter()
+                .any(|existing: &StructuredOutput| existing == &output)
+        {
+            outputs.push(output);
+        }
     }
     outputs
 }
@@ -1957,8 +2036,12 @@ mod tests {
         let text = "before\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Temperature\",\"value\":25,\"unit\":\"C\"}}\n```\nafter";
         let outputs = structured_outputs_from_text(text);
         assert_eq!(outputs.len(), 1);
-        assert_eq!(outputs[0].semantic_type, "metric");
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
+
+        let unfenced = "Vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Temperature\",\"value\":25,\"unit\":\"C\"}}\n\nProse.";
+        let unfenced_outputs = structured_outputs_from_text(unfenced);
+        assert_eq!(unfenced_outputs.len(), 1);
+        assert_eq!(unfenced_outputs[0].semantic_type, "metric");
     }
 
     #[test]

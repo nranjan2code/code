@@ -41,7 +41,7 @@ import UniversalCard, { PresentationValue } from "./presentation/UniversalCard";
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
-import { parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -69,6 +69,28 @@ function UserMessage(props: { document: PresentationDocument; text: string }) {
     <div class="msg-user-content"><PresentationDocumentView document={props.document} /></div>
     <MessageActions text={props.text} role="user" />
   </div></div>;
+}
+
+function inlineNodesToText(nodes: InlineNode[]): string {
+  let out = "";
+  for (const node of nodes) {
+    switch (node.type) {
+      case "text": out += node.text; break;
+      case "soft_break":
+      case "hard_break": out += "\n"; break;
+      case "code": out += node.code; break;
+      case "strong":
+      case "emphasis":
+      case "strikethrough":
+        out += inlineNodesToText(node.content);
+        break;
+      case "link":
+        out += inlineNodesToText(node.label);
+        break;
+      default: break;
+    }
+  }
+  return out;
 }
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
@@ -389,8 +411,26 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
         switch (block.type) {
           case "heading":
             return <Heading block={block} />;
-          case "paragraph":
+          case "paragraph": {
+            const raw = inlineNodesToText(block.content);
+            if (raw.includes('"semantic_type"')) {
+              const parts = assistantParts(raw);
+              if (parts.some((p) => p.type === "card")) {
+                return (
+                  <For each={parts}>
+                    {(part) =>
+                      part.type === "card" ? (
+                        <StructuredView output={part.output} fallback={part.source} />
+                      ) : (
+                        <p class="semantic-paragraph">{part.text}</p>
+                      )
+                    }
+                  </For>
+                );
+              }
+            }
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
+          }
           case "list": {
             const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} /></li>}</For>;
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
@@ -407,7 +447,7 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
-            if (block.language === "vak" || block.language === "json") {
+            if (block.language === "vak" || block.language === "json" || block.content.includes('"semantic_type"')) {
               const structured = parseVakFence(block.content);
               if (structured) return <StructuredView output={structured} fallback={block.content} />;
             }
@@ -434,8 +474,25 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             return <Artifact item={{ id: block.id, turn_id: "", timestamp: "", role: "assistant", kind: "artifact", status: "succeeded", content: { type: "artifact", artifact: block.artifact }, actions: [], fallback_text: block.artifact.path ?? block.artifact.name }} />;
           case "rule":
             return <hr class="semantic-rule" />;
-          case "raw_markdown":
+          case "raw_markdown": {
+            if (block.markdown.includes('"semantic_type"')) {
+              const parts = assistantParts(block.markdown);
+              if (parts.some((p) => p.type === "card")) {
+                return (
+                  <For each={parts}>
+                    {(part) =>
+                      part.type === "card" ? (
+                        <StructuredView output={part.output} fallback={part.source} />
+                      ) : (
+                        <div class="semantic-limited"><span>Limited rendering</span><pre>{part.text}</pre><small>{block.reason}</small></div>
+                      )
+                    }
+                  </For>
+                );
+              }
+            }
             return <div class="semantic-limited"><span>Limited rendering</span><pre>{block.markdown}</pre><small>{block.reason}</small></div>;
+          }
         }
       }}
     </For>
@@ -457,7 +514,17 @@ export function PresentationDocumentView(props: { document: PresentationDocument
   return (
     <div class="semantic-document">
       <Show when={showOperatorChrome() && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
-      <Show when={props.document.blocks.length === 0 && props.document.source_markdown}><div class="semantic-source">{props.document.source_markdown}</div></Show>
+      <Show when={props.document.blocks.length === 0 && props.document.source_markdown}>
+        <For each={assistantParts(props.document.source_markdown)}>
+          {(part) =>
+            part.type === "card" ? (
+              <StructuredView output={part.output} fallback={part.source} />
+            ) : (
+              <div class="semantic-source">{part.text}</div>
+            )
+          }
+        </For>
+      </Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <Show when={showOperatorChrome()}>
         <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>

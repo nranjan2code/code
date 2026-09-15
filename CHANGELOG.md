@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.92 — 2026-09-15
+
+- Settled presentation rendering parity: enabled delivery engine `compile_markdown` and `find_semantic_json_spans` to detect and extract unfenced and prefixed semantic JSON cards from paragraph blocks, cleanly splitting prose and structured output cards with validated fallbacks.
+- Defense-in-depth presentation renderer: added card extraction fallback in `PresentationRenderer` for paragraph and raw markdown blocks containing `"semantic_type"` cards, ensuring completed turns, historical replays, and settled views never regress to raw JSON.
+- Rebuilt client UI bundles: stamped updated web and desktop client assets.
+
 ## 3.0.91 — 2026-09-15
 
 - Universal semantic card extraction: empowered `assistantParts()` in `vak-client-ui` to detect, parse, and extract `{ "semantic_type": ... }` JSON presentation blocks (metrics, weather, recipes, timelines, tables, diffs, etc.) from arbitrary assistant prose even when models omit markdown backtick fences or prepend `Vak` prefixes.

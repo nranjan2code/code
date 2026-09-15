@@ -716,32 +716,57 @@ fn nodes_to_blocks(
                 if !content.is_empty() {
                     let mut text_buf = String::new();
                     for node in &content {
-                        if let InlineNode::Text { text } = node {
-                            text_buf.push_str(text);
+                        match node {
+                            InlineNode::Text { text } => text_buf.push_str(text),
+                            InlineNode::Code { code } => text_buf.push_str(code),
+                            InlineNode::SoftBreak | InlineNode::HardBreak => text_buf.push('\n'),
+                            InlineNode::Strong { content }
+                            | InlineNode::Emphasis { content }
+                            | InlineNode::Strikethrough { content } => {
+                                text_buf.push_str(&inline_text(content));
+                            }
+                            _ => {}
                         }
                     }
-                    let trimmed = text_buf.trim();
-                    let candidate = if let Some(rest) = trimmed
-                        .strip_prefix("vak\n")
-                        .or_else(|| trimmed.strip_prefix("vak "))
-                        .or_else(|| trimmed.strip_prefix("Vak\n"))
-                        .or_else(|| trimmed.strip_prefix("Vak "))
-                    {
-                        rest.trim()
-                    } else {
-                        trimmed
-                    };
-                    if candidate.starts_with('{')
-                        && candidate.contains("\"semantic_type\"")
-                        && let Ok(output) = crate::skills::parse_fragment(candidate)
-                    {
-                        let fallback_markdown = crate::skills::structured_markdown(&output);
-                        blocks.push(DocumentBlock::Structured {
-                            id: ids.next(),
-                            output,
-                            fallback_markdown,
-                        });
-                        continue;
+                    let spans = crate::skills::find_semantic_json_spans(&text_buf);
+                    if let Some((start, end)) = spans.into_iter().next() {
+                        let candidate = &text_buf[start..end];
+                        if let Ok(output) = crate::skills::parse_fragment(candidate) {
+                            let before = text_buf[..start].trim();
+                            let clean_before = before
+                                .strip_prefix("vak\n")
+                                .or_else(|| before.strip_prefix("vak "))
+                                .or_else(|| before.strip_prefix("Vak\n"))
+                                .or_else(|| before.strip_prefix("Vak "))
+                                .or_else(|| before.strip_prefix("vak"))
+                                .or_else(|| before.strip_prefix("Vak"))
+                                .unwrap_or(before)
+                                .trim();
+                            if !clean_before.is_empty() {
+                                blocks.push(DocumentBlock::Paragraph {
+                                    id: ids.next(),
+                                    content: vec![InlineNode::Text {
+                                        text: clean_before.to_string(),
+                                    }],
+                                });
+                            }
+                            let fallback_markdown = crate::skills::structured_markdown(&output);
+                            blocks.push(DocumentBlock::Structured {
+                                id: ids.next(),
+                                output,
+                                fallback_markdown,
+                            });
+                            let after = text_buf[end..].trim();
+                            if !after.is_empty() {
+                                blocks.push(DocumentBlock::Paragraph {
+                                    id: ids.next(),
+                                    content: vec![InlineNode::Text {
+                                        text: after.to_string(),
+                                    }],
+                                });
+                            }
+                            continue;
+                        }
                     }
                     blocks.push(DocumentBlock::Paragraph {
                         id: ids.next(),
@@ -759,7 +784,10 @@ fn nodes_to_blocks(
                 blocks: nodes_to_blocks(children, ids, diagnostics),
             }),
             Node::CodeBlock(language, content) => {
-                if language.as_deref() == Some("vak") || content.contains("\"semantic_type\"") {
+                if language.as_deref() == Some("vak")
+                    || language.as_deref() == Some("json")
+                    || content.contains("\"semantic_type\"")
+                {
                     let trimmed = content.trim();
                     let candidate = if let Some(rest) = trimmed
                         .strip_prefix("vak\n")
@@ -771,8 +799,17 @@ fn nodes_to_blocks(
                     } else {
                         trimmed
                     };
-                    match crate::skills::parse_fragment(candidate) {
-                        Ok(output) => {
+                    if let Ok(output) = crate::skills::parse_fragment(candidate) {
+                        let fallback_markdown = crate::skills::structured_markdown(&output);
+                        blocks.push(DocumentBlock::Structured {
+                            id: ids.next(),
+                            output,
+                            fallback_markdown,
+                        });
+                        continue;
+                    }
+                    if let Some((s, e)) = crate::skills::find_semantic_json_spans(&content).into_iter().next() {
+                        if let Ok(output) = crate::skills::parse_fragment(&content[s..e]) {
                             let fallback_markdown = crate::skills::structured_markdown(&output);
                             blocks.push(DocumentBlock::Structured {
                                 id: ids.next(),
@@ -781,13 +818,11 @@ fn nodes_to_blocks(
                             });
                             continue;
                         }
-                        Err(error) => {
-                            if language.as_deref() == Some("vak") {
-                                diagnostics
-                                    .push(format!("Structured block parsing suppressed: {error}"));
-                                continue;
-                            }
-                        }
+                    }
+                    if language.as_deref() == Some("vak") {
+                        diagnostics
+                            .push("Structured block parsing suppressed".into());
+                        continue;
                     }
                 }
                 if language.as_deref() == Some("mermaid") {
@@ -1230,6 +1265,13 @@ mod tests {
             assert_eq!(replayed, output);
         }
         assert_eq!(fallback, "Publish the report after approval.");
+    }
+
+    #[test]
+    fn test_unfenced_vak_prefix() {
+        let text = "Vak\n{\"semantic_type\":\"metric\",\"payload\":{\"title\":\"Delhi Weather Snapshot\",\"Temperature\":\"33.5°C\"}}\n\nSome prose.";
+        let doc = compile_markdown(text);
+        assert!(doc.blocks.iter().any(|b| matches!(b, DocumentBlock::Structured { .. })));
     }
 
     #[test]
