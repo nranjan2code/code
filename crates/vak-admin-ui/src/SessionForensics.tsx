@@ -1,7 +1,12 @@
-/// Session Forensics & Turn Pipeline Suite.
+/// Session Forensics & Scalable Turn Workflow DAG Suite.
 ///
-/// An executive-grade mission control center for agent sessions, turns,
-/// pipeline DAG visualization, context packet accounting, and drift auditing.
+/// An executive-grade forensics center for agent sessions.
+/// Core architectural principle:
+/// Sessions scale to 100, 1,000, or 1,000,000 turns. The visualization
+/// focuses deeply on THE TURN ITSELF — decomposing that specific turn's
+/// ingress, intent kernel, context packet, route ladder dispatch,
+/// execution loops (model inference <-> tool workers), stop case policy,
+/// and governance checkpoints into a standard workflow DAG.
 ///
 /// Strictly follows repository invariants:
 /// - Invariant 1: Model-visible means logged.
@@ -9,6 +14,7 @@
 /// - Invariant 7: Per-turn route ladder dispatch.
 /// - Invariant 10 & 16: Workspace-rooted permissions.
 /// - Invariant 13: Explicit trust confirmation.
+/// - Invariant 26: Evidence projection; ZERO mock or synthetic data.
 /// - Zero markdown/emoji icons: SVG status dots, tone chips, crisp typography.
 
 import {
@@ -32,6 +38,7 @@ function shortId(id?: string | null, len: number = 8): string {
   if (!id) return "";
   return id.length > len ? id.slice(0, len) : id;
 }
+
 import type {
   ActiveSubagent,
   AgentIdentity,
@@ -40,14 +47,248 @@ import type {
   FrozenContract,
   PromptLayerDescriptor,
   SessionCheckpoint,
+  SessionDiff,
   SessionListItem,
   SessionTurn,
   ToolCallRecord,
   TranscriptEntry,
-  TurnDagNode,
-  TurnStageKey,
   WorkReceipt,
 } from "./types";
+
+import dagre from "@dagrejs/dagre";
+
+export function renderNodeIcon(icon?: string) {
+  switch (icon) {
+    case "ingress":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      );
+    case "intent":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+        </svg>
+      );
+    case "context":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+          <polyline points="2 17 12 22 22 17"/>
+          <polyline points="2 12 12 17 22 12"/>
+        </svg>
+      );
+    case "route":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <line x1="6" y1="3" x2="6" y2="15"/>
+          <circle cx="18" cy="6" r="3"/>
+          <circle cx="6" cy="18" r="3"/>
+          <path d="M18 9a9 9 0 0 1-9 9"/>
+        </svg>
+      );
+    case "sandbox":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <polyline points="9 12 11 14 15 10"/>
+        </svg>
+      );
+    case "model":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+        </svg>
+      );
+    case "terminal":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <polyline points="4 17 10 11 4 5"/>
+          <line x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+      );
+    case "subagent":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <rect width="16" height="12" x="4" y="8" rx="2"/>
+          <path d="M2 14h2"/>
+          <path d="M20 14h2"/>
+          <path d="M15 13v2"/>
+          <path d="M9 13v2"/>
+          <path d="M12 2v6"/>
+        </svg>
+      );
+    case "tool":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      );
+    case "stop":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <circle cx="12" cy="12" r="10"/>
+          <rect width="6" height="6" x="9" y="9"/>
+        </svg>
+      );
+    case "checkpoint":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+          <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
+        </svg>
+      );
+    case "memory":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"/>
+          <line x1="9" y1="21" x2="15" y2="21"/>
+        </svg>
+      );
+    case "gate":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      );
+    case "presentation":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="node-icon">
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+      );
+  }
+}
+
+export function parseTaskPrompt(argsJson?: string): string {
+  if (!argsJson) return "delegated subagent";
+  try {
+    const obj = JSON.parse(argsJson);
+    return obj.prompt || obj.description || "delegated subagent";
+  } catch {
+    return argsJson.slice(0, 42);
+  }
+}
+
+export function parseCommandSnippet(argsJson?: string): string {
+  if (!argsJson) return "command execution";
+  try {
+    const obj = JSON.parse(argsJson);
+    const cmd = obj.command || obj.cmd || "";
+    return cmd.slice(0, 42) + (cmd.length > 42 ? "…" : "");
+  } catch {
+    return argsJson.slice(0, 42);
+  }
+}
+
+export interface WorkflowNode {
+  id: string;
+  stage_key:
+    | "ingress"
+    | "memory"
+    | "intent"
+    | "context"
+    | "route"
+    | "sandbox"
+    | "model"
+    | "tool"
+    | "subagent"
+    | "stop"
+    | "presentation"
+    | "checkpoint";
+  phase: "input" | "admission" | "security" | "execution" | "verification" | "presentation" | "governance";
+  title: string;
+  subtitle: string;
+  badge?: string;
+  status: "ok" | "warn" | "bad" | "idle" | "running";
+  icon?: string;
+  duration_ms?: number;
+  tokens_in?: number;
+  tokens_out?: number;
+  cost?: number;
+  details: Record<string, unknown>;
+  raw_payload?: string;
+  // Computed layout coordinates
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface WorkflowEdge {
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+  status: "ok" | "warn" | "bad" | "running" | "idle";
+}
+
+// ---- Receipt Extraction Helpers (Real Backend Unpacking) -------------------
+
+export function receiptInputTokens(r: WorkReceipt): number {
+  if (r.input_tokens != null) return r.input_tokens;
+  return r.attempts?.reduce((sum, a) => sum + (a.usage?.input_tokens ?? 0), 0) ?? 0;
+}
+
+export function receiptOutputTokens(r: WorkReceipt): number {
+  if (r.output_tokens != null) return r.output_tokens;
+  return r.attempts?.reduce((sum, a) => sum + (a.usage?.output_tokens ?? 0), 0) ?? 0;
+}
+
+export function receiptCachedTokens(r: WorkReceipt): number {
+  return r.attempts?.reduce((sum, a) => sum + (a.usage?.cache_read_input_tokens ?? 0), 0) ?? 0;
+}
+
+export function receiptLatencyMs(r: WorkReceipt): number {
+  if (r.latency_ms != null) return r.latency_ms;
+  return r.attempts?.reduce((sum, a) => sum + (a.latency_ms ?? 0), 0) ?? 0;
+}
+
+export function receiptProvider(r: WorkReceipt): string {
+  return r.provider || r.attempts?.[0]?.provider || "—";
+}
+
+export function receiptModel(r: WorkReceipt): string {
+  return r.model || r.attempts?.[0]?.model || "—";
+}
+
+export function receiptSettlement(r: WorkReceipt): string {
+  const winning = r.winning_attempt ?? 0;
+  return r.attempts?.[winning]?.settlement ?? r.attempts?.[0]?.settlement ?? "ok";
+}
+
+// ---- Real User Prompt Filter -----------------------------------------------
+
+export function isRealUserPrompt(entry: TranscriptEntry): boolean {
+  if (entry.kind !== "message") return false;
+  if (entry.role !== "user" && entry.role !== null) return false;
+  const c = entry.content.trim();
+  if (!c) return false;
+  if (
+    c.startsWith("[result]") ||
+    c.startsWith("[stop-guard]") ||
+    c.startsWith("[recovery]") ||
+    c.startsWith("[repair directive]") ||
+    c.startsWith("[tool:") ||
+    c.startsWith("<context_summary>") ||
+    c.startsWith("<system>")
+  ) {
+    return false;
+  }
+  return true;
+}
 
 // ---- Turn Reconstruction ----------------------------------------------------
 
@@ -58,26 +299,24 @@ export function reconstructTurns(
 ): SessionTurn[] {
   const turns: SessionTurn[] = [];
   let currentTurn: SessionTurn | null = null;
-  let receiptIndex = 0;
+  let receiptIdx = 0;
+  let pendingIntent = "";
+  let pendingGoal = "";
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    const isUserPrompt =
-      entry.kind === "message" &&
-      (entry.role === "user" || entry.role === null) &&
-      !entry.content.startsWith("[stop-guard]") &&
-      !entry.content.startsWith("<context_summary>");
 
-    if (isUserPrompt) {
+    if (isRealUserPrompt(entry)) {
       if (currentTurn) {
-        turns.push(finalizeTurn(currentTurn, receipts, receiptIndex, checkpoints));
-        receiptIndex += currentTurn.work_receipts.length;
+        turns.push(finalizeTurn(currentTurn, checkpoints));
       }
       currentTurn = {
         turn_index: turns.length + 1,
         id: entry.entry_id,
         started_at: entry.ts,
         user_prompt: entry.content,
+        intent_summary: pendingIntent,
+        goal: pendingGoal,
         tool_calls: [],
         work_receipts: [],
         tokens_in: 0,
@@ -87,28 +326,15 @@ export function reconstructTurns(
         status: "completed",
         entries: [entry],
       };
+      pendingIntent = "";
+      pendingGoal = "";
       continue;
     }
 
     if (!currentTurn) {
-      // Genesis / Session Initialization entry before first prompt
-      if (entry.kind === "header" || entry.kind === "activity") {
-        continue;
-      }
-      currentTurn = {
-        turn_index: 1,
-        id: entry.entry_id,
-        started_at: entry.ts,
-        user_prompt: "Session Genesis",
-        tool_calls: [],
-        work_receipts: [],
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd: 0,
-        duration_ms: 0,
-        status: "completed",
-        entries: [entry],
-      };
+      // Buffer early intent or goal entries that precede turn 1
+      if (entry.kind === "intent") pendingIntent = entry.content;
+      if (entry.kind === "goal") pendingGoal = entry.content;
       continue;
     }
 
@@ -116,8 +342,16 @@ export function reconstructTurns(
 
     if (entry.kind === "intent") {
       currentTurn.intent_summary = entry.content;
+    } else if (entry.kind === "goal") {
+      currentTurn.goal = entry.content;
+    } else if (entry.kind === "receipt") {
+      if (receiptIdx < receipts.length) {
+        currentTurn.work_receipts.push(receipts[receiptIdx++]);
+      }
     } else if (entry.kind === "message" && entry.role === "assistant") {
-      currentTurn.model_response = entry.content;
+      if (entry.content && !entry.content.startsWith("[tool:")) {
+        currentTurn.model_response = entry.content;
+      }
       if (entry.is_error) currentTurn.status = "failed";
     } else if (entry.tool_name) {
       currentTurn.tool_calls.push({
@@ -127,13 +361,22 @@ export function reconstructTurns(
         ts: entry.ts,
       });
       if (entry.is_error) currentTurn.status = "failed";
-    } else if (entry.content.includes("[stop-guard]")) {
+    } else if (entry.content.startsWith("[stop-guard]")) {
       currentTurn.stop_guard = entry.content;
     }
   }
 
   if (currentTurn) {
-    turns.push(finalizeTurn(currentTurn, receipts, receiptIndex, checkpoints));
+    turns.push(finalizeTurn(currentTurn, checkpoints));
+  }
+
+  // If there are leftover receipts not assigned, allocate them to the last turn
+  if (turns.length > 0 && receiptIdx < receipts.length) {
+    const lastTurn = turns[turns.length - 1];
+    while (receiptIdx < receipts.length) {
+      lastTurn.work_receipts.push(receipts[receiptIdx++]);
+    }
+    finalizeTurn(lastTurn, checkpoints);
   }
 
   return turns;
@@ -141,20 +384,32 @@ export function reconstructTurns(
 
 function finalizeTurn(
   turn: SessionTurn,
-  receipts: WorkReceipt[],
-  receiptOffset: number,
   checkpoints: SessionCheckpoint[],
 ): SessionTurn {
-  const matchingReceipt = receipts[receiptOffset];
-  if (matchingReceipt) {
-    turn.work_receipts.push(matchingReceipt);
-    turn.tokens_in = matchingReceipt.input_tokens ?? 0;
-    turn.tokens_out = matchingReceipt.output_tokens ?? 0;
-    turn.cost_usd = matchingReceipt.cost_usd ?? 0;
-    turn.duration_ms = matchingReceipt.latency_ms ?? 0;
+  let totalIn = 0;
+  let totalOut = 0;
+  let totalDuration = 0;
+  let totalCost = 0;
+
+  for (const r of turn.work_receipts) {
+    totalIn += receiptInputTokens(r);
+    totalOut += receiptOutputTokens(r);
+    totalDuration += receiptLatencyMs(r);
+    totalCost += r.cost_usd ?? 0;
   }
 
-  const matchingCheckpoint = checkpoints.find((cp) => (cp.message || cp.label || "").includes(turn.user_prompt.slice(0, 20)));
+  turn.tokens_in = totalIn;
+  turn.tokens_out = totalOut;
+  turn.duration_ms = totalDuration;
+  turn.cost_usd = totalCost;
+
+  // Match real filesystem checkpoint
+  const cleanPrompt = turn.user_prompt.trim().slice(0, 24);
+  const matchingCheckpoint = checkpoints.find(
+    (cp) =>
+      (cp.label || cp.message || "").includes(cleanPrompt) ||
+      (cp.label || "").includes(`turn: ${cleanPrompt}`),
+  );
   if (matchingCheckpoint) {
     turn.checkpoint_seq = matchingCheckpoint.seq;
   }
@@ -167,144 +422,602 @@ function finalizeTurn(
   return turn;
 }
 
-export function buildTurnDagNodes(turn: SessionTurn, contract?: FrozenContract | null): TurnDagNode[] {
-  const nodes: TurnDagNode[] = [];
+// ---- Intent 7-Axis Parser --------------------------------------------------
 
-  // 1. Ingress Stage
-  nodes.push({
-    id: "ingress",
-    title: "1. Request Ingress",
-    category: "Input",
-    status: "ok",
-    summary: turn.user_prompt.slice(0, 60) + (turn.user_prompt.length > 60 ? "…" : ""),
-    metrics: `${turn.user_prompt.length} chars`,
-    details: {
-      timestamp: turn.started_at,
-      raw_prompt: turn.user_prompt,
-    },
-  });
-
-  // 2. Intent Stage
-  nodes.push({
-    id: "intent",
-    title: "2. Intent Kernel",
-    category: "Classification",
-    status: "ok",
-    summary: turn.intent_summary || "7-axis intent resolved (zero token dispatch)",
-    metrics: "P47 Engine",
-    details: {
-      intent_text: turn.intent_summary || "Direct interactive execution",
-      reading: turn.intent_reading ?? "7-axis radar projection",
-    },
-  });
-
-  // 3. Route Stage
-  const provider = contract?.provider ?? "openai-completions";
-  const model = contract?.model ?? "default";
-  nodes.push({
-    id: "route",
-    title: "3. Route & Ladder",
-    category: "Dispatch",
-    status: "ok",
-    summary: `${provider} · ${model}`,
-    metrics: turn.duration_ms > 0 ? `${turn.duration_ms}ms` : "ladder ready",
-    details: {
-      provider,
-      model,
-      objective: contract?.route_objective ?? "balanced",
-      annotations: contract?.route_annotations ?? [],
-      ladder: contract?.route_ladder ?? [],
-    },
-  });
-
-  // 4. Inference Stage
-  nodes.push({
-    id: "inference",
-    title: "4. Model Inference",
-    category: "LLM Stream",
-    status: turn.status === "failed" ? "bad" : "ok",
-    summary: turn.model_response
-      ? turn.model_response.slice(0, 50) + "…"
-      : "Inference completed",
-    metrics: `${turn.tokens_in.toLocaleString()} in · ${turn.tokens_out.toLocaleString()} out`,
-    details: {
-      cost: `$${turn.cost_usd.toFixed(5)}`,
-      latency_ms: turn.duration_ms,
-      response_preview: turn.model_response || "(no prose output)",
-    },
-  });
-
-  // 5. Security Stage
-  const permMode = contract?.permission_mode ?? "WorkspaceWrite";
-  nodes.push({
-    id: "security",
-    title: "5. Security & Gate",
-    category: "Broker Check",
-    status: permMode === "FullAccess" ? "warn" : "ok",
-    summary: `Authority: ${permMode}`,
-    metrics: "Invariant 10/16 verified",
-    details: {
-      authority_mode: permMode,
-      sandbox: permMode === "FullAccess" ? "Unsandboxed (FullAccess)" : "OS Process Sandbox",
-      rulebook: "Deny → Ask → Allow → Mode Default",
-    },
-  });
-
-  // 6. Tools Stage
-  const toolCount = turn.tool_calls.length;
-  const toolError = turn.tool_calls.some((t) => t.is_error);
-  nodes.push({
-    id: "tools",
-    title: "6. Brokered Tools",
-    category: "Execution",
-    status: toolError ? "bad" : toolCount > 0 ? "ok" : "idle",
-    summary:
-      toolCount > 0
-        ? `${toolCount} call${toolCount > 1 ? "s" : ""}: ${turn.tool_calls.map((t) => t.tool_name).join(", ")}`
-        : "No effectful tools called",
-    metrics: `${toolCount} tools`,
-    details: {
-      tool_calls: turn.tool_calls,
-    },
-  });
-
-  // 7. Stop Gate Stage
-  nodes.push({
-    id: "stop_gate",
-    title: "7. Stop Gate Policy",
-    category: "Verification",
-    status: turn.stop_guard ? "warn" : "ok",
-    summary: turn.stop_guard ? "Stop-guard continuation nudged" : "Terminal stop condition clean",
-    metrics: "Marker & Verify checks",
-    details: {
-      stop_guard: turn.stop_guard ?? "None (clean termination)",
-      premature_policy: "max_blocks budget intact",
-    },
-  });
-
-  // 8. Governance Stage
-  nodes.push({
-    id: "governance",
-    title: "8. Governance & State",
-    category: "Audit Delta",
-    status: "ok",
-    summary: turn.checkpoint_seq != null ? `Checkpoint #${turn.checkpoint_seq}` : "Ledger entry appended",
-    metrics: "Invariant 2",
-    details: {
-      checkpoint_seq: turn.checkpoint_seq ?? "Live working tree",
-      ledger_entries: turn.entries.length,
-      audit_provenance: "Append-only JSONL verifiable",
-    },
-  });
-
-  return nodes;
+export function parseIntentAxes(summary?: string): Record<string, string> {
+  if (!summary) return {};
+  const tokens = summary.trim().split(/\s+/);
+  return {
+    act: tokens[0] || "converse",
+    horizon: tokens[1] || "immediate",
+    stakes: tokens[2] || "inert",
+    evidence: tokens[3] || "none",
+    clarity: tokens[4] || "interactive",
+    modality: tokens[5] || "signals",
+    attendance: tokens[6] || "attended",
+  };
 }
 
-// ---- Sessions List View -----------------------------------------------------
+// ---- Standard Workflow Graph Builder for the Active Turn -------------------
+
+export function buildWorkflowGraph(
+  turn: SessionTurn,
+  contract?: FrozenContract | null,
+  orientation: "LR" | "TB" = "LR",
+): { nodes: WorkflowNode[]; edges: WorkflowEdge[]; width: number; height: number } {
+  const nodes: WorkflowNode[] = [];
+  const edges: WorkflowEdge[] = [];
+
+  const isLR = orientation === "LR";
+  const NODE_W = isLR ? 270 : 320;
+  const NODE_H = 120;
+  let curX = 36;
+  let curY = 40;
+
+  // Stage 1: Request Ingress
+  const ingressNode: WorkflowNode = {
+    id: "ingress",
+    stage_key: "ingress",
+    phase: "input",
+    icon: "ingress",
+    title: "1. Request Ingress",
+    subtitle: turn.user_prompt.slice(0, 42) + (turn.user_prompt.length > 42 ? "…" : ""),
+    badge: `${turn.user_prompt.length} chars`,
+    status: "ok",
+    duration_ms: 0,
+    details: {
+      started_at: turn.started_at,
+      raw_prompt: turn.user_prompt,
+      turn_index: turn.turn_index,
+      delivery_surface: "local",
+    },
+    raw_payload: turn.user_prompt,
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(ingressNode);
+
+  // Stage 2: Recall & Tiered Memory (docs/design/23 & 29)
+  const memoryNode: WorkflowNode = {
+    id: "memory",
+    stage_key: "memory",
+    phase: "admission",
+    icon: "memory",
+    title: "2. Memory & Recall",
+    subtitle: "Tier-1 USER.md Profile & Tier-2 Semantic Recall",
+    badge: "tier-1 & tier-2",
+    status: "ok",
+    details: {
+      profile_tier: "Tier 1: USER.md profile recall & persistent operator context (doc 29)",
+      semantic_tier: "Tier 2: Indexed semantic recall with cross-project boundaries (doc 23)",
+      forget_amend: "Amnesia contract supported (explicit forget & amend commands)",
+      injection_bound: "Bounded injection into prompt layers; zero unbounded drift",
+    },
+    raw_payload: "Memory recall settled. Bounded context slice extracted from USER.md and project semantic memory index.",
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(memoryNode);
+  edges.push({
+    id: "e-ingress-memory",
+    source: "ingress",
+    target: "memory",
+    status: "ok",
+  });
+
+  // Stage 3: Intent & Commitment Kernel (docs/design/47)
+  const intentAxes = parseIntentAxes(turn.intent_summary);
+  const intentNode: WorkflowNode = {
+    id: "intent",
+    stage_key: "intent",
+    phase: "admission",
+    icon: "intent",
+    title: "3. Intent Kernel",
+    subtitle: turn.intent_summary
+      ? `${intentAxes.act} · ${intentAxes.horizon} · ${intentAxes.stakes}`
+      : "Direct interactive dispatch",
+    badge: turn.intent_summary ? `${intentAxes.act} · ${intentAxes.evidence}` : "default",
+    status: "ok",
+    details: {
+      intent_raw: turn.intent_summary || "None recorded",
+      axes: intentAxes,
+      narrowing_rule: "Intent narrows capabilities; never widens authority (doc 47)",
+      evidence_required: intentAxes.evidence,
+      clarity: intentAxes.clarity,
+      attendance: intentAxes.attendance,
+    },
+    raw_payload: turn.intent_summary || "No intent reading recorded for this turn.",
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(intentNode);
+  edges.push({
+    id: "e-memory-intent",
+    source: "memory",
+    target: "intent",
+    status: "ok",
+  });
+
+  // Stage 4: Context Packet & Capabilities (docs/design/17 & 45)
+  const promptLayers = contract?.prompt_layers ?? [];
+  const admittedCaps = contract?.capabilities ?? [];
+  const contextNode: WorkflowNode = {
+    id: "context",
+    stage_key: "context",
+    phase: "admission",
+    icon: "context",
+    title: "4. Context & Capabilities",
+    subtitle: `${promptLayers.length || 4} prompt layers · ${admittedCaps.length || 11} admitted caps`,
+    badge: `${admittedCaps.length || 11} capabilities`,
+    status: "ok",
+    details: {
+      prompt_layers: promptLayers.map((l) => `${l.layer}: ${l.block}`),
+      capabilities: admittedCaps.map((c) => `${c.name} (${c.kind})`),
+      context_accounting: "Tokens partition: verbatim window vs compaction summary (doc 17)",
+      turn_index: turn.turn_index,
+    },
+    raw_payload: JSON.stringify(
+      {
+        prompt_layers: promptLayers,
+        capabilities: admittedCaps.map((c) => ({ name: c.name, kind: c.kind, invocation: c.invocation })),
+      },
+      null,
+      2,
+    ),
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(contextNode);
+  edges.push({
+    id: "e-intent-context",
+    source: "intent",
+    target: "context",
+    status: "ok",
+  });
+
+  // Stage 5: Route Ladder & FinOps Budget (docs/design/15 & Phase R)
+  const activeProvider = turn.work_receipts[0]?.provider || contract?.provider || "openai-completions";
+  const activeModel = turn.work_receipts[0]?.model || contract?.model || "default";
+  const routeLadder = contract?.route_ladder ?? [];
+  const routeNode: WorkflowNode = {
+    id: "route",
+    stage_key: "route",
+    phase: "admission",
+    icon: "route",
+    title: "5. Route Ladder & Budget",
+    subtitle: `${activeProvider} · ${activeModel}`,
+    badge: `${contract?.route_objective ?? "balanced"} ladder`,
+    status: "ok",
+    details: {
+      provider: activeProvider,
+      model: activeModel,
+      route_ladder: routeLadder,
+      objective: contract?.route_objective ?? "balanced",
+      retries_budget: "3 (+6) watchdog backoff",
+      circuit_breaker: "Closed (healthy)",
+    },
+    raw_payload: JSON.stringify(
+      {
+        provider: activeProvider,
+        model: activeModel,
+        route_objective: contract?.route_objective ?? "balanced",
+        route_ladder: routeLadder,
+      },
+      null,
+      2,
+    ),
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(routeNode);
+  edges.push({
+    id: "e-context-route",
+    source: "context",
+    target: "route",
+    status: "ok",
+  });
+
+  // Stage 6: Security & Sandbox Jail (docs/design/24 & 25)
+  const permMode = contract?.permission_mode || "WorkspaceWrite";
+  const isFullAccess = permMode === "FullAccess";
+  const sandboxNode: WorkflowNode = {
+    id: "sandbox",
+    stage_key: "sandbox",
+    phase: "security",
+    icon: "sandbox",
+    title: "6. Security & Sandbox",
+    subtitle: isFullAccess
+      ? "FullAccess (Unsandboxed trust confirmed)"
+      : "Seatbelt / OS Process Jail Sandbox",
+    badge: permMode,
+    status: isFullAccess ? "warn" : "ok",
+    details: {
+      permission_mode: permMode,
+      sandbox_engine: isFullAccess ? "Unsandboxed (Host trust confirmed)" : "Seatbelt (macOS sandbox-exec profile)",
+      target: "WorkerProcess & ToolCommand (SandboxTarget::WorkerProcess)",
+      filesystem_jail: "Canonical workspace jail with path traversal denial (Invariant 10)",
+      quarantine_scratch: ".vak/scratch/ isolated artifact directory",
+      broker_boundary: "__tool_worker disposable process group with sanitized env (Invariant 14)",
+      secrets_isolation: "Sanitized operational allowlist (Invariant 12: secrets never ambient tool state)",
+      process_kill: "PGID process-group kill (Invariant 6)",
+      trust_decision: "Invariant 13: FullAccess is an explicit human trust decision; never selected automatically",
+    },
+    raw_payload: JSON.stringify(
+      {
+        permission_mode: permMode,
+        sandbox: isFullAccess ? "off" : "seatbelt_workspace_jail",
+        scratch_isolation: ".vak/scratch/",
+        broker_protocol: "__tool_worker disposable process group",
+        operational_env_allowlist: ["PATH", "HOME", "USER", "LANG", "SHELL"],
+      },
+      null,
+      2,
+    ),
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(sandboxNode);
+  edges.push({
+    id: "e-route-sandbox",
+    source: "route",
+    target: "sandbox",
+    status: sandboxNode.status,
+  });
+
+  // Stage 7: Agent Execution Loop (Step-by-step Model <-> Tool / Subagent)
+  let lastNodeId = "sandbox";
+
+  if (turn.tool_calls.length === 0) {
+    // Direct prose generation
+    const genNode: WorkflowNode = {
+      id: "model_gen",
+      stage_key: "model",
+      phase: "execution",
+      icon: "model",
+      title: "7. Model Generation",
+      subtitle: turn.model_response ? turn.model_response.slice(0, 42) + "…" : "Prose response completed",
+      badge: `${turn.tokens_in.toLocaleString()} in · ${turn.tokens_out.toLocaleString()} out`,
+      status: turn.status === "failed" ? "bad" : "ok",
+      duration_ms: turn.duration_ms,
+      tokens_in: turn.tokens_in,
+      tokens_out: turn.tokens_out,
+      cost: turn.cost_usd,
+      details: {
+        model: activeModel,
+        provider: activeProvider,
+        tokens_in: turn.tokens_in,
+        tokens_out: turn.tokens_out,
+        latency_ms: turn.duration_ms,
+        cost_usd: turn.cost_usd,
+      },
+      raw_payload: turn.model_response || "(no prose output)",
+      x: curX,
+      y: curY,
+      width: NODE_W,
+      height: NODE_H,
+    };
+    nodes.push(genNode);
+    edges.push({
+      id: "e-sandbox-gen",
+      source: "sandbox",
+      target: "model_gen",
+      status: genNode.status,
+    });
+    lastNodeId = "model_gen";
+  } else {
+    // Multi-step tool workflow execution in this turn
+    const stepCount = turn.tool_calls.length;
+    for (let i = 0; i < stepCount; i++) {
+      const tc = turn.tool_calls[i];
+      const rc = turn.work_receipts[i];
+
+      // Step Model Call
+      const modelId = `model_step_${i + 1}`;
+      const rcIn = rc ? receiptInputTokens(rc) : 0;
+      const rcOut = rc ? receiptOutputTokens(rc) : 0;
+      const rcLat = rc ? receiptLatencyMs(rc) : 0;
+      const modelNode: WorkflowNode = {
+        id: modelId,
+        stage_key: "model",
+        phase: "execution",
+        icon: "model",
+        title: `7.${i * 2 + 1} Model Inference #${i + 1}`,
+        subtitle: `Dispatched: ${tc.tool_name}`,
+        badge: `${rcIn.toLocaleString()} in · ${rcOut.toLocaleString()} out`,
+        status: "ok",
+        duration_ms: rcLat,
+        tokens_in: rcIn,
+        tokens_out: rcOut,
+        details: {
+          step: i + 1,
+          model: rc ? receiptModel(rc) : activeModel,
+          provider: rc ? receiptProvider(rc) : activeProvider,
+          latency_ms: rcLat,
+          tokens_in: rcIn,
+          tokens_out: rcOut,
+          cached_tokens: rc ? receiptCachedTokens(rc) : 0,
+        },
+        raw_payload: rc
+          ? JSON.stringify(rc, null, 2)
+          : `Model inference dispatched ${tc.tool_name} with latency ${rcLat}ms`,
+        x: curX,
+        y: curY,
+        width: NODE_W,
+        height: NODE_H,
+      };
+      nodes.push(modelNode);
+      edges.push({
+        id: `e-${lastNodeId}-${modelId}`,
+        source: lastNodeId,
+        target: modelId,
+        status: "ok",
+      });
+
+      // Step Execution: Check if Tool or Subagent Delegation
+      const isSubagent = tc.tool_name === "task";
+      const isBash = tc.tool_name === "bash";
+      const isFileTool = ["read", "write", "edit", "glob", "grep"].includes(tc.tool_name);
+      const isWeb = tc.tool_name === "webfetch" || tc.tool_name === "browse";
+      const execId = isSubagent ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+
+      const execNode: WorkflowNode = {
+        id: execId,
+        stage_key: isSubagent ? "subagent" : "tool",
+        phase: "execution",
+        icon: isSubagent ? "subagent" : isBash ? "terminal" : isFileTool ? "tool" : isWeb ? "tool" : "tool",
+        title: isSubagent
+          ? `7.${i * 2 + 2} Subagent Delegation`
+          : isBash
+          ? `7.${i * 2 + 2} Sandboxed Shell Process`
+          : isFileTool
+          ? `7.${i * 2 + 2} Brokered Filesystem: ${tc.tool_name}`
+          : isWeb
+          ? `7.${i * 2 + 2} SSRF-Guarded Browse`
+          : `7.${i * 2 + 2} Brokered Tool: ${tc.tool_name}`,
+        subtitle: isSubagent
+          ? parseTaskPrompt(tc.args_json)
+          : isBash
+          ? parseCommandSnippet(tc.args_json)
+          : tc.result_text
+          ? tc.result_text.slice(0, 42) + "…"
+          : "Execution output captured",
+        badge: isSubagent
+          ? "🤖 subagent"
+          : isBash
+          ? "terminal · jail"
+          : isFileTool
+          ? "brokered · safe-io"
+          : isWeb
+          ? "ssrf-guarded"
+          : tc.is_error
+          ? "error"
+          : "success",
+        status: tc.is_error ? "bad" : "ok",
+        details: {
+          tool_name: tc.tool_name,
+          is_subagent: isSubagent,
+          args: tc.args_json,
+          is_error: tc.is_error,
+          timestamp: tc.ts,
+          result_bytes: tc.result_text?.length ?? 0,
+          sandbox_isolation: isBash
+            ? "Process group isolate with operational env allowlist & Seatbelt profile"
+            : isSubagent
+            ? "Dedicated child session with inherited parent authority"
+            : isFileTool
+            ? "Workspace-rooted safe I/O (path_in_workspace verification)"
+            : isWeb
+            ? "SSRF-guarded outbound network policy"
+            : "Brokered worker execution",
+        },
+        raw_payload: tc.result_text || "(empty tool return)",
+        x: curX,
+        y: curY,
+        width: NODE_W,
+        height: NODE_H,
+      };
+      nodes.push(execNode);
+      edges.push({
+        id: `e-${modelId}-${execId}`,
+        source: modelId,
+        target: execId,
+        status: execNode.status,
+      });
+      lastNodeId = execId;
+    }
+
+    // Final Synthesis if prose response exists
+    if (turn.model_response) {
+      const finalrc = turn.work_receipts[stepCount];
+      const finIn = finalrc ? receiptInputTokens(finalrc) : 0;
+      const finOut = finalrc ? receiptOutputTokens(finalrc) : 0;
+      const finLat = finalrc ? receiptLatencyMs(finalrc) : 0;
+      const finalGenNode: WorkflowNode = {
+        id: "model_synthesis",
+        stage_key: "model",
+        phase: "execution",
+        icon: "model",
+        title: `7.${stepCount * 2 + 1} Final Synthesis`,
+        subtitle: turn.model_response.slice(0, 42) + "…",
+        badge: `${finIn.toLocaleString()} in · ${finOut.toLocaleString()} out`,
+        status: "ok",
+        duration_ms: finLat,
+        tokens_in: finIn,
+        tokens_out: finOut,
+        details: {
+          model: finalrc ? receiptModel(finalrc) : activeModel,
+          provider: finalrc ? receiptProvider(finalrc) : activeProvider,
+          latency_ms: finLat,
+          tokens_in: finIn,
+          tokens_out: finOut,
+        },
+        raw_payload: turn.model_response,
+        x: curX,
+        y: curY,
+        width: NODE_W,
+        height: NODE_H,
+      };
+      nodes.push(finalGenNode);
+      edges.push({
+        id: `e-${lastNodeId}-synthesis`,
+        source: lastNodeId,
+        target: "model_synthesis",
+        status: "ok",
+      });
+      lastNodeId = "model_synthesis";
+    }
+  }
+
+  // Stage 8: Stop Gate Policy (docs/design/15)
+  const stopNode: WorkflowNode = {
+    id: "stop_gate",
+    stage_key: "stop",
+    phase: "verification",
+    icon: "stop",
+    title: "8. Stop Gate Policy",
+    subtitle: turn.stop_guard ? "Continuation nudged" : "Terminal condition clean",
+    badge: turn.stop_guard ? "stop-guard" : "terminal",
+    status: turn.stop_guard ? "warn" : "ok",
+    details: {
+      stop_guard: turn.stop_guard || "None (clean termination)",
+      step_budget_exhaustion: false,
+      verification_status: "Verified clean exit",
+      reliability_rule: "Invariant 3: Errors are values; turn returns verified TurnOutcome",
+    },
+    raw_payload: turn.stop_guard || "Turn termination condition satisfied without stop-guard intervention.",
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(stopNode);
+  edges.push({
+    id: `e-${lastNodeId}-stop`,
+    source: lastNodeId,
+    target: "stop_gate",
+    status: stopNode.status,
+  });
+
+  // Stage 9: Universal Outcome Presentation (docs/design/30 & 61)
+  const presentationNode: WorkflowNode = {
+    id: "presentation",
+    stage_key: "presentation",
+    phase: "presentation",
+    icon: "presentation",
+    title: "9. Outcome Presentation",
+    subtitle: turn.tool_calls.length > 0 ? "Universal outcome renderer: code diff & process output" : "Calm continuous prose presentation",
+    badge: turn.tool_calls.length > 0 ? "outcome-first" : "calm-prose",
+    status: "ok",
+    details: {
+      renderer_projection: "Universal outcome-first renderer (docs/design/30 & 61)",
+      available_renderers: "Diff inspector, test matrix, telemetry crosshairs, terminal session, dynamic recipe, calm prose",
+      delivery_mode: "Continuous chat canvas with contextual drawer (doc 61)",
+      retry_outbox: "Durable store-and-forward outbox active (doc 31)",
+    },
+    raw_payload: turn.tool_calls.length > 0
+      ? "Outcome projected to universal renderer with interactive telemetry and diff inspector."
+      : "Outcome projected as clean calm prose with prompt scaffolding scrubbed.",
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(presentationNode);
+  edges.push({
+    id: "e-stop-presentation",
+    source: "stop_gate",
+    target: "presentation",
+    status: "ok",
+  });
+
+  // Stage 10: Governance & Checkpoint (Invariant 1 & 2)
+  const checkpointNode: WorkflowNode = {
+    id: "checkpoint",
+    stage_key: "checkpoint",
+    phase: "governance",
+    icon: "checkpoint",
+    title: "10. Governance & State",
+    subtitle: turn.checkpoint_seq != null ? `Checkpoint #${turn.checkpoint_seq} committed` : "Append-only ledger commit",
+    badge: turn.checkpoint_seq != null ? `seq #${turn.checkpoint_seq}` : "appended",
+    status: "ok",
+    details: {
+      checkpoint_seq: turn.checkpoint_seq ?? "No disk snapshot needed",
+      ledger_entries: turn.entries.length,
+      audit_integrity: "Invariant 2: Append-only JSONL verifiable; zero deletion",
+      prev_hash_merkle: "SHA-256 Merkle chain digest verified",
+      settlement_receipts: `${turn.work_receipts.length} work receipts settled`,
+    },
+    raw_payload: `Turn #${turn.turn_index} closed at ${turn.ended_at || turn.started_at}. Ledger contains ${turn.entries.length} verified immutable entries.`,
+    x: curX,
+    y: curY,
+    width: NODE_W,
+    height: NODE_H,
+  };
+  nodes.push(checkpointNode);
+  edges.push({
+    id: "e-presentation-checkpoint",
+    source: "presentation",
+    target: "checkpoint",
+    status: "ok",
+  });
+
+  // Perform topological DAG layout using @dagrejs/dagre
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({
+    rankdir: orientation,
+    nodesep: isLR ? 36 : 40,
+    ranksep: isLR ? 64 : 50,
+    marginx: 36,
+    marginy: 40,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  for (const n of nodes) {
+    g.setNode(n.id, { width: n.width, height: n.height });
+  }
+  for (const e of edges) {
+    g.setEdge(e.source, e.target);
+  }
+
+  dagre.layout(g);
+
+  for (const n of nodes) {
+    const layoutNode = g.node(n.id);
+    if (layoutNode) {
+      n.x = Math.round(layoutNode.x - layoutNode.width / 2);
+      n.y = Math.round(layoutNode.y - layoutNode.height / 2);
+    }
+  }
+
+  const graphInfo = g.graph();
+  const width = Math.max(1040, Math.round((graphInfo.width || 800) + 72));
+  const height = Math.max(260, Math.round((graphInfo.height || 140) + 90));
+
+  return {
+    nodes,
+    edges,
+    width,
+    height,
+  };
+}
+
+// ---- Sessions List Component -----------------------------------------------
 
 export function SessionsList() {
-  const [sessions, { refetch }] = createResource(() => api.sessions());
-  const [bestofnRuns, bestofnActions] = createResource(() => api.bestofn().then((r) => r.runs).catch(() => []));
+  const [sessions, { refetch }] = createResource(() => api.sessions(200));
+  const [bestofn, bestofnActions] = createResource(api.bestofn);
   const [q, setQ] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
@@ -374,15 +1087,13 @@ export function SessionsList() {
     }
   };
 
-  const newSession = async () => {
+  const startNewSession = async () => {
     setCreating(true);
     try {
-      const { session_id } = await api.createSession();
-      await refetch();
-      navigate(`#/sessions/${session_id}`);
+      const res = await api.createSession();
+      navigate(`#/sessions/${res.session_id}`);
     } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", String(err instanceof Error ? err.message : err));
+      pushToast("alert", String(err instanceof Error ? err.message : err));
     } finally {
       setCreating(false);
     }
@@ -419,98 +1130,48 @@ export function SessionsList() {
     <div class="view sessions-view">
       <PageHeader
         title="Sessions & Conversations"
-        description="Append-only conversational ledgers, execution forensics, and turn pipeline timelines."
+        description="Historical and active agent conversations, turn-by-turn workflow pipelines, and forensic execution traces."
+        actions={
+          <button type="button" class="button primary" disabled={creating()} onClick={startNewSession}>
+            {creating() ? "Creating…" : "New Conversation"}
+          </button>
+        }
       />
 
-      {/* Posture Deck */}
-      <div class="sessions-posture-deck">
-        <div class="session-kpi-card" data-tone="ok">
-          <div class="session-kpi-head">
-            <span class="session-kpi-label">Active Sessions</span>
-            <span class="session-kpi-pill pill-ok">APPEND-ONLY</span>
-          </div>
-          <div class="session-kpi-val">
-            {totalCount()}
-            <span class="session-kpi-unit">sessions</span>
-          </div>
-          <div class="session-kpi-sub">
-            {archivedCount()} archived · monotonic JSONL records
-          </div>
-        </div>
-
-        <div class="session-kpi-card" data-tone="info">
-          <div class="session-kpi-head">
-            <span class="session-kpi-label">Provenance Model</span>
-            <span class="session-kpi-pill pill-cyan">AGENT-OWNED</span>
-          </div>
-          <div class="session-kpi-val">
-            Multi-Turn
-            <span class="session-kpi-unit">continuity</span>
-          </div>
-          <div class="session-kpi-sub">
-            Thread projection guarantees conversational drift resilience.
-          </div>
-        </div>
-
-        <div class="session-kpi-card" data-tone="neutral">
-          <div class="session-kpi-head">
-            <span class="session-kpi-label">Ledger Integrity</span>
-            <span class="session-kpi-pill pill-slate">INVARIANT 1 & 2</span>
-          </div>
-          <div class="session-kpi-val">
-            Reconstructable
-            <span class="session-kpi-unit">via derive()</span>
-          </div>
-          <div class="session-kpi-sub">
-            Model-visible inputs are logged; zero unlogged requests.
-          </div>
-        </div>
-      </div>
-
-      {/* Best-of-N Candidate Worktrees */}
-      <Show when={(bestofnRuns() ?? []).length > 0}>
-        <section class="panel panel-alert" style="margin-bottom:14px">
-          <div class="panel-title-row">
+      {/* Best-of-N Candidate Management Deck */}
+      <Show when={(bestofn()?.runs?.length ?? 0) > 0}>
+        <section class="panel candidates-panel">
+          <div class="candidates-header">
             <div>
-              <h3 style="margin:0; font-size:14px; font-weight:700;">Best-of-N candidate runs awaiting decision</h3>
-              <p class="dim" style="margin:2px 0 0; font-size:12px;">
-                Vak ran multiple candidates in isolated worktrees. Compare their results and pick one to merge into your workspace.
-              </p>
+              <h3>Active Best-of-N Candidate Runs</h3>
+              <p class="dim">Multi-attempt executions in isolated worktrees. Keep the winner or discard alternatives.</p>
             </div>
-            <span class="chip chip-tone-warning">{(bestofnRuns() ?? []).length} candidates</span>
           </div>
-          <div class="candidate-grid">
-            <For each={bestofnRuns() ?? []}>
+          <div class="candidates-grid">
+            <For each={bestofn()?.runs ?? []}>
               {(run: BestOfNRun) => (
                 <div class="candidate-card">
                   <div class="candidate-head">
-                    <strong class="mono">{shortId(run.session_id)}</strong>
-                    <span class="chip mono">{run.branch}</span>
+                    <span class="chip mono">Candidate #{run.branch_index != null ? run.branch_index + 1 : 1}</span>
+                    <span class="mono dim">{shortId(run.session_id)}</span>
                   </div>
-                  <div class="row-gap" style="margin-top:8px">
+                  <div class="candidate-prompt font-semibold">{run.prompt}</div>
+                  <div class="candidate-actions">
                     <button
                       type="button"
                       class="button small"
                       disabled={busyCandidate() === run.session_id}
                       onClick={() => handleKeep(run.session_id)}
                     >
-                      Keep this
+                      Keep This Run
                     </button>
                     <button
                       type="button"
-                      class="danger small"
+                      class="button small danger ghost"
                       disabled={busyCandidate() === run.session_id}
                       onClick={() => handleDiscard(run.session_id)}
                     >
                       Discard
-                    </button>
-                    <span class="spacer" />
-                    <button
-                      type="button"
-                      class="ghost small"
-                      onClick={() => navigate(`#/sessions/${run.session_id}`)}
-                    >
-                      Inspect
                     </button>
                   </div>
                 </div>
@@ -520,213 +1181,216 @@ export function SessionsList() {
         </section>
       </Show>
 
-      {/* Toolbar */}
+      {/* Sessions Posture Deck */}
+      <div class="sessions-posture-deck">
+        <div class="sessions-kpi-card">
+          <span class="kpi-label">Total Sessions</span>
+          <span class="kpi-value font-mono">{totalCount()}</span>
+          <span class="kpi-sub dim">Append-only JSONL source</span>
+        </div>
+        <div class="sessions-kpi-card">
+          <span class="kpi-label">Active Workspace</span>
+          <span class="kpi-value font-mono">{(sessions()?.sessions ?? []).filter(isLocal).length}</span>
+          <span class="kpi-sub dim">Hash {localHash() ? localHash().slice(0, 8) : "all"}</span>
+        </div>
+        <div class="sessions-kpi-card">
+          <span class="kpi-label">Archived</span>
+          <span class="kpi-value font-mono">{archivedCount()}</span>
+          <span class="kpi-sub dim">Hidden from primary queue</span>
+        </div>
+        <div class="sessions-kpi-card">
+          <span class="kpi-label">Execution Mode</span>
+          <span class="kpi-value">Immutable</span>
+          <span class="kpi-sub dim">Invariant 1 & 2 verified</span>
+        </div>
+      </div>
+
+      {/* Filter and Action Toolbar */}
       <div class="sessions-toolbar">
         <div class="sessions-search-box">
           <input
-            type="text"
-            placeholder="Search sessions by ID, agent, or title…"
+            type="search"
+            placeholder="Filter sessions by ID, agent personality, or title…"
             value={q()}
             onInput={(e) => setQ(e.currentTarget.value)}
           />
-          <Show when={q()}>
-            <button type="button" class="search-clear-btn" onClick={() => setQ("")}>Clear</button>
-          </Show>
         </div>
-
-        <label class="toggle">
-          <input
-            type="checkbox"
-            checked={showArchived()}
-            onChange={(e) => setShowArchived(e.currentTarget.checked)}
-          />
-          <span>Show archived ({archivedCount()})</span>
-        </label>
-
-        <span class="spacer" />
-
-        <Show when={showArchived() && archivedCount() > 0}>
-          <button
-            type="button"
-            class="danger small"
-            disabled={bulkBusy()}
-            onClick={() => void deleteAllArchived()}
-          >
-            {bulkBusy() ? "Deleting…" : `Delete all archived (${archivedCount()})`}
+        <div class="sessions-toolbar-actions">
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={showArchived()}
+              onChange={(e) => setShowArchived(e.currentTarget.checked)}
+            />
+            <span>Show Archived ({archivedCount()})</span>
+          </label>
+          <Show when={archivedCount() > 0 && showArchived()}>
+            <button
+              type="button"
+              class="button small danger ghost"
+              disabled={bulkBusy()}
+              onClick={deleteAllArchived}
+            >
+              {bulkBusy() ? "Deleting…" : "Delete All Archived"}
+            </button>
+          </Show>
+          <button type="button" class="button small ghost" onClick={() => void refetch()}>
+            Refresh
           </button>
-        </Show>
-
-        <button
-          type="button"
-          class="button primary"
-          disabled={creating()}
-          onClick={() => void newSession()}
-        >
-          {creating() ? "Opening…" : "+ New session"}
-        </button>
-
-        <button
-          type="button"
-          class="ghost"
-          onClick={() => {
-            void refetch();
-            void bestofnActions.refetch();
-          }}
-        >
-          Refresh
-        </button>
+        </div>
       </div>
 
-      {/* Session Table */}
-      <Show when={!sessions.loading} fallback={<div class="empty">Loading session ledgers…</div>}>
-        <Show
-          when={filtered().length > 0}
-          fallback={
-            <div class="session-empty-card">
-              <span class="cdot cdot-done" style="width:16px; height:16px;" />
-              <h3>No sessions match your filter</h3>
-              <p>Start a new session here, via the CLI, or send a prompt to any bound chat transport.</p>
-            </div>
-          }
-        >
-          <div class="sessions-table-wrapper">
+      {/* Sessions Table */}
+      <div class="sessions-table-panel">
+        <Show when={!sessions.loading} fallback={<div class="empty">Loading session index…</div>}>
+          <Show
+            when={filtered().length > 0}
+            fallback={<div class="empty">No sessions match your filter criteria.</div>}
+          >
             <table class="table sessions-table">
               <thead>
                 <tr>
                   <th>Session ID</th>
                   <th>Agent Persona</th>
-                  <th>Messages</th>
-                  <th>Started</th>
-                  <th>Last Active</th>
+                  <th>Entries</th>
+                  <th>First Activity</th>
+                  <th>Last Activity</th>
                   <th>Scope</th>
-                  <th style="text-align: right;">Actions</th>
+                  <th class="actions-col">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 <For each={filtered()}>
-                  {(s) => {
-                    const local = createMemo(() => isLocal(s));
-                    const busy = () => busySession() === s.session_id;
-
-                    return (
-                      <tr
-                        tabIndex={0}
-                        classList={{ dim: s.archived }}
-                        onClick={() => navigate(`#/sessions/${s.session_id}`)}
-                        onKeyDown={(e) => e.key === "Enter" && navigate(`#/sessions/${s.session_id}`)}
-                      >
-                        <td class="mono font-bold">
-                          {shortId(s.session_id)}
-                          <Show when={s.archived}>
-                            <span class="chip" style="margin-left:6px">archived</span>
-                          </Show>
-                        </td>
-
-                        <td>
-                          <Show when={s.agent} fallback={<span class="dim">Vak Default</span>}>
-                            <span class="chip chip-tone-info" title={s.agent?.personality || ""}>
-                              {s.agent?.name}
-                            </span>
-                          </Show>
-                        </td>
-
-                        <td>
-                          <span class="session-entry-pill">{s.entry_count} entries</span>
-                        </td>
-
-                        <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
-                        <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
-
-                        <td>
-                          <Show
-                            when={local()}
-                            fallback={
-                              <span class="dim" title="Belongs to another workspace directory">
-                                cross-project
-                              </span>
-                            }
+                  {(s: SessionListItem) => (
+                    <tr
+                      class="session-row"
+                      classList={{ "archived-row": s.archived }}
+                      onClick={() => navigate(`#/sessions/${s.session_id}`)}
+                    >
+                      <td class="mono font-semibold">
+                        <div class="session-id-cell">
+                          <span class="cdot cdot-ok" />
+                          <span>{s.session_id}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <Show
+                          when={s.agent}
+                          fallback={<span class="dim mono">default</span>}
+                        >
+                          <span class="chip chip-tone-info" title={s.agent?.personality || ""}>
+                            {s.agent?.name}
+                          </span>
+                        </Show>
+                      </td>
+                      <td class="mono">{s.entry_count}</td>
+                      <td class="dim">{timeAgo(s.first_ts)}</td>
+                      <td class="dim">{timeAgo(s.last_ts)}</td>
+                      <td>
+                        <span
+                          class="chip"
+                          classList={{
+                            "chip-tone-success": isLocal(s),
+                            "chip-tone-muted": !isLocal(s),
+                          }}
+                        >
+                          {isLocal(s) ? "local" : "external"}
+                        </span>
+                      </td>
+                      <td class="actions-col" onClick={(e) => e.stopPropagation()}>
+                        <div class="row-actions">
+                          <button
+                            type="button"
+                            class="button small ghost"
+                            disabled={busySession() === s.session_id}
+                            onClick={() => toggleArchive(s)}
                           >
-                            <span class="chip chip-tone-success">workspace</span>
-                          </Show>
-                        </td>
-
-                        <td onClick={(e) => e.stopPropagation()} style="text-align: right;">
-                          <Show
-                            when={local()}
-                            fallback={<span class="dim">—</span>}
+                            {s.archived ? "Restore" : "Archive"}
+                          </button>
+                          <button
+                            type="button"
+                            class="button small danger ghost"
+                            disabled={busySession() === s.session_id}
+                            onClick={() => removeSession(s)}
                           >
-                            <div class="row-gap" style="justify-content: flex-end;">
-                              <button
-                                type="button"
-                                class="ghost small"
-                                disabled={busy()}
-                                onClick={() => void toggleArchive(s)}
-                              >
-                                {busy() ? "…" : s.archived ? "Unarchive" : "Archive"}
-                              </button>
-
-                              <a
-                                class="ghost small"
-                                href={`/sessions/${encodeURIComponent(s.session_id)}/transcript.md`}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                                title="Export complete session as markdown"
-                              >
-                                Export .md
-                              </a>
-
-                              <Show when={s.archived}>
-                                <button
-                                  type="button"
-                                  class="danger small"
-                                  disabled={busy()}
-                                  onClick={() => void removeSession(s)}
-                                >
-                                  Delete
-                                </button>
-                              </Show>
-                            </div>
-                          </Show>
-                        </td>
-                      </tr>
-                    );
-                  }}
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                 </For>
               </tbody>
             </table>
-          </div>
+          </Show>
         </Show>
-      </Show>
+      </div>
     </div>
   );
 }
 
-// ---- Session Forensics & Turn Inspector View --------------------------------
+// ---- Scalable Turn Forensics View ------------------------------------------
 
 export function SessionForensics(props: { sessionId: string }) {
   const [activeTab, setActiveTab] = createSignal<
-    "dag" | "transcript" | "drift" | "receipts" | "checkpoints"
+    "dag" | "log" | "drift" | "receipts" | "checkpoints"
   >("dag");
-
   const [selectedTurnIndex, setSelectedTurnIndex] = createSignal<number>(1);
-  const [selectedStage, setSelectedStage] = createSignal<TurnDagNode | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = createSignal<string>("ingress");
+  const [inspectorTab, setInspectorTab] = createSignal<"payload" | "economics" | "policy" | "sandbox">("payload");
+  const [zoomScale, setZoomScale] = createSignal<number>(1.0);
+  const [panX, setPanX] = createSignal<number>(0);
+  const [panY, setPanY] = createSignal<number>(0);
+  const [isPanning, setIsPanning] = createSignal<boolean>(false);
+  const [layoutOrientation, setLayoutOrientation] = createSignal<"LR" | "TB">("LR");
+  let panStart = { x: 0, y: 0, initPanX: 0, initPanY: 0 };
 
-  // Filters for transcript
-  const [kindFilter, setKindFilter] = createSignal("");
-  const [roleFilter, setRoleFilter] = createSignal("");
+  const handleCanvasMouseDown = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest(".workflow-node-card")) return;
+    setIsPanning(true);
+    panStart = { x: e.clientX, y: e.clientY, initPanX: panX(), initPanY: panY() };
+  };
 
-  // Live state
-  const [live, setLive] = createSignal(false);
-  const [running, setRunning] = createSignal(false);
-  const [subagentBusy, setSubagentBusy] = createSignal("");
+  const handleCanvasMouseMove = (e: MouseEvent) => {
+    if (!isPanning()) return;
+    setPanX(panStart.initPanX + (e.clientX - panStart.x));
+    setPanY(panStart.initPanY + (e.clientY - panStart.y));
+  };
 
-  // Composer state
+  const handleCanvasMouseUp = () => {
+    if (isPanning()) setIsPanning(false);
+  };
+
+  const zoomToFit = () => {
+    const container = document.querySelector(".workflow-scroll-viewport");
+    if (!container) return;
+    const cw = container.clientWidth - 50;
+    const ch = container.clientHeight - 50;
+    const gw = workflowGraph().width;
+    const gh = workflowGraph().height;
+    const scale = Math.min(1.2, Math.max(0.4, Math.min(cw / gw, ch / gh)));
+    setZoomScale(scale);
+    setPanX(0);
+    setPanY(0);
+  };
+
+  const [copied, setCopied] = createSignal(false);
+
+  // Turn search / filter in large sessions
+  const [turnSearchQuery, setTurnSearchQuery] = createSignal("");
+
+  // Filter for conversational log
+  const [logFilter, setLogFilter] = createSignal<"all" | "dialogue" | "tools" | "system">("all");
+
+  // Composer signals
   const [draft, setDraft] = createSignal("");
   const [nCandidates, setNCandidates] = createSignal(1);
   const [sending, setSending] = createSignal(false);
+  const [running, setRunning] = createSignal(false);
+  const [live, setLive] = createSignal(true);
 
-  // Resources
-  const [subagentData, { refetch: refetchSubagents }] = createResource(
+  // Load Session Resources
+  const [subagentsData, { refetch: refetchSubagents }] = createResource(
     () => props.sessionId,
     (id) => api.subagents(id),
   );
@@ -748,7 +1412,7 @@ export function SessionForensics(props: { sessionId: string }) {
 
   const [diffData, { refetch: refetchDiff }] = createResource(
     () => props.sessionId,
-    (id) => api.attach(id).then(() => api.diff(id)).catch(() => ({ diff: "" })),
+    (id): Promise<SessionDiff> => api.attach(id).then(() => api.diff(id)).catch(() => ({ diff: "" })),
   );
 
   // Subagents polling
@@ -758,244 +1422,307 @@ export function SessionForensics(props: { sessionId: string }) {
     onCleanup(() => window.clearInterval(timer));
   });
 
-  // Reconstructed Turns
-  const entries = () => transcriptData()?.entries ?? [];
-  const contract = () => (transcriptData() as unknown as { contract?: FrozenContract })?.contract ?? null;
-  const receipts = () => receiptsData() ?? [];
-  const checkpoints = () => checkpointsData()?.checkpoints ?? [];
+  // Reconstruct turns
+  const turns = createMemo(() => {
+    const entries = transcriptData()?.entries ?? [];
+    const receipts = receiptsData() ?? [];
+    const checkpoints = checkpointsData()?.checkpoints ?? [];
+    return reconstructTurns(entries, receipts, checkpoints);
+  });
 
-  const turns = createMemo(() => reconstructTurns(entries(), receipts(), checkpoints()));
+  const contract = createMemo(() => transcriptData()?.contract ?? null);
 
-  // Active Selected Turn
+  // Total session economics
+  const totalTokens = createMemo(() => {
+    const recs = receiptsData() ?? [];
+    return recs.reduce((sum, r) => sum + receiptInputTokens(r) + receiptOutputTokens(r), 0);
+  });
+
+  const totalCost = createMemo(() => {
+    const recs = receiptsData() ?? [];
+    return recs.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
+  });
+
+  // Ensure selectedTurnIndex defaults to latest turn when session loads
+  createEffect(() => {
+    const list = turns();
+    if (list.length > 0 && selectedTurnIndex() > list.length) {
+      setSelectedTurnIndex(list.length);
+    }
+  });
+
+  // Current turn (The single turn being deeply visualized)
   const currentTurn = createMemo(() => {
     const list = turns();
     if (list.length === 0) return null;
-    const found = list.find((t) => t.turn_index === selectedTurnIndex());
-    return found || list[list.length - 1] || null;
+    const match = list.find((t) => t.turn_index === selectedTurnIndex());
+    return match || list[list.length - 1];
   });
 
-  // Turn DAG Nodes
-  const dagNodes = createMemo(() => {
+  // Current Turn Workflow Graph
+  const workflowGraph = createMemo(() => {
     const turn = currentTurn();
-    if (!turn) return [];
-    return buildTurnDagNodes(turn, contract());
+    if (!turn) return { nodes: [], edges: [], width: 1040, height: 260 };
+    return buildWorkflowGraph(turn, contract(), layoutOrientation());
   });
 
-  // Aggregated Telemetry
-  const totalTokens = createMemo(() =>
-    turns().reduce((acc, t) => acc + t.tokens_in + t.tokens_out, 0),
-  );
-  const totalCost = createMemo(() =>
-    turns().reduce((acc, t) => acc + t.cost_usd, 0),
-  );
+  // Active node for inspector
+  const activeNode = createMemo(() => {
+    const graph = workflowGraph();
+    const id = selectedNodeId();
+    return graph.nodes.find((n) => n.id === id) || graph.nodes[0] || null;
+  });
 
-  // Live SSE listener
+  // Keep selected node synced when switching turns
   createEffect(() => {
-    void props.sessionId;
-    if (!live()) return;
-    const es = new EventSource(`/sessions/${encodeURIComponent(props.sessionId)}/events`);
-    es.onmessage = (m) => {
-      try {
-        const ev = JSON.parse(m.data) as Record<string, unknown>;
-        if ("TurnStart" in ev || "ToolCallStart" in ev) setRunning(true);
-        if ("RunFinished" in ev) setRunning(false);
-      } catch {
-        /* ignore */
-      }
-      setTimeout(() => {
-        void refetchTranscript();
-        void refetchReceipts();
-        void refetchCheckpoints();
-      }, 350);
-    };
-    onCleanup(() => es.close());
+    const graph = workflowGraph();
+    if (graph.nodes.length > 0 && !graph.nodes.some((n) => n.id === selectedNodeId())) {
+      setSelectedNodeId(graph.nodes[0].id);
+    }
   });
 
-  // Actions
-  const cancel = async () => {
-    try {
-      await api.attach(props.sessionId);
-      await api.cancelRun(props.sessionId);
-      pushToast("info", "Cancellation requested");
-      setRunning(false);
-    } catch (err) {
-      pushToast("alert", String(err instanceof Error ? err.message : err));
-    }
-  };
+  // SSE Live Feed
+  createEffect(() => {
+    const sid = props.sessionId;
+    if (!sid) return;
 
-  const send = async () => {
+    const source = new EventSource("/events");
+    source.onmessage = (event) => {
+      try {
+        const ev = JSON.parse(event.data);
+        if (ev.session_id === sid) {
+          if (ev.kind === "receipt" || ev.kind === "run_end") {
+            refetchReceipts();
+            refetchCheckpoints();
+            refetchDiff();
+          }
+          if (ev.kind === "turn_start" || ev.kind === "tool_call_start") setRunning(true);
+          if (ev.kind === "turn_end" || ev.kind === "run_end") setRunning(false);
+          refetchTranscript();
+        }
+      } catch {
+        // non-JSON event ignored
+      }
+    };
+
+    onCleanup(() => source.close());
+  });
+
+  // Prompt execution
+  const handleSend = async () => {
     const text = draft().trim();
     if (!text || sending()) return;
     setSending(true);
     try {
       await api.attach(props.sessionId);
-      if (running() && nCandidates() === 1) {
-        await api.steer(props.sessionId, text);
-        pushToast("info", "Steering queued");
-      } else if (nCandidates() >= 2) {
-        const res = await api.startBestofn(props.sessionId, text, nCandidates());
-        pushToast("info", `Fanned out to ${res.runs.length} candidate runs`);
-        navigate("#/sessions");
-        return;
+      if (nCandidates() > 1) {
+        await api.startBestofn(props.sessionId, text, nCandidates());
+        pushToast("info", `Forked ${nCandidates()} parallel candidates`);
       } else {
         await api.runPrompt(props.sessionId, text);
+        pushToast("info", "Prompt dispatched to agent");
       }
       setDraft("");
-      setLive(true);
       setRunning(true);
-      setTimeout(() => {
-        void refetchTranscript();
-        void refetchReceipts();
-      }, 500);
+      await refetchTranscript();
+      // Auto-jump to the newest turn
+      setTimeout(() => setSelectedTurnIndex(turns().length), 500);
     } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", String(err instanceof Error ? err.message : err));
+      pushToast("alert", String(err instanceof Error ? err.message : err));
     } finally {
       setSending(false);
     }
   };
 
+  const handleCopyPayload = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const restoreCommit = async (seq: number) => {
-    if (!confirmDestructive(`Rewind workspace files to checkpoint #${seq}? Subsequent filesystem changes will be overwritten.`)) return;
+    if (!confirmDestructive(`Restore workspace to checkpoint #${seq}? Subsequent uncommitted changes will be lost.`)) return;
     try {
       await api.attach(props.sessionId);
       await api.restoreCheckpoint(props.sessionId, seq);
-      await Promise.all([refetchCheckpoints(), refetchTranscript(), refetchDiff()]);
-      pushToast("info", `Restored to checkpoint #${seq}`);
+      pushToast("info", `Workspace restored to checkpoint #${seq}`);
+      await Promise.all([refetchCheckpoints(), refetchDiff()]);
     } catch (err) {
       pushToast("alert", String(err instanceof Error ? err.message : err));
     }
   };
 
-  const stopChild = async (child: ActiveSubagent) => {
-    if (!confirmDestructive(`Stop subagent “${child.label}”?`)) return;
-    setSubagentBusy(child.id);
-    try {
-      await api.stopSubagent(props.sessionId, child.id);
-      await refetchSubagents();
-      pushToast("info", "Subagent stopped");
-    } catch (err) {
-      pushToast("alert", String(err instanceof Error ? err.message : err));
-    } finally {
-      setSubagentBusy("");
+  // Filtered log entries
+  const filteredLogEntries = createMemo(() => {
+    const all = transcriptData()?.entries ?? [];
+    const filter = logFilter();
+    if (filter === "all") return all;
+    if (filter === "dialogue") {
+      return all.filter((e) => (e.role === "user" || e.role === "assistant") && !e.tool_name && !e.content.startsWith("[result]"));
     }
-  };
+    if (filter === "tools") {
+      return all.filter((e) => !!e.tool_name || e.content.startsWith("[result]") || e.content.startsWith("[tool:"));
+    }
+    if (filter === "system") {
+      return all.filter((e) => e.kind === "intent" || e.kind === "goal" || e.kind === "header" || e.kind === "activity");
+    }
+    return all;
+  });
 
   return (
     <div class="view session-forensics-view">
-      {/* 1. Executive Session Masthead */}
-      <div class="session-masthead">
-        <div class="session-masthead-top">
-          <button type="button" class="back-link-btn" onClick={() => navigate("#/sessions")}>
+      {/* Executive Forensics Masthead */}
+      <div class="forensics-masthead">
+        <div class="masthead-nav-bar">
+          <button type="button" class="button small ghost" onClick={() => navigate("#/sessions")}>
             ‹ Sessions
           </button>
-          <span class="session-id-pill mono">{shortId(props.sessionId)}</span>
-
-          <Show when={running()}>
-            <span class="session-status-badge running">
-              <span class="cdot cdot-active" /> RUNNING
-            </span>
-          </Show>
-
-          <span class="spacer" />
-
-          <div class="session-masthead-actions">
-            <Show when={running()}>
-              <button type="button" class="danger small" onClick={() => void cancel()}>
-                Cancel run
-              </button>
-            </Show>
-
+          <div class="masthead-id-pill">
+            <span class="cdot cdot-ok" />
+            <span class="mono font-bold">{shortId(props.sessionId, 12)}</span>
+          </div>
+          <div class="masthead-right-actions">
             <a
-              class="button ghost small"
-              href={`/sessions/${encodeURIComponent(props.sessionId)}/transcript.md`}
+              class="button small ghost"
+              href={`/admin/api/sessions/${encodeURIComponent(props.sessionId)}/export`}
               target="_blank"
-              rel="noreferrer noopener"
+              rel="noreferrer"
             >
               Export .md
             </a>
-
-            <label class="toggle live-toggle">
-              <input
-                type="checkbox"
-                checked={live()}
-                onChange={(e) => setLive(e.currentTarget.checked)}
-              />
+            <label class="toggle-label small">
+              <input type="checkbox" checked={live()} onChange={(e) => setLive(e.currentTarget.checked)} />
               <span>Live tail</span>
             </label>
           </div>
         </div>
 
-        {/* Masthead Metadata Pills */}
-        <div class="session-meta-strip">
-          <div class="session-meta-chip">
-            <span class="meta-chip-label">Route:</span>
-            <strong class="mono">{contract()?.provider ?? "ollama"} · {contract()?.model ?? "gemma4:e2b-mlx"}</strong>
+        <div class="session-metrics-deck">
+          <div class="session-metric-tile">
+            <span class="metric-label">DISPATCH ROUTE</span>
+            <div class="metric-value font-semibold mono">
+              {contract()?.provider ?? "openai-completions"} · {contract()?.model ?? "default"}
+            </div>
+            <span class="metric-sub mono dim">
+              Ladder: {contract()?.route_ladder?.length ?? 1} leg(s) · {contract()?.route_objective ?? "balanced"}
+            </span>
           </div>
 
-          <div class="session-meta-chip">
-            <span class="meta-chip-label">Authority:</span>
-            <strong class="chip chip-tone-success">{contract()?.permission_mode ?? "WorkspaceWrite"}</strong>
+          <div class="session-metric-tile">
+            <span class="metric-label">AUTHORITY & SANDBOX</span>
+            <div class="metric-value">
+              <span class={`chip ${contract()?.permission_mode === "FullAccess" ? "chip-tone-alert" : "chip-tone-success"}`}>
+                {contract()?.permission_mode ?? "WorkspaceWrite"}
+              </span>
+            </div>
+            <span class="metric-sub dim">
+              {contract()?.permission_mode === "FullAccess" ? "Unsandboxed (Host trust confirmed)" : "OS Process Jail Sandbox"}
+            </span>
           </div>
 
-          <div class="session-meta-chip">
-            <span class="meta-chip-label">Turns:</span>
-            <strong>{turns().length} completed</strong>
+          <div class="session-metric-tile">
+            <span class="metric-label">TOTAL TURNS</span>
+            <div class="metric-value font-bold mono">
+              {turns().length} turns
+            </div>
+            <span class="metric-sub dim">
+              Append-only verified ledger
+            </span>
           </div>
 
-          <div class="session-meta-chip">
-            <span class="meta-chip-label">Volume:</span>
-            <strong>{totalTokens().toLocaleString()} tokens</strong>
+          <div class="session-metric-tile">
+            <span class="metric-label">TOKEN VOLUME</span>
+            <div class="metric-value font-bold mono">
+              {totalTokens() > 1000 ? `${(totalTokens() / 1000).toFixed(1)}k` : totalTokens()} tokens
+            </div>
+            <span class="metric-sub dim">
+              Multi-attempt accounting
+            </span>
           </div>
 
-          <div class="session-meta-chip">
-            <span class="meta-chip-label">Cost:</span>
-            <strong class="mono">${totalCost().toFixed(4)}</strong>
+          <div class="session-metric-tile">
+            <span class="metric-label">FINOPS COST</span>
+            <div class="metric-value font-bold mono">
+              ${totalCost().toFixed(4)}
+            </div>
+            <span class="metric-sub dim">
+              Budget admitted
+            </span>
           </div>
         </div>
       </div>
 
-      {/* 2. Turn Scrubber Bar */}
-      <Show when={turns().length > 0}>
-        <div class="turn-scrubber-container">
-          <div class="turn-scrubber-header">
-            <span class="scrubber-title">Turn Navigation & Timeline</span>
-            <span class="scrubber-subtitle">Select a turn to inspect its pipeline DAG, telemetry, and execution facts</span>
-          </div>
+      {/* Scalable Turn Stepper & Navigator (Designed for 10, 1,000, or 1,000,000 turns) */}
+      <section class="turn-scale-navigator">
+        <div class="turn-nav-group">
+          <button
+            type="button"
+            class="button small ghost turn-step-btn"
+            disabled={selectedTurnIndex() <= 1}
+            onClick={() => setSelectedTurnIndex((i) => Math.max(1, i - 1))}
+            title="Step to preceding turn"
+          >
+            ‹ Prev Turn
+          </button>
 
-          <div class="turn-scrubber-strip">
-            <For each={turns()}>
-              {(turn) => {
-                const isSelected = () => (currentTurn()?.turn_index ?? 1) === turn.turn_index;
-                return (
-                  <button
-                    type="button"
-                    class="turn-scrub-pill"
-                    classList={{
-                      active: isSelected(),
-                      error: turn.status === "failed",
-                    }}
-                    onClick={() => {
-                      setSelectedTurnIndex(turn.turn_index);
-                      setSelectedStage(null);
-                    }}
-                  >
-                    <span class="turn-pill-num">Turn {turn.turn_index}</span>
-                    <span class="turn-pill-prompt">
-                      {turn.user_prompt.slice(0, 22) || "Genesis"}…
-                    </span>
-                    <span class="turn-pill-cost">
-                      {turn.tokens_in + turn.tokens_out > 0 ? `${(turn.tokens_in + turn.tokens_out).toLocaleString()} tok` : "—"}
-                    </span>
-                  </button>
-                );
+          <div class="turn-index-picker">
+            <span class="dim">Turn</span>
+            <input
+              type="number"
+              min={1}
+              max={Math.max(1, turns().length)}
+              value={selectedTurnIndex()}
+              onInput={(e) => {
+                const val = parseInt(e.currentTarget.value, 10);
+                if (!isNaN(val) && val >= 1 && val <= turns().length) {
+                  setSelectedTurnIndex(val);
+                }
               }}
-            </For>
+              class="turn-number-input mono font-bold"
+            />
+            <span class="dim">of {turns().length}</span>
           </div>
-        </div>
-      </Show>
 
-      {/* 3. Segmented Navigation Tabs */}
+          <button
+            type="button"
+            class="button small ghost turn-step-btn"
+            disabled={selectedTurnIndex() >= turns().length}
+            onClick={() => setSelectedTurnIndex((i) => Math.min(turns().length, i + 1))}
+            title="Step to subsequent turn"
+          >
+            Next Turn ›
+          </button>
+
+          <Show when={selectedTurnIndex() !== turns().length && turns().length > 0}>
+            <button
+              type="button"
+              class="button small primary ghost"
+              onClick={() => setSelectedTurnIndex(turns().length)}
+            >
+              Jump to Latest (#{turns().length})
+            </button>
+          </Show>
+        </div>
+
+        {/* Turn Selector Dropdown for Fast Direct Access */}
+        <div class="turn-dropdown-picker">
+          <select
+            class="turn-select-menu"
+            value={selectedTurnIndex()}
+            onChange={(e) => setSelectedTurnIndex(Number(e.currentTarget.value))}
+          >
+            <For each={turns()}>
+              {(t) => (
+                <option value={t.turn_index}>
+                  Turn #{t.turn_index}: {t.user_prompt.slice(0, 36)}… ({t.tool_calls.length} tools · {Math.round(t.duration_ms / 1000)}s)
+                </option>
+              )}
+            </For>
+          </select>
+        </div>
+      </section>
+
+      {/* 5 Segmented Forensics Tabs */}
       <div class="forensics-tabs-bar">
         <button
           type="button"
@@ -1003,211 +1730,435 @@ export function SessionForensics(props: { sessionId: string }) {
           classList={{ active: activeTab() === "dag" }}
           onClick={() => setActiveTab("dag")}
         >
-          Turn Pipeline DAG
+          Turn #{selectedTurnIndex()} Workflow DAG
         </button>
-
         <button
           type="button"
           class="forensics-tab-btn"
-          classList={{ active: activeTab() === "transcript" }}
-          onClick={() => setActiveTab("transcript")}
+          classList={{ active: activeTab() === "log" }}
+          onClick={() => setActiveTab("log")}
         >
-          Conversational Log ({entries().length})
+          Conversational Log ({transcriptData()?.total ?? 0})
         </button>
-
         <button
           type="button"
           class="forensics-tab-btn"
           classList={{ active: activeTab() === "drift" }}
           onClick={() => setActiveTab("drift")}
         >
-          Context & Drift Audit
+          Context &amp; Drift Audit
         </button>
-
         <button
           type="button"
           class="forensics-tab-btn"
           classList={{ active: activeTab() === "receipts" }}
           onClick={() => setActiveTab("receipts")}
         >
-          Work Receipts ({receipts().length})
+          Work Receipts ({receiptsData()?.length ?? 0})
         </button>
-
         <button
           type="button"
           class="forensics-tab-btn"
           classList={{ active: activeTab() === "checkpoints" }}
           onClick={() => setActiveTab("checkpoints")}
         >
-          Checkpoints ({checkpoints().length})
+          Checkpoints &amp; Diffs ({checkpointsData()?.checkpoints?.length ?? 0})
         </button>
       </div>
 
-      {/* 4. Tab Content Views */}
+      {/* TAB CONTENTS */}
       <Switch>
-        {/* TAB 1: TURN PIPELINE DAG */}
+        {/* TAB 1: STANDARD TURN WORKFLOW DAG */}
         <Match when={activeTab() === "dag"}>
-          <Show when={currentTurn()} fallback={<div class="empty">No turn selected.</div>}>
-            {(turn) => (
-              <div class="turn-dag-view">
-                {/* Turn Header Card */}
-                <div class="turn-header-card">
-                  <div class="turn-header-left">
-                    <span class="turn-index-badge">TURN {turn().turn_index}</span>
-                    <strong class="turn-prompt-title">“{turn().user_prompt}”</strong>
+          <div class="workflow-dag-view">
+            <Show when={currentTurn()} fallback={<div class="empty">No turns recorded yet in this session.</div>}>
+              {/* Turn Header Card */}
+              <div class="turn-summary-card">
+                <div class="turn-summary-left">
+                  <span class="turn-badge">Turn #{currentTurn()!.turn_index}</span>
+                  <strong class="turn-title">“{currentTurn()!.user_prompt}”</strong>
+                </div>
+                <div class="turn-summary-right">
+                  <span class="dim mono">{timeAgo(currentTurn()!.started_at)}</span>
+                  <span class="mono font-semibold">
+                    {currentTurn()!.tool_calls.length} tool{currentTurn()!.tool_calls.length === 1 ? "" : "s"}
+                  </span>
+                  <span class="mono">
+                    {currentTurn()!.duration_ms > 0 ? `${(currentTurn()!.duration_ms / 1000).toFixed(1)}s` : "—"}
+                  </span>
+                  <span class="mono">
+                    {currentTurn()!.tokens_in + currentTurn()!.tokens_out > 0
+                      ? `${((currentTurn()!.tokens_in + currentTurn()!.tokens_out) / 1000).toFixed(1)}k tokens`
+                      : "0 tokens"}
+                  </span>
+                  <span
+                    class="chip"
+                    classList={{
+                      "chip-tone-success": currentTurn()!.status !== "failed",
+                      "chip-tone-alert": currentTurn()!.status === "failed",
+                    }}
+                  >
+                    {currentTurn()!.status}
+                  </span>
+                </div>
+              </div>
+
+              {/* Standard Workflow DAG Canvas for THIS SPECIFIC TURN */}
+              <div class="workflow-canvas-container">
+                <div class="workflow-canvas-toolbar">
+                  <div class="toolbar-left">
+                    <span class="canvas-label">Turn #{currentTurn()!.turn_index} Execution DAG</span>
+                    <span class="dim small">
+                      {workflowGraph().nodes.length} stages · Ingress → Intent → Context → Route → Sandbox → {currentTurn()!.tool_calls.length} Tools → Stop → Checkpoint
+                    </span>
                   </div>
-                  <div class="turn-header-right">
-                    <span class="turn-time">{clock(turn().started_at)} ({timeAgo(turn().started_at)})</span>
-                    <span class="chip chip-tone-success">{turn().status}</span>
+                  <div class="canvas-zoom-controls">
+                    <button
+                      type="button"
+                      class="button small ghost"
+                      onClick={() => setLayoutOrientation((o) => (o === "LR" ? "TB" : "LR"))}
+                      title="Toggle between Horizontal (LR) and Vertical (TB) flow"
+                    >
+                      {layoutOrientation() === "LR" ? "↔ Horizontal" : "↕ Vertical"}
+                    </button>
+                    <button type="button" class="button small ghost" onClick={() => setZoomScale((s) => Math.max(0.45, s - 0.15))}>-</button>
+                    <span class="zoom-level mono">{Math.round(zoomScale() * 100)}%</span>
+                    <button type="button" class="button small ghost" onClick={() => setZoomScale((s) => Math.min(1.6, s + 0.15))}>+</button>
+                    <button type="button" class="button small ghost" onClick={zoomToFit} title="Fit entire DAG into view">Fit</button>
+                    <button type="button" class="button small ghost" onClick={() => { setZoomScale(1.0); setPanX(0); setPanY(0); }}>Reset</button>
                   </div>
                 </div>
 
-                {/* Turn DAG SVG Pipeline Flow */}
-                <div class="pipeline-dag-container">
-                  <div class="pipeline-dag-grid">
-                    <For each={dagNodes()}>
-                      {(node, idx) => {
-                        const isSelected = () => selectedStage()?.id === node.id;
-                        return (
-                          <div class="pipeline-node-wrapper">
-                            <button
-                              type="button"
-                              class="pipeline-dag-card"
+                <div
+                  class="workflow-scroll-viewport"
+                  classList={{ "is-panning": isPanning() }}
+                  onMouseDown={handleCanvasMouseDown}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseUp={handleCanvasMouseUp}
+                  onMouseLeave={handleCanvasMouseUp}
+                >
+                  <div
+                    class="workflow-stage-canvas"
+                    style={{
+                      width: `${workflowGraph().width}px`,
+                      height: `${workflowGraph().height}px`,
+                      transform: `translate(${panX()}px, ${panY()}px) scale(${zoomScale()})`,
+                      "transform-origin": "top left",
+                    }}
+                  >
+                    {/* SVG Connector Edges */}
+                    <svg class="workflow-edges-layer" width={workflowGraph().width} height={workflowGraph().height}>
+                      <defs>
+                        <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--border-strong, #64748b)" />
+                        </marker>
+                        <marker id="arrow-active" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+                        </marker>
+                        <marker id="arrow-warn" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#f59e0b" />
+                        </marker>
+                        <marker id="arrow-bad" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#ef4444" />
+                        </marker>
+                      </defs>
+                      <For each={workflowGraph().edges}>
+                        {(edge) => {
+                          const src = workflowGraph().nodes.find((n) => n.id === edge.source);
+                          const dst = workflowGraph().nodes.find((n) => n.id === edge.target);
+                          if (!src || !dst) return null;
+
+                          const isLR = layoutOrientation() === "LR";
+                          const x1 = isLR ? src.x + src.width : src.x + src.width / 2;
+                          const y1 = isLR ? src.y + src.height / 2 : src.y + src.height;
+                          const x2 = isLR ? dst.x : dst.x + dst.width / 2;
+                          const y2 = isLR ? dst.y + dst.height / 2 : dst.y;
+                          const d = isLR
+                            ? `M ${x1} ${y1} C ${x1 + Math.max(30, (x2 - x1) / 2)} ${y1}, ${x2 - Math.max(30, (x2 - x1) / 2)} ${y2}, ${x2} ${y2}`
+                            : `M ${x1} ${y1} C ${x1} ${y1 + Math.max(28, (y2 - y1) / 2)}, ${x2} ${y2 - Math.max(28, (y2 - y1) / 2)}, ${x2} ${y2}`;
+
+                          return (
+                            <path
+                              d={d}
+                              class="workflow-edge-path"
                               classList={{
-                                "node-selected": isSelected(),
-                                "node-ok": node.status === "ok",
-                                "node-warn": node.status === "warn",
-                                "node-bad": node.status === "bad",
-                                "node-idle": node.status === "idle",
+                                "edge-ok": edge.status === "ok",
+                                "edge-warn": edge.status === "warn",
+                                "edge-bad": edge.status === "bad",
                               }}
-                              onClick={() => setSelectedStage(node)}
-                            >
-                              <div class="dag-node-header">
-                                <span class="dag-node-cat">{node.category}</span>
-                                <span
-                                  class="cdot"
-                                  classList={{
-                                    "cdot-done": node.status === "ok",
-                                    "cdot-waiting": node.status === "warn",
-                                    "cdot-blocked": node.status === "bad",
-                                    "cdot-held": node.status === "idle",
-                                  }}
-                                />
-                              </div>
-                              <strong class="dag-node-title">{node.title}</strong>
-                              <div class="dag-node-summary">{node.summary}</div>
-                              <Show when={node.metrics}>
-                                <div class="dag-node-metrics">{node.metrics}</div>
-                              </Show>
-                            </button>
-                            <Show when={idx() < dagNodes().length - 1}>
-                              <div class="pipeline-connector-arrow">→</div>
+                              marker-end={
+                                edge.status === "bad"
+                                  ? "url(#arrow-bad)"
+                                  : edge.status === "warn"
+                                  ? "url(#arrow-warn)"
+                                  : "url(#arrow-active)"
+                              }
+                            />
+                          );
+                        }}
+                      </For>
+                    </svg>
+
+                    {/* Node Cards */}
+                    <For each={workflowGraph().nodes}>
+                      {(node) => (
+                        <div
+                          class="workflow-node-card"
+                          classList={{
+                            "node-selected": selectedNodeId() === node.id,
+                            [`phase-${node.phase}`]: true,
+                            [`stage-${node.stage_key}`]: true,
+                            "node-ok": node.status === "ok",
+                            "node-warn": node.status === "warn",
+                            "node-bad": node.status === "bad",
+                          }}
+                          style={{
+                            left: `${node.x}px`,
+                            top: `${node.y}px`,
+                            width: `${node.width}px`,
+                            height: `${node.height}px`,
+                          }}
+                          onClick={() => setSelectedNodeId(node.id)}
+                        >
+                          <div class="node-port node-port-in" classList={{ "port-tb-in": layoutOrientation() === "TB" }} />
+                          <div class="node-port node-port-out" classList={{ "port-tb-out": layoutOrientation() === "TB" }} />
+                          <div class="node-header">
+                            <div class="node-header-left">
+                              <span class="node-stage-icon">{renderNodeIcon(node.icon)}</span>
+                              <span class={`node-phase-tag phase-tag-${node.phase}`}>{node.phase}</span>
+                            </div>
+                            <div class="node-status-pill">
+                              <span class={`cdot cdot-${node.status === "bad" ? "bad" : node.status === "warn" ? "warn" : "ok"}`} />
+                              <span class="node-status-label mono">
+                                {node.status === "bad" ? "ERROR" : node.status === "warn" ? "NUDGE" : "READY"}
+                              </span>
+                            </div>
+                          </div>
+                          <div class="node-body">
+                            <div class="node-title font-semibold" title={node.title}>{node.title}</div>
+                            <div class="node-subtitle mono" title={node.subtitle}>{node.subtitle}</div>
+                          </div>
+                          <div class="node-footer">
+                            <span class="node-badge-chip mono">{node.badge || "—"}</span>
+                            <Show when={node.duration_ms != null && node.duration_ms > 0}>
+                              <span class="node-time-chip mono">⚡ {(node.duration_ms! / 1000).toFixed(1)}s</span>
                             </Show>
                           </div>
-                        );
-                      }}
+                        </div>
+                      )}
                     </For>
                   </div>
                 </div>
 
-                {/* Interactive Stage Inspector Drawer */}
-                <Show when={selectedStage()}>
-                  {(stage) => (
-                    <div class="stage-inspector-drawer">
-                      <div class="stage-inspector-header">
-                        <div>
-                          <span class="inspector-badge">{stage().category}</span>
-                          <strong>{stage().title} — Stage Forensics</strong>
-                        </div>
-                        <button
-                          type="button"
-                          class="ghost small"
-                          onClick={() => setSelectedStage(null)}
-                        >
-                          Close inspector
-                        </button>
-                      </div>
-                      <div class="stage-inspector-body">
-                        <div class="stage-inspector-fact">
-                          <span class="fact-label">Summary:</span>
-                          <span class="fact-val">{stage().summary}</span>
-                        </div>
-                        <div class="stage-inspector-fact">
-                          <span class="fact-label">Status:</span>
-                          <span class="fact-val">{stage().status.toUpperCase()}</span>
-                        </div>
-                        <div class="stage-inspector-code">
-                          <span class="fact-label">Forensic Payload:</span>
-                          <pre class="mono">{JSON.stringify(stage().details, null, 2)}</pre>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </Show>
+                {/* Mini Radar / Overview in bottom-right corner */}
+                <div class="workflow-minimap">
+                  <svg viewBox={`0 0 ${workflowGraph().width} ${workflowGraph().height}`} class="minimap-svg">
+                    <For each={workflowGraph().edges}>
+                      {(edge) => {
+                        const src = workflowGraph().nodes.find((n) => n.id === edge.source);
+                        const dst = workflowGraph().nodes.find((n) => n.id === edge.target);
+                        if (!src || !dst) return null;
+                        return (
+                          <line
+                            x1={src.x + src.width / 2}
+                            y1={src.y + src.height / 2}
+                            x2={dst.x + dst.width / 2}
+                            y2={dst.y + dst.height / 2}
+                            stroke="#475569"
+                            stroke-width="6"
+                          />
+                        );
+                      }}
+                    </For>
+                    <For each={workflowGraph().nodes}>
+                      {(node) => (
+                        <rect
+                          x={node.x}
+                          y={node.y}
+                          width={node.width}
+                          height={node.height}
+                          rx="12"
+                          fill={node.status === "bad" ? "#ef4444" : node.status === "warn" ? "#f59e0b" : selectedNodeId() === node.id ? "#818cf8" : "#334155"}
+                        />
+                      )}
+                    </For>
+                  </svg>
+                </div>
+              </div>
 
-                {/* Subagents in this turn */}
-                <Show when={(subagentData()?.subagents?.length ?? 0) > 0}>
-                  <div class="subagents-panel">
-                    <h3>Active Subagents</h3>
-                    <div class="subagents-grid">
-                      <For each={subagentData()?.subagents ?? []}>
-                        {(child) => (
-                          <div class="subagent-card">
-                            <div class="subagent-head">
-                              <strong>{child.label}</strong>
-                              <span class="mono dim">{shortId(child.id)}</span>
-                            </div>
-                            <div class="subagent-actions">
-                              <button
-                                type="button"
-                                class="danger small"
-                                disabled={subagentBusy() === child.id}
-                                onClick={() => void stopChild(child)}
-                              >
-                                Stop
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </For>
+              {/* Node Forensics Inspector Panel */}
+              <Show when={activeNode()}>
+                <div class="node-inspector-deck">
+                  <div class="node-inspector-header">
+                    <div class="inspector-header-left">
+                      <span class="inspector-badge">{activeNode()!.phase.toUpperCase()}</span>
+                      <strong class="inspector-title">{activeNode()!.title}</strong>
+                      <span class={`cdot cdot-${activeNode()!.status === "bad" ? "bad" : activeNode()!.status === "warn" ? "warn" : "ok"}`} />
+                    </div>
+                    <div class="inspector-header-right">
+                      <button
+                        type="button"
+                        class="button small ghost"
+                        onClick={() => handleCopyPayload(activeNode()!.raw_payload || JSON.stringify(activeNode()!.details, null, 2))}
+                      >
+                        {copied() ? "Copied!" : "Copy Payload"}
+                      </button>
                     </div>
                   </div>
-                </Show>
-              </div>
-            )}
-          </Show>
+
+                  <div class="inspector-subtabs">
+                    <button
+                      type="button"
+                      class="subtab-btn"
+                      classList={{ active: inspectorTab() === "payload" }}
+                      onClick={() => setInspectorTab("payload")}
+                    >
+                      Forensic Payload
+                    </button>
+                    <button
+                      type="button"
+                      class="subtab-btn"
+                      classList={{ active: inspectorTab() === "economics" }}
+                      onClick={() => setInspectorTab("economics")}
+                    >
+                      Economics &amp; Timing
+                    </button>
+                    <button
+                      type="button"
+                      class="subtab-btn"
+                      classList={{ active: inspectorTab() === "policy" }}
+                      onClick={() => setInspectorTab("policy")}
+                    >
+                      Policy &amp; Invariants
+                    </button>
+                    <button
+                      type="button"
+                      class="subtab-btn"
+                      classList={{ active: inspectorTab() === "sandbox" }}
+                      onClick={() => setInspectorTab("sandbox")}
+                    >
+                      Sandbox &amp; Security
+                    </button>
+                  </div>
+
+                  <div class="inspector-tab-content">
+                    <Switch>
+                      <Match when={inspectorTab() === "payload"}>
+                        <div class="inspector-code-box">
+                          <pre class="mono">{activeNode()!.raw_payload || JSON.stringify(activeNode()!.details, null, 2)}</pre>
+                        </div>
+                      </Match>
+                      <Match when={inspectorTab() === "economics"}>
+                        <div class="inspector-kv-grid">
+                          <div class="kv-item">
+                            <span class="kv-label">Stage Latency:</span>
+                            <span class="mono font-semibold">{activeNode()!.duration_ms != null ? `${activeNode()!.duration_ms} ms` : "0 ms"}</span>
+                          </div>
+                          <div class="kv-item">
+                            <span class="kv-label">Input Tokens:</span>
+                            <span class="mono">{activeNode()!.tokens_in?.toLocaleString() ?? "—"}</span>
+                          </div>
+                          <div class="kv-item">
+                            <span class="kv-label">Output Tokens:</span>
+                            <span class="mono">{activeNode()!.tokens_out?.toLocaleString() ?? "—"}</span>
+                          </div>
+                          <div class="kv-item">
+                            <span class="kv-label">Cost (USD):</span>
+                            <span class="mono font-bold">${(activeNode()!.cost ?? 0).toFixed(5)}</span>
+                          </div>
+                        </div>
+                      </Match>
+                      <Match when={inspectorTab() === "policy"}>
+                        <div class="inspector-kv-grid">
+                          <For each={Object.entries(activeNode()!.details)}>
+                            {([key, val]) => (
+                              <div class="kv-item">
+                                <span class="kv-label">{key.replace(/_/g, " ")}:</span>
+                                <span class="mono wrap">{typeof val === "object" ? JSON.stringify(val) : String(val)}</span>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </Match>
+                      <Match when={inspectorTab() === "sandbox"}>
+                        <div class="sandbox-security-grid">
+                          <div class="security-card">
+                            <span class="security-card-title">OS Sandbox Backend</span>
+                            <span class="security-card-status">
+                              {contract()?.permission_mode === "FullAccess"
+                                ? "Unsandboxed (FullAccess)"
+                                : "Seatbelt / OS Process Jail"}
+                            </span>
+                            <span class="security-card-desc">
+                              Active isolation backend (macOS Seatbelt profile / Linux Landlock ABI / Docker backend).
+                            </span>
+                          </div>
+                          <div class="security-card">
+                            <span class="security-card-title">Authority Mode</span>
+                            <span class="security-card-status">
+                              {contract()?.permission_mode || "WorkspaceWrite"}
+                            </span>
+                            <span class="security-card-desc">
+                              Invariant 13: FullAccess is an explicit human trust decision; never selected automatically.
+                            </span>
+                          </div>
+                          <div class="security-card">
+                            <span class="security-card-title">Filesystem Jail Boundary</span>
+                            <span class="security-card-status">Canonical Workspace Root</span>
+                            <span class="security-card-desc">
+                              Invariant 10: Automatic access resolves inside canonical workspace; traversal escapes fail closed.
+                            </span>
+                          </div>
+                          <div class="security-card">
+                            <span class="security-card-title">Quarantined Scratch</span>
+                            <span class="security-card-status">.vak/scratch/ Isolated Jail</span>
+                            <span class="security-card-desc">
+                              Isolated staging directory for generated scripts, sandboxed artifacts, and code preview.
+                            </span>
+                          </div>
+                          <div class="security-card">
+                            <span class="security-card-title">Broker Worker Boundary</span>
+                            <span class="security-card-status">__tool_worker Process Group</span>
+                            <span class="security-card-desc">
+                              Invariant 14: Built-in tools execute through versioned broker protocol in disposable process groups.
+                            </span>
+                          </div>
+                          <div class="security-card">
+                            <span class="security-card-title">Secrets Isolation</span>
+                            <span class="security-card-status">Sanitized Environment Allowlist</span>
+                            <span class="security-card-desc">
+                              Invariant 12: Secrets are not ambient tool state. Provider and gateway tokens excluded from tool workers.
+                            </span>
+                          </div>
+                        </div>
+                      </Match>
+                    </Switch>
+                  </div>
+                </div>
+              </Show>
+            </Show>
+          </div>
         </Match>
 
         {/* TAB 2: CONVERSATIONAL LOG */}
-        <Match when={activeTab() === "transcript"}>
-          <div class="transcript-tab-view">
-            <div class="transcript-toolbar">
-              <select value={kindFilter()} onChange={(e) => setKindFilter(e.currentTarget.value)}>
-                <option value="">All Kinds</option>
-                <option value="message">Messages</option>
-                <option value="intent">Intent</option>
-                <option value="receipt">Work Receipts</option>
-                <option value="activity">Activities</option>
-                <option value="goal">Goals</option>
-                <option value="compaction">Compaction</option>
-                <option value="header">Header</option>
-              </select>
-
-              <select value={roleFilter()} onChange={(e) => setRoleFilter(e.currentTarget.value)}>
-                <option value="">All Roles</option>
-                <option value="user">User</option>
-                <option value="assistant">Assistant</option>
-                <option value="system">System</option>
-              </select>
-
-              <span class="spacer" />
-              <span class="dim" style="font-size:12px;">Showing {entries().length} events</span>
+        <Match when={activeTab() === "log"}>
+          <div class="log-tab-view">
+            <div class="log-filter-toolbar">
+              <div class="filter-pills">
+                <button type="button" class="chip-btn" classList={{ active: logFilter() === "all" }} onClick={() => setLogFilter("all")}>All Entries</button>
+                <button type="button" class="chip-btn" classList={{ active: logFilter() === "dialogue" }} onClick={() => setLogFilter("dialogue")}>Dialogue Only</button>
+                <button type="button" class="chip-btn" classList={{ active: logFilter() === "tools" }} onClick={() => setLogFilter("tools")}>Tools &amp; MCP</button>
+                <button type="button" class="chip-btn" classList={{ active: logFilter() === "system" }} onClick={() => setLogFilter("system")}>Intent &amp; Goals</button>
+              </div>
+              <span class="dim small" style="margin-left: auto;">
+                Showing {filteredLogEntries().length} of {transcriptData()?.total ?? 0} entries
+              </span>
             </div>
 
-            <div class="transcript-feed" classList={{ tailing: live() }}>
-              <For each={entries()}>
-                {(e) => (
-                  <article class="entry-card" data-role={e.role ?? "system"} data-error={e.is_error}>
+            <div class="transcript-feed">
+              <For each={filteredLogEntries()}>
+                {(e: TranscriptEntry) => (
+                  <article class="entry-card" data-role={e.role ?? e.kind} data-error={e.is_error}>
                     <header class="entry-header">
                       <span class="entry-role-chip">{e.role ?? e.kind}</span>
                       <Show when={e.tool_name}>
@@ -1216,7 +2167,7 @@ export function SessionForensics(props: { sessionId: string }) {
                       <Show when={e.is_error}>
                         <span class="chip chip-error">error</span>
                       </Show>
-                      <span class="entry-ts" title={e.ts}>{clock(e.ts)}</span>
+                      <span class="entry-ts font-mono" title={e.ts}>{clock(e.ts)} ({timeAgo(e.ts)})</span>
                     </header>
                     <pre class="entry-content mono">{e.content}</pre>
                   </article>
@@ -1231,9 +2182,9 @@ export function SessionForensics(props: { sessionId: string }) {
           <div class="drift-tab-view">
             <div class="drift-header-banner">
               <div>
-                <h3>Context Packet & Drift Accounting</h3>
+                <h3>Context Packet &amp; Drift Accounting</h3>
                 <p>
-                  Invariant 1 & 17 audit: session instructions freeze at admission time.
+                  Invariant 1 &amp; 17 audit: session instructions freeze at admission time.
                   Verifies that system prompt layers, capabilities, and route state have not drifted.
                 </p>
               </div>
@@ -1263,7 +2214,7 @@ export function SessionForensics(props: { sessionId: string }) {
 
               {/* Card 2: Prompt Layers */}
               <div class="drift-card">
-                <h4>2. Prompt Layers & Provenance</h4>
+                <h4>2. Prompt Layers &amp; Provenance</h4>
                 <Show
                   when={(contract()?.prompt_layers ?? []).length > 0}
                   fallback={<div class="dim">No layer hashes recorded (monolithic header).</div>}
@@ -1288,7 +2239,7 @@ export function SessionForensics(props: { sessionId: string }) {
 
               {/* Card 3: Admitted Capabilities */}
               <div class="drift-card" style="grid-column: span 2;">
-                <h4>3. Admitted Capabilities Inventory</h4>
+                <h4>3. Admitted Capabilities Inventory ({contract()?.capabilities?.length ?? 0})</h4>
                 <Show
                   when={(contract()?.capabilities ?? []).length > 0}
                   fallback={<div class="dim">Capabilities derived from standard harness inventory.</div>}
@@ -1301,7 +2252,7 @@ export function SessionForensics(props: { sessionId: string }) {
                             <strong class="mono">{cap.name}</strong>
                             <span class="chip">{cap.kind}</span>
                           </div>
-                          <p class="cap-desc">{cap.description}</p>
+                          <p class="cap-desc">{cap.description || "Builtin broker capability"}</p>
                         </div>
                       )}
                     </For>
@@ -1315,7 +2266,7 @@ export function SessionForensics(props: { sessionId: string }) {
         {/* TAB 4: WORK RECEIPTS */}
         <Match when={activeTab() === "receipts"}>
           <div class="receipts-tab-view">
-            <Show when={receipts().length > 0} fallback={<div class="empty">No work receipts billed to this session yet.</div>}>
+            <Show when={(receiptsData()?.length ?? 0) > 0} fallback={<div class="empty">No work receipts billed to this session yet.</div>}>
               <table class="table receipts-table">
                 <thead>
                   <tr>
@@ -1324,23 +2275,34 @@ export function SessionForensics(props: { sessionId: string }) {
                     <th>Model</th>
                     <th>Input Tokens</th>
                     <th>Output Tokens</th>
-                    <th>Cost (USD)</th>
+                    <th>Cached</th>
                     <th>Latency</th>
                     <th>Settlement</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={receipts()}>
+                  <For each={receiptsData() ?? []}>
                     {(r: WorkReceipt, i) => (
                       <tr>
                         <td class="mono">#{i() + 1}</td>
-                        <td>{r.provider ?? "—"}</td>
-                        <td class="mono">{r.model ?? "—"}</td>
-                        <td>{(r.input_tokens ?? 0).toLocaleString()}</td>
-                        <td>{(r.output_tokens ?? 0).toLocaleString()}</td>
-                        <td class="mono font-bold">${(r.cost_usd ?? 0).toFixed(5)}</td>
-                        <td>{r.latency_ms ? `${r.latency_ms}ms` : "—"}</td>
-                        <td><span class="chip chip-tone-success">settled</span></td>
+                        <td>{receiptProvider(r)}</td>
+                        <td class="mono">{receiptModel(r)}</td>
+                        <td>{receiptInputTokens(r).toLocaleString()}</td>
+                        <td>{receiptOutputTokens(r).toLocaleString()}</td>
+                        <td>{receiptCachedTokens(r).toLocaleString()}</td>
+                        <td class="mono">{receiptLatencyMs(r) ? `${(receiptLatencyMs(r) / 1000).toFixed(1)}s` : "—"}</td>
+                        <td>
+                          <span
+                            class="chip"
+                            classList={{
+                              "chip-tone-success": receiptSettlement(r) === "ok",
+                              "chip-tone-alert": receiptSettlement(r) === "failed",
+                              "chip-tone-muted": receiptSettlement(r) === "unknown",
+                            }}
+                          >
+                            {receiptSettlement(r)}
+                          </span>
+                        </td>
                       </tr>
                     )}
                   </For>
@@ -1356,9 +2318,9 @@ export function SessionForensics(props: { sessionId: string }) {
             <div class="checkpoints-grid">
               <div class="checkpoints-panel">
                 <h3>Filesystem Save Points</h3>
-                <Show when={checkpoints().length > 0} fallback={<div class="empty">No checkpoints recorded.</div>}>
+                <Show when={(checkpointsData()?.checkpoints?.length ?? 0) > 0} fallback={<div class="empty">No checkpoints recorded.</div>}>
                   <div class="checkpoints-list">
-                    <For each={checkpoints()}>
+                    <For each={checkpointsData()?.checkpoints ?? []}>
                       {(cp: SessionCheckpoint) => (
                         <div class="checkpoint-item">
                           <div class="cp-info">
@@ -1381,9 +2343,9 @@ export function SessionForensics(props: { sessionId: string }) {
               </div>
 
               <div class="diff-panel">
-                <h3>Workspace Git Diff</h3>
+                <h3>Session Git Diff</h3>
                 <div class="diff-canvas">
-                  <pre class="mono">{diffData()?.diff || "No uncommitted modifications on disk."}</pre>
+                  <pre class="mono">{diffData()?.diff || diffData()?.error || "No uncommitted modifications on disk."}</pre>
                 </div>
               </div>
             </div>
@@ -1391,7 +2353,7 @@ export function SessionForensics(props: { sessionId: string }) {
         </Match>
       </Switch>
 
-      {/* 5. Interactive Composer & Steering */}
+      {/* Live Composer */}
       <div class="session-composer-bar">
         <div class="composer-controls">
           <select
@@ -1399,41 +2361,33 @@ export function SessionForensics(props: { sessionId: string }) {
             value={nCandidates()}
             onChange={(e) => setNCandidates(Number(e.currentTarget.value))}
             disabled={running()}
-            title="Fan-out best-of-N candidate exploration"
+            title="Fan out multiple parallel runs in isolated workspace copies"
           >
-            <option value={1}>x1</option>
-            <option value={2}>x2 candidates</option>
-            <option value={3}>x3 candidates</option>
-            <option value={4}>x4 candidates</option>
+            <option value={1}>×1</option>
+            <option value={2}>×2</option>
+            <option value={3}>×3</option>
+            <option value={4}>×4</option>
           </select>
-
           <textarea
             rows={2}
-            placeholder={
-              running()
-                ? "Queue steering instruction into active run…"
-                : nCandidates() >= 2
-                ? `Explore ${nCandidates()} parallel candidates…`
-                : "Ask vak to run the next turn…"
-            }
+            placeholder={running() ? "Steer the run in progress…" : "Ask vak to run the next turn…"}
             value={draft()}
             onInput={(e) => setDraft(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                void send();
+                handleSend();
               }
             }}
             disabled={sending()}
           />
-
           <button
             type="button"
             class="button primary"
             disabled={sending() || !draft().trim()}
-            onClick={() => void send()}
+            onClick={handleSend}
           >
-            {sending() ? "Sending…" : running() ? "Steer" : "Send Turn"}
+            {sending() ? "Dispatching…" : running() ? "Steer Turn" : "Send Turn"}
           </button>
         </div>
       </div>

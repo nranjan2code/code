@@ -60,6 +60,7 @@ export interface SessionTurn {
   started_at: string;
   ended_at?: string;
   user_prompt: string;
+  goal?: string;
   intent_summary?: string;
   intent_reading?: Record<string, unknown>;
   model_response?: string;
@@ -434,6 +435,8 @@ export interface BestOfNRun {
   session_id: string;
   repo: string;
   branch: string;
+  branch_index?: number;
+  prompt?: string;
 }
 
 export interface RebuildStats {
@@ -943,10 +946,30 @@ export interface MemoryItem {
   session_id?: string;
 }
 
-export interface WorkReceipt {
-  step?: number;
+export interface WorkReceiptAttempt {
+  ordinal: number;
+  reason?: string;
+  domain?: string;
+  settlement?: "ok" | "failed" | "cancelled" | "unknown" | string;
+  latency_ms: number;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  error?: string;
   provider?: string;
   model?: string;
+}
+
+export interface WorkReceipt {
+  purpose?: string;
+  provider?: string;
+  model?: string;
+  winning_attempt?: number;
+  attempts?: WorkReceiptAttempt[];
+  step?: number;
   input_tokens?: number;
   output_tokens?: number;
   cost_usd?: number;
@@ -967,6 +990,7 @@ export interface WorkProjection {
 
 export interface SessionDiff {
   diff: string;
+  error?: string;
 }
 
 export interface SessionCheckpoint {

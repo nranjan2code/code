@@ -9,6 +9,7 @@ import type {
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
+  FrozenContract,
   GatewayStatus,
   HealthInfo,
   HookConfig,
@@ -172,7 +173,7 @@ export const api = {
   transcript: (
     id: string,
     opts: { limit?: number; offset?: number; kind?: string; role?: string; refresh?: boolean } = {},
-  ): Promise<{ session_id: string; entries: TranscriptEntry[]; offset: number; total: number; has_more: boolean }> => {
+  ): Promise<{ session_id: string; entries: TranscriptEntry[]; offset: number; total: number; has_more: boolean; contract?: FrozenContract }> => {
     const q = new URLSearchParams();
     if (opts.limit != null) q.set("limit", String(opts.limit));
     if (opts.offset != null) q.set("offset", String(opts.offset));
