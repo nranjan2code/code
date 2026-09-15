@@ -386,9 +386,15 @@ code, pre, kbd { font-family: var(--mono); }
 .sb-time { flex: none; color: var(--faint); font-size: 10.5px; }
 .sb-archive { opacity: 0; }
 .sb-item:hover .sb-archive, .sb-item:focus-visible .sb-archive { opacity: 1; }
-.sb-item:hover .sb-time { display: none; }
-.sidebar-footer { display: flex; align-items: center; gap: 4px; padding: 7px 8px; border-top: 1px solid var(--border-soft); }
-.sidebar-settings { display: flex; flex: 1; align-items: center; gap: 9px; min-height: 34px; padding: 6px 8px; border-radius: 8px; color: var(--muted); text-align: left; }
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
 .sidebar-settings:hover { color: var(--text); background: var(--surface-hover); }
 .sidebar-settings span { flex: 1; }
 .sidebar-settings kbd { color: var(--faint); background: transparent; border: 0; }
@@ -2949,6 +2955,9 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
 
 /* ---- Persistent agent navigation ----------------------------------------- */
 .sb-agent-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -5040,7 +5049,12 @@ body.is-resizing .split-divider {
 .workspace-group-row, .workspace-group-row.active { margin-inline: 10px; border-radius: 12px; background: transparent; }
 .workspace-group-head { min-height: 39px; padding-inline: 10px; border-radius: 12px; }
 .workspace-group-head:hover { background: color-mix(in srgb, var(--surface-hover) 72%, transparent); }
-.sidebar-footer { border-top: 0; padding: 12px; }
+.sidebar-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border-soft);
+  padding: 12px;
+  flex-shrink: 0;
+}
 .sidebar-footer .sb-nav-item { min-height: 38px; }
 
 /* Right rail: a quiet companion surface, not a second application window. */

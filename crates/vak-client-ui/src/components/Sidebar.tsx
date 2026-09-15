@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { activeAgentId, activeId, agentOpening, backend, sessions, settingsOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen, setTranscriptViewId, setPendingSettingsPage } from "../store";
-import { activate, openAgentChat } from "../App";
+import { activeAgentId, agentOpening, backend, settingsOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen, setPendingSettingsPage } from "../store";
+import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
 import Icon from "./Icon";
@@ -10,6 +10,7 @@ export default function Sidebar() {
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
   const [searching, setSearching] = createSignal(false);
+
   createEffect(() => {
     const cwd = backend().cwd;
     const ready = backend().ready;
@@ -27,19 +28,25 @@ export default function Sidebar() {
     const timer = window.setInterval(refresh, 10000);
     onCleanup(() => { disposed = true; window.clearInterval(timer); });
   });
+
   const shown = () => agents().filter((p) => p.name.toLocaleLowerCase().includes(query().toLocaleLowerCase()));
-  const history = () => sessions().filter((s) => (s.agent?.id ?? "vak") === activeAgentId() && s.session_id !== activeId());
+
   return (
     <aside class="sidebar">
       <div class="sb-head">
-        <div class="brand" aria-label="Vak"><span class="brand-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></span><span>vak</span></div>
+        <div class="brand" aria-label="Vak">
+          <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></span>
+          <span>vak</span>
+        </div>
         <div class="sb-head-actions">
           <button type="button" class="icon-button subtle" aria-label="Search agents" aria-expanded={searching()} onClick={() => setSearching(!searching())}><Icon name="search" /></button>
           <button type="button" class="icon-button subtle" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
         </div>
       </div>
+
       <div class="sb-section-row"><span class="sb-section-title">Your agents</span></div>
       <Show when={searching()}><div class="sb-search-wrap"><input class="sb-search" type="search" aria-label="Search agents" placeholder="Find an agent" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} /></div></Show>
+
       <nav class="sb-agent-list" aria-label="Agents">
         <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><Icon name="spark" /><span>Vak</span></button>
         <For each={shown()}>{(profile) =>
@@ -50,23 +57,7 @@ export default function Sidebar() {
         <Show when={agentOpening()}><p role="status" class="sb-empty">Opening agent…</p></Show>
         <button type="button" class="sb-agent-item" onClick={() => { setSettingsScope("user"); setPendingSettingsPage("agent"); setSettingsOpen(true); }}><Icon name="add" /><span>Manage agents</span></button>
       </nav>
-      <details class="sb-agent-history">
-        <summary>Agent history</summary>
-        <div class="sb-list">
-          <For each={history()}>{(session) => (
-            <button
-              class="sb-agent-item"
-              classList={{ active: activeId() === session.session_id }}
-              type="button"
-              onClick={() => void activate(session.session_id)}
-            >
-              <Icon name="history" />
-              <span>{session.title || session.agent?.name || "Earlier conversation"}</span>
-            </button>
-          )}</For>
-          <Show when={!history().length}><p class="sb-empty">Your history will appear here.</p></Show>
-        </div>
-      </details>
+
       <div class="sidebar-footer">
         <button type="button" class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
         <Show when={host.logout}><button class="sidebar-help" aria-label="Sign out" onClick={() => void host.logout?.().then(() => window.location.reload())}><Icon name="shield" /></button></Show>
