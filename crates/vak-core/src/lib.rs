@@ -821,11 +821,10 @@ fn has_credential(env_name: &str, cwd: &std::path::Path) -> bool {
     {
         return true;
     }
-    if let Some(user_env) = vak_config::user_env_path() {
-        if vak_config::read_env_file_var(&user_env, env_name).is_some_and(|v| !v.trim().is_empty())
-        {
-            return true;
-        }
+    if let Some(user_env) = vak_config::user_env_path()
+        && vak_config::read_env_file_var(&user_env, env_name).is_some_and(|v| !v.trim().is_empty())
+    {
+        return true;
     }
     false
 }
