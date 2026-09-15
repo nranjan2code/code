@@ -58,7 +58,11 @@ function PromptsPage() {
         title="Prompts"
         description="What the agent is told before every turn. Edit Global or Workspace settings; narrower settings inherit them."
       />
-      <PromptsSection scope={configScope} pushToast={pushToast} />
+      <PromptsSection
+        scope={configScope}
+        pushToast={pushToast}
+        onScopeChange={setConfigScopePersisted}
+      />
     </>
   );
 }
