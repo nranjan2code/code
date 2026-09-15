@@ -2767,6 +2767,16 @@ impl Core {
         Ok(SessionLog::open(path)?)
     }
 
+    /// Opens an existing session ledger in read-only mode without acquiring an exclusive write lock.
+    pub async fn open_session_read_only(&self, session_id: &str) -> Result<SessionLog, CoreError> {
+        let path = vak_session::SessionPath::new_session_file(
+            &self.sessions_home(),
+            &self.inner.cwd,
+            session_id,
+        );
+        Ok(SessionLog::open_read_only(path)?)
+    }
+
     /// SDK seam: relocate session storage (tests, embedded runtimes).
     pub fn set_sessions_home(&self, path: PathBuf) {
         Self::write_override(&self.inner.sessions_home_override, Some(path));

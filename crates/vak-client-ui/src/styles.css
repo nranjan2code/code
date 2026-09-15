@@ -208,6 +208,34 @@ code, pre, kbd { font-family: var(--mono); }
 .setup-banner { grid-area: banner; }
 .app.sidebar-collapsed .sidebar { visibility: hidden; pointer-events: none; }
 
+/* Canvas split layout: chat resizes seamlessly to remaining space */
+.app {
+  --canvas-split-width: min(65%, calc(100vw - 360px));
+}
+
+.app.canvas-split-active {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+}
+
+.app.canvas-split-active .sidebar {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.app.canvas-split-active .main {
+  margin-right: var(--canvas-split-width, 65%);
+  min-width: 0;
+  transition: margin-right 0.32s cubic-bezier(0.22, 1.0, 0.36, 1.0);
+}
+
+.app.canvas-split-active .composer-wrap {
+  padding-inline: 12px;
+}
+
+.app.canvas-split-active .composer-box {
+  max-width: 100%;
+}
+
 :where(button, input, textarea, select, summary):focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
@@ -5096,9 +5124,9 @@ body.is-resizing .split-divider {
 }
 
 .artifact-canvas.canvas-split {
-  width: 68%;
-  min-width: 480px;
-  max-width: calc(100vw - 200px);
+  width: var(--canvas-split-width, 65%);
+  min-width: 440px;
+  max-width: calc(100vw - 320px);
   border-top-left-radius: var(--radius-lg);
   border-bottom-left-radius: var(--radius-lg);
 }

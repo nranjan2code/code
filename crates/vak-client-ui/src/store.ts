@@ -304,6 +304,12 @@ export const canvasOpen = () => canvasArtifact() !== null;
 
 /** Open the artifact canvas with a smooth slide-in. User-initiated only. */
 export function openArtifactCanvas(preview: ActiveComponentPreview) {
+  if (sidebarOpen()) {
+    setSidebarOpen(false);
+  }
+  if (dockTab()) {
+    setDockTab(null);
+  }
   setCanvasArtifact(preview);
 }
 

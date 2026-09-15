@@ -13,6 +13,7 @@ use crate::types::{
 pub struct SessionLog {
     path: PathBuf,
     file: File,
+    read_only: bool,
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
@@ -48,6 +49,7 @@ impl SessionLog {
         let mut log = SessionLog {
             path,
             file,
+            read_only: false,
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
@@ -57,12 +59,18 @@ impl SessionLog {
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
         Ok(log)
     }
+}
 
-    pub fn open(path: PathBuf) -> Result<Self, SessionError> {
-        let file = OpenOptions::new().append(true).open(&path)?;
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(path.clone()))?;
-        let reader = BufReader::new(File::open(&path)?);
+struct ParsedEntries {
+    entries: Vec<Entry>,
+    by_id: HashMap<String, usize>,
+    tail_id: Option<String>,
+    tail_hash: Option<String>,
+    warnings: Vec<String>,
+}
+
+impl SessionLog {
+    fn parse_entries(path: &Path, reader: BufReader<File>) -> Result<ParsedEntries, SessionError> {
         let mut entries = Vec::new();
         let mut by_id = HashMap::new();
         let mut warnings = Vec::new();
@@ -128,9 +136,7 @@ impl SessionLog {
             ));
         }
         let tail_id = entries.last().map(|e| e.id.clone());
-        Ok(SessionLog {
-            path,
-            file,
+        Ok(ParsedEntries {
             entries,
             by_id,
             tail_id,
@@ -139,12 +145,57 @@ impl SessionLog {
         })
     }
 
+    pub fn open(path: PathBuf) -> Result<Self, SessionError> {
+        let file = OpenOptions::new().append(true).open(&path)?;
+        file.try_lock()
+            .map_err(|_| SessionError::Locked(path.clone()))?;
+        let reader = BufReader::new(File::open(&path)?);
+        let parsed = Self::parse_entries(&path, reader)?;
+        Ok(SessionLog {
+            path,
+            file,
+            read_only: false,
+            entries: parsed.entries,
+            by_id: parsed.by_id,
+            tail_id: parsed.tail_id,
+            tail_hash: parsed.tail_hash,
+            warnings: parsed.warnings,
+        })
+    }
+
+    /// Open an existing session for reading and inspection without acquiring an
+    /// exclusive write lock. Allows web clients, exports, and inspectors to
+    /// read and rehydrate sessions that are currently active in another process.
+    pub fn open_read_only(path: PathBuf) -> Result<Self, SessionError> {
+        let file = File::open(&path)?;
+        let reader = BufReader::new(File::open(&path)?);
+        let parsed = Self::parse_entries(&path, reader)?;
+        Ok(SessionLog {
+            path,
+            file,
+            read_only: true,
+            entries: parsed.entries,
+            by_id: parsed.by_id,
+            tail_id: parsed.tail_id,
+            tail_hash: parsed.tail_hash,
+            warnings: parsed.warnings,
+        })
+    }
+
+    /// Returns whether this SessionLog was opened read-only.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// Non-fatal problems seen while opening the ledger.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
     pub fn append(&mut self, entry: Entry) -> Result<Entry, SessionError> {
+        if self.read_only {
+            return Err(SessionError::Locked(self.path.clone()));
+        }
         if let Some(pid) = &entry.parent_id
             && !self.by_id.contains_key(pid)
         {

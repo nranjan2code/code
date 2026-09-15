@@ -82,6 +82,8 @@ import {
   openWorkbenchFolder,
   isScratchDirectory,
   isDirectoryPath,
+  canvasOpen,
+  canvasMode,
   type ReplyTarget,
 } from "./store";
 import type { SessionSummary } from "./types";
@@ -1236,7 +1238,12 @@ export default function App() {
       {(info) => (
         <div
           class="app"
-          classList={{ "sidebar-collapsed": !sidebarOpen() }}
+          classList={{
+            "sidebar-collapsed": !sidebarOpen(),
+            "canvas-active": canvasOpen(),
+            "canvas-split-active": canvasOpen() && canvasMode() === "split",
+            "canvas-focused-active": canvasOpen() && canvasMode() === "focused",
+          }}
           style={`--sidebar-width:${sidebarWidth()}px;--dock-width:${dockWidth()}px`}
         >
           <Sidebar />

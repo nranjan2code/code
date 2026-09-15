@@ -260,6 +260,38 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     .await;
     let (_, isolated) = call(&other_app, "POST", "/agents/newsy/open", json!({})).await;
     assert_ne!(isolated["session_id"], sid);
+
+    // Concurrent process simulation: a second server instance sharing the same workspace
+    // and sessions home (e.g. gateway service when desktop application holds the writer lock).
+    let concurrent_core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
+    concurrent_core.set_sessions_home(core.sessions_home());
+    concurrent_core.set_provider_instance(Arc::new(Capture::default()));
+    let concurrent_app = vak_server::router(concurrent_core);
+
+    let (status, opened) = call(&concurrent_app, "POST", "/agents/newsy/open", json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "concurrent open must succeed read-only when locked by desktop"
+    );
+    assert_eq!(
+        opened["session_id"], sid,
+        "must match the canonical session id"
+    );
+
+    let (transcript_status, transcript) = call(
+        &concurrent_app,
+        "GET",
+        &format!("/sessions/{sid}/transcript"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        transcript_status,
+        StatusCode::OK,
+        "transcript must be readable when session is locked"
+    );
+    assert!(transcript["messages"].as_array().is_some());
 }
 
 /// Isolated, credential-free browser fixture. Never reads the operator's home.

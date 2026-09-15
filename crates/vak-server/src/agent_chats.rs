@@ -130,16 +130,21 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         let sid = h.session_id.clone();
         if state.get(&sid).is_none() {
             let session = match core.open_session(&sid).await {
-                Ok(session) => session,
+                Ok(session) => Some(session),
+                Err(vak_core::CoreError::Session(vak_session::SessionError::Locked(_))) => {
+                    core.open_session_read_only(&sid).await.ok()
+                }
                 Err(e) => return error(StatusCode::CONFLICT, e),
             };
-            register_handle(
-                &state,
-                sid.clone(),
-                session,
-                core.cwd().clone(),
-                core.clone(),
-            );
+            if let Some(session) = session {
+                register_handle(
+                    &state,
+                    sid.clone(),
+                    session,
+                    core.cwd().clone(),
+                    core.clone(),
+                );
+            }
         }
         return Json(serde_json::json!({"session_id": sid, "agent": h.agent, "cwd": core.cwd()}))
             .into_response();

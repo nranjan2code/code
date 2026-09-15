@@ -658,6 +658,28 @@ fn second_handle_on_same_file_is_locked_out() {
 }
 
 #[test]
+fn open_read_only_succeeds_while_handle_is_locked() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut writer = SessionLog::create(path.clone(), header()).unwrap();
+    writer
+        .append_message(user_msg("hello from writer"))
+        .unwrap();
+
+    let mut reader = SessionLog::open_read_only(path.clone()).expect("read only open must succeed");
+    assert!(reader.is_read_only());
+    assert_eq!(reader.derive_messages().len(), 1);
+    assert!(
+        reader
+            .append_message(user_msg("write should fail"))
+            .is_err(),
+        "appending to read-only session must fail"
+    );
+
+    drop(writer);
+}
+
+#[test]
 fn create_on_existing_nonempty_file_refuses() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("s.jsonl");

@@ -3124,10 +3124,10 @@ fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
     let before = library.definitions().count();
     let mut changed = false;
     for seed in vak_presentation::seeds::built_in_seed_pack() {
-        if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision) {
-            if existing.digest != seed.digest {
-                changed = true;
-            }
+        if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision)
+            && existing.digest != seed.digest
+        {
+            changed = true;
         }
         library.register(seed).map_err(|error| error.to_string())?;
     }
@@ -3786,6 +3786,14 @@ async fn attach_session(
         Ok(s)
     } else if let Ok(s) = state.core.open_session(&body.session_id).await {
         Ok(s)
+    } else if let Ok(s) = state
+        .active_core()
+        .open_session_read_only(&body.session_id)
+        .await
+    {
+        Ok(s)
+    } else if let Ok(s) = state.core.open_session_read_only(&body.session_id).await {
+        Ok(s)
     } else {
         let home = state.core.sessions_home();
         let sessions_dir = home.join("sessions");
@@ -3793,7 +3801,7 @@ async fn attach_session(
         if let Ok(entries) = std::fs::read_dir(sessions_dir) {
             for entry in entries.flatten() {
                 let candidate = entry.path().join(format!("{}.jsonl", body.session_id));
-                if let Ok(s) = vak_session::SessionLog::open(candidate) {
+                if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
                     found = Some(s);
                     break;
                 }
@@ -4202,6 +4210,37 @@ async fn run_prompt(
         }
         return StatusCode::CONFLICT.into_response(); // run already active
     };
+    if taken.is_read_only() {
+        match vak_session::SessionLog::open(taken.path().to_path_buf()) {
+            Ok(writable) => {
+                taken = writable;
+            }
+            Err(vak_session::SessionError::Locked(_)) => {
+                *handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "This conversation is currently active in Vak Desktop. Close or finish the task in Desktop before continuing here."
+                    })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                *handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+                    .into_response();
+            }
+        }
+    }
     if let Some(request_id) = request_id.as_deref()
         && taken.has_request_admission(request_id)
     {
@@ -6552,6 +6591,8 @@ fn markdown_response(md: String) -> axum::response::Response {
 
 /// Historical sessions live on disk but not in the in-memory handle map
 /// (a fresh server process starts with an empty map). Open read-only for
+/// Historical sessions live on disk but not in the in-memory handle map
+/// (a fresh server process starts with an empty map). Open read-only for
 /// export/inspection without mutating run bookkeeping.
 fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
     let path = state
@@ -6560,7 +6601,20 @@ fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::Se
         .join("sessions")
         .join(vak_core::memory::hash_cwd(state.core.cwd()))
         .join(format!("{id}.jsonl"));
-    vak_session::SessionLog::open(path).ok()
+    if let Ok(s) = vak_session::SessionLog::open_read_only(path) {
+        return Some(s);
+    }
+    let home = state.core.sessions_home();
+    let sessions_dir = home.join("sessions");
+    if let Ok(entries) = std::fs::read_dir(sessions_dir) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(format!("{id}.jsonl"));
+            if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 /// Read only the immutable first header entry without acquiring the session's
@@ -7834,10 +7888,10 @@ async fn list_presentations(State(state): State<AppState>) -> axum::response::Re
         let before = library.definitions().count();
         let mut changed = false;
         for seed in vak_presentation::seeds::built_in_seed_pack() {
-            if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision) {
-                if existing.digest != seed.digest {
-                    changed = true;
-                }
+            if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision)
+                && existing.digest != seed.digest
+            {
+                changed = true;
             }
             library.register(seed).map_err(|error| {
                 vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
@@ -8587,10 +8641,11 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
     let active = state.active_core();
 
     // 1. Direct workspace check
-    if let Some(p) = confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean)) {
-        if p.exists() {
-            return Some(p);
-        }
+    if let Some(p) =
+        confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
+        && p.exists()
+    {
+        return Some(p);
     }
 
     // 2. Quarantine scratch check: if file is in .vak/scratch/<subdirs>
@@ -8604,10 +8659,10 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
                 .unwrap_or_else(|| clean.strip_prefix("scratch/").unwrap_or(clean));
 
             let direct = scratch_dir.join(rel);
-            if direct.is_file() {
-                if let Some(canon) = confined_path(cwd, &direct.display().to_string()) {
-                    return Some(canon);
-                }
+            if direct.is_file()
+                && let Some(canon) = confined_path(cwd, &direct.display().to_string())
+            {
+                return Some(canon);
             }
 
             // Search execution subdirectories under .vak/scratch
@@ -8615,17 +8670,18 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
                 for entry in entries.flatten() {
                     if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                         let sub_path = entry.path().join(rel);
-                        if sub_path.is_file() {
-                            if let Some(canon) = confined_path(cwd, &sub_path.display().to_string()) {
-                                return Some(canon);
-                            }
+                        if sub_path.is_file()
+                            && let Some(canon) = confined_path(cwd, &sub_path.display().to_string())
+                        {
+                            return Some(canon);
                         }
                         if let Some(filename) = std::path::Path::new(rel).file_name() {
                             let by_name = entry.path().join(filename);
-                            if by_name.is_file() {
-                                if let Some(canon) = confined_path(cwd, &by_name.display().to_string()) {
-                                    return Some(canon);
-                                }
+                            if by_name.is_file()
+                                && let Some(canon) =
+                                    confined_path(cwd, &by_name.display().to_string())
+                            {
+                                return Some(canon);
                             }
                         }
                     }
