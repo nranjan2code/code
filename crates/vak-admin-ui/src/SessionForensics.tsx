@@ -438,6 +438,19 @@ export function parseIntentAxes(summary?: string): Record<string, string> {
   };
 }
 
+// ---- Turn Breadcrumb Formatter ---------------------------------------------
+
+export function buildTurnBreadcrumb(turn: SessionTurn, nodeCount: number): string {
+  const toolCount = turn.tool_calls.length;
+  const toolPart =
+    toolCount === 0
+      ? "Direct Generation"
+      : `${toolCount} Tool${toolCount > 1 ? "s" : ""} (parallel)`;
+  const stopPart = turn.stop_guard ? " → Stop Guard" : "";
+  const synthPart = turn.model_response && toolCount > 0 ? " → Synthesis" : "";
+  return `${nodeCount} nodes · Ingress → Admission (5 parallel gates) → Model → ${toolPart}${synthPart}${stopPart} → Presentation → Checkpoint`;
+}
+
 // ---- Standard Workflow Graph Builder for the Active Turn -------------------
 
 export function buildWorkflowGraph(
@@ -449,12 +462,13 @@ export function buildWorkflowGraph(
   const edges: WorkflowEdge[] = [];
 
   const isLR = orientation === "LR";
-  const NODE_W = isLR ? 270 : 320;
-  const NODE_H = 120;
-  let curX = 36;
-  let curY = 40;
+  // In vertical (TB) mode: admission nodes are sized so 5 parallel gates fit side-by-side gracefully
+  const ADMISSION_W = isLR ? 260 : 220;
+  const STANDARD_W = isLR ? 270 : 260;
+  const TOOL_W = isLR ? 260 : (turn.tool_calls.length > 2 ? 220 : 250);
+  const NODE_H = 112;
 
-  // Stage 1: Request Ingress
+  // Tier 1: Request Ingress
   const ingressNode: WorkflowNode = {
     id: "ingress",
     stage_key: "ingress",
@@ -472,21 +486,22 @@ export function buildWorkflowGraph(
       delivery_surface: "local",
     },
     raw_payload: turn.user_prompt,
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: STANDARD_W,
     height: NODE_H,
   };
   nodes.push(ingressNode);
 
-  // Stage 2: Recall & Tiered Memory (docs/design/23 & 29)
+  // Tier 2: Admission Cluster (5 parallel gates: Memory, Intent, Context, Route, Sandbox)
+  // 2.1: Memory & Recall (docs/design/23 & 29)
   const memoryNode: WorkflowNode = {
     id: "memory",
     stage_key: "memory",
     phase: "admission",
     icon: "memory",
-    title: "2. Memory & Recall",
-    subtitle: "Tier-1 USER.md Profile & Tier-2 Semantic Recall",
+    title: "2.1 Memory & Recall",
+    subtitle: "Tier-1 USER.md & Tier-2 Recall",
     badge: "tier-1 & tier-2",
     status: "ok",
     details: {
@@ -496,9 +511,9 @@ export function buildWorkflowGraph(
       injection_bound: "Bounded injection into prompt layers; zero unbounded drift",
     },
     raw_payload: "Memory recall settled. Bounded context slice extracted from USER.md and project semantic memory index.",
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: ADMISSION_W,
     height: NODE_H,
   };
   nodes.push(memoryNode);
@@ -509,14 +524,14 @@ export function buildWorkflowGraph(
     status: "ok",
   });
 
-  // Stage 3: Intent & Commitment Kernel (docs/design/47)
+  // 2.2: Intent & Commitment Kernel (docs/design/47)
   const intentAxes = parseIntentAxes(turn.intent_summary);
   const intentNode: WorkflowNode = {
     id: "intent",
     stage_key: "intent",
     phase: "admission",
     icon: "intent",
-    title: "3. Intent Kernel",
+    title: "2.2 Intent Kernel",
     subtitle: turn.intent_summary
       ? `${intentAxes.act} · ${intentAxes.horizon} · ${intentAxes.stakes}`
       : "Direct interactive dispatch",
@@ -531,20 +546,20 @@ export function buildWorkflowGraph(
       attendance: intentAxes.attendance,
     },
     raw_payload: turn.intent_summary || "No intent reading recorded for this turn.",
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: ADMISSION_W,
     height: NODE_H,
   };
   nodes.push(intentNode);
   edges.push({
-    id: "e-memory-intent",
-    source: "memory",
+    id: "e-ingress-intent",
+    source: "ingress",
     target: "intent",
     status: "ok",
   });
 
-  // Stage 4: Context Packet & Capabilities (docs/design/17 & 45)
+  // 2.3: Context Packet & Capabilities (docs/design/17 & 45)
   const promptLayers = contract?.prompt_layers ?? [];
   const admittedCaps = contract?.capabilities ?? [];
   const contextNode: WorkflowNode = {
@@ -552,8 +567,8 @@ export function buildWorkflowGraph(
     stage_key: "context",
     phase: "admission",
     icon: "context",
-    title: "4. Context & Capabilities",
-    subtitle: `${promptLayers.length || 4} prompt layers · ${admittedCaps.length || 11} admitted caps`,
+    title: "2.3 Context & Caps",
+    subtitle: `${promptLayers.length || 4} prompt layers · ${admittedCaps.length || 11} caps`,
     badge: `${admittedCaps.length || 11} capabilities`,
     status: "ok",
     details: {
@@ -570,20 +585,20 @@ export function buildWorkflowGraph(
       null,
       2,
     ),
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: ADMISSION_W,
     height: NODE_H,
   };
   nodes.push(contextNode);
   edges.push({
-    id: "e-intent-context",
-    source: "intent",
+    id: "e-ingress-context",
+    source: "ingress",
     target: "context",
     status: "ok",
   });
 
-  // Stage 5: Route Ladder & FinOps Budget (docs/design/15 & Phase R)
+  // 2.4: Route Ladder & FinOps Budget (docs/design/15 & Phase R)
   const activeProvider = turn.work_receipts[0]?.provider || contract?.provider || "openai-completions";
   const activeModel = turn.work_receipts[0]?.model || contract?.model || "default";
   const routeLadder = contract?.route_ladder ?? [];
@@ -592,7 +607,7 @@ export function buildWorkflowGraph(
     stage_key: "route",
     phase: "admission",
     icon: "route",
-    title: "5. Route Ladder & Budget",
+    title: "2.4 Route & Budget",
     subtitle: `${activeProvider} · ${activeModel}`,
     badge: `${contract?.route_objective ?? "balanced"} ladder`,
     status: "ok",
@@ -614,20 +629,20 @@ export function buildWorkflowGraph(
       null,
       2,
     ),
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: ADMISSION_W,
     height: NODE_H,
   };
   nodes.push(routeNode);
   edges.push({
-    id: "e-context-route",
-    source: "context",
+    id: "e-ingress-route",
+    source: "ingress",
     target: "route",
     status: "ok",
   });
 
-  // Stage 6: Security & Sandbox Jail (docs/design/24 & 25)
+  // 2.5: Security & Sandbox Jail (docs/design/24 & 25)
   const permMode = contract?.permission_mode || "WorkspaceWrite";
   const isFullAccess = permMode === "FullAccess";
   const sandboxNode: WorkflowNode = {
@@ -635,7 +650,7 @@ export function buildWorkflowGraph(
     stage_key: "sandbox",
     phase: "security",
     icon: "sandbox",
-    title: "6. Security & Sandbox",
+    title: "2.5 Security & Sandbox",
     subtitle: isFullAccess
       ? "FullAccess (Unsandboxed trust confirmed)"
       : "Seatbelt / OS Process Jail Sandbox",
@@ -663,30 +678,30 @@ export function buildWorkflowGraph(
       null,
       2,
     ),
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: ADMISSION_W,
     height: NODE_H,
   };
   nodes.push(sandboxNode);
   edges.push({
-    id: "e-route-sandbox",
-    source: "route",
+    id: "e-ingress-sandbox",
+    source: "ingress",
     target: "sandbox",
     status: sandboxNode.status,
   });
 
-  // Stage 7: Agent Execution Loop (Step-by-step Model <-> Tool / Subagent)
-  let lastNodeId = "sandbox";
+  // Tier 3: Execution (Dynamic depending on tool_calls)
+  let convergenceTargetId = "";
 
   if (turn.tool_calls.length === 0) {
-    // Direct prose generation
+    // Direct prose generation: 0 tools executed
     const genNode: WorkflowNode = {
       id: "model_gen",
       stage_key: "model",
       phase: "execution",
       icon: "model",
-      title: "7. Model Generation",
+      title: "3. Direct Generation",
       subtitle: turn.model_response ? turn.model_response.slice(0, 42) + "…" : "Prose response completed",
       badge: `${turn.tokens_in.toLocaleString()} in · ${turn.tokens_out.toLocaleString()} out`,
       status: turn.status === "failed" ? "bad" : "ok",
@@ -703,74 +718,78 @@ export function buildWorkflowGraph(
         cost_usd: turn.cost_usd,
       },
       raw_payload: turn.model_response || "(no prose output)",
-      x: curX,
-      y: curY,
-      width: NODE_W,
+      x: 0,
+      y: 0,
+      width: STANDARD_W,
       height: NODE_H,
     };
     nodes.push(genNode);
-    edges.push({
-      id: "e-sandbox-gen",
-      source: "sandbox",
-      target: "model_gen",
-      status: genNode.status,
-    });
-    lastNodeId = "model_gen";
-  } else {
-    // Multi-step tool workflow execution in this turn
-    const stepCount = turn.tool_calls.length;
-    for (let i = 0; i < stepCount; i++) {
-      const tc = turn.tool_calls[i];
-      const rc = turn.work_receipts[i];
 
-      // Step Model Call
-      const modelId = `model_step_${i + 1}`;
-      const rcIn = rc ? receiptInputTokens(rc) : 0;
-      const rcOut = rc ? receiptOutputTokens(rc) : 0;
-      const rcLat = rc ? receiptLatencyMs(rc) : 0;
-      const modelNode: WorkflowNode = {
-        id: modelId,
-        stage_key: "model",
-        phase: "execution",
-        icon: "model",
-        title: `7.${i * 2 + 1} Model Inference #${i + 1}`,
-        subtitle: `Dispatched: ${tc.tool_name}`,
-        badge: `${rcIn.toLocaleString()} in · ${rcOut.toLocaleString()} out`,
-        status: "ok",
-        duration_ms: rcLat,
-        tokens_in: rcIn,
-        tokens_out: rcOut,
-        details: {
-          step: i + 1,
-          model: rc ? receiptModel(rc) : activeModel,
-          provider: rc ? receiptProvider(rc) : activeProvider,
-          latency_ms: rcLat,
-          tokens_in: rcIn,
-          tokens_out: rcOut,
-          cached_tokens: rc ? receiptCachedTokens(rc) : 0,
-        },
-        raw_payload: rc
-          ? JSON.stringify(rc, null, 2)
-          : `Model inference dispatched ${tc.tool_name} with latency ${rcLat}ms`,
-        x: curX,
-        y: curY,
-        width: NODE_W,
-        height: NODE_H,
-      };
-      nodes.push(modelNode);
+    // All 5 admission gates converge into model_gen
+    for (const admId of ["memory", "intent", "context", "route", "sandbox"]) {
       edges.push({
-        id: `e-${lastNodeId}-${modelId}`,
-        source: lastNodeId,
-        target: modelId,
+        id: `e-${admId}-gen`,
+        source: admId,
+        target: "model_gen",
         status: "ok",
       });
+    }
+    convergenceTargetId = "model_gen";
+  } else {
+    // Multi-tool / Brokered execution: Model Dispatched Tools
+    const stepCount = turn.tool_calls.length;
+    const rc0 = turn.work_receipts[0];
+    const rcIn = rc0 ? receiptInputTokens(rc0) : turn.tokens_in;
+    const rcOut = rc0 ? receiptOutputTokens(rc0) : turn.tokens_out;
+    const rcLat = rc0 ? receiptLatencyMs(rc0) : 0;
 
-      // Step Execution: Check if Tool or Subagent Delegation
+    const dispatchNode: WorkflowNode = {
+      id: "model_dispatch",
+      stage_key: "model",
+      phase: "execution",
+      icon: "model",
+      title: `3. Model Inference`,
+      subtitle: `Dispatched ${stepCount} tool call${stepCount > 1 ? "s" : ""}`,
+      badge: `${rcIn.toLocaleString()} in · ${rcOut.toLocaleString()} out`,
+      status: "ok",
+      duration_ms: rcLat,
+      tokens_in: rcIn,
+      tokens_out: rcOut,
+      details: {
+        model: rc0 ? receiptModel(rc0) : activeModel,
+        provider: rc0 ? receiptProvider(rc0) : activeProvider,
+        tool_count: stepCount,
+        tools_dispatched: turn.tool_calls.map((t) => t.tool_name).join(", "),
+        latency_ms: rcLat,
+      },
+      raw_payload: rc0 ? JSON.stringify(rc0, null, 2) : `Model dispatched ${stepCount} tools.`,
+      x: 0,
+      y: 0,
+      width: STANDARD_W,
+      height: NODE_H,
+    };
+    nodes.push(dispatchNode);
+
+    // All 5 admission gates converge into model_dispatch
+    for (const admId of ["memory", "intent", "context", "route", "sandbox"]) {
+      edges.push({
+        id: `e-${admId}-dispatch`,
+        source: admId,
+        target: "model_dispatch",
+        status: "ok",
+      });
+    }
+
+    // Dynamic Tool Execution Nodes (placed side-by-side in vertical mode)
+    const toolNodeIds: string[] = [];
+    for (let i = 0; i < stepCount; i++) {
+      const tc = turn.tool_calls[i];
       const isSubagent = tc.tool_name === "task";
       const isBash = tc.tool_name === "bash";
       const isFileTool = ["read", "write", "edit", "glob", "grep"].includes(tc.tool_name);
-      const isWeb = tc.tool_name === "webfetch" || tc.tool_name === "browse";
+      const isWeb = tc.tool_name === "webfetch" || tc.tool_name === "browse" || tc.tool_name === "tavily_search";
       const execId = isSubagent ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+      toolNodeIds.push(execId);
 
       const execNode: WorkflowNode = {
         id: execId,
@@ -778,32 +797,32 @@ export function buildWorkflowGraph(
         phase: "execution",
         icon: isSubagent ? "subagent" : isBash ? "terminal" : isFileTool ? "tool" : isWeb ? "tool" : "tool",
         title: isSubagent
-          ? `7.${i * 2 + 2} Subagent Delegation`
+          ? `Subagent Delegation`
           : isBash
-          ? `7.${i * 2 + 2} Sandboxed Shell Process`
+          ? `Shell: ${tc.tool_name}`
           : isFileTool
-          ? `7.${i * 2 + 2} Brokered Filesystem: ${tc.tool_name}`
+          ? `File: ${tc.tool_name}`
           : isWeb
-          ? `7.${i * 2 + 2} SSRF-Guarded Browse`
-          : `7.${i * 2 + 2} Brokered Tool: ${tc.tool_name}`,
+          ? `Web: ${tc.tool_name}`
+          : `Tool: ${tc.tool_name}`,
         subtitle: isSubagent
           ? parseTaskPrompt(tc.args_json)
           : isBash
           ? parseCommandSnippet(tc.args_json)
           : tc.result_text
           ? tc.result_text.slice(0, 42) + "…"
-          : "Execution output captured",
+          : "Output captured",
         badge: isSubagent
-          ? "🤖 subagent"
+          ? "subagent"
           : isBash
-          ? "terminal · jail"
+          ? "jail"
           : isFileTool
-          ? "brokered · safe-io"
+          ? "safe-io"
           : isWeb
-          ? "ssrf-guarded"
+          ? "ssrf-guard"
           : tc.is_error
           ? "error"
-          : "success",
+          : "ok",
         status: tc.is_error ? "bad" : "ok",
         details: {
           tool_name: tc.tool_name,
@@ -823,33 +842,35 @@ export function buildWorkflowGraph(
             : "Brokered worker execution",
         },
         raw_payload: tc.result_text || "(empty tool return)",
-        x: curX,
-        y: curY,
-        width: NODE_W,
+        x: 0,
+        y: 0,
+        width: TOOL_W,
         height: NODE_H,
       };
       nodes.push(execNode);
+
+      // Model dispatch branches to all tools (side-by-side)
       edges.push({
-        id: `e-${modelId}-${execId}`,
-        source: modelId,
+        id: `e-dispatch-${execId}`,
+        source: "model_dispatch",
         target: execId,
         status: execNode.status,
       });
-      lastNodeId = execId;
     }
 
-    // Final Synthesis if prose response exists
+    // Final Synthesis if model response prose exists
     if (turn.model_response) {
-      const finalrc = turn.work_receipts[stepCount];
+      const finalrc = turn.work_receipts[stepCount] || turn.work_receipts[turn.work_receipts.length - 1];
       const finIn = finalrc ? receiptInputTokens(finalrc) : 0;
       const finOut = finalrc ? receiptOutputTokens(finalrc) : 0;
       const finLat = finalrc ? receiptLatencyMs(finalrc) : 0;
-      const finalGenNode: WorkflowNode = {
+
+      const synthNode: WorkflowNode = {
         id: "model_synthesis",
         stage_key: "model",
         phase: "execution",
         icon: "model",
-        title: `7.${stepCount * 2 + 1} Final Synthesis`,
+        title: "4. Outcome Synthesis",
         subtitle: turn.model_response.slice(0, 42) + "…",
         badge: `${finIn.toLocaleString()} in · ${finOut.toLocaleString()} out`,
         status: "ok",
@@ -864,60 +885,74 @@ export function buildWorkflowGraph(
           tokens_out: finOut,
         },
         raw_payload: turn.model_response,
-        x: curX,
-        y: curY,
-        width: NODE_W,
+        x: 0,
+        y: 0,
+        width: STANDARD_W,
         height: NODE_H,
       };
-      nodes.push(finalGenNode);
-      edges.push({
-        id: `e-${lastNodeId}-synthesis`,
-        source: lastNodeId,
-        target: "model_synthesis",
-        status: "ok",
-      });
-      lastNodeId = "model_synthesis";
+      nodes.push(synthNode);
+
+      // All tools converge into model_synthesis
+      for (const tId of toolNodeIds) {
+        edges.push({
+          id: `e-${tId}-synthesis`,
+          source: tId,
+          target: "model_synthesis",
+          status: "ok",
+        });
+      }
+      convergenceTargetId = "model_synthesis";
+    } else {
+      convergenceTargetId = toolNodeIds[0];
     }
   }
 
-  // Stage 8: Stop Gate Policy (docs/design/15)
-  const stopNode: WorkflowNode = {
-    id: "stop_gate",
-    stage_key: "stop",
-    phase: "verification",
-    icon: "stop",
-    title: "8. Stop Gate Policy",
-    subtitle: turn.stop_guard ? "Continuation nudged" : "Terminal condition clean",
-    badge: turn.stop_guard ? "stop-guard" : "terminal",
-    status: turn.stop_guard ? "warn" : "ok",
-    details: {
-      stop_guard: turn.stop_guard || "None (clean termination)",
-      step_budget_exhaustion: false,
-      verification_status: "Verified clean exit",
-      reliability_rule: "Invariant 3: Errors are values; turn returns verified TurnOutcome",
-    },
-    raw_payload: turn.stop_guard || "Turn termination condition satisfied without stop-guard intervention.",
-    x: curX,
-    y: curY,
-    width: NODE_W,
-    height: NODE_H,
-  };
-  nodes.push(stopNode);
-  edges.push({
-    id: `e-${lastNodeId}-stop`,
-    source: lastNodeId,
-    target: "stop_gate",
-    status: stopNode.status,
-  });
+  // Tier 4: Stop Gate (Stop Gate Policy - docs/design/15)
+  // Only insert separate Stop Gate node if stop-guard actually intervened or warned
+  let prePresentationId = convergenceTargetId;
 
-  // Stage 9: Universal Outcome Presentation (docs/design/30 & 61)
+  if (turn.stop_guard) {
+    const stopNode: WorkflowNode = {
+      id: "stop_gate",
+      stage_key: "stop",
+      phase: "verification",
+      icon: "stop",
+      title: "Stop Gate Policy",
+      subtitle: "Continuation nudged",
+      badge: "stop-guard",
+      status: "warn",
+      details: {
+        stop_guard: turn.stop_guard,
+        verification_status: "Continuation nudged by stop guard",
+        reliability_rule: "Invariant 3: Errors are values; turn returns verified TurnOutcome",
+      },
+      raw_payload: turn.stop_guard,
+      x: 0,
+      y: 0,
+      width: STANDARD_W,
+      height: NODE_H,
+    };
+    nodes.push(stopNode);
+
+    if (turn.tool_calls.length > 0 && !turn.model_response) {
+      for (let i = 0; i < turn.tool_calls.length; i++) {
+        const tId = turn.tool_calls[i].tool_name === "task" ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+        edges.push({ id: `e-${tId}-stop`, source: tId, target: "stop_gate", status: "warn" });
+      }
+    } else {
+      edges.push({ id: `e-${convergenceTargetId}-stop`, source: convergenceTargetId, target: "stop_gate", status: "warn" });
+    }
+    prePresentationId = "stop_gate";
+  }
+
+  // Tier 5: Outcome Presentation (docs/design/30 & 61)
   const presentationNode: WorkflowNode = {
     id: "presentation",
     stage_key: "presentation",
     phase: "presentation",
     icon: "presentation",
-    title: "9. Outcome Presentation",
-    subtitle: turn.tool_calls.length > 0 ? "Universal outcome renderer: code diff & process output" : "Calm continuous prose presentation",
+    title: "Universal Outcome",
+    subtitle: turn.tool_calls.length > 0 ? "Diff inspector, test matrix & telemetry" : "Calm continuous prose presentation",
     badge: turn.tool_calls.length > 0 ? "outcome-first" : "calm-prose",
     status: "ok",
     details: {
@@ -929,26 +964,34 @@ export function buildWorkflowGraph(
     raw_payload: turn.tool_calls.length > 0
       ? "Outcome projected to universal renderer with interactive telemetry and diff inspector."
       : "Outcome projected as clean calm prose with prompt scaffolding scrubbed.",
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: STANDARD_W,
     height: NODE_H,
   };
   nodes.push(presentationNode);
-  edges.push({
-    id: "e-stop-presentation",
-    source: "stop_gate",
-    target: "presentation",
-    status: "ok",
-  });
 
-  // Stage 10: Governance & Checkpoint (Invariant 1 & 2)
+  if (!turn.stop_guard && turn.tool_calls.length > 0 && !turn.model_response) {
+    for (let i = 0; i < turn.tool_calls.length; i++) {
+      const tId = turn.tool_calls[i].tool_name === "task" ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+      edges.push({ id: `e-${tId}-presentation`, source: tId, target: "presentation", status: "ok" });
+    }
+  } else {
+    edges.push({
+      id: `e-${prePresentationId}-presentation`,
+      source: prePresentationId,
+      target: "presentation",
+      status: "ok",
+    });
+  }
+
+  // Tier 6: Governance & Checkpoint (Invariant 1 & 2)
   const checkpointNode: WorkflowNode = {
     id: "checkpoint",
     stage_key: "checkpoint",
     phase: "governance",
     icon: "checkpoint",
-    title: "10. Governance & State",
+    title: "Governance & State",
     subtitle: turn.checkpoint_seq != null ? `Checkpoint #${turn.checkpoint_seq} committed` : "Append-only ledger commit",
     badge: turn.checkpoint_seq != null ? `seq #${turn.checkpoint_seq}` : "appended",
     status: "ok",
@@ -960,9 +1003,9 @@ export function buildWorkflowGraph(
       settlement_receipts: `${turn.work_receipts.length} work receipts settled`,
     },
     raw_payload: `Turn #${turn.turn_index} closed at ${turn.ended_at || turn.started_at}. Ledger contains ${turn.entries.length} verified immutable entries.`,
-    x: curX,
-    y: curY,
-    width: NODE_W,
+    x: 0,
+    y: 0,
+    width: STANDARD_W,
     height: NODE_H,
   };
   nodes.push(checkpointNode);
@@ -977,8 +1020,8 @@ export function buildWorkflowGraph(
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: orientation,
-    nodesep: isLR ? 36 : 40,
-    ranksep: isLR ? 64 : 50,
+    nodesep: isLR ? 32 : 20,
+    ranksep: isLR ? 64 : 48,
     marginx: 36,
     marginy: 40,
   });
@@ -1002,7 +1045,7 @@ export function buildWorkflowGraph(
   }
 
   const graphInfo = g.graph();
-  const width = Math.max(1040, Math.round((graphInfo.width || 800) + 72));
+  const width = Math.max(1060, Math.round((graphInfo.width || 800) + 72));
   const height = Math.max(260, Math.round((graphInfo.height || 140) + 90));
 
   return {
@@ -1809,7 +1852,7 @@ export function SessionForensics(props: { sessionId: string }) {
                   <div class="toolbar-left">
                     <span class="canvas-label">Turn #{currentTurn()!.turn_index} Execution DAG</span>
                     <span class="dim small">
-                      {workflowGraph().nodes.length} stages · Ingress → Intent → Context → Route → Sandbox → {currentTurn()!.tool_calls.length} Tools → Stop → Checkpoint
+                      {buildTurnBreadcrumb(currentTurn()!, workflowGraph().nodes.length)}
                     </span>
                   </div>
                   <div class="canvas-zoom-controls">

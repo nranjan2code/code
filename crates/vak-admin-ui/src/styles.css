@@ -5187,10 +5187,11 @@ button.inbox-meta-tag:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.turn-summary-metrics {
+.turn-summary-metrics,
+.turn-summary-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-size: 12px;
   flex-shrink: 0;
 }
@@ -5401,14 +5402,16 @@ button.inbox-meta-tag:hover {
 .node-port-out { right: -6px; }
 .node-port.port-tb-in {
   top: -6px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
 }
 .node-port.port-tb-out {
-  top: auto;
+  top: auto !important;
   bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
 }
 .workflow-node-card.node-ok .node-port {
   border-color: #10b981;
