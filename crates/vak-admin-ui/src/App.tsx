@@ -2440,6 +2440,57 @@ function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
   return "stale";
 }
 
+function KnowledgeSubNav(props: { active: "#/memory" | "#/feeds" | "#/search" }) {
+  return (
+    <div class="knowledge-subnav">
+      <a
+        href="#/memory"
+        class="knowledge-tab-btn"
+        classList={{ active: props.active === "#/memory" }}
+      >
+        Memory & Profile
+      </a>
+      <a
+        href="#/feeds"
+        class="knowledge-tab-btn"
+        classList={{ active: props.active === "#/feeds" }}
+      >
+        Scheduled Feeds
+      </a>
+      <a
+        href="#/search"
+        class="knowledge-tab-btn"
+        classList={{ active: props.active === "#/search" }}
+      >
+        Global Search
+      </a>
+    </div>
+  );
+}
+
+const MEMORY_PRESETS = [
+  {
+    label: "Tone & Brevity",
+    tag: "tone",
+    text: "Prefer direct, dense, and structured prose. Skip conversational pleasantries, flattery, and apologies.",
+  },
+  {
+    label: "Tech Stack & Tools",
+    tag: "stack",
+    text: "This workspace uses Rust 2024, SolidJS, and Vanilla CSS. Do not introduce TailwindCSS.",
+  },
+  {
+    label: "Security & Secrets",
+    tag: "security",
+    text: "Never print, log, or commit API keys or auth tokens. Ask for human confirmation before deleting files.",
+  },
+  {
+    label: "Architecture Constraint",
+    tag: "architecture",
+    text: "Preserve append-only ledger; do not rewrite or delete historical session records.",
+  },
+] as const;
+
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory());
   const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
@@ -2453,6 +2504,7 @@ function MemoryView() {
   const [cleaning, setCleaning] = createSignal(false);
   const [togglingFlag, setTogglingFlag] = createSignal<string | null>(null);
   const [filterScope, setFilterScope] = createSignal<"all" | "profile" | "workspace">("all");
+  const [filterFreshness, setFilterFreshness] = createSignal<"all" | "fresh" | "stale">("all");
   const [query, setQuery] = createSignal("");
 
   const notes = createMemo(() => memoryData()?.notes ?? []);
@@ -2471,6 +2523,11 @@ function MemoryView() {
       if (filterScope() !== "all") {
         const bucket = n.scope === "profile" ? "profile" : "workspace";
         if (bucket !== filterScope()) return false;
+      }
+      if (filterFreshness() !== "all") {
+        const age = noteAgeBucket(n.ts);
+        if (filterFreshness() === "fresh" && age === "stale") return false;
+        if (filterFreshness() === "stale" && age !== "stale") return false;
       }
       if (q && !n.text.toLowerCase().includes(q) && !(n.tag ?? "").toLowerCase().includes(q)) return false;
       return true;
@@ -2553,6 +2610,7 @@ function MemoryView() {
 
   return (
     <div class="view">
+      <KnowledgeSubNav active="#/memory" />
       <PageHeader
         title="Memory"
         description="Things vak should keep in mind between sessions — about you, or about this workspace."
@@ -2612,6 +2670,11 @@ function MemoryView() {
               <button classList={{ active: filterScope() === "profile" }} onClick={() => setFilterScope("profile")}>About me</button>
               <button classList={{ active: filterScope() === "workspace" }} onClick={() => setFilterScope("workspace")}>This workspace</button>
             </div>
+            <div class="scope-tabs" style="margin-left: 4px;">
+              <button classList={{ active: filterFreshness() === "all" }} onClick={() => setFilterFreshness("all")}>All time</button>
+              <button classList={{ active: filterFreshness() === "fresh" }} onClick={() => setFilterFreshness("fresh")}>Fresh</button>
+              <button classList={{ active: filterFreshness() === "stale" }} onClick={() => setFilterFreshness("stale")}>Stale (30d+)</button>
+            </div>
           </div>
           <Show when={!memoryData.loading} fallback={<div class="empty">Loading…</div>}>
             <Show when={!memoryData.error} fallback={<LoadError message={`${memoryData.error}`} onRetry={() => refetch()} />}>
@@ -2620,7 +2683,7 @@ function MemoryView() {
               <ul class="hit-list">
                 <For each={visibleNotes()}>
                   {(m: MemoryItem) => (
-                    <li class="note-card">
+                    <li class={`note-card ${m.scope === "profile" ? "note-profile" : "note-workspace"}`}>
                       <div class="note-head">
                         <span class="note-freshness" data-age={noteAgeBucket(m.ts)} title={`Last touched ${timeAgo(m.ts)}`} />
                         <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this workspace"}</span>
@@ -2683,7 +2746,29 @@ function MemoryView() {
             <label>Note</label>
             <textarea rows={4} placeholder="What should vak remember?" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
           </div>
-          <div class="row-gap" style="margin-top:12px">
+
+          {/* Quick Preset Templates */}
+          <div class="memory-presets">
+            <span class="dim small">Quick-insert preset templates:</span>
+            <div class="memory-preset-strip">
+              <For each={MEMORY_PRESETS}>
+                {(preset) => (
+                  <button
+                    type="button"
+                    class="memory-preset-btn"
+                    onClick={() => {
+                      setTag(preset.tag);
+                      setNoteText(preset.text);
+                    }}
+                  >
+                    + {preset.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="row-gap" style="margin-top:14px">
             <button disabled={busy() || !noteText().trim()} onClick={addNote}>
               {busy() ? "Recording…" : "Save Note"}
             </button>
@@ -3322,20 +3407,45 @@ function SearchView() {
 
   return (
     <div class="view">
+      <KnowledgeSubNav active="#/search" />
       <PageHeader title="Search" description="Look through every conversation vak has had, and jump straight to where something was said." />
-      <div class="search-hero">
-        <input
-          class="search-big"
-          placeholder="Search everything you’ve ever asked…"
-          value={q()}
-          onInput={(e) => {
-            setQ(e.currentTarget.value);
-            runSearch(e.currentTarget.value);
-          }}
-        />
-        <select value={role()} onChange={(e) => { setRole(e.currentTarget.value); runSearch(q()); }}>
-          <For each={ROLE_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
-        </select>
+      <div class="search-hero-deck">
+        <div class="search-hero">
+          <input
+            class="search-big"
+            placeholder="Search everything you’ve ever asked…"
+            value={q()}
+            onInput={(e) => {
+              setQ(e.currentTarget.value);
+              runSearch(e.currentTarget.value);
+            }}
+          />
+          <select value={role()} onChange={(e) => { setRole(e.currentTarget.value); runSearch(q()); }}>
+            <For each={ROLE_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
+          </select>
+        </div>
+        <div class="search-role-pills">
+          <span class="dim small" style="margin-right: 4px;">Role filter:</span>
+          <For each={ROLE_FILTERS}>
+            {(f) => (
+              <button
+                class="search-role-btn"
+                classList={{ active: role() === f.id }}
+                onClick={() => {
+                  setRole(f.id);
+                  runSearch(q());
+                }}
+              >
+                {f.label}
+              </button>
+            )}
+          </For>
+          <Show when={hits()}>
+            <span class="chip chip-kind" style="margin-left: auto;">
+              {hits()!.length} match{hits()!.length === 1 ? "" : "es"}
+            </span>
+          </Show>
+        </div>
       </div>
       <Show when={error()}>
         <div class="login-error">{error()}</div>
@@ -7125,6 +7235,7 @@ function FeedsSection() {
 
   return (
     <div class="view">
+      <KnowledgeSubNav active="#/feeds" />
       <PageHeader
         title="Feeds"
         description="Sources vak reads on a schedule — blogs, YouTube channels, Reddit, Hacker News — so it can answer from them."

@@ -9,7 +9,13 @@ import logging
 import os
 import sys
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        import toml as tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
