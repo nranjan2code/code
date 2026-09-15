@@ -14,25 +14,41 @@ import type {
 /// bot -> chat -> agent role). Doc 44 requires every editable surface to report
 /// the selected layer *and* the effective result with provenance.
 
-const BLOCKS: { id: PromptBlock; label: string; help: string }[] = [
+interface BlockDef {
+  id: PromptBlock;
+  label: string;
+  icon: string;
+  color: string;
+  help: string;
+}
+
+const BLOCKS: BlockDef[] = [
   {
     id: "identity",
     label: "Identity",
+    icon: "👤",
+    color: "#8b5cf6",
     help: "Who the agent is. The narrowest setting that defines this wins.",
   },
   {
     id: "operating-rules",
     label: "Operating rules",
+    icon: "⚡",
+    color: "#06b6d4",
     help: "How it works. The narrowest setting that defines this wins.",
   },
   {
     id: "guardrails",
     label: "Guardrails",
+    icon: "🛡️",
+    color: "#f59e0b",
     help: "Guardrails from every scope apply together. A narrower scope cannot remove one.",
   },
   {
     id: "surface-note",
     label: "Surface note",
+    icon: "🌐",
+    color: "#10b981",
     help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across scopes.",
   },
 ];
@@ -59,27 +75,105 @@ const LAYER_CSS_CLASS: Record<PromptLayerDescriptor["layer"], string> = {
 
 const SURFACES = ["cli", "desktop", "server", "background", "subagent", "telegram"] as const;
 
-const TEMPLATES: Record<PromptBlock, { label: string; snippet: string }[]> = {
-  "guardrails": [
-    { label: "+ Confirm file deletion", snippet: "- Always ask for human confirmation before deleting files or directories" },
-    { label: "+ Never leak secrets", snippet: "- Never print, log, or export credentials, API keys, or private tokens" },
-    { label: "+ Strict TypeScript", snippet: "- Strict TypeScript mode: ensure code compiles with zero type errors" },
-    { label: "+ Concise JSON only", snippet: "- Format output strictly as valid compact JSON without markdown formatting" },
-  ],
-  "surface-note": [
-    { label: "+ Public channel warning", snippet: "- This is a shared channel; assume anyone can inspect the conversation" },
-    { label: "+ Autonomous background task", snippet: "- Running unattended: prioritize non-blocking, idempotent operations" },
-    { label: "+ Read-only observation", snippet: "- Perform inspection only: do not perform any destructive actions" },
+/// Universal Agent templates (Research, Writing, Data, Operations, Life/Work Automation, Engineering)
+const UNIVERSAL_TEMPLATES: Record<PromptBlock, { label: string; snippet: string }[]> = {
+  "identity": [
+    {
+      label: "🧠 Universal Agent",
+      snippet: "You are vak, a general-purpose agent working on the user's behalf. You do real work, not just talk about it: answering questions, researching, writing, analysing data, building software, running commands, managing files, fetching information, drafting documents, and operating systems. Engineering, research, writing, data, operations, and ordinary questions are all equally your work. Read each request for what it actually asks and do that; never reshape it into a different kind of task because that kind is more familiar.",
+    },
+    {
+      label: "🔬 Research & Synthesis",
+      snippet: "You are an analytical researcher and synthesizer. Formulate evidence-backed arguments, cross-examine claims, cite verifiable sources, and explicitly identify nuances, assumptions, and edge cases.",
+    },
+    {
+      label: "✍️ Writing & Briefings",
+      snippet: "You are an executive writer and communications specialist. Craft clear, high-impact prose with crisp executive summaries, structured headers, and active voice.",
+    },
+    {
+      label: "📊 Data & Quantitative",
+      snippet: "You are a quantitative data analyst. Uncover statistical patterns, highlight anomalies, structure insights into comparative tables, and quantify decision impacts.",
+    },
+    {
+      label: "⚡ Systems & Ops",
+      snippet: "You are a systems operations specialist. Prioritize site reliability, non-destructive validation, clear runbooks, and robust telemetry.",
+    },
   ],
   "operating-rules": [
-    { label: "+ Verify before editing", snippet: "- Always inspect file content before applying targeted edits" },
-    { label: "+ Outcome-directed prose", snippet: "- Keep explanations concise, technical, and focused on outcomes" },
+    {
+      label: "+ Outcome-directed prose",
+      snippet: "- Read each request for what it actually asks and do that; never reshape it into a different kind of task because that kind is more familiar.",
+    },
+    {
+      label: "+ Grounded verification",
+      snippet: "- Always verify state before making assertions or edits. Present concrete facts and evidence rather than assumptions.",
+    },
+    {
+      label: "+ Structured & scannable",
+      snippet: "- Keep prose structured, dense, and scannable. Use tables and bulleted lists where appropriate.",
+    },
   ],
-  "identity": [
-    { label: "+ Senior Systems Engineer", snippet: "You are an expert systems software engineer and systems architect specializing in Rust and distributed systems." },
-    { label: "+ Production Site SRE", snippet: "You are a production site reliability engineer focused on operational resilience and diagnostics." },
+  "guardrails": [
+    {
+      label: "+ Confirm destructive actions",
+      snippet: "- Always ask for human confirmation before deleting files, dropping tables, or executing irreversible system commands",
+    },
+    {
+      label: "+ Protect privacy & secrets",
+      snippet: "- Never print, log, or leak API keys, auth tokens, passwords, or personal identifying information",
+    },
+    {
+      label: "+ Source grounding",
+      snippet: "- Ground assertions in verified sources. Distinguish observed data from model inference",
+    },
+    {
+      label: "+ Format constraints",
+      snippet: "- Return structured output as requested without conversational preamble or pleasantries",
+    },
+  ],
+  "surface-note": [
+    {
+      label: "+ Public channel caution",
+      snippet: "- This is a shared channel; assume anyone can inspect the conversation",
+    },
+    {
+      label: "+ Background automation",
+      snippet: "- Running unattended: prioritize non-blocking, idempotent operations",
+    },
+    {
+      label: "+ Read-only persona",
+      snippet: "- Perform inspection and reporting only: do not perform any state-modifying actions",
+    },
   ],
 };
+
+interface PromptHistoryEntry {
+  id: string;
+  timestamp: string;
+  block: PromptBlock;
+  scope: ConfigScope;
+  text: string;
+  chars: number;
+}
+
+function loadHistory(): PromptHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem("vak_prompt_history");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistoryEntry(entry: PromptHistoryEntry) {
+  try {
+    const current = loadHistory();
+    const next = [entry, ...current.slice(0, 19)];
+    localStorage.setItem("vak_prompt_history", JSON.stringify(next));
+  } catch {
+    // ignore local storage errors
+  }
+}
 
 function scopeLabel(scope: ConfigScope): string {
   return scope === "user" ? "Global" : "Workspace";
@@ -113,6 +207,11 @@ export function PromptsSection(props: {
   // Copy state
   const [copiedFingerprint, setCopiedFingerprint] = createSignal(false);
   const [copiedPrompt, setCopiedPrompt] = createSignal(false);
+  // History list
+  const [history, setHistory] = createSignal<PromptHistoryEntry[]>(loadHistory());
+  const [showHistory, setShowHistory] = createSignal(false);
+  // Highlighted block in preview
+  const [highlightedBlock, setHighlightedBlock] = createSignal<PromptBlock | null>(null);
 
   const blockText = (block: PromptBlock): string | null => {
     const l = layer()?.layer;
@@ -123,17 +222,34 @@ export function PromptsSection(props: {
     return rules.length ? rules.map((r) => `- ${r}`).join("\n") : null;
   };
 
+  const inheritedText = (block: PromptBlock): string | null => {
+    const eff = effective();
+    if (!eff) return null;
+    return eff.blocks?.[block] ?? eff.seed_blocks?.[block] ?? null;
+  };
+
   const contributors = (block: PromptBlock): PromptLayerDescriptor[] =>
     (effective()?.layers ?? []).filter((d) => d.block === block);
 
   async function save(block: PromptBlock) {
     setBusy(true);
+    const content = draft();
     try {
-      await api.putPromptBlock(props.scope(), block, draft());
+      await api.putPromptBlock(props.scope(), block, content);
       props.pushToast(
         "info",
         `${block} saved to ${scopeLabel(props.scope())}. Applies to new sessions.`,
       );
+      // Record history
+      saveHistoryEntry({
+        id: Date.now().toString(),
+        timestamp: new Date().toLocaleTimeString(),
+        block,
+        scope: props.scope(),
+        text: content,
+        chars: content.length,
+      });
+      setHistory(loadHistory());
       setEditing(null);
       await Promise.all([refetchLayer(), refetchEffective()]);
     } catch (e) {
@@ -166,7 +282,6 @@ export function PromptsSection(props: {
     }
   }
 
-  // Trigger preview update when surface or role changes
   createEffect(() => {
     const s = previewSurface();
     const r = previewRole();
@@ -179,7 +294,6 @@ export function PromptsSection(props: {
 
   const renderedText = () => preview()?.text ?? effective()?.text ?? "";
 
-  // Filtered preview lines or match count
   const searchMatches = createMemo(() => {
     const q = searchQuery().trim().toLowerCase();
     if (!q) return [];
@@ -207,6 +321,15 @@ export function PromptsSection(props: {
     } else {
       setDraft(cur + "\n" + snippet);
     }
+  }
+
+  function startOverride(block: PromptBlock) {
+    const existing = blockText(block);
+    const baseline = inheritedText(block);
+    // Pre-fill with existing override or active baseline so user sees what they are overriding!
+    setDraft(existing ?? baseline ?? "");
+    setEditing(block);
+    setHighlightedBlock(block);
   }
 
   async function copyToClipboard(text: string, kind: "fingerprint" | "prompt") {
@@ -326,11 +449,18 @@ export function PromptsSection(props: {
             <div>
               <h2>Editing {scopeLabel(props.scope())} Blocks</h2>
               <p class="dim">
-                Only what {scopeLabel(props.scope())} defines. Narrowest scope wins for identity and rules; guardrails and notes accumulate.
+                Universal agent harness prompt blocks. Inspect original prompts or override per workspace.
               </p>
             </div>
+            <button
+              class="ghost small"
+              onClick={() => setShowHistory(!showHistory())}
+            >
+              🕒 History ({history().length})
+            </button>
           </div>
 
+          {/* Color-Coded Filter Strip */}
           <div class="prompt-blocks-filter">
             <button
               class="prompt-filter-btn"
@@ -342,41 +472,88 @@ export function PromptsSection(props: {
             <For each={BLOCKS}>
               {(b) => (
                 <button
-                  class="prompt-filter-btn"
+                  class={`prompt-filter-btn block-${b.id}`}
                   classList={{ active: blockFilter() === b.id }}
                   onClick={() => setBlockFilter(b.id)}
                 >
-                  {b.label}
+                  <span>{b.icon}</span> {b.label}
                 </button>
               )}
             </For>
             <button
-              class="prompt-filter-btn"
+              class="prompt-filter-btn block-code-owned"
               classList={{ active: blockFilter() === "code-owned" }}
               onClick={() => setBlockFilter("code-owned")}
             >
-              Code-owned 🔒
+              🔒 Code-owned
             </button>
           </div>
 
+          {/* Optional History Drawer */}
+          <Show when={showHistory()}>
+            <div class="prompt-history-drawer">
+              <div class="prompt-history-head">
+                <strong>Recent Prompt Edits (This Session)</strong>
+                <button class="ghost small" onClick={() => setShowHistory(false)}>Close</button>
+              </div>
+              <Show
+                when={history().length > 0}
+                fallback={<p class="dim small" style="margin: 4px 0;">No edits recorded yet in this session.</p>}
+              >
+                <div class="prompt-history-list">
+                  <For each={history()}>
+                    {(item) => (
+                      <div class="prompt-history-item">
+                        <div class="prompt-history-meta">
+                          <span class="mono dim">{item.timestamp}</span>
+                          <strong>{item.block}</strong>
+                          <span class="chip chip-kind">{item.scope}</span>
+                          <span class="dim small mono">{item.chars} chars</span>
+                        </div>
+                        <button
+                          class="ghost small"
+                          onClick={() => {
+                            setDraft(item.text);
+                            setEditing(item.block);
+                            props.pushToast("info", `Restored ${item.block} revision into editor`);
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          {/* Prompt Blocks */}
           <For each={BLOCKS}>
             {(block) => {
               const own = () => blockText(block.id);
+              const baseline = () => inheritedText(block.id);
               const from = () => contributors(block.id);
               const isVisible = () => blockFilter() === "all" || blockFilter() === block.id;
 
               return (
                 <Show when={isVisible()}>
                   <div
-                    class="prompt-block-card"
+                    class={`prompt-block-card block-${block.id}`}
                     classList={{ editing: editing() === block.id }}
+                    onClick={() => setHighlightedBlock(block.id)}
                   >
                     <div class="prompt-block-card-head">
                       <h3>
+                        <span>{block.icon}</span>
                         {block.label}
                         <Show
                           when={own() !== null}
-                          fallback={<span class="chip chip-kind">inherited</span>}
+                          fallback={
+                            <span class="chip chip-kind" title="Inherited from higher tier">
+                              📦 {from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"}
+                            </span>
+                          }
                         >
                           <span class="chip chip-ok">set in {scopeLabel(props.scope())}</span>
                         </Show>
@@ -386,12 +563,15 @@ export function PromptsSection(props: {
                         <Show when={own() !== null}>
                           <span class="dim small mono">{own()!.length} chars</span>
                         </Show>
+                        <Show when={own() === null && baseline() !== null}>
+                          <span class="dim small mono">{baseline()!.length} chars (original)</span>
+                        </Show>
                         <Show when={editing() !== block.id}>
                           <button
                             class="ghost small"
-                            onClick={() => {
-                              setDraft(own() ?? "");
-                              setEditing(block.id);
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startOverride(block.id);
                             }}
                           >
                             {own() === null ? "Override" : "Edit"}
@@ -400,7 +580,10 @@ export function PromptsSection(props: {
                             <button
                               class="ghost small"
                               disabled={busy()}
-                              onClick={() => reset(block.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void reset(block.id);
+                              }}
                             >
                               Reset
                             </button>
@@ -415,33 +598,37 @@ export function PromptsSection(props: {
                       when={editing() === block.id}
                       fallback={
                         <>
-                          <Show
-                            when={own() !== null}
-                            fallback={
-                              <p class="dim small" style="margin-top: 4px;">
-                                <Show
-                                  when={from().length}
-                                  fallback={<>Nothing set anywhere.</>}
-                                >
-                                  Inheriting from{" "}
-                                  <strong>
-                                    {from().map((d) => LAYER_LABELS[d.layer]).join(", ")}
-                                  </strong>
-                                  . Click Override to define workspace-level rules.
-                                </Show>
-                              </p>
-                            }
-                          >
+                          {/* When NOT overridden, display the ACTIVE ORIGINAL PROMPT TEXT so users can actually see it! */}
+                          <Show when={own() !== null}>
                             <pre class="mono prompt-preview">{own()}</pre>
+                          </Show>
+
+                          <Show when={own() === null}>
+                            <Show
+                              when={baseline() !== null}
+                              fallback={
+                                <p class="dim small" style="margin-top: 4px;">
+                                  Nothing set anywhere. Click Override to define {block.label} for {scopeLabel(props.scope())}.
+                                </p>
+                              }
+                            >
+                              <div class="prompt-inherited-preview">
+                                <div class="prompt-inherited-banner">
+                                  <span>Original / Active Prompt ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"})</span>
+                                  <span>{baseline()!.length} characters</span>
+                                </div>
+                                <pre class="prompt-inherited-text">{baseline()}</pre>
+                              </div>
+                            </Show>
                           </Show>
                         </>
                       }
                     >
-                      {/* Quick Template Pills */}
-                      <Show when={TEMPLATES[block.id]?.length}>
+                      {/* IN EDITING MODE: Show Universal Templates & Baseline Comparison */}
+                      <Show when={UNIVERSAL_TEMPLATES[block.id]?.length}>
                         <div class="prompt-template-pills">
-                          <span class="prompt-template-label">Snippets:</span>
-                          <For each={TEMPLATES[block.id]}>
+                          <span class="prompt-template-label">Universal Presets:</span>
+                          <For each={UNIVERSAL_TEMPLATES[block.id]}>
                             {(tmpl) => (
                               <button
                                 type="button"
@@ -455,18 +642,20 @@ export function PromptsSection(props: {
                         </div>
                       </Show>
 
+                      {/* Overriding Baseline Comparison */}
+                      <Show when={baseline() !== null}>
+                        <details class="prompt-override-baseline">
+                          <summary>👁️ Compare with original baseline ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"})</summary>
+                          <pre>{baseline()}</pre>
+                        </details>
+                      </Show>
+
                       <textarea
                         class="prompt-editor"
-                        rows={block.id === "identity" ? 7 : 10}
+                        rows={block.id === "identity" ? 8 : 11}
                         value={draft()}
                         onInput={(e) => setDraft(e.currentTarget.value)}
-                        placeholder={
-                          block.id === "guardrails"
-                            ? "- one guardrail per line\n- e.g. - Always ask for confirmation before modifying production resources"
-                            : block.id === "surface-note"
-                              ? "- this is a public channel; assume anyone can read the reply"
-                              : "Plain text or markdown instructions for the model"
-                        }
+                        placeholder="Plain text or markdown instructions for the universal agent"
                       />
 
                       <Show when={block.id === "guardrails"}>
@@ -530,9 +719,9 @@ export function PromptsSection(props: {
           </For>
 
           <Show when={blockFilter() === "all" || blockFilter() === "code-owned"}>
-            <div class="prompt-block-card code-owned">
+            <div class="prompt-block-card block-code-owned code-owned">
               <div class="prompt-block-card-head">
-                <h3>Code-owned Interface <span class="chip chip-kind">🔒 Immutable</span></h3>
+                <h3>🔒 Code-owned Interface <span class="chip chip-kind">Immutable</span></h3>
               </div>
               <p class="dim small">
                 The capability contract, the <code>Surface:</code> line, and the skill and
@@ -549,7 +738,7 @@ export function PromptsSection(props: {
           <div class="panel-title-row">
             <div>
               <h2>Effective Prompt Workbench</h2>
-              <p class="dim">What the model actually receives across active layers.</p>
+              <p class="dim">Assembled system prompt across active layers.</p>
             </div>
             <button
               class="prompt-copy-btn"
@@ -559,6 +748,24 @@ export function PromptsSection(props: {
                 ✓ Copied!
               </Show>
             </button>
+          </div>
+
+          {/* Quick Target Section Jump Strip ("clicking targets show relevant") */}
+          <div class="prompt-jump-strip">
+            <span class="dim small" style="margin-right: 2px;">Jump to:</span>
+            <For each={BLOCKS}>
+              {(b) => (
+                <button
+                  class="prompt-jump-btn"
+                  onClick={() => setSearchQuery(b.id === "operating-rules" ? "work in turns" : b.id === "guardrails" ? "guardrails:" : b.id === "surface-note" ? "surface:" : "you are vak")}
+                >
+                  {b.icon} {b.label}
+                </button>
+              )}
+            </For>
+            <Show when={searchQuery()}>
+              <button class="ghost small" onClick={() => setSearchQuery("")}>Clear jump</button>
+            </Show>
           </div>
 
           <Show when={overBudget()}>
@@ -578,6 +785,7 @@ export function PromptsSection(props: {
                     class={`prompt-provenance-segment ${LAYER_CSS_CLASS[d.layer] || "seed"}`}
                     style={{ width: `${pct}%` }}
                     title={`${d.block} (${LAYER_LABELS[d.layer]}): ${d.bytes}B (${pct}%)`}
+                    onClick={() => setSearchQuery(d.block)}
                   />
                 );
               }}
@@ -599,7 +807,11 @@ export function PromptsSection(props: {
                 {(d) => {
                   const pct = Math.round((d.bytes / totalBytes()) * 100);
                   return (
-                    <tr>
+                    <tr
+                      style="cursor: pointer;"
+                      onClick={() => setSearchQuery(d.block === "operating-rules" ? "rules" : d.block)}
+                      title="Click to search and highlight in prompt preview"
+                    >
                       <td><strong>{d.block}</strong></td>
                       <td>
                         <span class={`chip chip-tone-${d.layer === "seed" ? "neutral" : d.layer === "shared" ? "accent" : "info"}`} title={d.source ?? "built-in"}>
@@ -628,7 +840,7 @@ export function PromptsSection(props: {
                   value={previewRole()}
                   onChange={(e) => setPreviewRole(e.currentTarget.value)}
                 >
-                  <option value="">(default — no role)</option>
+                  <option value="">(default — universal)</option>
                   <For each={roles()!.roles}>
                     {(r) => <option value={r}>{r}</option>}
                   </For>

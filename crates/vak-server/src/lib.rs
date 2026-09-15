@@ -11498,12 +11498,21 @@ async fn put_agents(
 
 fn prompt_effective_payload(core: &vak_core::Core) -> serde_json::Value {
     let resolution = core.resolve_prompt(&core.capability_descriptors());
+    let (seed_content, _, _) = vak_core::prompts::seed(vak_core::APP_VERSION);
+    let seed_blocks = serde_json::json!({
+        "identity": seed_content.identity,
+        "operating-rules": seed_content.operating_rules,
+        "guardrails": seed_content.guardrails.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join("\n"),
+        "surface-note": seed_content.surface_notes.iter().map(|r| format!("- {r}")).collect::<Vec<_>>().join("\n"),
+    });
     serde_json::json!({
         "text": resolution.text,
         "fingerprint": resolution.fingerprint(),
         "estimated_tokens": resolution.text.len() / 4,
         "surface": core.surface().slug(),
         "layers": resolution.descriptors,
+        "blocks": resolution.blocks,
+        "seed_blocks": seed_blocks,
     })
 }
 

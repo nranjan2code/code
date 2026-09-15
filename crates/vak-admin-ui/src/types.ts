@@ -697,6 +697,8 @@ export interface PromptEffective {
   estimated_tokens: number;
   surface: string;
   layers: PromptLayerDescriptor[];
+  blocks?: Record<string, string>;
+  seed_blocks?: Record<string, string>;
 }
 
 export interface ConfigLayer {

@@ -341,6 +341,8 @@ pub struct Resolution {
     /// one does not appear: the question a reader has is where the text came
     /// from, not what was considered and discarded.
     pub descriptors: Vec<PromptLayerDescriptor>,
+    /// Winning / accumulated text for each individual prompt block.
+    pub blocks: std::collections::HashMap<String, String>,
 }
 
 impl Resolution {
@@ -584,7 +586,24 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
             PromptLayer::from_wire(&d.layer).map_or(u8::MAX, |l| l as u8),
         )
     });
-    Resolution { text, descriptors }
+    let mut blocks = std::collections::HashMap::new();
+    if !identity.is_empty() {
+        blocks.insert("identity".to_string(), identity);
+    }
+    if !operating_rules.is_empty() {
+        blocks.insert("operating-rules".to_string(), operating_rules);
+    }
+    if !guardrails.is_empty() {
+        blocks.insert("guardrails".to_string(), render_guardrails(&guardrails));
+    }
+    if !surface_notes.is_empty() {
+        blocks.insert("surface-note".to_string(), render_guardrails(&surface_notes));
+    }
+    Resolution {
+        text,
+        descriptors,
+        blocks,
+    }
 }
 
 fn normalize(rule: &str) -> String {
