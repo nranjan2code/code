@@ -822,8 +822,7 @@ fn has_credential(env_name: &str, cwd: &std::path::Path) -> bool {
         return true;
     }
     if let Some(user_env) = vak_config::user_env_path() {
-        if vak_config::read_env_file_var(&user_env, env_name)
-            .is_some_and(|v| !v.trim().is_empty())
+        if vak_config::read_env_file_var(&user_env, env_name).is_some_and(|v| !v.trim().is_empty())
         {
             return true;
         }
@@ -872,13 +871,7 @@ fn route_from_config(
         (config.provider.clone(), config.model.clone())
     };
 
-    route_selection(
-        provider,
-        model,
-        &p_src,
-        &m_src,
-        pinned,
-    )
+    route_selection(provider, model, &p_src, &m_src, pinned)
 }
 
 fn route_revision(
@@ -4720,40 +4713,18 @@ impl Core {
             Some(&self.inner.sessions_home),
         )?;
         let session_contract = session.header().map(|header| header.contract.clone());
-        let (provider, model) = match session_contract.as_ref() {
-            Some(contract) => {
-                let injected = self
-                    .inner
-                    .provider_instance
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                let provider = if let Some(provider) = injected {
-                    provider
-                } else {
-                    let auth = self.provider_auth_for_leg(
-                        &contract.provider,
-                        contract
-                            .route_ladder
-                            .first()
-                            .and_then(|leg| leg.credential_id.as_deref()),
-                    )?;
-                    let leg = contract.route_ladder.first().cloned().unwrap_or_else(|| {
-                        vak_llm::RouteLeg {
-                            provider: contract.provider.clone(),
-                            model: contract.model.clone(),
-                            dialect: vak_llm::EndpointDialect::default(),
-                            credential_id: None,
-                        }
-                    });
-                    self.inner
-                        .registry
-                        .get(&adapter_name_for_leg(&leg), &auth)?
-                };
-                (provider, contract.model.clone())
-            }
-            None => (self.provider()?, self.effective_model()),
-        };
+        // Per-turn routing: provider/model are always resolved from the live
+        // effective_route(), never from the session's FrozenContract. The
+        // contract is authority only for capabilities and permission_mode
+        // (security/audit boundaries). This means:
+        //   - A user changing provider in Settings takes effect on the next turn
+        //     of any open session, not just new sessions.
+        //   - The auto-routing algorithm (evidence, beliefs, v2 ordering) is
+        //     re-evaluated every turn, not frozen at admission.
+        //   - Subagents inherit the Core's current effective route, not the
+        //     parent session's admission snapshot.
+        //   - Per-turn dispatch is recorded in WorkReceipt; audit is preserved.
+        let (provider, model) = (self.provider()?, self.effective_model());
         // Rendered from the re-bound packet, not from the frozen string.
         //
         // The contract's admitted set is still the authority; only the
@@ -4906,21 +4877,29 @@ impl Core {
                 self.inner.config.request_timeout_secs,
             ))
         };
-        let route_legs = session_contract
-            .as_ref()
-            .map(|contract| contract.route_ladder.as_slice())
-            .unwrap_or(&[]);
-        let primary_leg = session_contract
-            .as_ref()
-            .and_then(|contract| contract.route_ladder.first().cloned())
-            .unwrap_or_else(|| vak_llm::RouteLeg {
-                provider: provider.name().to_string(),
-                model: model.clone(),
-                dialect: vak_llm::EndpointDialect::default(),
-                credential_id: None,
-            });
-        let (context_window, max_output) =
-            self.route_context_limits(&primary_leg, route_legs).await;
+        // Per-turn route planning: assemble a fresh ladder using the current
+        // evidence ledger, belief state, warm discovery cache, and demand facts
+        // from this turn's intent resolution. This replaces the admission-frozen
+        // ladder; the session header's route_ladder is now an initial snapshot.
+        let needs_tools = !self.tool_names().is_empty();
+        let turn_primary_credential_id = self
+            .provider_auth_for_leg(&self.effective_provider(), None)
+            .ok()
+            .and_then(|auth| auth.credential_id);
+        let turn_primary_leg = vak_llm::RouteLeg {
+            provider: provider.name().to_string(),
+            model: model.clone(),
+            dialect: vak_llm::EndpointDialect::for_provider(
+                provider.name(),
+                needs_tools || engagement.posture.demand.reasoning_required,
+            ),
+            credential_id: turn_primary_credential_id,
+        };
+        let turn_plan =
+            self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
+        let (context_window, max_output) = self
+            .route_context_limits(&turn_primary_leg, &turn_plan.ladder)
+            .await;
         cfg.context_policy.context_window = context_window;
         cfg.context_policy.max_output = max_output;
         let sp = &self.inner.config.stop_policy;
@@ -4992,20 +4971,18 @@ impl Core {
             .unwrap_or_default();
         cfg.sandbox = self.session_sandbox(&session_id);
 
-        // Phase B: materialize fallback legs beyond the primary provider.
-        // Unresolvable legs (missing key/registry) skip silently --
-        // receipts record whatever actually walked.
-        if let Some(contract) = session_contract.as_ref()
-            && contract.route_ladder.len() > 1
-        {
-            for leg in contract.route_ladder.iter().skip(1) {
-                if let Ok(auth) =
-                    self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
-                    && let Ok(p) = self.inner.registry.get(&adapter_name_for_leg(leg), &auth)
-                {
-                    cfg.ladder.push((p, leg.model.clone()));
-                    cfg.ladder_provider_names.push(leg.provider.clone());
-                }
+        // Per-turn fallback ladder: built from the freshly planned turn_plan,
+        // not the admission-frozen session contract. This reflects the current
+        // evidence ledger and belief state, so a provider that failed earlier
+        // this session or was demoted by the auto-routing algorithm is correctly
+        // ranked. Unresolvable legs (missing key/registry) skip silently.
+        for leg in turn_plan.ladder.iter().skip(1) {
+            if let Ok(auth) =
+                self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
+                && let Ok(p) = self.inner.registry.get(&adapter_name_for_leg(leg), &auth)
+            {
+                cfg.ladder.push((p, leg.model.clone()));
+                cfg.ladder_provider_names.push(leg.provider.clone());
             }
         }
 

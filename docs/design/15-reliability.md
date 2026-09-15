@@ -193,3 +193,74 @@ serving leg per dispatch (`CostRow.provider`).
 | Hibernation / wake | tokio timers collapse across sleep; watchdog bounds dead sockets; scheduler per-tick evaluation fires each missed slot once | scheduler catch-up tests |
 | Full restart | sessions append-only + resume; gateway bindings + task store persisted; telegram cursor re-synced by probe | existing resume/bindings suites |
 | Delivery while channel down | inbox chokepoint stores durably; transports best-effort | P6 zero-transports test |
+
+## §Turn-Level Routing
+
+**Status: shipped.**
+
+### Problem with session-frozen ladders
+
+The original Phase R design froze `provider`, `model`, and `route_ladder` into the
+`FrozenContract` at session creation (`start_session_with_route_for`). Every subsequent
+turn in that session read the frozen values unconditionally, which caused:
+
+- A user changing provider in Settings had zero effect on open sessions.
+- The auto-routing algorithm (`plan_route_ladder`: evidence, beliefs, v2 ordering,
+  demand-scoring) ran exactly once at admission, then was inert for the session's life.
+- If a provider failed mid-session the frozen ladder was always tried first, even if
+  the user had switched away from it.
+- Subagents inherited the parent session's frozen route rather than the current
+  effective route at spawn time.
+
+### Design change
+
+**Route planning is now per-turn, not per-session.**
+
+`run_turn_inner` (`vak-core/src/lib.rs`) now:
+
+1. Resolves `(provider, model)` from `Core::effective_route()` — always the live
+   operator selection, never the session header's initial snapshot.
+2. Calls `Core::plan_route_ladder(turn_primary_leg, Some(engagement.posture.demand))`
+   after intent resolution to assemble a fresh ladder using:
+   - Current evidence ledger (`routing-evidence.jsonl`, 30-day TTL)
+   - Session belief state (domain-weighted doubt, clears on success)
+   - Warm discovery cache (TTL 5 min)
+   - Demand facts from this turn's intent reading (not hardcoded constants)
+3. Uses the fresh `turn_plan.ladder` to populate `cfg.ladder` (fallback legs),
+   not `session_contract.route_ladder`.
+
+### What the FrozenContract still governs (immutable)
+
+| Field | Still frozen | Reason |
+|---|---|---|
+| `capabilities` | Yes | Security/audit boundary — which tools are admitted |
+| `permission_mode` | Yes | Security boundary — cannot escalate permissions mid-session |
+| `system_prompt` / `prompt_layers` | Yes | Drift detection and prompt attribution |
+| `app_version` | Yes | Audit context |
+
+### What changed to initial snapshot only
+
+| Field | Was | Now |
+|---|---|---|
+| `provider` | Dispatch authority | Admission snapshot for audit |
+| `model` | Dispatch authority | Admission snapshot for audit |
+| `route_ladder` | Dispatch authority | Admission snapshot for audit |
+
+### Audit preservation
+
+`WorkReceipt` records the exact provider, model, and attempt outcome for every
+dispatch, per turn. Per-turn audit is strictly richer than the previous
+session-level frozen record — you can now reconstruct which provider handled
+turn 3 even if the user switched providers between turn 2 and turn 3.
+
+### Affected call sites
+
+- `vak-core/src/lib.rs` — `run_turn_inner`: provider/model resolution + ladder assembly
+- `vak-agent/src/lib.rs` — `run_turn`, `run_judge`, `write_handoff`, managed-work
+  authoring: all read `self.config.model` (set per-turn by `run_turn_inner`)
+- `vak-server/src/lib.rs` — `configuration_mismatch` field: always `false` (concept retired)
+- `vak-server/src/admin.rs` — `stale_reasons`: `provider_changed`/`model_changed` removed
+- `vak-server/src/gateway.rs` — `session_matches_route`: no longer checks initial contract
+- `vak-server/src/agent_chats.rs` — candidate sessions no longer filtered by initial route
+- `vak-session/src/types.rs` — `FrozenContract` doc comments updated
+- `AGENTS.md` — invariant 7 updated

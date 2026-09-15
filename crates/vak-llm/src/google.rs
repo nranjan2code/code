@@ -143,8 +143,7 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                             }
                             parts.push(call_part);
                         }
-                        ContentBlock::ToolResult { .. }
-                        | ContentBlock::Image { .. } => {}
+                        ContentBlock::ToolResult { .. } | ContentBlock::Image { .. } => {}
                     }
                 }
                 if !text.is_empty() {

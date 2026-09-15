@@ -1,4 +1,3 @@
-use std::io::BufRead;
 use crate::{AppState, agents, register_handle};
 use axum::{
     Json,
@@ -6,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use std::io::BufRead;
 use vak_session::types::{
     AgentIdentity, ConversationContext, ConversationOrigin, Entry, EntryPayload, SessionHeader,
 };
@@ -122,17 +122,15 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             && h.agent.as_ref().is_some_and(|a| a.id == identity.id)
             && h.conversation.as_ref() == Some(&conversation)
         {
-            let provider_ok = core.provider_configured(&h.contract.provider);
-            if provider_ok {
-                let effective = core.effective_route();
-                let route_matches = h.contract.provider == effective.provider
-                    && h.contract.model == effective.model;
-                let has_content = std::fs::File::open(entry.path())
-                    .ok()
-                    .map(|f| std::io::BufReader::new(f).lines().count() > 1)
-                    .unwrap_or(false);
-                candidates.push((h, has_content, route_matches));
-            }
+            let has_content = std::fs::File::open(entry.path())
+                .ok()
+                .map(|f| std::io::BufReader::new(f).lines().count() > 1)
+                .unwrap_or(false);
+            // Per-turn routing: provider/model are resolved fresh each turn,
+            // so every session for this conversation is a valid candidate
+            // regardless of its initial frozen contract values.
+            let route_matches = true;
+            candidates.push((h, has_content, route_matches));
         }
     }
     candidates.sort_by_key(|(h, has_content, route_matches)| {

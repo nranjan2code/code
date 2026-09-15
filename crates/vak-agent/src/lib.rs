@@ -826,17 +826,9 @@ impl Agent {
 
             let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
-            let model = {
-                let session = self.session.lock().await;
-                if self.config.model.is_empty() {
-                    session
-                        .header()
-                        .map(|h| h.contract.model.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.config.model.clone()
-                }
-            };
+            // config.model is set by run_turn_inner from effective_model() on
+            // every turn, so it always reflects the current live provider route.
+            let model = self.config.model.clone();
 
             // Long-horizon guard: estimate the projection; on overflow,
             // summarize older turns into a compaction entry and retry
@@ -1576,13 +1568,8 @@ impl Agent {
             .header()
             .map(|header| header.session_id.clone())
             .ok_or_else(|| "managed work requires a session header".to_string())?;
-        let model = self
-            .session
-            .lock()
-            .await
-            .header()
-            .map(|header| header.contract.model.clone())
-            .unwrap_or_else(|| self.config.model.clone());
+        // config.model reflects the per-turn effective route set by run_turn_inner.
+        let model = self.config.model.clone();
         let authoring_request = ChatRequest {
             model: model.clone(),
             system: Some("You author durable work contracts. Return only one strict JSON object with keys objective, constraints, assumptions, criteria, and items. Each item must have item_id, title, instructions, dependencies, owner, required, readonly, path_claims, and criterion_ids. Owner must be one of parent_agent, subagent, flow, tool, or human. Criterion kind must be one of shell, file_exists, file_contains, tool_succeeded, flow_completed, external_receipt, or semantic. Do not include markdown or commentary.".into()),
@@ -2295,13 +2282,8 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Result<Vec<goal::CriterionVerdict>, String> {
-        let model = {
-            let session = self.session.lock().await;
-            session
-                .header()
-                .map(|h| h.contract.model.clone())
-                .unwrap_or_else(|| self.config.model.clone())
-        };
+        // config.model reflects the per-turn effective route set by run_turn_inner.
+        let model = self.config.model.clone();
         let digest = {
             let session = self.session.lock().await;
             let msgs = session.derive_messages();
@@ -2354,13 +2336,8 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Result<String, LlmError> {
-        let model = {
-            let session = self.session.lock().await;
-            session
-                .header()
-                .map(|h| h.contract.model.clone())
-                .unwrap_or_else(|| self.config.model.clone())
-        };
+        // config.model reflects the per-turn effective route set by run_turn_inner.
+        let model = self.config.model.clone();
         let digest = {
             let session = self.session.lock().await;
             let msgs = session.derive_messages();

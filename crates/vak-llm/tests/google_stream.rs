@@ -261,7 +261,11 @@ fn body_sanitizes_unsupported_schema_keywords_for_gemini() {
     assert!(params.get("additionalProperties").is_none());
     assert!(params.get("patternProperties").is_none());
     assert!(params.get("definitions").is_none());
-    assert!(params["properties"]["nested"].get("additionalProperties").is_none());
+    assert!(
+        params["properties"]["nested"]
+            .get("additionalProperties")
+            .is_none()
+    );
     assert_eq!(params["properties"]["name"]["type"], "string");
 }
 
@@ -295,4 +299,3 @@ fn body_serializes_thought_signature_on_assistant_function_calls() {
     assert_eq!(model_parts[0]["functionCall"]["name"], "get_weather");
     assert_eq!(model_parts[0]["thoughtSignature"], "sig_abc_123");
 }
-

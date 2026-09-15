@@ -6488,10 +6488,10 @@ async fn transcript(
             "count": msgs.len(),
             "usage": s.total_usage(),
             "contract": contract,
-            "configuration_mismatch": s.header().is_some_and(|header| {
-                header.contract.provider != state.core.effective_provider()
-                    || header.contract.model != state.core.effective_model()
-            }),
+            // Per-turn routing: every turn resolves provider/model from the
+            // live effective_route(), so the header's initial contract snapshot
+            // is no longer a mismatch indicator. Field kept for API compat.
+            "configuration_mismatch": false,
             "messages": msgs,
         }))
         .into_response();
@@ -6504,10 +6504,10 @@ async fn transcript(
                 "count": msgs.len(),
                 "usage": s.total_usage(),
                 "contract": contract,
-                "configuration_mismatch": s.header().is_some_and(|header| {
-                    header.contract.provider != state.core.effective_provider()
-                        || header.contract.model != state.core.effective_model()
-                }),
+                // Per-turn routing: every turn resolves provider/model from the
+                // live effective_route(), so the header's initial contract snapshot
+                // is no longer a mismatch indicator. Field kept for API compat.
+                "configuration_mismatch": false,
                 "messages": msgs,
             }))
             .into_response()

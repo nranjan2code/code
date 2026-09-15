@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.0.89 — Full-stack local macOS distribution, LaunchAgent gateway integration, and release pipeline verification shipped: macOS application bundle `/Applications/Vak.app`, desktop client, delivery worker, persistent gateway LaunchAgent, and clean-room release gating verified.**
+**Status: v3.0.90 — Dynamic per-turn provider/model route planning and runtime provider switching shipped: route ladder re-planned fresh on every turn from live effective route and belief state.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -100,18 +100,23 @@ shipped behaviour rather than a proposal.
    async call; partial results survive.
 6. **Unsafe is denied** workspace-wide except process-group kill in
    `vak-tools/src/bash.rs` (annotated).
-7. **Transient provider failures retry within the frozen route ladder
-   committed at admission.** The ladder is part of the contract, so
-   walking it never changes the contract. Never dispatch outside the
-   frozen ladder; never switch providers outside it; retries honor
-   `Retry-After` under a per-step watchdog deadline; run-level endurance
-   re-attempts the same turn after cancel-aware backoff when nothing was
-   committed. Informed transience (429 with Retry-After, explicit
-   overload) feeds endurance but does not trip the shared circuit breaker;
-   blind failures (network loss, deadlines, truncated/malformed streams)
-   do. An open breaker fails fast; endurance paces its waits to the
-   remaining cooldown so the half-close probe gets through. Never retry
-   user aborts.
+7. **Transient provider failures retry within the turn's route ladder,
+   which is planned fresh on every turn.** The turn ladder is assembled
+   at dispatch time from `Core::plan_route_ladder()` using the live
+   evidence ledger, session belief state, warm discovery cache, and the
+   operator's current `effective_route()` — never from a session-frozen
+   snapshot. Walking the turn ladder never changes the effective route.
+   Retries honor `Retry-After` under a per-step watchdog deadline;
+   run-level endurance re-attempts the same turn after cancel-aware
+   backoff when nothing was committed. Informed transience (429 with
+   Retry-After, explicit overload) feeds endurance but does not trip
+   the shared circuit breaker; blind failures (network loss, deadlines,
+   truncated/malformed streams) do. An open breaker fails fast;
+   endurance paces its waits to the remaining cooldown so the half-close
+   probe gets through. Never retry user aborts. The session header's
+   `FrozenContract.route_ladder` / `.provider` / `.model` fields are the
+   **initial admission snapshot** for audit only; `WorkReceipt` is the
+   authoritative per-turn dispatch record.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
    the canonical user `.env` at `~/vak-home/.env`
    (`vak_config::user_env_path`, gitignored), loaded via

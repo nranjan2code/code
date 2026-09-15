@@ -203,10 +203,7 @@ pub(crate) async fn session_transcript_admin(
                     crate::open_historical_session(&state, &session_id)
                         .and_then(|session| session.header().map(|header| header.contract.clone()))
                 });
-            let configuration_mismatch = contract.as_ref().is_some_and(|contract| {
-                contract.provider != state.core.effective_provider()
-                    || contract.model != state.core.effective_model()
-            });
+            let configuration_mismatch = false; // Per-turn routing: contract snapshot != mismatch
             Json(serde_json::json!({
                 "session_id": session_id,
                 "entries": page,
@@ -566,12 +563,10 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                 if header.cwd != effective_workspace {
                     reasons.push("workspace_changed");
                 }
-                if header.contract.provider != provider {
-                    reasons.push("provider_changed");
-                }
-                if header.contract.model != model {
-                    reasons.push("model_changed");
-                }
+                // Per-turn routing: provider/model are resolved fresh each turn
+                // from effective_route(), so the header's initial snapshot no
+                // longer constitutes a stale reason. WorkReceipt records actual
+                // per-turn dispatch for audit.
                 reasons
             })
             .unwrap_or_else(|| {

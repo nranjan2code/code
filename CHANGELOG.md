@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.90 — 2026-09-15
+
+- Dynamic per-turn provider and model routing: decoupled provider and model selection from session admission, assembling the route ladder dynamically on every turn from the live evidence ledger, session belief state, and current effective route.
+- Runtime provider switching across desktop and gateway: changes to the global workspace route or channel provider take immediate effect on the very next turn without stale route retention or unnecessary session rotation.
+- Gateway channel rotation isolation: preserved explicit channel-scoped route overrides while allowing same-workspace sessions to seamlessly route to new providers and models per turn.
+- Capability drift independence: ensured capability descriptor drift acts as an authoritative, independent session rotation boundary.
+
 ## 3.0.89 — 2026-09-15
 
 - Full-stack local macOS release & packaging: end-to-end verified build and install for macOS `/Applications/Vak.app`, `vak` CLI, `vak-desktop`, `vak-delivery-worker`, and embedded frontend bundles.

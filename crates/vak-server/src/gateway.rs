@@ -2581,16 +2581,42 @@ fn session_matches_route(
     provider: &str,
     model: &str,
 ) -> bool {
+    // A channel-scoped route override (revision prefix "channel:") is an
+    // explicit operator-level binding: the session must have been created
+    // with the overridden provider/model to be reusable — otherwise the
+    // channel would silently get a different identity than intended (rule 23).
+    //
+    // Without an explicit override the current provider/model is always the
+    // effective_route() which every turn already re-evaluates, so there is
+    // nothing to rotate on — the existing session is always compatible.
+    let has_channel_override = provider.contains('/') || {
+        // Detect the "channel:p:m" revision stamp that binding_route emits
+        // for overrides. We check by whether the caller got the route from an
+        // override or from effective_route(): overrides set revision to
+        // "channel:provider:model", effective_route returns a hash/timestamp.
+        // The simplest proxy: provider/model differ from the workspace default.
+        let route = core.effective_route();
+        provider != route.provider || model != route.model
+    };
     session.header().is_some_and(|header| {
-        header.cwd.as_path() == core.cwd().as_path()
-            && header.contract.provider == provider
-            && header.contract.model == model
-            && core
-                .conversation_context()
-                .is_none_or(|expected| header.conversation.as_ref() == Some(expected))
-        // Prompt layers and capabilities are live session state. They are
-        // refreshed at the next turn boundary; the ledger retains the
-        // immutable contract used by each historical turn.
+        let workspace_ok = header.cwd.as_path() == core.cwd().as_path();
+        let conv_ok = core
+            .conversation_context()
+            .is_none_or(|expected| header.conversation.as_ref() == Some(expected));
+        let capabilities_ok = header.contract.capabilities == core.capability_descriptors();
+        if has_channel_override {
+            // Channel route overrides: session must match the pinned route.
+            // Per-turn routing does not apply across explicit bot/channel splits.
+            workspace_ok
+                && conv_ok
+                && capabilities_ok
+                && header.contract.provider == provider
+                && header.contract.model == model
+        } else {
+            // No override: per-turn routing handles provider/model, so any
+            // session in this workspace+conversation is valid if capabilities match.
+            workspace_ok && conv_ok && capabilities_ok
+        }
     })
 }
 

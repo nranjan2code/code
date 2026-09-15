@@ -47,18 +47,28 @@ pub struct CapabilityDescriptor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrozenContract {
     pub app_version: String,
+    /// Provider at session admission — **initial snapshot only**.
+    ///
+    /// Not authoritative for turn dispatch since the per-turn routing change
+    /// (docs/design/15-reliability.md §Turn-Level Routing). Each turn's actual
+    /// provider is resolved from `Core::effective_route()` and recorded in its
+    /// `WorkReceipt`. This field is retained for audit history.
     pub provider: String,
+    /// Model at session admission — **initial snapshot only**.
+    ///
+    /// Same caveat as `provider`: not dispatch authority post per-turn routing.
+    /// Use `WorkReceipt.attempt_leg()` to reconstruct which model served a turn.
     pub model: String,
-    /// Frozen route ladder (docs/design/15-reliability.md): ordered candidate
-    /// legs committed at admission; dispatch walks it top-down on typed
-    /// failures. Walking the ladder IS contract execution — never a
-    /// mid-contract switch. Empty/missing ⇒ a single-model header, which
-    /// includes every header written before ladders existed.
+    /// Route ladder at session admission — **initial snapshot only**.
+    ///
+    /// Since per-turn routing, each turn calls `Core::plan_route_ladder()` fresh
+    /// using the live evidence ledger, belief state, and `effective_route()`.
+    /// This field records what the ladder looked like when the session was opened.
+    /// Empty/missing ⇒ a single-model header written before ladders existed.
     #[serde(default)]
     pub route_ladder: Vec<vak_llm::RouteLeg>,
     /// Objective the ladder was ordered for (Phase R): "utility" |
-    /// "balanced" | "quality-critical". Empty on headers written before
-    /// objectives existed.
+    /// "balanced" | "quality-critical". Initial snapshot; see `route_ladder`.
     #[serde(default)]
     pub route_objective: String,
     /// Freeze-time routing warnings (thin chain, dominant failure
@@ -68,10 +78,12 @@ pub struct FrozenContract {
     #[serde(default)]
     pub route_annotations: Vec<String>,
     pub system_prompt: String,
+    /// **Authoritative** for the session's lifetime: the permission mode
+    /// admitted when this session was created. Never changed mid-session.
     pub permission_mode: String,
-    /// Authoritative capability packet admitted for this session. Prompt
+    /// **Authoritative** capability packet admitted for this session. Prompt
     /// advertisement, model tool schemas, dispatch, and audit projections
-    /// must all derive from this exact list.
+    /// must all derive from this exact list. Never changed mid-session.
     #[serde(default)]
     pub capabilities: Vec<CapabilityDescriptor>,
     /// Which prompt layer contributed each block, with a digest of the text
