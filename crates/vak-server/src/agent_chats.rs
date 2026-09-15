@@ -1,3 +1,4 @@
+use std::io::BufRead;
 use crate::{AppState, agents, register_handle};
 use axum::{
     Json,
@@ -10,7 +11,6 @@ use vak_session::types::{
 };
 
 pub(crate) fn header(path: &std::path::Path) -> Result<SessionHeader, String> {
-    use std::io::BufRead;
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let line = std::io::BufReader::new(file)
         .lines()
@@ -122,17 +122,23 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             && h.agent.as_ref().is_some_and(|a| a.id == identity.id)
             && h.conversation.as_ref() == Some(&conversation)
         {
-            let effective = core.effective_route();
-            let route_matches = h.contract.provider == effective.provider
-                && h.contract.model == effective.model;
             let provider_ok = core.provider_configured(&h.contract.provider);
-            if route_matches && provider_ok {
-                candidates.push(h);
+            if provider_ok {
+                let effective = core.effective_route();
+                let route_matches = h.contract.provider == effective.provider
+                    && h.contract.model == effective.model;
+                let has_content = std::fs::File::open(entry.path())
+                    .ok()
+                    .map(|f| std::io::BufReader::new(f).lines().count() > 1)
+                    .unwrap_or(false);
+                candidates.push((h, has_content, route_matches));
             }
         }
     }
-    candidates.sort_by_key(|h| h.created_at);
-    if let Some(h) = candidates.last() {
+    candidates.sort_by_key(|(h, has_content, route_matches)| {
+        (*has_content, *route_matches, h.created_at)
+    });
+    if let Some((h, _, _)) = candidates.last() {
         let sid = h.session_id.clone();
         if state.get(&sid).is_none() {
             let session = match core.open_session(&sid).await {

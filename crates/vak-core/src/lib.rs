@@ -3771,26 +3771,16 @@ impl Core {
 
     /// True when a run on `provider` would find credentials right now.
     pub fn provider_configured(&self, provider: &str) -> bool {
-        match provider {
-            "ollama" => true,
-            "google" => {
-                ["GEMINI_API_KEY", "GOOGLE_API_KEY"].iter().any(|env| {
-                    self.provider_secret(env)
-                        .is_some_and(|key| !key.trim().is_empty())
-                }) || self
-                    .provider_secret("GEMINI_API_KEYS")
-                    .is_some_and(|keys| keys.split([',', '\n']).any(|key| !key.trim().is_empty()))
-            }
-            other => {
-                let singular = self
-                    .provider_secret(Self::provider_env_var(other).unwrap_or(""))
-                    .is_some_and(|key| !key.trim().is_empty());
-                let plural = Self::provider_pool_env_var(other)
-                    .and_then(|env| self.provider_secret(env))
-                    .is_some_and(|keys| keys.split([',', '\n']).any(|key| !key.trim().is_empty()));
-                singular || plural
-            }
+        if self
+            .inner
+            .provider_instance
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
+            return true;
         }
+        self.provider_auth_for_leg(provider, None).is_ok()
     }
 
     /// Secret provenance for administrative displays. Values are deliberately
