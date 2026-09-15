@@ -3461,6 +3461,12 @@ a.tab-btn {
 .prompt-filter-btn.block-surface-note.active { background: #10b981; border-color: #10b981; color: #fff; }
 .prompt-filter-btn.block-code-owned.active { background: #64748b; border-color: #64748b; color: #fff; }
 
+.dot-identity { background: #8b5cf6; }
+.dot-rules { background: #06b6d4; }
+.dot-guardrails { background: #f59e0b; }
+.dot-surface { background: #10b981; }
+.dot-code { background: #64748b; }
+
 .prompt-inherited-preview {
   margin-top: 8px;
   background: var(--surface-raised);

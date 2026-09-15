@@ -17,8 +17,7 @@ import type {
 interface BlockDef {
   id: PromptBlock;
   label: string;
-  icon: string;
-  color: string;
+  dotClass: string;
   help: string;
 }
 
@@ -26,29 +25,25 @@ const BLOCKS: BlockDef[] = [
   {
     id: "identity",
     label: "Identity",
-    icon: "👤",
-    color: "#8b5cf6",
+    dotClass: "dot-identity",
     help: "Who the agent is. The narrowest setting that defines this wins.",
   },
   {
     id: "operating-rules",
     label: "Operating rules",
-    icon: "⚡",
-    color: "#06b6d4",
+    dotClass: "dot-rules",
     help: "How it works. The narrowest setting that defines this wins.",
   },
   {
     id: "guardrails",
     label: "Guardrails",
-    icon: "🛡️",
-    color: "#f59e0b",
+    dotClass: "dot-guardrails",
     help: "Guardrails from every scope apply together. A narrower scope cannot remove one.",
   },
   {
     id: "surface-note",
     label: "Surface note",
-    icon: "🌐",
-    color: "#10b981",
+    dotClass: "dot-surface",
     help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across scopes.",
   },
 ];
@@ -79,69 +74,69 @@ const SURFACES = ["cli", "desktop", "server", "background", "subagent", "telegra
 const UNIVERSAL_TEMPLATES: Record<PromptBlock, { label: string; snippet: string }[]> = {
   "identity": [
     {
-      label: "🧠 Universal Agent",
+      label: "Universal Agent",
       snippet: "You are vak, a general-purpose agent working on the user's behalf. You do real work, not just talk about it: answering questions, researching, writing, analysing data, building software, running commands, managing files, fetching information, drafting documents, and operating systems. Engineering, research, writing, data, operations, and ordinary questions are all equally your work. Read each request for what it actually asks and do that; never reshape it into a different kind of task because that kind is more familiar.",
     },
     {
-      label: "🔬 Research & Synthesis",
+      label: "Research & Synthesis",
       snippet: "You are an analytical researcher and synthesizer. Formulate evidence-backed arguments, cross-examine claims, cite verifiable sources, and explicitly identify nuances, assumptions, and edge cases.",
     },
     {
-      label: "✍️ Writing & Briefings",
+      label: "Executive Writing",
       snippet: "You are an executive writer and communications specialist. Craft clear, high-impact prose with crisp executive summaries, structured headers, and active voice.",
     },
     {
-      label: "📊 Data & Quantitative",
+      label: "Data & Insights",
       snippet: "You are a quantitative data analyst. Uncover statistical patterns, highlight anomalies, structure insights into comparative tables, and quantify decision impacts.",
     },
     {
-      label: "⚡ Systems & Ops",
+      label: "Systems & Ops",
       snippet: "You are a systems operations specialist. Prioritize site reliability, non-destructive validation, clear runbooks, and robust telemetry.",
     },
   ],
   "operating-rules": [
     {
-      label: "+ Outcome-directed prose",
+      label: "Outcome-directed prose",
       snippet: "- Read each request for what it actually asks and do that; never reshape it into a different kind of task because that kind is more familiar.",
     },
     {
-      label: "+ Grounded verification",
+      label: "Grounded verification",
       snippet: "- Always verify state before making assertions or edits. Present concrete facts and evidence rather than assumptions.",
     },
     {
-      label: "+ Structured & scannable",
+      label: "Structured and scannable",
       snippet: "- Keep prose structured, dense, and scannable. Use tables and bulleted lists where appropriate.",
     },
   ],
   "guardrails": [
     {
-      label: "+ Confirm destructive actions",
+      label: "Confirm destructive actions",
       snippet: "- Always ask for human confirmation before deleting files, dropping tables, or executing irreversible system commands",
     },
     {
-      label: "+ Protect privacy & secrets",
+      label: "Protect privacy and secrets",
       snippet: "- Never print, log, or leak API keys, auth tokens, passwords, or personal identifying information",
     },
     {
-      label: "+ Source grounding",
+      label: "Ground in verified sources",
       snippet: "- Ground assertions in verified sources. Distinguish observed data from model inference",
     },
     {
-      label: "+ Format constraints",
+      label: "Structured output format",
       snippet: "- Return structured output as requested without conversational preamble or pleasantries",
     },
   ],
   "surface-note": [
     {
-      label: "+ Public channel caution",
+      label: "Public channel caution",
       snippet: "- This is a shared channel; assume anyone can inspect the conversation",
     },
     {
-      label: "+ Background automation",
+      label: "Background automation",
       snippet: "- Running unattended: prioritize non-blocking, idempotent operations",
     },
     {
-      label: "+ Read-only persona",
+      label: "Read-only observation",
       snippet: "- Perform inspection and reporting only: do not perform any state-modifying actions",
     },
   ],
@@ -326,7 +321,6 @@ export function PromptsSection(props: {
   function startOverride(block: PromptBlock) {
     const existing = blockText(block);
     const baseline = inheritedText(block);
-    // Pre-fill with existing override or active baseline so user sees what they are overriding!
     setDraft(existing ?? baseline ?? "");
     setEditing(block);
     setHighlightedBlock(block);
@@ -456,11 +450,11 @@ export function PromptsSection(props: {
               class="ghost small"
               onClick={() => setShowHistory(!showHistory())}
             >
-              🕒 History ({history().length})
+              Revision history ({history().length})
             </button>
           </div>
 
-          {/* Color-Coded Filter Strip */}
+          {/* Clean Segmented Filter Strip */}
           <div class="prompt-blocks-filter">
             <button
               class="prompt-filter-btn"
@@ -476,7 +470,8 @@ export function PromptsSection(props: {
                   classList={{ active: blockFilter() === b.id }}
                   onClick={() => setBlockFilter(b.id)}
                 >
-                  <span>{b.icon}</span> {b.label}
+                  <span class={`dot ${b.dotClass}`} style="margin-right: 5px;" />
+                  {b.label}
                 </button>
               )}
             </For>
@@ -485,7 +480,8 @@ export function PromptsSection(props: {
               classList={{ active: blockFilter() === "code-owned" }}
               onClick={() => setBlockFilter("code-owned")}
             >
-              🔒 Code-owned
+              <span class="dot dot-code" style="margin-right: 5px;" />
+              Code-owned
             </button>
           </div>
 
@@ -545,17 +541,17 @@ export function PromptsSection(props: {
                   >
                     <div class="prompt-block-card-head">
                       <h3>
-                        <span>{block.icon}</span>
+                        <span class={`dot ${block.dotClass}`} />
                         {block.label}
                         <Show
                           when={own() !== null}
                           fallback={
                             <span class="chip chip-kind" title="Inherited from higher tier">
-                              📦 {from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"}
+                              Inherited from {from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "shipped default"}
                             </span>
                           }
                         >
-                          <span class="chip chip-ok">set in {scopeLabel(props.scope())}</span>
+                          <span class="chip chip-ok">Custom ({scopeLabel(props.scope())})</span>
                         </Show>
                       </h3>
 
@@ -564,7 +560,7 @@ export function PromptsSection(props: {
                           <span class="dim small mono">{own()!.length} chars</span>
                         </Show>
                         <Show when={own() === null && baseline() !== null}>
-                          <span class="dim small mono">{baseline()!.length} chars (original)</span>
+                          <span class="dim small mono">{baseline()!.length} chars (baseline)</span>
                         </Show>
                         <Show when={editing() !== block.id}>
                           <button
@@ -614,7 +610,7 @@ export function PromptsSection(props: {
                             >
                               <div class="prompt-inherited-preview">
                                 <div class="prompt-inherited-banner">
-                                  <span>Original / Active Prompt ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"})</span>
+                                  <span>Active baseline ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "shipped default"})</span>
                                   <span>{baseline()!.length} characters</span>
                                 </div>
                                 <pre class="prompt-inherited-text">{baseline()}</pre>
@@ -627,7 +623,7 @@ export function PromptsSection(props: {
                       {/* IN EDITING MODE: Show Universal Templates & Baseline Comparison */}
                       <Show when={UNIVERSAL_TEMPLATES[block.id]?.length}>
                         <div class="prompt-template-pills">
-                          <span class="prompt-template-label">Universal Presets:</span>
+                          <span class="prompt-template-label">Templates:</span>
                           <For each={UNIVERSAL_TEMPLATES[block.id]}>
                             {(tmpl) => (
                               <button
@@ -645,7 +641,7 @@ export function PromptsSection(props: {
                       {/* Overriding Baseline Comparison */}
                       <Show when={baseline() !== null}>
                         <details class="prompt-override-baseline">
-                          <summary>👁️ Compare with original baseline ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "Shipped default"})</summary>
+                          <summary>Compare with baseline ({from().map((d) => LAYER_LABELS[d.layer]).join(", ") || "shipped default"})</summary>
                           <pre>{baseline()}</pre>
                         </details>
                       </Show>
@@ -655,7 +651,7 @@ export function PromptsSection(props: {
                         rows={block.id === "identity" ? 8 : 11}
                         value={draft()}
                         onInput={(e) => setDraft(e.currentTarget.value)}
-                        placeholder="Plain text or markdown instructions for the universal agent"
+                        placeholder="Plain text or instructions for the universal agent"
                       />
 
                       <Show when={block.id === "guardrails"}>
@@ -701,7 +697,7 @@ export function PromptsSection(props: {
                                 }
                                 fallback={
                                   <span class="chip chip-kind" title="Inherited from higher tier — cannot be removed here">
-                                    🔒 {LAYER_LABELS[d.layer]} ({d.bytes}B)
+                                    {LAYER_LABELS[d.layer]} ({d.bytes}B)
                                   </span>
                                 }
                               >
@@ -721,7 +717,7 @@ export function PromptsSection(props: {
           <Show when={blockFilter() === "all" || blockFilter() === "code-owned"}>
             <div class="prompt-block-card block-code-owned code-owned">
               <div class="prompt-block-card-head">
-                <h3>🔒 Code-owned Interface <span class="chip chip-kind">Immutable</span></h3>
+                <h3><span class="dot dot-code" /> Code-owned Interface <span class="chip chip-kind">Immutable</span></h3>
               </div>
               <p class="dim small">
                 The capability contract, the <code>Surface:</code> line, and the skill and
@@ -744,22 +740,23 @@ export function PromptsSection(props: {
               class="prompt-copy-btn"
               onClick={() => copyToClipboard(renderedText(), "prompt")}
             >
-              <Show when={copiedPrompt()} fallback={<>📋 Copy Full Prompt</>}>
-                ✓ Copied!
+              <Show when={copiedPrompt()} fallback={<>Copy prompt</>}>
+                Copied
               </Show>
             </button>
           </div>
 
-          {/* Quick Target Section Jump Strip ("clicking targets show relevant") */}
+          {/* Quick Target Section Jump Strip */}
           <div class="prompt-jump-strip">
-            <span class="dim small" style="margin-right: 2px;">Jump to:</span>
+            <span class="dim small" style="margin-right: 2px;">Jump:</span>
             <For each={BLOCKS}>
               {(b) => (
                 <button
                   class="prompt-jump-btn"
                   onClick={() => setSearchQuery(b.id === "operating-rules" ? "work in turns" : b.id === "guardrails" ? "guardrails:" : b.id === "surface-note" ? "surface:" : "you are vak")}
                 >
-                  {b.icon} {b.label}
+                  <span class={`dot ${b.dotClass}`} style="margin-right: 4px;" />
+                  {b.label}
                 </button>
               )}
             </For>
@@ -770,7 +767,7 @@ export function PromptsSection(props: {
 
           <Show when={overBudget()}>
             <p class="posture-warning small" style="margin-top: 6px;">
-              ⚠️ This prompt is injected on every turn of every session. Over ~1,500 tokens it
+              This prompt is injected on every turn of every session. Over ~1,500 tokens it
               becomes a recurring context cost worth trimming.
             </p>
           </Show>
@@ -878,7 +875,7 @@ export function PromptsSection(props: {
                   class="prompt-search-clear"
                   onClick={() => setSearchQuery("")}
                 >
-                  ✕
+                  Clear
                 </button>
               </Show>
             </div>

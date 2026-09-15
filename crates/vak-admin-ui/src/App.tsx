@@ -6745,7 +6745,7 @@ function Settings() {
             </Show>
 
             <div class="settings-info-box">
-              <h3>⚡ Distributed Fabric Topology</h3>
+              <h3>Distributed Fabric Topology</h3>
               <p>
                 The distributed bus handles multi-tenant events with Merkle/W3C causal lineage and dead-letter queues.
                 Local nodes fall back to high-throughput shared-memory channels when NATS is not configured.
