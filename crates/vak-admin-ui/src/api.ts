@@ -403,18 +403,22 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => handle(r)),
 
-  permissionRules: (scope: ConfigScope = "project"): Promise<PermissionRulesView> =>
-    fetch(`/config/permissions?scope=${scope}`).then((r) => handle(r)),
+  permissionRules: (scope: ConfigScope = "project"): Promise<PermissionRulesView> => {
+    const s = scope === "project" ? "workspace" : scope;
+    return fetch(`/config/permissions?scope=${s}`).then((r) => handle(r));
+  },
 
   setPermissionRules: (
     scope: ConfigScope,
     lists: { allow?: string[]; ask?: string[]; deny?: string[] },
-  ): Promise<{ scope: ConfigScope; effective: PermissionRules }> =>
-    fetch("/config/permissions", {
+  ): Promise<{ scope: ConfigScope; effective: PermissionRules }> => {
+    const s = scope === "project" ? "workspace" : scope;
+    return fetch("/config/permissions", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...lists, scope }),
-    }).then((r) => handle(r)),
+      body: JSON.stringify({ ...lists, scope: s }),
+    }).then((r) => handle(r));
+  },
 
   setMode: (mode: string): Promise<void> =>
     fetch("/config/mode", {

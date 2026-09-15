@@ -1,29 +1,28 @@
-/// The commitment portfolio (docs/design/47-commitment-kernel.md).
+/// The commitment portfolio & intent kernel suite (docs/design/47-commitment-kernel.md).
 ///
-/// Four questions, in the order an operator actually asks them: what does this
-/// agent owe, what will it do next and why, what is stuck and on what, and can
-/// I believe the ones it says are finished.
+/// Four questions, in the order an operator actually asks them:
+///   1. What does this agent owe?
+///   2. What will it do next and why?
+///   3. What is stuck and on what?
+///   4. Can I believe the ones it says are finished?
 ///
-/// The last question is the one no other agent surface answers, so it gets the
-/// most design. `EvidenceMeter` renders the satisfaction lattice — asserted <
-/// cited < observed < attested — with the *required* level marked against the
-/// *achieved* one. A commitment closed `fulfilled` on the model's own say-so
-/// and one closed on a check the runtime ran are completely different facts,
-/// and until you draw them differently they look identical in a status column.
-///
-/// Rows, not cards. This is a ledger: the operator scans a column, compares
-/// across rows, and needs density. Cards would let four commitments fill a
-/// screen that should hold thirty.
+/// Rows, not cards, for the ledger. Rich 7-axis simulation for the intent kernel.
+/// Zero markdown/emoji icons: styling is built from SVG status dots, tone chips,
+/// and crisp typography.
 
-import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
 
 import { api } from "./api";
 import { PageHeader } from "./display";
-import { pushToast } from "./store";
+import { navigate, pushToast, route } from "./store";
 import { timeAgo } from "./time";
 import type {
   Commitment,
+  CommitmentEpisode,
   CommitmentPriority,
+  CriterionState,
+  IntentExplain,
+  IntentPolicy,
   Satisfaction,
   Verdict,
 } from "./types";
@@ -47,10 +46,7 @@ function rank(strength: Satisfaction): number {
 /// marks the level this work is actually held to. When achieved falls short,
 /// the shortfall carries the accent — this is a live gap that blocks a
 /// closure, which is exactly what the one accent colour is reserved for.
-///
-/// Never colour alone (DESIGN.md): the fill difference is a second channel,
-/// and the whole thing carries an `aria-label` stating both levels in words.
-function EvidenceMeter(props: {
+export function EvidenceMeter(props: {
   achieved: Satisfaction;
   required: Satisfaction;
   compact?: boolean;
@@ -215,9 +211,6 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
       setOpen(false);
       props.onDone();
     } catch (error) {
-      // A refused closure is the closure invariant speaking, and its message
-      // names the evidence that was missing. Surfacing it verbatim is the
-      // whole point: the operator learns the rule by hitting it.
       pushToast("alert", String(error instanceof Error ? error.message : error));
     } finally {
       setBusy(false);
@@ -242,7 +235,7 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
           <For each={VERDICTS}>{(v) => <option value={v}>{v}</option>}</For>
         </select>
         <input
-          placeholder="Why"
+          placeholder="Closing note / reason"
           value={note()}
           onInput={(e) => setNote(e.currentTarget.value)}
           aria-label="Closing note"
@@ -285,8 +278,17 @@ function Row(props: {
         <td class="crow-objective">
           <span class="crow-title">{props.commitment.spec.objective}</span>
           <span class="crow-sub">
-            {props.commitment.spec.reading.act} · {props.commitment.spec.reading.horizon} ·{" "}
-            {props.commitment.spec.reading.stakes}
+            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+              {props.commitment.spec.reading.act}
+            </span>
+            {" · "}
+            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+              {props.commitment.spec.reading.horizon}
+            </span>
+            {" · "}
+            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+              {props.commitment.spec.reading.stakes}
+            </span>
             <Show when={props.commitment.consecutive_stalls > 0}>
               {" · "}
               <span class="crow-stall">
@@ -327,43 +329,101 @@ function Row(props: {
                   <span class="k">episodes</span>
                   <span class="v">{props.commitment.episodes.length}</span>
                 </div>
+                <div>
+                  <span class="k">min satisfaction</span>
+                  <span class="v">{props.commitment.spec.min_satisfaction}</span>
+                </div>
+                <Show when={props.commitment.spec.economics.lifetime_budget_usd}>
+                  <div>
+                    <span class="k">budget cap</span>
+                    <span class="v">${props.commitment.spec.economics.lifetime_budget_usd?.toFixed(2)}</span>
+                  </div>
+                </Show>
                 <Show when={props.commitment.blocker}>
                   <div>
                     <span class="k">blocked</span>
-                    <span class="v">{props.commitment.blocker}</span>
+                    <span class="v" style={{ "color": "var(--red)" }}>{props.commitment.blocker}</span>
                   </div>
                 </Show>
                 <Show when={props.commitment.drift.length > 0}>
                   <div>
-                    <span class="k">drift</span>
-                    <span class="v">{props.commitment.drift.join("; ")}</span>
+                    <span class="k">drift alerts</span>
+                    <span class="v" style={{ "color": "var(--yellow)" }}>{props.commitment.drift.join("; ")}</span>
                   </div>
                 </Show>
               </div>
 
+              {/* Criteria List */}
               <Show when={props.commitment.criteria.length > 0}>
-                <ul class="cdetail-criteria">
-                  <For each={props.commitment.criteria}>
-                    {(criterion) => (
-                      <li>
-                        <span
-                          class="crit-pip"
-                          classList={{
-                            "crit-pass": criterion.result?.kind === "passed",
-                            "crit-fail": criterion.result?.kind === "failed",
-                            "crit-unknown": criterion.result?.kind === "unknown",
-                          }}
-                        />
-                        <span class="cdetail-stmt">{criterion.statement}</span>
-                        <Show when={criterion.strength}>
-                          <span class="cdetail-strength">{criterion.strength}</span>
-                        </Show>
-                      </li>
-                    )}
-                  </For>
-                </ul>
+                <div style={{ "margin-top": "14px" }}>
+                  <span class="eyebrow">Satisfaction Criteria ({props.commitment.criteria.length})</span>
+                  <ul class="cdetail-criteria">
+                    <For each={props.commitment.criteria}>
+                      {(criterion: CriterionState) => (
+                        <li>
+                          <span
+                            class="crit-pip"
+                            classList={{
+                              "crit-pass": criterion.result?.kind === "passed",
+                              "crit-fail": criterion.result?.kind === "failed",
+                              "crit-unknown": criterion.result?.kind === "unknown",
+                            }}
+                          />
+                          <span class="cdetail-stmt">
+                            <strong>{criterion.statement}</strong>
+                            <Show when={criterion.result?.kind === "passed"}>
+                              <span class="dim" style={{ "display": "block", "font-size": "11px", "margin-top": "2px" }}>
+                                Evidence: {(criterion.result as { kind: "passed"; evidence: string }).evidence}
+                              </span>
+                            </Show>
+                            <Show when={criterion.result && ("reason" in criterion.result)}>
+                              <span class="dim" style={{ "display": "block", "font-size": "11px", "margin-top": "2px", "color": "var(--red)" }}>
+                                Failure: {(criterion.result as { reason: string }).reason}
+                              </span>
+                            </Show>
+                          </span>
+                          <Show when={criterion.strength}>
+                            <span class="cdetail-strength chip chip-phrase">{criterion.strength}</span>
+                          </Show>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
               </Show>
 
+              {/* Episodes Timeline */}
+              <Show when={props.commitment.episodes.length > 0}>
+                <div style={{ "margin-top": "14px" }}>
+                  <span class="eyebrow">Work Episode History ({props.commitment.episodes.length})</span>
+                  <div class="episode-timeline">
+                    <For each={props.commitment.episodes}>
+                      {(ep: CommitmentEpisode) => (
+                        <div class="episode-item">
+                          <span class="mono" style={{ "font-size": "11px" }}>{ep.episode_id.slice(0, 8)}</span>
+                          <a
+                            href={`#/sessions/${ep.session_id}`}
+                            class="mono dim"
+                            style={{ "text-decoration": "underline" }}
+                            title="Inspect Session Transcript"
+                          >
+                            session:{ep.session_id.slice(0, 8)}
+                          </a>
+                          <span class="dim">{timeAgo(ep.started_at)}</span>
+                          <span>
+                            <span class={`advancement-badge ${ep.advancement?.kind ?? "advanced"}`}>
+                              {ep.advancement?.kind ?? "completed"}
+                            </span>
+                          </span>
+                          <span class="num">${ep.spend_usd.toFixed(3)}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+
+              {/* Closure Controls / Status */}
               <Show
                 when={props.commitment.closure}
                 fallback={
@@ -374,7 +434,8 @@ function Row(props: {
               >
                 {(closure) => (
                   <div class="cdetail-closure">
-                    closed <b>{closure().verdict}</b> on {closure().strength} evidence
+                    closed <strong style={{ "color": "var(--text)" }}>{closure().verdict}</strong> on{" "}
+                    <span class="chip chip-phrase">{closure().strength}</span> evidence
                     {closure().note ? ` — ${closure().note}` : ""}
                   </div>
                 )}
@@ -387,88 +448,641 @@ function Row(props: {
   );
 }
 
+const PRESET_INTENT_PROMPTS = [
+  {
+    title: "Code Bug Fix & Test",
+    prompt: "Fix the race condition in the worker pool and run all cargo integration tests.",
+  },
+  {
+    title: "Direct Query",
+    prompt: "What is the capital of France and what is the current local time there?",
+  },
+  {
+    title: "Database Refactoring",
+    prompt: "Migrate the billing schema to add support for multiple currencies, with backward compatibility.",
+  },
+  {
+    title: "Security Audit",
+    prompt: "Inspect system authentication logs for failed SSH logins and generate a summary report.",
+  },
+  {
+    title: "Executive Briefing",
+    prompt: "Draft a quarterly executive briefing for leadership on platform stability and token burn.",
+  },
+];
+
+function IntentSimulator() {
+  const [testPrompt, setTestPrompt] = createSignal(PRESET_INTENT_PROMPTS[0].prompt);
+  const [debouncedPrompt, setDebouncedPrompt] = createSignal(PRESET_INTENT_PROMPTS[0].prompt);
+  const [surface, setSurface] = createSignal("");
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    const p = testPrompt();
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      setDebouncedPrompt(p.trim());
+    }, 250);
+  });
+
+  const [explain] = createResource(
+    () => ({ prompt: debouncedPrompt(), surface: surface() || undefined }),
+    ({ prompt, surface: s }) => {
+      if (!prompt) return null;
+      return api.explainIntent(prompt, s);
+    },
+  );
+
+  return (
+    <div class="intent-sim-container">
+      <div class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Intent Kernel & 7-Axis Classifier</h2>
+            <p class="dim">
+              The commitment kernel analyzes work requests across 7 orthogonal axes before any turn runs,
+              determining capability slicing, commitment promotion, and satisfaction standards.
+            </p>
+          </div>
+        </div>
+
+        {/* Presets */}
+        <div class="eyebrow" style={{ "margin-bottom": "6px" }}>Sample Request Presets</div>
+        <div class="intent-presets-grid">
+          <For each={PRESET_INTENT_PROMPTS}>
+            {(preset) => (
+              <button
+                type="button"
+                class="intent-preset-btn"
+                classList={{ active: testPrompt() === preset.prompt }}
+                onClick={() => setTestPrompt(preset.prompt)}
+              >
+                <span class="intent-preset-title">{preset.title}</span>
+                <span class="intent-preset-prompt">{preset.prompt}</span>
+              </button>
+            )}
+          </For>
+        </div>
+
+        {/* Custom Input */}
+        <div class="form-row" style={{ "margin-top": "14px" }}>
+          <label>Test Prompt</label>
+          <textarea
+            rows={2}
+            value={testPrompt()}
+            onInput={(e) => setTestPrompt(e.currentTarget.value)}
+            placeholder="Type any instruction to test intent classification..."
+            style={{ "width": "100%", "font-family": "var(--font-sans)", "font-size": "13px" }}
+          />
+        </div>
+      </div>
+
+      <Show when={explain.loading}>
+        <div class="skeleton-rows">
+          <div class="skeleton-row" />
+          <div class="skeleton-row" />
+        </div>
+      </Show>
+
+      <Show when={explain()}>
+        {(exp: () => IntentExplain) => (
+          <>
+            {/* 7-Axes Radar Deck */}
+            <div class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h3>7-Axis Behavioral Reading</h3>
+                  <p class="dim">Inferred work characteristics driving runtime subsystems.</p>
+                </div>
+                <span class="chip chip-tone-success">zero-cost classification</span>
+              </div>
+
+              <div class="intent-axes-grid">
+                <div class="axis-card act">
+                  <div class="axis-header">
+                    <span class="axis-name">Act</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.act}</span>
+                  <span class="axis-desc">Drives capability slice & stop profile</span>
+                </div>
+
+                <div class="axis-card horizon">
+                  <div class="axis-header">
+                    <span class="axis-name">Horizon</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.horizon}</span>
+                  <span class="axis-desc">Drives managed admission & commitment creation</span>
+                </div>
+
+                <div class="axis-card stakes">
+                  <div class="axis-header">
+                    <span class="axis-name">Stakes</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.stakes}</span>
+                  <span class="axis-desc">Drives approval ceiling & checkpoint requirement</span>
+                </div>
+
+                <div class="axis-card evidence">
+                  <div class="axis-header">
+                    <span class="axis-name">Evidence</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.evidence}</span>
+                  <span class="axis-desc">Minimum satisfaction strength to close</span>
+                </div>
+
+                <div class="axis-card clarity">
+                  <div class="axis-header">
+                    <span class="axis-name">Clarity</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.clarity}</span>
+                  <span class="axis-desc">Ask vs. state-an-assumption rule</span>
+                </div>
+
+                <div class="axis-card modality">
+                  <div class="axis-header">
+                    <span class="axis-name">Modality</span>
+                  </div>
+                  <span class="axis-val">{exp().engagement.limits.required_modalities.join(", ") || "text"}</span>
+                  <span class="axis-desc">Ladder model filtering & format</span>
+                </div>
+
+                <div class="axis-card attendance">
+                  <div class="axis-header">
+                    <span class="axis-name">Attendance</span>
+                  </div>
+                  <span class="axis-val">{exp().reading.attendance}</span>
+                  <span class="axis-desc">HIL mode & delivery cadence</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Derived Engagement & Narrowing */}
+            <div class="intent-engagement-grid">
+              <div class="panel">
+                <div class="panel-title-row">
+                  <div>
+                    <h3>Derived Engagement Posture</h3>
+                    <p class="dim">Safety boundaries calculated from the 7 axes.</p>
+                  </div>
+                </div>
+                <div style={{ "display": "grid", "grid-template-columns": "140px 1fr", "gap": "10px", "font-size": "12px" }}>
+                  <span class="dim">Managed Mode:</span>
+                  <span><strong>{exp().engagement.posture.managed ? "Yes (Durable Session)" : "No (Direct)"}</strong></span>
+
+                  <span class="dim">Open Commitment:</span>
+                  <span><strong>{exp().engagement.posture.open_commitment ? "Yes" : "No"}</strong></span>
+
+                  <span class="dim">Approval Ceiling:</span>
+                  <span><span class="chip chip-phrase">{exp().engagement.limits.approval_ceiling}</span></span>
+
+                  <span class="dim">Permission Ceiling:</span>
+                  <span><span class="chip chip-phrase">{exp().engagement.limits.permission_ceiling}</span></span>
+
+                  <span class="dim">Stop Condition:</span>
+                  <span><code>{exp().engagement.posture.stop}</code></span>
+
+                  <span class="dim">Context Profile:</span>
+                  <span><code>{exp().engagement.posture.context}</code></span>
+
+                  <span class="dim">Delivery Cadence:</span>
+                  <span>{exp().engagement.posture.delivery.cadence} ({exp().engagement.posture.delivery.urgency})</span>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title-row">
+                  <div>
+                    <h3>Progressive Capability Slicing</h3>
+                    <p class="dim">What this request narrows versus doing nothing.</p>
+                  </div>
+                </div>
+
+                <Show
+                  when={exp().narrows.length > 0}
+                  fallback={<p class="dim">No additional restrictions applied beyond default posture.</p>}
+                >
+                  <div class="narrowing-list">
+                    <For each={exp().narrows}>
+                      {(narrow) => (
+                        <div class="narrowing-item">
+                          <span class="narrowing-bullet">·</span>
+                          <span>{narrow}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={exp().model_visible}>
+                  <div style={{ "margin-top": "12px" }}>
+                    <span class="eyebrow">Model Visible Framing</span>
+                    <pre style={{ "background": "var(--surface-raised)", "padding": "8px 10px", "border-radius": "4px", "font-size": "11px", "white-space": "pre-wrap", "margin": "4px 0 0" }}>
+                      {exp().model_visible}
+                    </pre>
+                  </div>
+                </Show>
+              </div>
+            </div>
+          </>
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function KernelPolicyView() {
+  const [policy] = createResource(() => api.intentPolicy());
+
+  return (
+    <div class="policy-grid">
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Intent Kernel Configuration</h2>
+            <p class="dim">Governing prompt reading, classification confidence, and autonomy.</p>
+          </div>
+          <Show when={policy()}>
+            {(p) => (
+              <span class={`chip ${p().intent.enabled ? "chip-tone-success" : "chip-tone-warning"}`}>
+                {p().intent.enabled ? "enabled" : "disabled"}
+              </span>
+            )}
+          </Show>
+        </div>
+
+        <Show when={policy()} fallback={<div class="skel skel-block" />}>
+          {(p: () => IntentPolicy) => (
+            <div style={{ "display": "grid", "grid-template-columns": "180px 1fr", "gap": "10px", "font-size": "12px" }}>
+              <span class="dim">Capability Slicing:</span>
+              <span>{p().intent.slice_capabilities ? "Active (Progressive Disclosure)" : "Inactive"}</span>
+
+              <span class="dim">Accept Confidence:</span>
+              <span class="num">{(p().intent.accept_confidence * 100).toFixed(0)}%</span>
+
+              <span class="dim">Provisional Confidence:</span>
+              <span class="num">{(p().intent.provisional_confidence * 100).toFixed(0)}%</span>
+
+              <span class="dim">Autonomy Level:</span>
+              <span><span class="chip chip-phrase">{p().intent.autonomy}</span></span>
+
+              <span class="dim">Max Classification Budget:</span>
+              <span class="num">${p().intent.max_classify_usd.toFixed(3)}</span>
+
+              <span class="dim">Escalation Strategy:</span>
+              <span><code>{p().intent.escalate}</code></span>
+            </div>
+          )}
+        </Show>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Commitment Engine Constraints</h2>
+            <p class="dim">Rules governing commitment lifecycle, budgets, and stall detection.</p>
+          </div>
+          <Show when={policy()}>
+            {(p) => (
+              <span class={`chip ${p().commitment.enabled ? "chip-tone-success" : "chip-tone-warning"}`}>
+                {p().commitment.enabled ? "enabled" : "disabled"}
+              </span>
+            )}
+          </Show>
+        </div>
+
+        <Show when={policy()} fallback={<div class="skel skel-block" />}>
+          {(p: () => IntentPolicy) => (
+            <div style={{ "display": "grid", "grid-template-columns": "180px 1fr", "gap": "10px", "font-size": "12px" }}>
+              <span class="dim">Consecutive Stall Limit:</span>
+              <span><strong>{p().commitment.stall_limit} episodes</strong></span>
+
+              <span class="dim">Review Cadence:</span>
+              <span>{p().commitment.review_every_hours ? `Every ${p().commitment.review_every_hours}h` : "On each episode"}</span>
+
+              <span class="dim">Default Time-To-Live:</span>
+              <span>{p().commitment.default_ttl_days ? `${p().commitment.default_ttl_days} days` : "Unlimited"}</span>
+
+              <span class="dim">Lifetime Budget Cap:</span>
+              <span>{p().commitment.lifetime_budget_usd ? `$${p().commitment.lifetime_budget_usd!.toFixed(2)}` : "No limit set"}</span>
+            </div>
+          )}
+        </Show>
+
+        <div style={{ "margin-top": "16px", "padding-top": "12px", "border-top": "1px solid var(--border-soft)" }}>
+          <span class="eyebrow">Satisfaction Lattice Standards</span>
+          <div style={{ "display": "flex", "flex-direction": "column", "gap": "6px", "margin-top": "6px", "font-size": "11.5px" }}>
+            <div><strong style={{ "color": "var(--text)" }}>1. Asserted:</strong> The model said so on its own say-so.</div>
+            <div><strong style={{ "color": "var(--text)" }}>2. Cited:</strong> The model said so, accompanied by verified citations.</div>
+            <div><strong style={{ "color": "var(--text)" }}>3. Observed:</strong> The runtime checked the fact against host reality.</div>
+            <div><strong style={{ "color": "var(--text)" }}>4. Attested:</strong> An independent external party or test affirmed it.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function Commitments() {
-  const [showAll, setShowAll] = createSignal(false);
-  const [data, { refetch }] = createResource(showAll, (all) => api.commitments(all));
+  type CommTab = "portfolio" | "intent" | "policy";
+  const [activeTab, setActiveTab] = createSignal<CommTab>("portfolio");
+
+  createEffect(() => {
+    const r = route().split("?", 1)[0];
+    if (r === "#/commitments/intent") setActiveTab("intent");
+    else if (r === "#/commitments/policy") setActiveTab("policy");
+    else if (r === "#/commitments/portfolio" || r === "#/commitments") setActiveTab("portfolio");
+  });
+
+  const switchTab = (tab: CommTab) => {
+    setActiveTab(tab);
+    navigate(`#/commitments/${tab}`);
+  };
+
+  const [phaseFilter, setPhaseFilter] = createSignal<string>("all");
+  const [evidenceFilter, setEvidenceFilter] = createSignal<string>("all");
+  const [searchQuery, setSearchQuery] = createSignal<string>("");
+
+  const [data, { refetch }] = createResource(() => api.commitments(true));
 
   const priorityFor = (id: string) =>
     data()?.priorities.find((p) => p.commitment_id === id);
 
+  // Filtered Commitments
+  const filteredCommitments = createMemo(() => {
+    const list = data()?.commitments ?? [];
+    const pf = phaseFilter();
+    const ef = evidenceFilter();
+    const q = searchQuery().trim().toLowerCase();
+
+    return list.filter((c) => {
+      // Phase match
+      if (pf !== "all") {
+        if (pf === "active" && c.phase !== "active") return false;
+        if (pf === "blocked" && c.phase !== "blocked") return false;
+        if (pf === "suspended" && c.phase !== "suspended") return false;
+        if (pf === "closed" && c.phase !== "closed") return false;
+      }
+      // Evidence match
+      if (ef !== "all") {
+        if (c.spec.min_satisfaction !== ef) return false;
+      }
+      // Search match
+      if (q) {
+        const matchesObj = c.spec.objective.toLowerCase().includes(q);
+        const matchesId = c.commitment_id.toLowerCase().includes(q);
+        const matchesCrit = c.criteria.some((cr) => cr.statement.toLowerCase().includes(q));
+        if (!matchesObj && !matchesId && !matchesCrit) return false;
+      }
+      return true;
+    });
+  });
+
+  // Posture Metrics
+  const metrics = createMemo(() => {
+    const list = data()?.commitments ?? [];
+    const active = list.filter((c) => c.phase === "active").length;
+    const blocked = list.filter((c) => c.phase === "blocked").length;
+    const suspended = list.filter((c) => c.phase === "suspended").length;
+    const closed = list.filter((c) => c.phase === "closed").length;
+    const totalSpend = list.reduce((acc, c) => acc + c.spend_usd, 0);
+
+    const metCount = list.filter((c) => {
+      const achieved = c.closure?.strength ?? "asserted";
+      return rank(achieved) >= rank(c.spec.min_satisfaction);
+    }).length;
+    const metRatio = list.length > 0 ? Math.round((metCount / list.length) * 100) : 100;
+
+    return { active, blocked, suspended, closed, totalSpend, metRatio };
+  });
+
   return (
-    <section>
+    <div class="view">
       <PageHeader
-        title="Commitments"
-        description="What this agent owes, what it will work next, and what evidence closed the rest."
+        title="Commitments & Intent Kernel"
+        description="Durable obligations, 7-axis behavioral readings, deterministic scheduling arithmetic, and satisfaction lattice proof."
       />
 
-      <div class="toolbar">
-        <label class="chk">
-          <input
-            type="checkbox"
-            checked={showAll()}
-            onChange={(e) => setShowAll(e.currentTarget.checked)}
-          />
-          Include closed
-        </label>
-        <button type="button" class="ghost small" onClick={() => void refetch()}>
-          Refresh
+      {/* Posture Masthead */}
+      <div class="commitments-posture-deck">
+        <div class="stat-card">
+          <span class="stat-card-label">Active Obligations</span>
+          <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
+            <strong style={{ "font-size": "18px", "font-weight": "700" }}>
+              {metrics().active}
+            </strong>
+            <Show when={metrics().blocked > 0}>
+              <span class="chip chip-tone-danger">{metrics().blocked} blocked</span>
+            </Show>
+            <Show when={metrics().suspended > 0}>
+              <span class="chip chip-tone-warning">{metrics().suspended} waiting</span>
+            </Show>
+          </div>
+          <span class="stat-card-hint">
+            {metrics().closed} closed / historical
+          </span>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-card-label">Evidence Satisfaction</span>
+          <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
+            <strong style={{ "font-size": "18px", "font-weight": "700" }}>
+              {metrics().metRatio}%
+            </strong>
+            <span class="chip chip-tone-success">standards met</span>
+          </div>
+          <span class="stat-card-hint">Lattice verified</span>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-card-label">Incurred Portfolio Spend</span>
+          <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
+            <strong style={{ "font-size": "18px", "font-weight": "700" }}>
+              ${metrics().totalSpend.toFixed(3)}
+            </strong>
+          </div>
+          <span class="stat-card-hint">Total episodes spend</span>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-card-label">Intent Classification</span>
+          <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
+            <span class="chip chip-tone-info">7-Axis Kernel Active</span>
+          </div>
+          <span class="stat-card-hint">Progressive capability slicing</span>
+        </div>
+      </div>
+
+      {/* Subnav Tabs */}
+      <div class="commitments-tab-bar">
+        <button
+          type="button"
+          class="commitments-tab-btn"
+          classList={{ active: activeTab() === "portfolio" }}
+          onClick={() => switchTab("portfolio")}
+        >
+          Active Portfolio
+          <Show when={data()?.commitments.length}>
+            <span class="nav-badge" style={{ "margin-left": "4px" }}>{data()?.commitments.length}</span>
+          </Show>
+        </button>
+        <button
+          type="button"
+          class="commitments-tab-btn"
+          classList={{ active: activeTab() === "intent" }}
+          onClick={() => switchTab("intent")}
+        >
+          Intent Kernel & 7-Axis Simulator
+        </button>
+        <button
+          type="button"
+          class="commitments-tab-btn"
+          classList={{ active: activeTab() === "policy" }}
+          onClick={() => switchTab("policy")}
+        >
+          Kernel Policy & Standards
         </button>
       </div>
 
-      <Switch>
-        <Match when={data.loading}>
-          <div class="skeleton-rows" aria-busy="true" aria-label="Loading commitments">
-            <For each={[0, 1, 2]}>{() => <div class="skeleton-row" />}</For>
+      {/* Tab 1: Active Portfolio */}
+      <Show when={activeTab() === "portfolio"}>
+        <div class="commitments-filter-toolbar">
+          <input
+            placeholder="Search commitments by objective, id, criteria..."
+            value={searchQuery()}
+            onInput={(e) => setSearchQuery(e.currentTarget.value)}
+            style={{ "min-width": "260px", "flex": "1" }}
+          />
+
+          <div class="chips">
+            <button
+              class="chip-btn"
+              classList={{ active: phaseFilter() === "all" }}
+              onClick={() => setPhaseFilter("all")}
+            >
+              All Phases
+            </button>
+            <button
+              class="chip-btn"
+              classList={{ active: phaseFilter() === "active" }}
+              onClick={() => setPhaseFilter("active")}
+            >
+              Active
+            </button>
+            <button
+              class="chip-btn"
+              classList={{ active: phaseFilter() === "blocked" }}
+              onClick={() => setPhaseFilter("blocked")}
+            >
+              Blocked
+            </button>
+            <button
+              class="chip-btn"
+              classList={{ active: phaseFilter() === "suspended" }}
+              onClick={() => setPhaseFilter("suspended")}
+            >
+              Suspended
+            </button>
+            <button
+              class="chip-btn"
+              classList={{ active: phaseFilter() === "closed" }}
+              onClick={() => setPhaseFilter("closed")}
+            >
+              Closed
+            </button>
           </div>
-        </Match>
-        <Match when={data.error}>
-          <div class="empty empty-teach">
-            <strong>Could not load commitments.</strong>
-            <p>{String(data.error)}</p>
+
+          <div class="chips">
+            <button
+              class="chip-btn"
+              classList={{ active: evidenceFilter() === "all" }}
+              onClick={() => setEvidenceFilter("all")}
+            >
+              All Levels
+            </button>
+            <For each={LATTICE}>
+              {(l) => (
+                <button
+                  class="chip-btn"
+                  classList={{ active: evidenceFilter() === l }}
+                  onClick={() => setEvidenceFilter(l)}
+                >
+                  {l}
+                </button>
+              )}
+            </For>
           </div>
-        </Match>
-        <Match when={(data()?.commitments.length ?? 0) === 0}>
-          {/* Teaches the mechanism rather than saying "nothing here": the
-              reason the list is empty is itself the useful fact. */}
-          <div class="empty empty-teach">
-            <strong>No commitments open.</strong>
-            <p>
-              vak opens one when a request reads as lasting beyond this session —
-              something recurring, or work with a done-condition worth checking
-              later. Short tasks never create one, so an empty list here usually
-              means everything asked of it so far was finishable in the moment.
-            </p>
-          </div>
-        </Match>
-        <Match when={data()}>
-          <table class="ctable">
-            <thead>
-              <tr>
-                <th class="sr-only">State</th>
-                <th>Objective</th>
-                <th>Evidence</th>
-                <th>Criteria</th>
-                <th class="num">Spend</th>
-                <th>Priority</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={data()!.commitments}>
-                {(commitment) => (
-                  <Row
-                    commitment={commitment}
-                    priority={priorityFor(commitment.commitment_id)}
-                    onChange={() => void refetch()}
-                  />
-                )}
-              </For>
-            </tbody>
-          </table>
-        </Match>
-      </Switch>
-    </section>
+
+          <button type="button" class="ghost" onClick={() => void refetch()}>
+            Refresh
+          </button>
+        </div>
+
+        <Switch>
+          <Match when={data.loading}>
+            <div class="skeleton-rows" aria-busy="true" aria-label="Loading commitments">
+              <For each={[0, 1, 2]}>{() => <div class="skeleton-row" />}</For>
+            </div>
+          </Match>
+          <Match when={data.error}>
+            <div class="empty empty-teach">
+              <strong>Could not load commitments.</strong>
+              <p>{String(data.error)}</p>
+            </div>
+          </Match>
+          <Match when={(data()?.commitments.length ?? 0) === 0}>
+            <div class="empty empty-teach">
+              <strong>No commitments open.</strong>
+              <p>
+                vak opens one when a request reads as lasting beyond this session —
+                something recurring, or work with a done-condition worth checking
+                later. Short tasks never create one, so an empty list here usually
+                means everything asked of it so far was finishable in the moment.
+              </p>
+            </div>
+          </Match>
+          <Match when={filteredCommitments().length === 0}>
+            <div class="empty">
+              No commitments match your active phase, evidence, or search filters.
+            </div>
+          </Match>
+          <Match when={filteredCommitments().length > 0}>
+            <table class="ctable">
+              <thead>
+                <tr>
+                  <th class="sr-only">State</th>
+                  <th>Objective & 7-Axis Reading</th>
+                  <th>Evidence (Achieved vs Required)</th>
+                  <th>Criteria</th>
+                  <th class="num">Spend</th>
+                  <th>Priority (Why)</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={filteredCommitments()}>
+                  {(commitment) => (
+                    <Row
+                      commitment={commitment}
+                      priority={priorityFor(commitment.commitment_id)}
+                      onChange={() => void refetch()}
+                    />
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
+      </Show>
+
+      {/* Tab 2: Intent Kernel & 7-Axis Simulator */}
+      <Show when={activeTab() === "intent"}>
+        <IntentSimulator />
+      </Show>
+
+      {/* Tab 3: Kernel Policy & Standards */}
+      <Show when={activeTab() === "policy"}>
+        <KernelPolicyView />
+      </Show>
+    </div>
   );
 }
-
-export { EvidenceMeter };

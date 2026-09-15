@@ -3806,3 +3806,450 @@ a.tab-btn {
   color: #fff;
 }
 
+/* ==========================================================================
+   Permissions & Security Center Modernization
+   ========================================================================== */
+
+.security-posture-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) {
+  .security-posture-deck {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.security-invariants-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  font-size: 11.5px;
+}
+
+.security-tab-bar {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 3px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+.security-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 550;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.security-tab-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.security-tab-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Gate Simulator */
+.sim-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sim-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+.sim-action-btn {
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sim-action-btn:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.sim-action-btn.active {
+  border-color: var(--accent);
+  background: var(--surface-active);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.sim-action-btn .sim-tool {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.sim-action-btn .sim-arg {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+.sim-verdict-box {
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sim-verdict-box.allow {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, var(--surface-raised) 100%);
+}
+.sim-verdict-box.ask {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, var(--surface-raised) 100%);
+}
+.sim-verdict-box.deny {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, var(--surface-raised) 100%);
+}
+
+.sim-verdict-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.sim-verdict-title.allow { color: #10b981; }
+.sim-verdict-title.ask { color: #f59e0b; }
+.sim-verdict-title.deny { color: #ef4444; }
+
+.sim-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.sim-trace-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.sim-trace-step.hit {
+  color: var(--text);
+  font-weight: 600;
+}
+.sim-trace-step .step-mark {
+  width: 16px;
+  text-align: center;
+  font-family: var(--mono, monospace);
+}
+
+/* Rulebook Lists */
+.rulebook-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .rulebook-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.rulebook-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+.rulebook-col.deny { border-top: 3px solid #ef4444; }
+.rulebook-col.ask { border-top: 3px solid #f59e0b; }
+.rulebook-col.allow { border-top: 3px solid #10b981; }
+.rulebook-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* ==========================================================================
+   Commitments & Intent Kernel Suite Modernization
+   ========================================================================== */
+
+.commitments-posture-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) {
+  .commitments-posture-deck {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .commitments-posture-deck {
+    grid-template-columns: 1fr;
+  }
+}
+
+.commitments-tab-bar {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 3px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+.commitments-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 550;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.commitments-tab-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.commitments-tab-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.commitments-filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+/* 7-Axis Intent Simulator */
+.intent-sim-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.intent-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.intent-preset-btn {
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.intent-preset-btn:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.intent-preset-btn.active {
+  border-color: var(--accent);
+  background: var(--surface-active);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.intent-preset-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.intent-preset-prompt {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intent-axes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.axis-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  transition: transform 0.15s ease;
+}
+.axis-card:hover {
+  transform: translateY(-1px);
+}
+.axis-card.act { border-top: 3px solid #8b5cf6; }
+.axis-card.horizon { border-top: 3px solid #06b6d4; }
+.axis-card.stakes { border-top: 3px solid #f59e0b; }
+.axis-card.evidence { border-top: 3px solid #10b981; }
+.axis-card.clarity { border-top: 3px solid #38bdf8; }
+.axis-card.modality { border-top: 3px solid #6366f1; }
+.axis-card.attendance { border-top: 3px solid #14b8a6; }
+
+.axis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.axis-name {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+.axis-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.axis-desc {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+/* Engagement & Narrowing */
+.intent-engagement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 800px) {
+  .intent-engagement-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.narrowing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.narrowing-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+  background: var(--surface);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+}
+.narrowing-bullet {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* Episode Timeline in Row Expansion */
+.episode-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.episode-item {
+  display: grid;
+  grid-template-columns: 110px 140px minmax(0, 1fr) 90px 90px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+@media (max-width: 768px) {
+  .episode-item {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+.advancement-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.advancement-badge.advanced { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.advancement-badge.learned { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
+.advancement-badge.blocked { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.advancement-badge.stalled { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+
+/* Policy Grid */
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 800px) {
+  .policy-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+

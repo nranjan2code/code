@@ -10,6 +10,7 @@ import { Home } from "./Home";
 import { OperationsCenter } from "./OperationsCenter";
 import { Commitments } from "./Commitments";
 import { PromptsSection } from "./Prompts";
+import { SecurityCenter } from "./SecurityCenter";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -3486,61 +3487,7 @@ function SearchView() {
 // ---- Security --------------------------------------------------------------
 
 function Security() {
-  const [kind, setKind] = createSignal("");
-  // The source function, not the fetcher, is what Solid tracks — reading
-  // `kind()` inside the fetcher (the old `() => api.security(...)` form)
-  // runs untracked, so clicking a filter chip never re-fetched until
-  // something else happened to trigger a refetch.
-  const [events, { refetch }] = createResource(kind, (k) => api.security(500, k || undefined));
-
-  return (
-    <div class="view">
-      <PageHeader title="Security" description="Every sign-in, blocked action, key change, and chat decision vak has recorded." />
-      <div class="toolbar">
-        <div class="chips">
-          <For each={SEC_KINDS}>
-            {(k) => (
-              <button
-                class="chip-btn"
-                classList={{ active: kind() === k.value }}
-                onClick={() => setKind(k.value)}
-                title={k.value}
-              >
-                {k.label}
-              </button>
-            )}
-          </For>
-        </div>
-        <span class="spacer" />
-        <button class="ghost" onClick={() => refetch()}>Refresh</button>
-      </div>
-      <Show when={!events.loading} fallback={<div class="empty">Loading…</div>}>
-        <Show
-          when={(events()?.events.length ?? 0) > 0}
-          fallback={<div class="empty">Nothing recorded. Quiet is good.</div>}
-        >
-          <table class="table">
-            <thead>
-              <tr><th>when</th><th>what</th><th>summary</th><th>details</th><th>from</th></tr>
-            </thead>
-            <tbody>
-              <For each={events()?.events}>
-                {(e: SecurityEvent) => (
-                  <tr data-kind={e.kind}>
-                    <td title={e.ts}>{timeAgo(e.ts)}</td>
-                    <td><span class="chip chip-phrase" data-kind={e.kind} title={e.kind}>{secKindLabel(e.kind)}</span></td>
-                    <td>{e.label}</td>
-                    <td class="mono dim wrap">{e.detail}</td>
-                    <td class="mono dim">{e.ip ?? "—"}</td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
-        </Show>
-      </Show>
-    </div>
-  );
+  return <SecurityCenter scope={configScope} />;
 }
 
 // ---- Inbox -----------------------------------------------------------------
