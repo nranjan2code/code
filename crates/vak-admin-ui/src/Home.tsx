@@ -137,9 +137,9 @@ function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: nu
 /// and the word printed in the legend — because the ring has to stay
 /// readable to someone who cannot separate the greens from the reds.
 function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
-  const size = 168;
+  const size = 136;
   const centre = size / 2;
-  const radius = 68;
+  const radius = 54;
   const gap = 5;
   const slice = createMemo(() => 360 / Math.max(1, props.subsystems.length));
   const healthy = createMemo(() => props.subsystems.filter((s) => s.state === "ok").length);
@@ -163,7 +163,7 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
         <div>
           <span class="eyebrow">Readiness</span>
           <h2>System health</h2>
-          <p class="dim">One arc per subsystem, each from its own live probe.</p>
+          <p class="dim">Live health probes per subsystem.</p>
         </div>
         <Show when={props.sampledAt}>
           <span class="mono dim">sampled {clock(props.sampledAt!)}</span>
@@ -173,14 +173,14 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
         <div class="home-ring-figure">
           <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img"
             aria-label={`${healthy()} of ${counted()} subsystems healthy`}>
-            <circle cx={centre} cy={centre} r={radius} fill="none" stroke="var(--border-soft)" stroke-width="13" />
+            <circle cx={centre} cy={centre} r={radius} fill="none" stroke="var(--border-soft)" stroke-width="11" />
             <For each={props.subsystems}>
               {(subsystem, index) => (
                 <path
                   class={`ring-arc ring-arc-${subsystem.state}`}
                   d={arcPath(centre, centre, radius, index() * slice() + gap / 2, (index() + 1) * slice() - gap / 2)}
                   fill="none"
-                  stroke-width="13"
+                  stroke-width="11"
                   stroke-linecap="butt"
                 >
                   <title>{`${subsystem.label}: ${STATE_WORD[subsystem.state]} — ${subsystem.detail}`}</title>
@@ -194,12 +194,16 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
           </div>
         </div>
         <div class="home-ring-legend">
-          <div class={`home-ring-verdict tone-${verdict().tone}`}>{verdict().text}</div>
-          <ul>
+          <div class={`home-ring-verdict tone-${verdict().tone}`}>● {verdict().text}</div>
+          <ul class="home-ring-grid">
             <For each={props.subsystems}>
               {(subsystem) => (
                 <li>
-                  <button class="home-ring-row" onClick={() => navigate(subsystem.href)}>
+                  <button
+                    class="home-ring-row"
+                    title={`${subsystem.label}: ${STATE_WORD[subsystem.state]} — ${subsystem.detail}`}
+                    onClick={() => navigate(subsystem.href)}
+                  >
                     <span class={`ring-mark ring-mark-${subsystem.state}`} aria-hidden="true" />
                     <span class="home-ring-name">{subsystem.label}</span>
                     <span class={`home-ring-state tone-${subsystem.state}`}>{STATE_WORD[subsystem.state]}</span>
@@ -211,7 +215,7 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
           </ul>
           <Show when={off() > 0}>
             <p class="dim home-ring-foot">
-              {off()} subsystem{off() === 1 ? " is" : "s are"} switched off and excluded from the count.
+              {off()} subsystem{off() === 1 ? " is" : "s are"} off and excluded from count.
             </p>
           </Show>
         </div>
@@ -223,6 +227,17 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
 // ---- the attention queue ---------------------------------------------------
 
 const QUEUE_VISIBLE = 8;
+
+function categoryOf(item: AttentionItem): string {
+  if (item.id.startsWith("sec")) return "Security";
+  if (item.id.startsWith("setup") || item.id.startsWith("unattended")) return "Setup";
+  if (item.id.startsWith("appr")) return "Approval";
+  if (item.id.startsWith("doc") || item.id.startsWith("incident")) return "Doctor";
+  if (item.id.startsWith("outbox")) return "Delivery";
+  if (item.id.startsWith("cap")) return "Budget";
+  if (item.id.startsWith("gateway")) return "Gateway";
+  return "Advisory";
+}
 
 function AttentionQueue(props: {
   items: AttentionItem[];
@@ -247,8 +262,8 @@ function AttentionQueue(props: {
       <div class="panel-title-row">
         <div>
           <span class="eyebrow">Queue</span>
-          <h2>Needs you</h2>
-          <p class="dim">Everything across vak that is blocked, asking, or drifting — in one order.</p>
+          <h2>Action queue</h2>
+          <p class="dim">Active approvals, security audits, and system notices.</p>
         </div>
         <div class="home-severity-tally">
           <div class="home-queue-tabs">
@@ -273,7 +288,7 @@ function AttentionQueue(props: {
                 style="color: var(--yellow)"
                 onClick={() => setFilter("warning")}
               >
-                Needs look ({bySeverity("warning")})
+                Warning ({bySeverity("warning")})
               </button>
             </Show>
             <Show when={bySeverity("info") > 0}>
@@ -281,7 +296,7 @@ function AttentionQueue(props: {
                 class={`home-queue-tab-btn ${filter() === "info" ? "active" : ""}`}
                 onClick={() => setFilter("info")}
               >
-                Review ({bySeverity("info")})
+                Advisory ({bySeverity("info")})
               </button>
             </Show>
           </div>
@@ -291,12 +306,15 @@ function AttentionQueue(props: {
         when={props.items.length > 0}
         fallback={
           <div class="home-clear">
-            <strong>Nothing is waiting on you.</strong>
-            <p class="dim">
-              {props.degraded
-                ? "Some probes could not be read, so this is an incomplete answer — open Operations for the evidence."
-                : `Derived from ${props.probes} live probes${props.sampledAt ? ` sampled at ${clock(props.sampledAt)}` : ""}. This is a reading, not a placeholder.`}
-            </p>
+            <div class="home-clear-icon">✓</div>
+            <div>
+              <strong>All clear — nothing is waiting on you.</strong>
+              <p class="dim">
+                {props.degraded
+                  ? "Some probes could not be read; open Operations for full evidence."
+                  : `Derived from ${props.probes} live probes${props.sampledAt ? ` sampled at ${clock(props.sampledAt)}` : ""}. System running nominally.`}
+              </p>
+            </div>
           </div>
         }
       >
@@ -304,12 +322,12 @@ function AttentionQueue(props: {
           <For each={shown()}>
             {(item) => (
               <li class={`home-attention-row sev-${item.severity}`}>
-                <span class={`home-sev tone-${item.severity}`}>{SEVERITY_WORD[item.severity]}</span>
+                <span class={`home-cat-tag sev-${item.severity}`}>{categoryOf(item)}</span>
                 <span class="home-attention-copy">
                   <strong>{item.title}</strong>
                   <small>{item.detail}</small>
                 </span>
-                <button class="ghost small" onClick={() => navigate(item.href)}>{item.action}</button>
+                <button class="ghost small home-action-btn" onClick={() => navigate(item.href)}>{item.action} →</button>
               </li>
             )}
           </For>
@@ -319,6 +337,13 @@ function AttentionQueue(props: {
             {expanded() ? "Show fewer" : `Show ${hidden()} more ${hidden() === 1 ? "item" : "items"} →`}
           </button>
         </Show>
+        <div class="home-queue-footer">
+          <span class="dim">
+            {bySeverity("critical") > 0
+              ? `${bySeverity("critical")} critical action(s) require intervention.`
+              : "Zero blocking actions. Background processes running autonomously."}
+          </span>
+        </div>
       </Show>
     </section>
   );
@@ -1146,23 +1171,46 @@ export function Home() {
     const now = Date.now();
     return activity().filter((item) => now - item.ts < 60_000).length;
   });
-  const headline = createMemo(() => {
-    if (opsFailed()) return "The control plane is not answering.";
-    if (blocking() > 0) return `${blocking()} thing${blocking() === 1 ? "" : "s"} ${blocking() === 1 ? "is" : "are"} blocking work.`;
-    if (attention().length > 0) return `${attention().length} thing${attention().length === 1 ? "" : "s"} to look at.`;
-    return "Everything is clear.";
+  const statusSummary = createMemo(() => {
+    if (opsFailed()) {
+      return {
+        tone: "bad",
+        status: "CONTROL PLANE UNREACHABLE",
+        title: "Control Plane Offline",
+        detail: "The operations telemetry endpoint did not answer. Subsystem health and active runs cannot be confirmed.",
+      };
+    }
+    if (blocking() > 0) {
+      return {
+        tone: "bad",
+        status: "ACTION REQUIRED",
+        title: `${blocking()} Action${blocking() === 1 ? "" : "s"} Blocking Execution`,
+        detail: `${blocking()} run${blocking() === 1 ? " is" : "s are"} held waiting for operator approval before tool execution can proceed.`,
+      };
+    }
+    if (attention().length > 0) {
+      const warnCount = attention().filter((i) => i.severity === "warning").length;
+      const infoCount = attention().filter((i) => i.severity === "info").length;
+      const label = warnCount > 0
+        ? `${warnCount} Warning${warnCount === 1 ? "" : "s"}`
+        : `${infoCount} Advisory Notice${infoCount === 1 ? "" : "s"}`;
+      return {
+        tone: warnCount > 0 ? "warn" : "ok",
+        status: warnCount > 0 ? "ATTENTION" : "OPERATIONAL",
+        title: `All Systems Operational · ${label}`,
+        detail: `Core runtime and models healthy. ${attention().length} non-blocking advisory item${attention().length === 1 ? " is" : "s are"} listed below in the Action Queue for your review.`,
+      };
+    }
+    return {
+      tone: "ok",
+      status: "ALL SYSTEMS OPERATIONAL",
+      title: "All Systems Operational",
+      detail: "Health probes green, budget nominal, and no actions held in queue.",
+    };
   });
 
   return (
     <div class="view home-view">
-      <PageHeader
-        title="Home"
-        description="Health, what needs you, what is running, and what it costs."
-        actions={<>
-          <button class="ghost" onClick={refreshAll}>Refresh</button>
-          <button onClick={newSession}>+ New session</button>
-        </>}
-      />
       <Show when={auxiliaryFailures() > 0}>
         <div class="error-state" role="status">
           <strong>Telemetry is incomplete.</strong>
@@ -1170,108 +1218,128 @@ export function Home() {
         </div>
       </Show>
 
-      <section class="home-masthead" data-tone={opsFailed() || blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}>
-        <div class="home-masthead-main">
-          <div class="hero-kicker">
-            <span class={`dot dot-${conn()}`} /> {conn() === "live" ? "Live telemetry" : `Telemetry ${conn()}`}
-            <Show when={snapshot()}>
-              <span class="dim"> · sampled {clock(snapshot()!.generated_at)}</span>
-            </Show>
+      <section class="home-deck" data-tone={statusSummary().tone}>
+        <div class="home-deck-top">
+          <div class="home-deck-brand">
+            <div class="home-deck-kicker">
+              <span class={`dot dot-${conn()}`} />
+              <span class={`home-status-tag ${statusSummary().tone}`}>
+                {statusSummary().status}
+              </span>
+              <Show when={snapshot()}>
+                <span class="dim"> · live telemetry sampled {clock(snapshot()!.generated_at)}</span>
+              </Show>
+            </div>
+            <h1 class="home-deck-title">{statusSummary().title}</h1>
+            <p class="home-deck-detail">{statusSummary().detail}</p>
           </div>
-          <h2>{headline()}</h2>
-          <Show when={snapshot()} fallback={<p>Reading the control plane…</p>}>
-            <div class="home-masthead-tags">
-              <span class="home-tag">
-                <span>Workspace</span>
-                <PathCell path={snapshot()!.server.cwd} budget={32} />
-              </span>
-              <span class="home-tag">
-                <span>Route</span>
-                <span class="mono">{providerLabel(config()?.provider ?? snapshot()!.health.provider)} · {config()?.model ?? snapshot()!.health.model}</span>
-              </span>
-              <span class="home-tag">
-                <span>Permission</span>
-                <span>{modeLabel(config()?.permission_mode ?? snapshot()!.health.permission_mode)}</span>
-              </span>
-              <span class="home-tag">
-                <span>Sandbox</span>
-                <span>{snapshot()!.health.sandbox}</span>
+
+          <div class="home-deck-actions">
+            <button class="ghost small" onClick={refreshAll} title="Refetch all telemetry">Refresh</button>
+            <button class="ghost small" onClick={() => navigate("#/settings")}>Change Model</button>
+            <button class="ghost small" onClick={() => navigate("#/operations")}>Operations Center</button>
+            <button class="small primary-cta" onClick={newSession}>+ New Session</button>
+          </div>
+        </div>
+
+        <Show when={snapshot()}>
+          <div class="home-deck-tags">
+            <div class="deck-tag">
+              <span class="deck-tag-k">Workspace</span>
+              <PathCell path={snapshot()!.server.cwd} budget={32} />
+            </div>
+            <div class="deck-tag">
+              <span class="deck-tag-k">Route</span>
+              <span class="mono">{providerLabel(config()?.provider ?? snapshot()!.health.provider)} · {config()?.model ?? snapshot()!.health.model}</span>
+            </div>
+            <div class="deck-tag">
+              <span class="deck-tag-k">Permission</span>
+              <span>{modeLabel(config()?.permission_mode ?? snapshot()!.health.permission_mode)}</span>
+            </div>
+            <div class="deck-tag">
+              <span class="deck-tag-k">Sandbox</span>
+              <span>{snapshot()!.health.sandbox}</span>
+            </div>
+          </div>
+        </Show>
+
+        <div class="home-deck-metrics">
+          <a href="#/operations/incidents" class="deck-metric-card" data-tone={failedChecks().length > 0 ? "bad" : "ok"}>
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">System Health</span>
+              <span class={`kpi-tag ${failedChecks().length > 0 ? "bad" : "ok"}`}>
+                {failedChecks().length > 0 ? "ALERT" : "OPERATIONAL"}
               </span>
             </div>
-          </Show>
-        </div>
-        <div class="home-masthead-side">
-          <button class="ghost small" onClick={() => navigate("#/settings")}>Change the model</button>
-          <button class="ghost small" onClick={() => navigate("#/operations")}>Operations Center</button>
+            <div class="deck-metric-val">
+              {failedChecks().length > 0 ? `${failedChecks().length} Failing` : "Healthy"}
+            </div>
+            <div class="deck-metric-sub">
+              {subsystems().filter((s) => s.state === "ok").length}/{subsystems().filter((s) => s.state !== "off").length} probes passing
+            </div>
+          </a>
+
+          <a href="#/operations/runtime" class="deck-metric-card">
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">Active Work</span>
+              <span class={`kpi-tag ${(snapshot()?.runs.length ?? 0) > 0 ? "ok" : "info"}`}>
+                {(snapshot()?.runs.length ?? 0) > 0 ? "RUNNING" : "IDLE"}
+              </span>
+            </div>
+            <div class="deck-metric-val">
+              {snapshot()?.runs.length ?? 0}
+            </div>
+            <div class="deck-metric-sub">
+              {snapshot()?.runs.length ?? 0} active · {snapshot()?.pool ? `${snapshot()!.pool.entries.length}/${snapshot()!.pool.max} pool` : "0 pool"}
+            </div>
+          </a>
+
+          <a href="#/inbox" class="deck-metric-card" data-tone={blocking() > 0 ? "bad" : attention().length > 0 ? "info" : "ok"}>
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">Action Queue</span>
+              <span class={`kpi-tag ${blocking() > 0 ? "bad" : attention().length > 0 ? "info" : "ok"}`}>
+                {blocking() > 0 ? `${blocking()} BLOCKING` : attention().length > 0 ? "ADVISORY" : "CLEAR"}
+              </span>
+            </div>
+            <div class="deck-metric-val">
+              {attention().length}
+            </div>
+            <div class="deck-metric-sub">
+              {blocking() > 0 ? `${blocking()} blocking` : `${attention().length} advisory item${attention().length === 1 ? "" : "s"}`}
+            </div>
+          </a>
+
+          <a href="#/finops" class="deck-metric-card" data-tone={capShare() != null && capShare()! >= 100 ? "bad" : capShare() != null && capShare()! >= 80 ? "warn" : undefined}>
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">Spend Today</span>
+              <Show when={capShare() != null}>
+                <span class={`kpi-tag ${capShare()! >= 100 ? "bad" : capShare()! >= 80 ? "warn" : "info"}`}>
+                  {capShare()!.toFixed(0)}%
+                </span>
+              </Show>
+            </div>
+            <div class="deck-metric-val">
+              {finops()?.day_usd != null ? money(finops()!.day_usd) : "$0.00"}
+            </div>
+            <div class="deck-metric-sub">
+              {capShare() != null ? `${capShare()!.toFixed(0)}% of daily cap` : "No daily cap configured"}
+            </div>
+          </a>
+
+          <a href="#/operations/runtime" class="deck-metric-card">
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">Throughput</span>
+              <span class="kpi-tag info">{conn().toUpperCase()}</span>
+            </div>
+            <div class="deck-metric-val">
+              {liveRate()} <small style="font-size: 13px; font-weight: 500; color: var(--muted)">ev/m</small>
+            </div>
+            <div class="deck-metric-sub">
+              {feed().length} live events held
+            </div>
+          </a>
         </div>
       </section>
-
-      <div class="home-kpi-strip">
-        <a href="#/operations/incidents" class="home-kpi-card" data-tone={failedChecks().length > 0 ? "bad" : "ok"}>
-          <span class="home-kpi-lbl">System Health</span>
-          <div class="home-kpi-val">
-            <span>{failedChecks().length > 0 ? `${failedChecks().length} Failing` : "Healthy"}</span>
-            <span class={`kpi-tag ${failedChecks().length > 0 ? "bad" : "ok"}`}>
-              {failedChecks().length > 0 ? "ALERT" : "OPERATIONAL"}
-            </span>
-          </div>
-          <span class="home-kpi-sub">
-            {subsystems().filter((s) => s.state === "ok").length} of {subsystems().filter((s) => s.state !== "off").length} probes passing
-          </span>
-        </a>
-
-        <a href="#/operations/runtime" class="home-kpi-card" data-tone={(snapshot()?.runs.length ?? 0) > 0 ? "ok" : undefined}>
-          <span class="home-kpi-lbl">Active Concurrency</span>
-          <div class="home-kpi-val">
-            <span>{snapshot()?.runs.length ?? 0}</span>
-            <Show when={(snapshot()?.runs.length ?? 0) > 0} fallback={<span class="kpi-tag info">IDLE</span>}>
-              <span class="kpi-tag ok">RUNNING</span>
-            </Show>
-          </div>
-          <span class="home-kpi-sub">
-            {snapshot()?.runs.length ?? 0} active · {snapshot()?.pool ? `${snapshot()!.pool.entries.length}/${snapshot()!.pool.max} pool` : "0 pool"}
-          </span>
-        </a>
-
-        <a href="#/inbox" class="home-kpi-card" data-tone={blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}>
-          <span class="home-kpi-lbl">Action Queue</span>
-          <div class="home-kpi-val">
-            <span>{attention().length}</span>
-            <span class={`kpi-tag ${blocking() > 0 ? "bad" : attention().length > 0 ? "warn" : "ok"}`}>
-              {blocking() > 0 ? `${blocking()} BLOCKING` : attention().length > 0 ? "ATTENTION" : "CLEAR"}
-            </span>
-          </div>
-          <span class="home-kpi-sub">
-            {blocking() > 0 ? `${blocking()} critical items` : "All automated runs clear"}
-          </span>
-        </a>
-
-        <a href="#/finops" class="home-kpi-card" data-tone={capShare() != null && capShare()! >= 100 ? "bad" : capShare() != null && capShare()! >= 80 ? "warn" : undefined}>
-          <span class="home-kpi-lbl">Spend Today</span>
-          <div class="home-kpi-val">
-            <span>{finops()?.day_usd != null ? money(finops()!.day_usd) : "$0.00"}</span>
-            <Show when={capShare() != null}>
-              <span class={`kpi-tag ${capShare()! >= 100 ? "bad" : capShare()! >= 80 ? "warn" : "info"}`}>
-                {capShare()!.toFixed(0)}%
-              </span>
-            </Show>
-          </div>
-          <span class="home-kpi-sub">
-            {capShare() != null ? `${capShare()!.toFixed(0)}% of daily cap` : "No daily cap configured"}
-          </span>
-        </a>
-
-        <a href="#/operations/runtime" class="home-kpi-card">
-          <span class="home-kpi-lbl">Live Rate</span>
-          <div class="home-kpi-val">
-            <span>{liveRate()} <small style="font-size: 13px; font-weight: 500; color: var(--muted)">ev/m</small></span>
-            <span class="kpi-tag info">{conn().toUpperCase()}</span>
-          </div>
-          <span class="home-kpi-sub">
-            {feed().length} live buffered events
-          </span>
-        </a>
-      </div>
 
       <div class="home-top">
         <ReadinessRing subsystems={subsystems()} sampledAt={snapshot()?.generated_at} />
