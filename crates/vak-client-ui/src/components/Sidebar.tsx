@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { activeAgentId, agentOpening, backend, sessions, settingsOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen, setTranscriptViewId, setPendingSettingsPage } from "../store";
-import { openAgentChat } from "../App";
+import { activeAgentId, activeId, agentOpening, backend, sessions, settingsOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen, setTranscriptViewId, setPendingSettingsPage } from "../store";
+import { activate, openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
 import Icon from "./Icon";
@@ -53,7 +53,17 @@ export default function Sidebar() {
       <details class="sb-agent-history">
         <summary>Agent history</summary>
         <div class="sb-list">
-          <For each={history()}>{(session) => <button class="sb-agent-item" type="button" onClick={() => setTranscriptViewId(session.session_id)}><Icon name="history" /><span>{session.title || session.agent?.name || "Earlier conversation"}</span></button>}</For>
+          <For each={history()}>{(session) => (
+            <button
+              class="sb-agent-item"
+              classList={{ active: activeId() === session.session_id }}
+              type="button"
+              onClick={() => void activate(session.session_id)}
+            >
+              <Icon name="history" />
+              <span>{session.title || session.agent?.name || "Earlier conversation"}</span>
+            </button>
+          )}</For>
           <Show when={!history().length}><p class="sb-empty">Your history will appear here.</p></Show>
         </div>
       </details>

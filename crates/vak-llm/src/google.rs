@@ -106,6 +106,7 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
             Role::Assistant => {
                 let mut parts: Vec<Value> = Vec::new();
                 let mut text = String::new();
+                let mut pending_sig: Option<String> = None;
                 for b in &m.content {
                     match b {
                         ContentBlock::Text { text: t } => {
@@ -114,25 +115,44 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                             }
                             text.push_str(t);
                         }
+                        ContentBlock::Thinking { signature, .. } => {
+                            if let Some(sig) = signature {
+                                pending_sig = Some(sig.clone());
+                            }
+                        }
                         ContentBlock::ToolUse { id, name, input } => {
                             // Flush pending text first so parts preserve
                             // assistant source order.
                             if !text.is_empty() {
-                                parts.push(serde_json::json!({"text": text}));
+                                let mut text_part = serde_json::json!({"text": text});
+                                if let Some(sig) = &pending_sig {
+                                    text_part["thoughtSignature"] = serde_json::json!(sig);
+                                }
+                                parts.push(text_part);
                                 text = String::new();
                             }
                             id_to_name.insert(id.clone(), name.clone());
-                            parts.push(
-                                serde_json::json!({"functionCall": {"name": name, "args": input}}),
-                            );
+                            let mut call_part = serde_json::json!({
+                                "functionCall": {
+                                    "name": name,
+                                    "args": input,
+                                }
+                            });
+                            if let Some(sig) = &pending_sig {
+                                call_part["thoughtSignature"] = serde_json::json!(sig);
+                            }
+                            parts.push(call_part);
                         }
-                        ContentBlock::Thinking { .. }
-                        | ContentBlock::ToolResult { .. }
+                        ContentBlock::ToolResult { .. }
                         | ContentBlock::Image { .. } => {}
                     }
                 }
                 if !text.is_empty() {
-                    parts.push(serde_json::json!({"text": text}));
+                    let mut text_part = serde_json::json!({"text": text});
+                    if let Some(sig) = &pending_sig {
+                        text_part["thoughtSignature"] = serde_json::json!(sig);
+                    }
+                    parts.push(text_part);
                 }
                 if !parts.is_empty() {
                     contents.push(serde_json::json!({"role": "model", "parts": parts}));
@@ -153,13 +173,37 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                 serde_json::json!({
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.parameters,
+                    "parameters": sanitize_schema(&t.parameters),
                 })
             })
             .collect();
         body["tools"] = serde_json::json!([{ "functionDeclarations": decls }]);
     }
     Ok(body)
+}
+
+fn sanitize_schema(val: &Value) -> Value {
+    match val {
+        Value::Object(map) => {
+            let mut cleaned = serde_json::Map::new();
+            for (k, v) in map {
+                if matches!(
+                    k.as_str(),
+                    "additionalProperties"
+                        | "$schema"
+                        | "patternProperties"
+                        | "definitions"
+                        | "$defs"
+                ) {
+                    continue;
+                }
+                cleaned.insert(k.clone(), sanitize_schema(v));
+            }
+            Value::Object(cleaned)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_schema).collect()),
+        other => other.clone(),
+    }
 }
 
 fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
@@ -232,6 +276,25 @@ impl Accumulator {
             .and_then(|p| p.as_array())
         {
             for part in parts {
+                let sig = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .or_else(|| {
+                        part.get("functionCall").and_then(|c| {
+                            c.get("thoughtSignature")
+                                .or_else(|| c.get("thought_signature"))
+                        })
+                    })
+                    .and_then(|s| s.as_str())
+                    .map(String::from);
+
+                if let Some(signature) = sig {
+                    self.message.content.push(ContentBlock::Thinking {
+                        text: String::new(),
+                        signature: Some(signature),
+                    });
+                }
+
                 if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                     if text.is_empty() {
                         continue;

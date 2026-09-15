@@ -902,7 +902,50 @@ export function transcriptToItems(id: string, messages: Message[]): Item[] {
 
 /** Rebuild a session view from the persisted ledger. */
 export function hydrateFromTranscript(id: string, messages: Message[]) {
-  setItemsBySession(id, transcriptToItems(id, messages));
+  const current: Item[] = itemsBySession[id] ?? [];
+  const incoming = transcriptToItems(id, messages);
+
+  if (current.length === 0) {
+    setItemsBySession(id, incoming);
+    return;
+  }
+
+  // Count user messages in incoming
+  const incomingUserCount = incoming.filter((it) => it.kind === "user").length;
+
+  // Find where unpersisted user messages or trailing notes begin in current
+  let currentUserCount = 0;
+  let unpersistedStartIndex = -1;
+  for (let i = 0; i < current.length; i++) {
+    if (current[i].kind === "user") {
+      currentUserCount++;
+      if (currentUserCount > incomingUserCount && unpersistedStartIndex === -1) {
+        unpersistedStartIndex = i;
+      }
+    }
+  }
+
+  if (unpersistedStartIndex !== -1) {
+    const tail = current.slice(unpersistedStartIndex).map((it: Item) => {
+      if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
+      return it;
+    });
+    setItemsBySession(id, [...incoming, ...tail]);
+    return;
+  }
+
+  // Preserve any trailing system note/error that happened after the last user turn
+  const lastCurrent = current[current.length - 1];
+  if (
+    lastCurrent?.kind === "system" &&
+    incoming.length > 0 &&
+    incoming[incoming.length - 1]?.kind !== "system"
+  ) {
+    setItemsBySession(id, [...incoming, lastCurrent]);
+    return;
+  }
+
+  setItemsBySession(id, incoming);
 }
 
 // ---- live event application ------------------------------------------------

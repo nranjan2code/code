@@ -84,7 +84,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Read\"}],\"role\":\"
 \n\
 data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ing now.\"}],\"role\":\"model\"}}]}\n\
 \n\
-data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read\",\"args\":{\"path\":\"a.txt\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":21,\"candidatesTokenCount\":9}}\n\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read\",\"args\":{\"path\":\"a.txt\"}},\"thoughtSignature\":\"test_sig_value\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":21,\"candidatesTokenCount\":9}}\n\
 \n";
 
 #[tokio::test]
@@ -124,6 +124,16 @@ async fn full_stream_accumulates_text_and_function_calls() {
     } else {
         unreachable!()
     }
+
+    let sigs: Vec<Option<&str>> = msg
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Thinking { signature, .. } => Some(signature.as_deref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sigs, vec![Some("test_sig_value")]);
 }
 
 const FIXTURE_STOP: &str = "\
@@ -211,3 +221,78 @@ async fn error_url(status: u16, json: &str) -> String {
     );
     spawn_server(owned.into_bytes()).await
 }
+
+#[test]
+fn body_sanitizes_unsupported_schema_keywords_for_gemini() {
+    let mut req = ChatRequest::new("gemini-2.5-flash");
+    req.messages = vec![Message::user_text("test")];
+    req.tools = vec![ToolDefinition::new(
+        "complex_tool",
+        "A tool with schema keywords unsupported by Gemini",
+        serde_json::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name"
+                },
+                "nested": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "inner": {"type": "string"}
+                    }
+                }
+            },
+            "patternProperties": {
+                "^x-": {"type": "string"}
+            },
+            "definitions": {
+                "something": {}
+            }
+        }),
+    )];
+
+    let body = build_body(&req).unwrap();
+    let params = &body["tools"][0]["functionDeclarations"][0]["parameters"];
+    assert!(params.get("$schema").is_none());
+    assert!(params.get("additionalProperties").is_none());
+    assert!(params.get("patternProperties").is_none());
+    assert!(params.get("definitions").is_none());
+    assert!(params["properties"]["nested"].get("additionalProperties").is_none());
+    assert_eq!(params["properties"]["name"]["type"], "string");
+}
+
+#[test]
+fn body_serializes_thought_signature_on_assistant_function_calls() {
+    let mut req = ChatRequest::new("gemini-3.8-flash");
+    req.messages = vec![
+        Message::user_text("what is the weather?"),
+        Message::assistant(vec![
+            ContentBlock::Thinking {
+                text: String::new(),
+                signature: Some("sig_abc_123".into()),
+            },
+            ContentBlock::ToolUse {
+                id: "call_1".into(),
+                name: "get_weather".into(),
+                input: serde_json::json!({"location": "Tokyo"}),
+            },
+        ]),
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::tool_result("call_1", "Sunny 22C")],
+        },
+    ];
+
+    let body = build_body(&req).unwrap();
+    let contents = body["contents"].as_array().unwrap();
+    assert_eq!(contents.len(), 3);
+    let model_parts = contents[1]["parts"].as_array().unwrap();
+    assert_eq!(model_parts.len(), 1);
+    assert_eq!(model_parts[0]["functionCall"]["name"], "get_weather");
+    assert_eq!(model_parts[0]["thoughtSignature"], "sig_abc_123");
+}
+

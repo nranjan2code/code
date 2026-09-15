@@ -122,11 +122,17 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             && h.agent.as_ref().is_some_and(|a| a.id == identity.id)
             && h.conversation.as_ref() == Some(&conversation)
         {
-            candidates.push(h);
+            let effective = core.effective_route();
+            let route_matches = h.contract.provider == effective.provider
+                && h.contract.model == effective.model;
+            let provider_ok = core.provider_configured(&h.contract.provider);
+            if route_matches && provider_ok {
+                candidates.push(h);
+            }
         }
     }
     candidates.sort_by_key(|h| h.created_at);
-    if let Some(h) = candidates.first() {
+    if let Some(h) = candidates.last() {
         let sid = h.session_id.clone();
         if state.get(&sid).is_none() {
             let session = match core.open_session(&sid).await {

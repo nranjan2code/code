@@ -812,16 +812,71 @@ fn route_selection(
     }
 }
 
+fn has_credential(env_name: &str, cwd: &std::path::Path) -> bool {
+    if std::env::var(env_name).is_ok_and(|v| !v.trim().is_empty()) {
+        return true;
+    }
+    if vak_config::read_env_file_var(&cwd.join(".env"), env_name)
+        .is_some_and(|v| !v.trim().is_empty())
+    {
+        return true;
+    }
+    if let Some(user_env) = vak_config::user_env_path() {
+        if vak_config::read_env_file_var(&user_env, env_name)
+            .is_some_and(|v| !v.trim().is_empty())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn route_from_config(
     cwd: &std::path::Path,
     config: &vak_config::Config,
     pinned: bool,
 ) -> RouteSelection {
+    let p_src = route_source(cwd, "provider");
+    let m_src = route_source(cwd, "model");
+
+    let (provider, model) = if p_src == "built_in_default" {
+        // If the user didn't explicitly pin a provider, detect configured credentials
+        // instead of blindly demanding an Anthropic key.
+        if has_credential("ANTHROPIC_API_KEY", cwd) {
+            (config.provider.clone(), config.model.clone())
+        } else if has_credential("GEMINI_API_KEY", cwd) || has_credential("GOOGLE_API_KEY", cwd) {
+            let m = if m_src == "built_in_default" {
+                "gemini-2.5-flash".to_string()
+            } else {
+                config.model.clone()
+            };
+            ("google".to_string(), m)
+        } else if has_credential("OPENAI_API_KEY", cwd) {
+            let m = if m_src == "built_in_default" {
+                "gpt-4o".to_string()
+            } else {
+                config.model.clone()
+            };
+            ("openai".to_string(), m)
+        } else if has_credential("AWS_BEARER_TOKEN_BEDROCK", cwd) {
+            let m = if m_src == "built_in_default" {
+                "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string()
+            } else {
+                config.model.clone()
+            };
+            ("bedrock".to_string(), m)
+        } else {
+            (config.provider.clone(), config.model.clone())
+        }
+    } else {
+        (config.provider.clone(), config.model.clone())
+    };
+
     route_selection(
-        config.provider.clone(),
-        config.model.clone(),
-        &route_source(cwd, "provider"),
-        &route_source(cwd, "model"),
+        provider,
+        model,
+        &p_src,
+        &m_src,
         pinned,
     )
 }
