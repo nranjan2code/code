@@ -6,6 +6,94 @@ export interface SessionListItem {
   last_ts: string;
   /** From the shared `archive.json`, not scoped to a workspace. */
   archived: boolean;
+  agent?: AgentIdentity | null;
+  title?: string;
+  running?: boolean;
+}
+
+export interface CapabilityDescriptor {
+  name: string;
+  kind: "tool" | "skill" | "mcp-server" | "hook" | "command" | string;
+  invocation: "model-tool" | "skill-loader" | "automatic" | "user-command" | string;
+  description: string;
+  source?: string | null;
+  digest?: string | null;
+  provenance?: string | null;
+  configuration?: Record<string, unknown>;
+}
+
+export interface AgentIdentity {
+  id: string;
+  revision: number;
+  name: string;
+  personality: string;
+  behaviour: string;
+  responsibilities?: string;
+  instructions?: string;
+}
+
+export interface FrozenContract {
+  app_version: string;
+  provider: string;
+  model: string;
+  route_ladder?: Array<{ provider: string; model: string }>;
+  route_objective?: string;
+  route_annotations?: string[];
+  system_prompt: string;
+  permission_mode: string;
+  capabilities?: CapabilityDescriptor[];
+  prompt_layers?: PromptLayerDescriptor[];
+}
+
+export interface ToolCallRecord {
+  tool_name: string;
+  args_json?: string;
+  tool_use_id?: string;
+  result_text?: string;
+  is_error?: boolean;
+  ts?: string;
+}
+
+export interface SessionTurn {
+  turn_index: number;
+  id: string;
+  started_at: string;
+  ended_at?: string;
+  user_prompt: string;
+  intent_summary?: string;
+  intent_reading?: Record<string, unknown>;
+  model_response?: string;
+  tool_calls: ToolCallRecord[];
+  work_receipts: WorkReceipt[];
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  duration_ms: number;
+  status: "completed" | "running" | "failed" | "aborted" | "escalated";
+  stop_reason?: string;
+  stop_guard?: string;
+  checkpoint_seq?: number;
+  entries: TranscriptEntry[];
+}
+
+export type TurnStageKey =
+  | "ingress"
+  | "intent"
+  | "route"
+  | "inference"
+  | "security"
+  | "tools"
+  | "stop_gate"
+  | "governance";
+
+export interface TurnDagNode {
+  id: TurnStageKey;
+  title: string;
+  category: string;
+  status: "ok" | "warn" | "bad" | "running" | "idle";
+  summary: string;
+  metrics?: string;
+  details?: Record<string, unknown> | string;
 }
 
 export interface TranscriptEntry {
@@ -886,6 +974,8 @@ export interface SessionCheckpoint {
   ts: string;
   commit_hash?: string;
   message?: string;
+  label?: string;
+  created_at?: string;
 }
 
 export interface ActiveSubagent {

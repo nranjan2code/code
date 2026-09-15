@@ -152,7 +152,7 @@ export const api = {
 
   /** `total` counts every session matching the filter, not just the page
    * `limit` returned — the list itself is capped, the count isn't. */
-  sessions: (limit = 100): Promise<{ sessions: SessionListItem[]; total: number }> =>
+  sessions: (limit = 100): Promise<{ sessions: SessionListItem[]; total: number; workspace_project_hash?: string }> =>
     fetch(`/admin/api/sessions?limit=${limit}`).then((r) => handle(r)),
 
   /** Open a persisted session's ledger in this server process so it can
