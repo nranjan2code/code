@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.93 — 2026-09-15
+
+- FinOps dashboard modernization: transformed the FinOps view into a high-density, real-time command dashboard with a responsive 5-column executive KPI strip, eliminating vertical layout inflation.
+- Interactive spend dynamics & trend telemetry: upgraded the 14-day spend trend chart with interactive SVG hover crosshairs, floating tooltips, daily average baseline, budget cap guides, and summary badges.
+- Spend allocation visualization: added visual distribution progress bars and share breakdown across active dispatches for providers and models.
+- Real-time synchronization: wired live updates via the SSE event hub (`statsVersion`) and background telemetry polling, complete with live status pulsing badge and manual refresh controls.
+- Rebuilt admin UI bundle: refreshed and stamped committed assets under `crates/vak-admin-ui/dist`.
+
 ## 3.0.92 — 2026-09-15
 
 - Settled presentation rendering parity: enabled delivery engine `compile_markdown` and `find_semantic_json_spans` to detect and extract unfenced and prefixed semantic JSON cards from paragraph blocks, cleanly splitting prose and structured output cards with validated fallbacks.

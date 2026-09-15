@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api, AuthRequired } from "./api";
 import {
   CHANNEL_MODES, ICONS, Icon, MODES, PageHeader, PathCell, SEC_KINDS, SETUP_STEPS, StatCard,
@@ -18,7 +18,7 @@ import {
 import type { AccessOption } from "./controls";
 import {
   authed, conn, connectEvents, disconnectEvents, navigate, pushToast, route, sessionsVersion,
-  setAuthed, toasts,
+  setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
@@ -2692,68 +2692,249 @@ function MemoryView() {
 
 // ---- FinOps -----------------------------------------------------------------
 
-/// A self-contained SVG bar chart for the 14-day spend trend — no charting
-/// dependency, since this is one series with no zoom/tooltip requirement.
-/// Every bar is drawn even at zero spend (a thin baseline tick), so a quiet
-/// day reads as "no spend", never as "no data".
+/// A self-contained SVG bar chart for the 14-day spend trend with interactive
+/// hover tooltips, baseline average, and budget cap guides.
 function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | null }) {
   const width = 640;
   const height = 160;
-  const padding = { top: 10, right: 10, bottom: 24, left: 44 };
+  const padding = { top: 16, right: 14, bottom: 24, left: 44 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
 
+  const [hovered, setHovered] = createSignal<{ date: string; usd: number; x: number; y: number } | null>(null);
+
+  const total14d = createMemo(() => props.points.reduce((a, p) => a + p.usd, 0));
+  const avgDaily = createMemo(() => (props.points.length ? total14d() / props.points.length : 0));
+  const peakPoint = createMemo(() =>
+    props.points.reduce((max, p) => (p.usd > max.usd ? p : max), { date: "—", usd: 0 })
+  );
+
   const maxUsd = createMemo(() => {
     const max = Math.max(...props.points.map((p) => p.usd), props.capUsd ?? 0);
-    return max > 0 ? max * 1.15 : 1;
+    return max > 0 ? max * 1.18 : 0.01;
   });
+
   const barW = createMemo(() => (props.points.length ? plotW / props.points.length : 0));
-  const yFor = (usd: number) => padding.top + plotH * (1 - usd / maxUsd());
-  const capY = createMemo(() => (props.capUsd != null ? yFor(props.capUsd) : null));
+  const yFor = (usd: number) => padding.top + plotH * (1 - Math.min(usd, maxUsd()) / maxUsd());
+  const capY = createMemo(() => (props.capUsd != null && props.capUsd <= maxUsd() ? yFor(props.capUsd) : null));
+  const avgY = createMemo(() => (avgDaily() > 0 ? yFor(avgDaily()) : null));
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Daily spend, last 14 days">
-      {/* Baseline */}
-      <line
-        x1={padding.left} y1={padding.top + plotH} x2={width - padding.right} y2={padding.top + plotH}
-        stroke="var(--border)" stroke-width="1"
-      />
-      <Show when={capY() != null}>
-        <line
-          x1={padding.left} y1={capY()!} x2={width - padding.right} y2={capY()!}
-          stroke="var(--accent)" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"
-        />
-        <text x={width - padding.right} y={capY()! - 4} text-anchor="end" fill="var(--accent)" font-size="10">
-          cap ${props.capUsd!.toFixed(2)}
-        </text>
+    <div class="chart-container" onMouseLeave={() => setHovered(null)}>
+      <div class="chart-meta-row" style="margin-bottom:10px">
+        <span class="chart-badge">14d Spend: <strong>${total14d().toFixed(4)}</strong></span>
+        <span class="chart-badge">Daily Avg: <strong>${avgDaily().toFixed(4)}</strong></span>
+        <Show when={peakPoint().usd > 0}>
+          <span class="chart-badge">Peak: <strong>${peakPoint().usd.toFixed(4)}</strong> ({peakPoint().date.slice(5)})</span>
+        </Show>
+        <Show when={props.capUsd != null}>
+          <span class="chart-badge">Daily Cap: <strong>${props.capUsd!.toFixed(2)}</strong></span>
+        </Show>
+      </div>
+
+      <Show when={hovered()}>
+        {(h) => (
+          <div
+            class="chart-tooltip"
+            style={{
+              left: `${(h().x / width) * 100}%`,
+              top: `${(h().y / height) * 100}%`,
+            }}
+          >
+            <div style="font-weight:600; margin-bottom:2px">{h().date}</div>
+            <div style="color:var(--text-soft)">Estimated: <strong>${h().usd.toFixed(4)}</strong></div>
+            <Show when={props.capUsd != null && props.capUsd! > 0}>
+              <div style="font-size:10px; color:var(--faint); margin-top:1px">
+                {((h().usd / props.capUsd!) * 100).toFixed(1)}% of daily cap
+              </div>
+            </Show>
+          </div>
+        )}
       </Show>
-      <For each={props.points}>
-        {(p, i) => {
-          const x = padding.left + i() * barW() + barW() * 0.15;
-          const w = barW() * 0.7;
-          const y = yFor(p.usd);
-          const h = Math.max(padding.top + plotH - y, 1.5);
-          const label = p.date.slice(5); // MM-DD
-          return (
-            <g>
-              <title>{`${p.date}: $${p.usd.toFixed(4)}`}</title>
-              <rect x={x} y={y} width={w} height={h} rx="1.5" fill="var(--accent)" opacity={p.usd > 0 ? 0.85 : 0.25} />
-              <Show when={i() % 2 === 0 || props.points.length <= 8}>
-                <text
-                  x={x + w / 2}
-                  y={height - 6}
-                  text-anchor="middle"
-                  fill="var(--faint)"
-                  font-size="9"
-                >
-                  {label}
-                </text>
-              </Show>
-            </g>
-          );
-        }}
-      </For>
-    </svg>
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height={height}
+        role="img"
+        aria-label="Daily spend, last 14 days"
+        style="overflow:visible"
+      >
+        {/* Baseline */}
+        <line
+          x1={padding.left}
+          y1={padding.top + plotH}
+          x2={width - padding.right}
+          y2={padding.top + plotH}
+          stroke="var(--border)"
+          stroke-width="1"
+        />
+
+        {/* Avg dashed line */}
+        <Show when={avgY() != null}>
+          <line
+            x1={padding.left}
+            y1={avgY()!}
+            x2={width - padding.right}
+            y2={avgY()!}
+            stroke="var(--faint)"
+            stroke-width="1"
+            stroke-dasharray="2 3"
+            opacity="0.4"
+          />
+          <text
+            x={padding.left + 4}
+            y={avgY()! - 3}
+            fill="var(--faint)"
+            font-size="9"
+            opacity="0.8"
+          >
+            avg
+          </text>
+        </Show>
+
+        {/* Daily Cap dashed line */}
+        <Show when={capY() != null}>
+          <line
+            x1={padding.left}
+            y1={capY()!}
+            x2={width - padding.right}
+            y2={capY()!}
+            stroke="var(--accent)"
+            stroke-width="1"
+            stroke-dasharray="4 3"
+            opacity="0.75"
+          />
+          <text
+            x={width - padding.right}
+            y={capY()! - 4}
+            text-anchor="end"
+            fill="var(--accent)"
+            font-size="10"
+            font-weight="500"
+          >
+            cap ${props.capUsd!.toFixed(2)}
+          </text>
+        </Show>
+
+        {/* Bars */}
+        <For each={props.points}>
+          {(p, i) => {
+            const x = padding.left + i() * barW() + barW() * 0.15;
+            const w = barW() * 0.7;
+            const y = yFor(p.usd);
+            const h = Math.max(padding.top + plotH - y, 2);
+            const label = p.date.slice(5); // MM-DD
+            const isHovered = () => hovered()?.date === p.date;
+
+            return (
+              <g
+                style="cursor:pointer"
+                onMouseEnter={() => setHovered({ date: p.date, usd: p.usd, x: x + w / 2, y })}
+              >
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  rx="2"
+                  fill="var(--accent)"
+                  opacity={isHovered() ? 1 : p.usd > 0 ? 0.85 : 0.25}
+                  stroke={isHovered() ? "var(--text)" : "none"}
+                  stroke-width="1"
+                />
+                <Show when={i() % 2 === 0 || props.points.length <= 8}>
+                  <text
+                    x={x + w / 2}
+                    y={height - 6}
+                    text-anchor="middle"
+                    fill={isHovered() ? "var(--text)" : "var(--faint)"}
+                    font-size="9.5"
+                    font-weight={isHovered() ? "600" : "normal"}
+                  >
+                    {label}
+                  </text>
+                </Show>
+              </g>
+            );
+          }}
+        </For>
+      </svg>
+    </div>
+  );
+}
+
+function SpendAllocationCard(props: { byProvider: FinOpsRollupEntry[]; byModel: FinOpsRollupEntry[] }) {
+  const [mode, setMode] = createSignal<"provider" | "model">("provider");
+  const items = createMemo(() => {
+    const list = mode() === "provider" ? props.byProvider : props.byModel;
+    return [...list].sort((a, b) => b.usd - a.usd || b.calls - a.calls);
+  });
+  const totalUsd = createMemo(() => items().reduce((a, r) => a + r.usd, 0));
+  const maxUsd = createMemo(() => Math.max(...items().map((r) => r.usd), 0.00001));
+
+  return (
+    <section class="panel" style="display:flex; flex-direction:column">
+      <div class="panel-title-row">
+        <div>
+          <h2>Spend allocation</h2>
+          <p class="dim">Distribution across active dispatches today.</p>
+        </div>
+      </div>
+
+      <div class="finops-tab-nav">
+        <button
+          class={`finops-tab-btn ${mode() === "provider" ? "active" : ""}`}
+          onClick={() => setMode("provider")}
+        >
+          By Provider ({props.byProvider.length})
+        </button>
+        <button
+          class={`finops-tab-btn ${mode() === "model" ? "active" : ""}`}
+          onClick={() => setMode("model")}
+        >
+          By Model ({props.byModel.length})
+        </button>
+      </div>
+
+      <div style="flex:1">
+        <Show
+          when={items().length > 0}
+          fallback={<p class="dim" style="padding:16px 0">No dispatches recorded today.</p>}
+        >
+          <div class="allocation-list">
+            <For each={items().slice(0, 5)}>
+              {(item) => {
+                const sharePct = totalUsd() > 0 ? (item.usd / totalUsd()) * 100 : 0;
+                const barPct = (item.usd / maxUsd()) * 100;
+                const totalTokens = item.input_tokens + item.output_tokens;
+                return (
+                  <div class="allocation-item">
+                    <div class="allocation-header">
+                      <span class="allocation-name" title={item.name}>{item.name || "(unknown)"}</span>
+                      <div class="allocation-val">
+                        <span>${item.usd.toFixed(4)}</span>
+                        <span class="dim" style="margin-left:6px">({sharePct.toFixed(0)}%)</span>
+                      </div>
+                    </div>
+                    <div class="allocation-bar-track">
+                      <div
+                        class="allocation-bar-fill"
+                        style={{ width: `${Math.max(barPct, item.calls > 0 ? 3 : 0)}%` }}
+                      />
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--faint)">
+                      <span>{item.calls} {item.calls === 1 ? "call" : "calls"}</span>
+                      <span>{totalTokens > 0 ? `${(totalTokens / 1000).toFixed(1)}k tokens` : "0 tokens"}</span>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </section>
   );
 }
 
@@ -2761,35 +2942,96 @@ function FinOpsRollupTable(props: { title: string; rows: FinOpsRollupEntry[] }) 
   const total = createMemo(() => props.rows.reduce((a, r) => a + r.usd, 0));
   return (
     <div>
-      <span class="eyebrow">{props.title}</span>
+      <div class="panel-title-row" style="margin-bottom:8px">
+        <div>
+          <h2>{props.title}</h2>
+          <p class="dim">Usage and token breakdown today.</p>
+        </div>
+      </div>
       <Show when={props.rows.length > 0} fallback={<p class="dim">No dispatches today.</p>}>
-        <table class="table">
-          <thead><tr><th>{props.title === "By provider" ? "provider" : "model"}</th><th>calls</th><th>input</th><th>output</th><th>usd</th><th>share</th></tr></thead>
-          <tbody>
-            <For each={[...props.rows].sort((a, b) => b.usd - a.usd)}>
-              {(r) => (
-                <tr>
-                  <td class="mono">{r.name || "(unknown)"}</td>
-                  <td>{r.calls}</td>
-                  <td class="mono">{r.input_tokens.toLocaleString()}</td>
-                  <td class="mono">{r.output_tokens.toLocaleString()}</td>
-                  <td class="mono">${r.usd.toFixed(4)}</td>
-                  <td class="dim">{total() > 0 ? `${((r.usd / total()) * 100).toFixed(0)}%` : "—"}</td>
-                </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
+        <div style="overflow-x:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{props.title === "By provider" ? "provider" : "model"}</th>
+                <th>calls</th>
+                <th>input</th>
+                <th>output</th>
+                <th>cached</th>
+                <th>est. usd</th>
+                <th>share</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={[...props.rows].sort((a, b) => b.usd - a.usd || b.calls - a.calls)}>
+                {(r) => {
+                  const share = total() > 0 ? (r.usd / total()) * 100 : 0;
+                  return (
+                    <tr>
+                      <td class="mono" style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title={r.name}>
+                        {r.name || "(unknown)"}
+                      </td>
+                      <td>{r.calls}</td>
+                      <td class="mono">{r.input_tokens.toLocaleString()}</td>
+                      <td class="mono">{r.output_tokens.toLocaleString()}</td>
+                      <td class="mono dim">
+                        {r.cache_read_tokens > 0 ? (
+                          <span style="color:var(--accent)">⚡ {r.cache_read_tokens.toLocaleString()}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td class="mono">${r.usd.toFixed(4)}</td>
+                      <td>
+                        <div style="display:flex; align-items:center; gap:6px">
+                          <div style="width:36px; height:4px; background:var(--surface-raised); border-radius:2px; overflow:hidden">
+                            <div style={{ width: `${Math.min(100, Math.max(0, share))}%`, height: "100%", background: "var(--accent)" }} />
+                          </div>
+                          <span class="dim" style="font-size:11px; min-width:28px">
+                            {total() > 0 ? `${share.toFixed(0)}%` : "—"}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+        </div>
       </Show>
     </div>
   );
 }
 
 function FinOpsView() {
-  const [data, { refetch }] = createResource(() => api.finops());
+  const [data, { refetch }] = createResource(
+    () => statsVersion(),
+    () => api.finops()
+  );
   const [runCapInput, setRunCapInput] = createSignal("");
   const [dayCapInput, setDayCapInput] = createSignal("");
   const [savingCaps, setSavingCaps] = createSignal(false);
+  const [refreshing, setRefreshing] = createSignal(false);
+
+  // Background polling every 15s when active tab
+  onMount(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refetch();
+      }
+    }, 15_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setTimeout(() => setRefreshing(false), 450);
+    }
+  };
 
   let initialized = false;
   createEffect(() => {
@@ -2837,58 +3079,90 @@ function FinOpsView() {
     <div class="view">
       <PageHeader
         title="FinOps"
-        description="What every dispatch is estimated to cost, where it goes, and the caps that keep it in check."
+        description="What every dispatch is estimated to cost, where it goes, and active guardrails."
+        actions={
+          <div class="finops-header-actions">
+            <div class="finops-live-badge" title="Real-time sync via SSE events and live telemetry pulse">
+              <span class="finops-live-dot" />
+              <span>Live</span>
+            </div>
+            <button
+              class="ghost small"
+              disabled={refreshing() || data.loading}
+              onClick={() => void handleRefresh()}
+              title="Refresh FinOps telemetry"
+            >
+              <span style={{ display: "inline-block", transform: refreshing() ? "rotate(180deg)" : "none", transition: "transform 0.5s ease" }}>↻</span>
+              <span>{refreshing() ? "Refreshing…" : "Refresh"}</span>
+            </button>
+          </div>
+        }
       />
       <Show when={!data.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
         <Show when={!data.error} fallback={<LoadError message={`${data.error}`} onRetry={() => refetch()} />}>
-          <div class="stats-grid" style="margin-bottom:14px">
+          {/* Executive KPI Strip (Compact 5-column responsive grid) */}
+          <div class="stats-grid">
             <StatCard
               label="Spent today"
               value={`$${(data()?.day_usd ?? 0).toFixed(4)}`}
               progress={dayProgress() ?? undefined}
-              sub={data()?.day_cap_usd ? `of $${data()!.day_cap_usd!.toFixed(2)} daily budget` : "No daily budget set"}
+              sub={data()?.day_cap_usd ? `of $${data()!.day_cap_usd!.toFixed(2)} daily budget (${dayProgress()?.toFixed(0)}%)` : "No daily budget set"}
               tone={dayProgress() != null && dayProgress()! > 90 ? "warn" : undefined}
             />
             <StatCard
-              label="Run cap"
-              value={data()?.run_cap_usd != null ? `$${data()!.run_cap_usd!.toFixed(2)}` : "No limit"}
-              sub="Ceiling checked before every dispatch"
+              label="Budget guardrails"
+              value={data()?.run_cap_usd != null ? `Run: $${data()!.run_cap_usd!.toFixed(2)}` : "No run cap"}
+              sub={data()?.day_cap_usd != null ? `Day limit: $${data()!.day_cap_usd!.toFixed(2)}` : "Checked before every dispatch"}
             />
             <StatCard
               label="Dispatches today"
               value={(data()?.by_provider ?? []).reduce((a, p) => a + p.calls, 0)}
-              sub={`${data()?.total_rows ?? 0} total in the ledger`}
+              sub={`${data()?.total_rows ?? 0} total in cost ledger`}
             />
             <StatCard
               label="Tokens today"
               value={`${((data()?.day_input_tokens ?? 0) + (data()?.day_output_tokens ?? 0)).toLocaleString()}`}
-              sub={`↑ ${(data()?.day_input_tokens ?? 0).toLocaleString()} in · ↓ ${(data()?.day_output_tokens ?? 0).toLocaleString()} out`}
+              sub={`↑ ${(data()?.day_input_tokens ?? 0).toLocaleString()} · ↓ ${(data()?.day_output_tokens ?? 0).toLocaleString()}${(data()?.day_cache_read_tokens ?? 0) > 0 ? ` · ⚡ ${(data()?.day_cache_read_tokens ?? 0).toLocaleString()} cached` : ""}`}
             />
             <StatCard
-              label="Unpriced dispatches"
-              value={data()?.unknown_rows ?? 0}
-              sub="Model has no known price — cost is unknown, not zero"
+              label="Pricing coverage"
+              value={(data()?.unknown_rows ?? 0) === 0 ? "100% priced" : `${data()?.unknown_rows} unpriced`}
+              sub={(data()?.unknown_rows ?? 0) === 0 ? "All models have price mappings" : "Cost is unknown for unpriced models"}
               tone={(data()?.unknown_rows ?? 0) > 0 ? "warn" : undefined}
             />
           </div>
 
-          <section class="panel" style="margin-bottom:14px">
-            <div class="panel-title-row">
-              <div>
-                <h2>Spend, last 14 days</h2>
-                <p class="dim">Estimated USD per day from the cost ledger. Every dollar figure here is an estimate — providers don't return real cost.</p>
-              </div>
-            </div>
-            <SpendTrendChart points={data()?.daily ?? []} capUsd={data()?.day_cap_usd ?? null} />
-          </section>
-
-          <div class="two-col">
+          {/* Spend Dynamics: Trend Chart + Allocation Breakdown */}
+          <div class="finops-main-grid">
             <section class="panel">
               <div class="panel-title-row">
                 <div>
-                  <h2>Budget caps</h2>
+                  <h2>Spend, last 14 days</h2>
+                  <p class="dim">Estimated USD per day from the cost ledger. Hover bars for daily details.</p>
+                </div>
+              </div>
+              <SpendTrendChart points={data()?.daily ?? []} capUsd={data()?.day_cap_usd ?? null} />
+            </section>
+
+            <SpendAllocationCard
+              byProvider={data()?.by_provider ?? []}
+              byModel={data()?.by_model ?? []}
+            />
+          </div>
+
+          {/* Governance: Budget Caps & Alert History */}
+          <div class="two-col" style="margin-bottom:14px">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Budget policy & caps</h2>
                   <p class="dim">Checked before every dispatch. Leave a field blank to remove that cap.</p>
                 </div>
+                <Show when={dayProgress() != null}>
+                  <span class={`finops-stat-badge ${dayProgress()! >= 100 ? "alert" : dayProgress()! >= 80 ? "warn" : "good"}`}>
+                    {dayProgress()! >= 100 ? "Limit reached" : dayProgress()! >= 80 ? "Approaching limit" : "Healthy pace"}
+                  </span>
+                </Show>
               </div>
               <div class="form-row">
                 <label>Per-run cap (USD)</label>
@@ -2898,10 +3172,15 @@ function FinOpsView() {
                 <label>Per-day cap (USD)</label>
                 <input class="mono" placeholder="No limit" value={dayCapInput()} onInput={(e) => setDayCapInput(e.currentTarget.value)} />
               </div>
-              <div class="row-gap" style="margin-top:10px">
+              <div class="row-gap" style="margin-top:12px; align-items:center">
                 <button disabled={savingCaps()} onClick={() => void saveCaps()}>
                   {savingCaps() ? "Saving…" : "Save caps"}
                 </button>
+                <Show when={data()?.day_cap_usd}>
+                  <span class="dim" style="font-size:11px">
+                    ${(data()?.day_usd ?? 0).toFixed(4)} spent of ${data()!.day_cap_usd!.toFixed(2)} limit ({dayProgress()?.toFixed(1)}%)
+                  </span>
+                </Show>
               </div>
             </section>
 
@@ -2912,16 +3191,16 @@ function FinOpsView() {
                   <p class="dim">Fired once per threshold per day — 80% and 100% of the daily cap.</p>
                 </div>
               </div>
-              <Show when={(data()?.recent_alerts ?? []).length > 0} fallback={<p class="dim">No alerts yet.</p>}>
+              <Show when={(data()?.recent_alerts ?? []).length > 0} fallback={<p class="dim">No alerts recorded.</p>}>
                 <ul class="hit-list">
                   <For each={data()?.recent_alerts ?? []}>
                     {(a) => (
                       <li class="inbox-item">
                         <div class="hit-meta">
-                          <span class={`chip chip-tone-${a.level === "full" ? "danger" : "warning"}`}>{a.level === "full" ? "100%" : "80%"}</span>
+                          <span class={`chip chip-tone-${a.level === "full" ? "danger" : "warning"}`}>{a.level === "full" ? "100% Cap" : "80% Cap"}</span>
                           <span class="when">{timeAgo(a.ts)}</span>
                         </div>
-                        <div class="hit-snippet">Day spend was ${a.day_total_usd.toFixed(2)} · session {shortId(a.session_id)}</div>
+                        <div class="hit-snippet">Day spend was ${a.day_total_usd.toFixed(4)} · session {shortId(a.session_id)}</div>
                       </li>
                     )}
                   </For>
@@ -2930,16 +3209,64 @@ function FinOpsView() {
             </section>
           </div>
 
-          <div class="two-col" style="margin-top:14px">
+          {/* Granular Rollup Tables */}
+          <div class="two-col" style="margin-bottom:14px">
             <section class="panel"><FinOpsRollupTable title="By provider" rows={data()?.by_provider ?? []} /></section>
             <section class="panel"><FinOpsRollupTable title="By model" rows={data()?.by_model ?? []} /></section>
           </div>
-          <section class="panel" style="margin-top:14px">
-            <div class="panel-title-row"><div><h2>Runtime activity today</h2><p class="dim">Only observed executions are counted. Duration is shown only when the execution boundary reports it.</p></div></div>
+
+          {/* Runtime Activity Today */}
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Runtime activity today</h2>
+                <p class="dim">Only observed executions are counted. Duration is shown only when the execution boundary reports it.</p>
+              </div>
+            </div>
             <Show when={(data()?.activity ?? []).length > 0} fallback={<p class="dim">No instrumented runtime executions have been recorded today.</p>}>
-              <table class="table"><thead><tr><th>kind</th><th>activity</th><th>plugin</th><th>calls</th><th>successes</th><th>duration</th></tr></thead><tbody>
-                <For each={data()?.activity ?? []}>{(row) => <tr><td class="mono">{row.kind}</td><td class="mono">{row.name}</td><td>{row.plugin ?? "—"}</td><td>{row.calls}</td><td>{row.successes}</td><td>{row.duration_ms > 0 ? `${row.duration_ms.toLocaleString()} ms` : "not measured"}</td></tr>}</For>
-              </tbody></table>
+              <div style="overflow-x:auto">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>kind</th>
+                      <th>activity</th>
+                      <th>plugin</th>
+                      <th>calls</th>
+                      <th>success rate</th>
+                      <th>duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={data()?.activity ?? []}>
+                      {(row) => {
+                        const successRate = row.calls > 0 ? (row.successes / row.calls) * 100 : 100;
+                        return (
+                          <tr>
+                            <td><span class="chip" style="font-size:10.5px">{row.kind}</span></td>
+                            <td class="mono">{row.name}</td>
+                            <td>{row.plugin ?? "—"}</td>
+                            <td>{row.calls}</td>
+                            <td>
+                              <span class={`finops-stat-badge ${successRate === 100 ? "good" : successRate >= 75 ? "warn" : "alert"}`}>
+                                {successRate.toFixed(0)}% ({row.successes}/{row.calls})
+                              </span>
+                            </td>
+                            <td class="mono">
+                              {row.duration_ms > 0 ? (
+                                <span class={row.duration_ms > 2000 ? "dim" : ""}>
+                                  {row.duration_ms >= 1000 ? `${(row.duration_ms / 1000).toFixed(2)}s` : `${row.duration_ms.toLocaleString()} ms`}
+                                </span>
+                              ) : (
+                                <span class="dim">not measured</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
             </Show>
           </section>
         </Show>
