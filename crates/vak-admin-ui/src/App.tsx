@@ -6052,6 +6052,7 @@ function Settings() {
   const [bedrockAvailability, setBedrockAvailability] = createSignal<import("./types").BedrockModelAvailability[]>([]);
   const [loadingModels, setLoadingModels] = createSignal(false);
   const [modelError, setModelError] = createSignal("");
+  const [modelSearch, setModelSearch] = createSignal("");
   const [providerKeyInput, setProviderKeyInput] = createSignal("");
   const [savingKey, setSavingKey] = createSignal(false);
   const [maxTurnsInput, setMaxTurnsInput] = createSignal("");
@@ -6065,14 +6066,17 @@ function Settings() {
   const [busSecretEnv, setBusSecretEnv] = createSignal("");
   const [savingBus, setSavingBus] = createSignal(false);
 
-  // Re-initialize the form whenever the layer resource resolves to a NEW
-  // value, evaluated against the current scope. Comparing the layer *reference*
-  // — not the scope alone — closes a race: when configScope flips, `layer()`
-  // still holds the previous scope's value until the refetch resolves, so a
-  // scope-only guard initialized from that stale layer and then never
-  // recovered, leaving Provider/Model one scope behind. Tying init to a fresh
-  // layer reference means the form always lands on the selected scope's layer,
-  // and a saved refetch (same scope) reflects the persisted edit.
+  const [activeTab, setActiveTab] = createSignal<"models" | "permissions" | "infrastructure" | "preferences">("models");
+
+  createEffect(() => {
+    const r = route().split("?", 1)[0];
+    if (r.startsWith("#/settings/perm") || r.startsWith("#/settings/sec")) setActiveTab("permissions");
+    else if (r.startsWith("#/settings/infra") || r.startsWith("#/settings/bus")) setActiveTab("infrastructure");
+    else if (r.startsWith("#/settings/pref") || r.startsWith("#/settings/sys") || r.startsWith("#/settings/diag")) setActiveTab("preferences");
+    else setActiveTab("models");
+  });
+
+  // Re-initialize the form whenever the layer resource resolves to a NEW value
   let initializedLayer: ConfigLayer | undefined;
   createEffect(() => {
     const c = config();
@@ -6099,8 +6103,6 @@ function Settings() {
     } catch (err) {
       setDiscoveredModels([]);
       setBedrockAvailability([]);
-      // Almost always "no key for this provider yet", which the free-text
-      // model field below already lets the operator work around.
       setModelError(`${err}`);
     } finally {
       setLoadingModels(false);
@@ -6109,7 +6111,15 @@ function Settings() {
 
   createEffect(() => {
     const provider = selectedProvider();
+    setModelSearch("");
     if (provider) void discover(provider);
+  });
+
+  const filteredDiscoveredModels = createMemo(() => {
+    const q = modelSearch().trim().toLowerCase();
+    const list = discoveredModels();
+    if (!q) return list;
+    return list.filter((m) => m.toLowerCase().includes(q));
   });
 
   const keyConfigured = createMemo(
@@ -6119,11 +6129,6 @@ function Settings() {
   const guard = async (work: () => Promise<void>, ok: string) => {
     try {
       await work();
-      // A mutation is not complete from the editor's perspective until both
-      // the effective projection and the edited layer have been read back.
-      // Awaiting these closes the window where a success toast accompanies
-      // stale controls, especially when switching scopes immediately after
-      // saving.
       await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", ok);
     } catch (err) {
@@ -6214,11 +6219,6 @@ function Settings() {
 
   const rules = createMemo(() => parseRuleLists(config()?.permissions));
   const rulesFor = (decision: RuleDecision) => rules().filter((r) => r.decision === decision);
-  // The layer's own value when it pins one, otherwise the effective value —
-  // which is what "inherited" means and what an operator needs to see. The
-  // fallback used to be scoped to the project view only, and the effective
-  // config did not report `approval_mode` at all, so the approval picker
-  // showed nothing selected no matter what was in force.
   const selectedPermissionMode = () => layer()?.permission_mode ?? config()?.permission_mode;
   const selectedApprovalMode = () => layer()?.approval_mode ?? config()?.approval_mode;
   const inheritedPermissionMode = () => !layer()?.permission_mode;
@@ -6227,8 +6227,8 @@ function Settings() {
   return (
     <div class="view">
       <PageHeader
-        title="Settings"
-        description="Choose the model, permissions, defaults, and inheritance boundary for vak."
+        title="Settings & Configuration"
+        description="Configure LLM routing, runtime permissions, event fabric, and local preferences."
       />
       <Show when={config.error || layer.error || providersData.error}>
         <div class="error-state" role="alert">
@@ -6237,503 +6237,645 @@ function Settings() {
           <button class="ghost small" type="button" onClick={() => { void refetchConfig(); void refetchLayer(); void refetchProviders(); }}>Retry settings</button>
         </div>
       </Show>
-      <div class="two-col">
-        <div class="stack">
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Model</h2>
-                <p class="dim">Which model answers, unless a chat or session picks its own.</p>
-              </div>
-            </div>
-            <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
-              <div class="form-row">
-                <label>Provider</label>
-                <select
-                  aria-label="Provider"
-                  value={selectedProvider()}
-                  ref={(el) => syncSelect(el, selectedProvider, () => providersData()?.providers)}
-                  onChange={(e) => setSelectedProvider(e.currentTarget.value)}
-                >
-                  <For each={providersData()?.providers ?? []}>
-                    {(p) => <option value={p.name}>{providerLabel(p.name)}</option>}
-                  </For>
-                </select>
-              </div>
-              <div class="form-row">
-                <label>Model</label>
-                <Show
-                  when={discoveredModels().length > 0}
-                  fallback={
-                    <input
-                      class="mono"
-                      aria-label="Model"
-                      placeholder={loadingModels() ? "Asking the provider…" : "claude-sonnet-4-5-20250929"}
-                      value={selectedModel()}
-                      onInput={(e) => setSelectedModel(e.currentTarget.value)}
-                    />
-                  }
-                >
-                  <select
-                    aria-label="Model"
-                    value={selectedModel()}
-                    ref={(el) => syncSelect(el, selectedModel, discoveredModels)}
-                    onChange={(e) => setSelectedModel(e.currentTarget.value)}
-                  >
-                    <For each={discoveredModels()}>{(m) => {
-                      const status = bedrockAvailability().find((item) => item.model_id === m);
-                      return <option value={m} disabled={selectedProvider() === "bedrock" && !!status && !status.invokable}>
-                        {status && !status.invokable ? `${m} (not invokable)` : m}
-                      </option>;
-                    }}</For>
-                  </select>
-                </Show>
-              </div>
-              <Show when={modelError() && discoveredModels().length === 0}>
-                <p class="dim">
-                  Couldn’t list models for {providerLabel(selectedProvider())} — usually because
-                  its key isn’t stored yet. Add the key below, or type a model name in by hand.
-                  ({modelError()})
-                </p>
-              </Show>
-              <Show when={selectedProvider() === "bedrock" && bedrockAvailability().length > 0}>
-                <div class="dim" style="{ 'margin-top': '8px' }">
-                  <For each={bedrockAvailability()}>{(item) => <p><span class="mono">{item.model_id}</span> · {item.invokable ? "invokable" : "not invokable"} · agreement {item.agreement_status ?? "unknown"} · authorization {item.authorization_status ?? "unknown"}{item.agreement_error ? ` · ${item.agreement_error}` : ""}</p>}</For>
-                </div>
-              </Show>
-              <Show when={selectedProvider() === "bedrock" && modelError()}>
-                <p class="dim">Bedrock authorization status could not be checked: {modelError()}</p>
-              </Show>
-              <div class="row-gap" style="margin-top:10px">
-                <button
-                  disabled={!selectedModel().trim()}
-                  onClick={() =>
-                    void guard(
-                      () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }),
-                      `Now using ${providerLabel(selectedProvider())} — ${selectedModel()}`,
-                    )
-                  }
-                >
-                  Save
-                </button>
-                <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
-                  {loadingModels() ? "Checking…" : "Refresh the list"}
-                </button>
-              </div>
-            </Show>
-          </section>
 
-          <Show when={configScope() === "project"}>
+      <div class="settings-nav-bar">
+        <button
+          type="button"
+          class={`settings-tab-btn ${activeTab() === "models" ? "active" : ""}`}
+          onClick={() => { setActiveTab("models"); navigate("#/settings"); }}
+        >
+          <span class="tab-icon">✦</span> Models & AI
+          <span class="tab-pill mono">{selectedModel() || "Default"}</span>
+        </button>
+        <button
+          type="button"
+          class={`settings-tab-btn ${activeTab() === "permissions" ? "active" : ""}`}
+          onClick={() => { setActiveTab("permissions"); navigate("#/settings/permissions"); }}
+        >
+          <span class="tab-icon">🛡</span> Permissions & Governance
+          <span class="tab-pill">{modeLabel(selectedPermissionMode())}</span>
+        </button>
+        <button
+          type="button"
+          class={`settings-tab-btn ${activeTab() === "infrastructure" ? "active" : ""}`}
+          onClick={() => { setActiveTab("infrastructure"); navigate("#/settings/infrastructure"); }}
+        >
+          <span class="tab-icon">⚡</span> Event Bus & Fabric
+          <span class={`tab-pill ${busData()?.runtime?.connected ? "pill-ok" : ""}`}>
+            {busData()?.runtime?.backend === "nats" ? "NATS" : "In-Process"}
+          </span>
+        </button>
+        <button
+          type="button"
+          class={`settings-tab-btn ${activeTab() === "preferences" ? "active" : ""}`}
+          onClick={() => { setActiveTab("preferences"); navigate("#/settings/preferences"); }}
+        >
+          <span class="tab-icon">⚙</span> System & Maintenance
+          <span class="tab-pill">{theme()}</span>
+        </button>
+      </div>
+
+      <Show when={activeTab() === "models"}>
+        <div class="two-col">
+          <div class="stack">
             <section class="panel">
               <div class="panel-title-row">
                 <div>
-                  <h2>Inherited capabilities</h2>
-                  <p class="dim">Workspace starts with Global capabilities. Turn a category off to break that inheritance; add Workspace entries under Extensions.</p>
+                  <h2>Model Route</h2>
+                  <p class="dim">Primary provider and model answering turns, planned fresh per turn ladder.</p>
                 </div>
               </div>
-              <div class="capability-inheritance-list">
-                <For each={[
-                  ["inherit_mcp", "Connected apps (MCP)"],
-                  ["inherit_hooks", "Automations (hooks)"],
-                  ["inherit_skills", "Skills"],
-                  ["inherit_plugins", "Plugins"],
-                ] as const}>
-                  {([key, label]) => {
-                    const inherited = () => layer()?.capabilities?.[key] !== false;
-                    return (
-                      <label class="inherit-toggle capability-inheritance-row">
-                        <input
-                          type="checkbox"
-                          checked={inherited()}
-                          onChange={(event) => void guard(
-                            () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }),
-                            event.currentTarget.checked ? `${label} now inherit Global` : `${label} inheritance disabled`,
-                          )}
-                        />
-                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Global" : "Workspace-only"}</small></span>
-                      </label>
-                    );
-                  }}
-                </For>
-              </div>
-            </section>
-          </Show>
-
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Provider key</h2>
-                <p class="dim">
-                  The key for {providerLabel(selectedProvider())}. It is written to the selected
-                  scope’s private <code>.env</code> and never shown again, here or anywhere else.
-                </p>
-              </div>
-              <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
-                {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
-              </span>
-            </div>
-            <div class="form-row">
-              <label>Key</label>
-              <input
-                type="password"
-                autocomplete="off"
-                placeholder="sk-…"
-                value={providerKeyInput()}
-                onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
-              />
-            </div>
-            <div class="row-gap" style="margin-top:10px">
-              <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
-                {savingKey() ? "Saving…" : "Save key"}
-              </button>
-              <Show when={keyConfigured()}>
-                <button
-                  class="danger small"
-                  onClick={() =>
-                    void guard(async () => {
-                      if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
-                      await api.deleteProviderKey(selectedProvider(), configScope());
-                      await refetchProviders();
-                      setDiscoveredModels([]);
-                    }, `Key deleted for ${providerLabel(selectedProvider())}`)
-                  }
-                >
-                  Revoke
-                </button>
-              </Show>
-            </div>
-          </section>
-
-          <section class="panel" data-testid="voice-settings">
-            <div class="panel-title-row">
-              <div>
-                <h2>Voice</h2>
-                <p class="dim">Global voice defaults for this scope. Bots and chats inherit these unless they pin their own voice.</p>
-              </div>
-              <span class="chip">{config()?.voice?.source ?? (configScope() === "user" ? "Global" : "Workspace")}</span>
-            </div>
-            <Show when={config()?.voice} fallback={<div class="dim">Voice configuration unavailable.</div>}>
-              {(voice) => <>
-                <label class="inherit-toggle"><input type="checkbox" checked={voice().enabled} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")} /> Enable voice conversations</label>
-                <div class="form-row"><label for="voice-provider">Provider</label><input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} /></div>
-                <div class="form-row"><label for="voice-transcription-model">Transcription model</label><input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} /></div>
-                <div class="form-row"><label for="voice-synthesis-model">Synthesis model</label><input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} /></div>
-                <div class="form-row"><label for="voice-realtime-model">Realtime model</label><input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} /></div>
-              </>}
-            </Show>
-          </section>
-
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Event bus</h2>
-                <p class="dim">
-                  Distributed event fabric (vak-bus, docs/design/53). Configure NATS
-                  credentials to enable multi-server fan-out; leave unset for
-                  in-process-only (memory backend). Credentials are written to
-                  <code>.vak/env</code> and take effect on next restart.
-                </p>
-              </div>
-              <Show when={busData()}>
-                <span class={`chip chip-tone-${busData()?.runtime?.connected ? "success" : "warning"}`}>
-                  {busData()?.runtime?.backend === "nats" ? "connected" : busData()?.runtime?.backend === "memory" ? "in-process" : "not connected"}
-                </span>
-              </Show>
-            </div>
-            <Show when={busData()} fallback={
-              <div class="error-state" role="alert">
-                <strong>Event bus configuration unavailable.</strong>
-                <p>{busData.error ? String(busData.error) : "No configuration response was returned."}</p>
-                <button class="ghost small" type="button" onClick={() => void refetchBus()}>Retry bus settings</button>
-              </div>
-            }>
-              <div class="form-row">
-                <label>NATS URL</label>
-                <input
-                  type="url"
-                  placeholder="nats://..."
-                  value={busData()?.nats_url ?? ""}
-                  onInput={(e) => setBusUrl(e.currentTarget.value)}
-                />
-              </div>
-              <div class="form-row">
-                <label>Credentials JWT (optional)</label>
-                <input
-                  type="password"
-                  autocomplete="off"
-                  placeholder="ey..."
-                  value={busJwt()}
-                  onInput={(e) => setBusJwt(e.currentTarget.value)}
-                />
-              </div>
-              <div class="form-row">
-                <label>NKey seed (optional)</label>
-                <input
-                  type="password"
-                  autocomplete="off"
-                  placeholder="SU..."
-                  value={busNkey()}
-                  onInput={(e) => setBusNkey(e.currentTarget.value)}
-                />
-              </div>
-              <div class="form-row">
-                <label>Workspace secret env var name</label>
-                <input
-                  type="text"
-                  class="mono"
-                  placeholder="VAK_ENCRYPTION_SECRET"
-                  value={busSecretEnv()}
-                  onInput={(e) => setBusSecretEnv(e.currentTarget.value)}
-                />
-              </div>
-              <Show when={busData()?.encrypted}>
-                <p class="dim" style="margin-top:8px">
-                  <span class="chip chip-tone-success">Credential envelope encrypted</span>
-                  AES-256-GCM envelope security is active for this workspace.
-                </p>
-              </Show>
-              <div class="row-gap" style="margin-top:10px">
-                <button disabled={savingBus()} onClick={() => void saveBus()}>
-                  {savingBus() ? "Saving…" : "Save bus config"}
-                </button>
-                <Show when={busData()?.encrypted || (busData()?.nats_url ?? "").trim() !== ""}>
-                  <button class="danger small" onClick={() => void clearBus()}>
-                    Remove credentials
-                  </button>
-                </Show>
-              </div>
-              <p class="dim" style="margin-top:8px">
-                Takes effect on next server restart. The runtime status above reflects the current
-                connection, not the pending configuration.
-              </p>
-            </Show>
-          </section>
-
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Appearance</h2>
-                <p class="dim">Just for this browser — nobody else sees the change.</p>
-              </div>
-            </div>
-            <div class="theme-grid">
-              <For
-                each={[
-                  { id: "warm", label: "Warm dark", class: "" },
-                  { id: "dark", label: "Midnight", class: "dark" },
-                  { id: "contrast", label: "High contrast", class: "contrast" },
-                ] as const}
-              >
-                {(t) => (
-                  <button class="theme-choice" classList={{ active: theme() === t.id }} onClick={() => setTheme(t.id)}>
-                    <span class={`theme-preview ${t.class}`}><i /><i /><i /></span>
-                    <strong>{t.label}</strong>
-                  </button>
-                )}
-              </For>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Limits</h2>
-                <p class="dim">How long a single run can go, and whether it can delegate.</p>
-              </div>
-            </div>
-            <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /></div>}>
-              <div class="form-row">
-                <label>Max turns</label>
-                <input
-                  class="mono"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={maxTurnsInput()}
-                  onInput={(e) => setMaxTurnsInput(e.currentTarget.value)}
-                />
-              </div>
-              <div class="row-gap" style="margin-top:10px; margin-bottom:14px">
-                <button
-                  disabled={
-                    savingMaxTurns() ||
-                    !maxTurnsInput().trim() ||
-                    !(Number(maxTurnsInput()) >= 1 && Number(maxTurnsInput()) <= 1000)
-                  }
-                  onClick={() => {
-                    setSavingMaxTurns(true);
-                    void guard(
-                      () => api.patchConfigScope(configScope(), { max_turns: Number(maxTurnsInput()) }),
-                      `Max turns set to ${maxTurnsInput()}`,
-                    ).finally(() => setSavingMaxTurns(false));
-                  }}
-                >
-                  {savingMaxTurns() ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <label class="inherit-toggle">
-                <input
-                  type="checkbox"
-                  checked={config()?.subagents ?? false}
-                  disabled={togglingSubagents()}
-                  onChange={(e) => {
-                    const next = e.currentTarget.checked;
-                    setTogglingSubagents(true);
-                    void guard(
-                      () => api.patchConfigScope(configScope(), { subagents: next }),
-                      next ? "Sub-agents enabled" : "Sub-agents disabled",
-                    ).finally(() => setTogglingSubagents(false));
-                  }}
-                />
-                Sub-agents — lets the agent delegate part of a run to a child agent
-              </label>
-            </Show>
-          </section>
-        </div>
-
-        <div class="stack">
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>How much can it do on its own?</h2>
-                <p class="dim">
-                  This is the answer for anything the specific rules below don’t already cover.
-                </p>
-              </div>
-            </div>
-            <div class="mode-grid">
-              <For each={MODES}>
-                {(m) => (
-                  <button
-                    class="mode-btn"
-                    classList={{ active: selectedPermissionMode() === m.value }}
-                    onClick={() => void guard(() => api.patchConfigScope(configScope(), { permission_mode: m.value === "ReadOnly" ? "read-only" : m.value === "WorkspaceWrite" ? "workspace-write" : "full-access" }), `Now set to \u201C${m.label}\u201D`)}
-                    disabled={selectedPermissionMode() === m.value}
+              <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
+                <div class="form-row">
+                  <label>Provider</label>
+                  <select
+                    aria-label="Provider"
+                    value={selectedProvider()}
+                    ref={(el) => syncSelect(el, selectedProvider, () => providersData()?.providers)}
+                    onChange={(e) => setSelectedProvider(e.currentTarget.value)}
                   >
-                    <span class="mode-name">
-                      {m.label}
-                      <Show when={selectedPermissionMode() === m.value}>
-                        <span class="chip chip-tone-success">
-                          {inheritedPermissionMode() ? "in force (inherited)" : "set here"}
-                        </span>
-                      </Show>
-                    </span>
-                    <span class="mode-desc">{MODE_COPY[m.value]}</span>
-                  </button>
-                )}
-              </For>
-            </div>
+                    <For each={providersData()?.providers ?? []}>
+                      {(p) => <option value={p.name}>
+                        {providerLabel(p.name)} {p.configured ? "✓ (configured)" : p.name === "ollama" ? "(local endpoint)" : "(key required)"}
+                      </option>}
+                    </For>
+                  </select>
+                </div>
 
-            <Show
-              when={rulesReported(config())}
-              fallback={
-                <Show when={!config.loading}>
-                  <div class="rule-lists">
-                    <p class="dim">
-                      This version of the server doesn’t report its specific rules, so they can’t be
-                      listed here. The setting above still applies. To see the rules, open the
-                      workspace’s <code>config.toml</code>, or update vak.
+                <div class="form-row">
+                  <label>Model</label>
+                  <Show
+                    when={discoveredModels().length > 0}
+                    fallback={
+                      <input
+                        class="mono"
+                        aria-label="Model"
+                        placeholder={loadingModels() ? "Asking the provider…" : "e.g. claude-sonnet-4-5, gemma4:e2b-mlx"}
+                        value={selectedModel()}
+                        onInput={(e) => setSelectedModel(e.currentTarget.value)}
+                      />
+                    }
+                  >
+                    <div style="display:flex; flex-direction:column; gap:6px; width:100%">
+                      <div class="model-search-box">
+                        <span class="model-search-icon">🔍</span>
+                        <input
+                          type="text"
+                          class="model-search-input"
+                          placeholder={`Filter ${discoveredModels().length} models or type custom name…`}
+                          value={modelSearch()}
+                          onInput={(e) => setModelSearch(e.currentTarget.value)}
+                        />
+                        <Show when={modelSearch()}>
+                          <button class="model-search-clear" type="button" onClick={() => setModelSearch("")}>×</button>
+                        </Show>
+                      </div>
+
+                      <select
+                        aria-label="Model"
+                        value={selectedModel()}
+                        ref={(el) => syncSelect(el, selectedModel, filteredDiscoveredModels)}
+                        onChange={(e) => setSelectedModel(e.currentTarget.value)}
+                      >
+                        <For each={filteredDiscoveredModels()}>{(m) => {
+                          const status = bedrockAvailability().find((item) => item.model_id === m);
+                          return <option value={m} disabled={selectedProvider() === "bedrock" && !!status && !status.invokable}>
+                            {status && !status.invokable ? `${m} (not invokable)` : m}
+                          </option>;
+                        }}</For>
+                      </select>
+
+                      <Show when={modelSearch().trim() && !discoveredModels().includes(modelSearch().trim())}>
+                        <button
+                          type="button"
+                          class="custom-model-chip"
+                          onClick={() => setSelectedModel(modelSearch().trim())}
+                        >
+                          + Set model to custom tag: "{modelSearch().trim()}"
+                        </button>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+
+                <div class="model-selection-badge">
+                  <span class="dim">Active Selection:</span>
+                  <strong class="mono">{providerLabel(selectedProvider())}</strong>
+                  <span class="mono">· {selectedModel() || "None"}</span>
+                </div>
+
+                <Show when={modelError() && discoveredModels().length === 0}>
+                  <p class="dim">
+                    Couldn’t list models for {providerLabel(selectedProvider())} — usually because
+                    its key isn’t stored yet. Add the key below, or type a model name in by hand.
+                    ({modelError()})
+                  </p>
+                </Show>
+                <Show when={selectedProvider() === "bedrock" && bedrockAvailability().length > 0}>
+                  <div class="dim" style={{ "margin-top": "8px" }}>
+                    <p>
+                      <span class="chip chip-tone-success">{bedrockAvailability().filter((item) => item.invokable).length} invokable</span>{" "}
+                      <span class="chip chip-tone-warning">{bedrockAvailability().filter((item) => !item.invokable).length} require entitlement/agreement</span>
                     </p>
                   </div>
                 </Show>
-              }
-            >
-              <div class="rule-lists">
-                <For each={RULE_SECTIONS}>
-                  {({ decision, title, empty }) => (
-                    <div>
-                      <span class="eyebrow">{title}</span>
-                      <Show
-                        when={rulesFor(decision).length > 0}
-                        fallback={<p class="dim">{empty}</p>}
-                      >
-                        <div class="chip-stack">
-                          <For each={rulesFor(decision)}>{(r) => <RuleChip rule={r} />}</For>
-                        </div>
-                      </Show>
+                <Show when={selectedProvider() === "bedrock" && modelError()}>
+                  <p class="dim">Bedrock authorization status could not be checked: {modelError()}</p>
+                </Show>
+
+                <div class="row-gap" style="margin-top:10px">
+                  <button
+                    disabled={!selectedModel().trim()}
+                    onClick={() =>
+                      void guard(
+                        () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }),
+                        `Now using ${providerLabel(selectedProvider())} — ${selectedModel()}`,
+                      )
+                    }
+                  >
+                    Save Model Route
+                  </button>
+                  <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
+                    {loadingModels() ? "Checking…" : `Refresh list (${discoveredModels().length})`}
+                  </button>
+                </div>
+              </Show>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Provider Key Vault</h2>
+                  <p class="dim">
+                    Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
+                    scope’s private <code>.env</code> and never shown again.
+                  </p>
+                </div>
+                <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
+                  {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
+                </span>
+              </div>
+              <div class="form-row">
+                <label>API Key / Bearer Token</label>
+                <input
+                  type="password"
+                  autocomplete="off"
+                  placeholder="sk-… or Bearer token"
+                  value={providerKeyInput()}
+                  onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
+                />
+              </div>
+              <div class="row-gap" style="margin-top:10px">
+                <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
+                  {savingKey() ? "Saving…" : "Save key"}
+                </button>
+                <Show when={keyConfigured()}>
+                  <button
+                    class="danger small"
+                    onClick={() =>
+                      void guard(async () => {
+                        if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
+                        await api.deleteProviderKey(selectedProvider(), configScope());
+                        await refetchProviders();
+                        setDiscoveredModels([]);
+                      }, `Key deleted for ${providerLabel(selectedProvider())}`)
+                    }
+                  >
+                    Revoke
+                  </button>
+                </Show>
+              </div>
+            </section>
+          </div>
+
+          <div class="stack">
+            <section class="panel" data-testid="voice-settings">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Voice & Speech Engine</h2>
+                  <p class="dim">Voice conversation defaults for this scope. Bots and chats inherit these unless overridden.</p>
+                </div>
+                <span class="chip">{config()?.voice?.source ?? (configScope() === "user" ? "Global" : "Workspace")}</span>
+              </div>
+              <Show when={config()?.voice} fallback={<div class="dim">Voice configuration unavailable.</div>}>
+                {(voice) => <>
+                  <label class="inherit-toggle">
+                    <input
+                      type="checkbox"
+                      checked={voice().enabled}
+                      onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")}
+                    /> Enable voice conversations
+                  </label>
+                  <div class="voice-grid-2x2">
+                    <div class="form-row">
+                      <label for="voice-provider">Provider</label>
+                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} />
                     </div>
+                    <div class="form-row">
+                      <label for="voice-transcription-model">Transcription Model</label>
+                      <input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} />
+                    </div>
+                    <div class="form-row">
+                      <label for="voice-synthesis-model">Synthesis Model</label>
+                      <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} />
+                    </div>
+                    <div class="form-row">
+                      <label for="voice-realtime-model">Realtime Streaming Model</label>
+                      <input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} />
+                    </div>
+                  </div>
+                </>}
+              </Show>
+            </section>
+
+            <div class="settings-info-box">
+              <h3>✦ Multi-Provider Ladder Contract</h3>
+              <p>
+                In accordance with <code>AGENTS.md</code> Invariant 7, the route ladder is planned fresh on every turn
+                from the live evidence ledger, session belief state, warm discovery cache, and your effective route.
+                Failed requests fall back across candidate models automatically without rewriting your primary route.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={activeTab() === "permissions"}>
+        <div class="two-col">
+          <div class="stack">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Execution Authority</h2>
+                  <p class="dim">Permission mode governing file and tool execution boundaries.</p>
+                </div>
+              </div>
+              <div class="mode-grid">
+                <For each={MODES}>
+                  {(m) => (
+                    <button
+                      class="mode-btn"
+                      classList={{ active: selectedPermissionMode() === m.value }}
+                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { permission_mode: m.value === "ReadOnly" ? "read-only" : m.value === "WorkspaceWrite" ? "workspace-write" : "full-access" }), `Now set to \u201C${m.label}\u201D`)}
+                      disabled={selectedPermissionMode() === m.value}
+                    >
+                      <span class="mode-name">
+                        {m.label}
+                        <Show when={selectedPermissionMode() === m.value}>
+                          <span class="chip chip-tone-success">
+                            {inheritedPermissionMode() ? "in force (inherited)" : "set here"}
+                          </span>
+                        </Show>
+                      </span>
+                      <span class="mode-desc">{MODE_COPY[m.value]}</span>
+                    </button>
                   )}
                 </For>
               </div>
-              <p class="dim">
-                Hover a rule to see exactly how it is written. To see what a rule grants one
-                connected app, open <a href="#/integrations">Extensions</a>.
+
+              <div class="panel-title-row" style={{ "margin-top": "20px" }}>
+                <div>
+                  <h3>How should approvals be handled?</h3>
+                  <p class="dim">Controls how Ask decisions are resolved without altering the OS sandbox.</p>
+                </div>
+              </div>
+              <div class="mode-grid">
+                <For each={APPROVAL_MODES}>
+                  {(m) => (
+                    <button
+                      class="mode-btn"
+                      classList={{ active: selectedApprovalMode() === m.value }}
+                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
+                      disabled={selectedApprovalMode() === m.value}
+                    >
+                      <span class="mode-name">
+                        {m.label}
+                        <Show when={selectedApprovalMode() === m.value}>
+                          <span class="chip chip-tone-success">
+                            {inheritedApprovalMode() ? "in force (inherited)" : "set here"}
+                          </span>
+                        </Show>
+                      </span>
+                      <span class="mode-desc">{m.desc}</span>
+                    </button>
+                  )}
+                </For>
+              </div>
+              <p class="dim" style={{ "margin-top": "12px" }}>
+                Effective sandbox: <span class="chip chip-tone-info" style={{ "letter-spacing": "normal" }}>{config()?.sandbox ?? "none"}</span>
               </p>
-              <RuleEditor scope={configScope()} onSaved={() => void refetchConfig()} />
-            </Show>
-            <div class="panel-title-row" style={{ "margin-top": "18px" }}>
-              <div>
-                <h3>How should approvals be handled?</h3>
-                <p class="dim">This controls how Ask decisions are resolved. It does not expand the permission mode or disable the sandbox.</p>
-              </div>
-            </div>
-            <div class="mode-grid">
-              <For each={APPROVAL_MODES}>
-                {(m) => (
-                  <button
-                    class="mode-btn"
-                    classList={{ active: selectedApprovalMode() === m.value }}
-                    onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
-                    disabled={selectedApprovalMode() === m.value}
-                  >
-                    <span class="mode-name">
-                      {m.label}
-                      <Show when={selectedApprovalMode() === m.value}>
-                        <span class="chip chip-tone-success">
-                          {inheritedApprovalMode() ? "in force (inherited)" : "set here"}
-                        </span>
-                      </Show>
-                    </span>
-                    <span class="mode-desc">{m.desc}</span>
-                  </button>
-                )}
-              </For>
-            </div>
-            <p class="dim" style={{ "margin-top": "10px" }}>
-              Effective sandbox: <code>{config()?.sandbox ?? "…"}</code>
-            </p>
-          </section>
+            </section>
+          </div>
 
-          <ApprovalForwarding />
+          <div class="stack">
+            <ApprovalForwarding />
 
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Housekeeping</h2>
-                <p class="dim">Safe to run any time. Both can take a moment in a large workspace.</p>
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Security Rulebook</h2>
+                  <p class="dim">Specific pattern exceptions and pre-approved tools.</p>
+                </div>
               </div>
-            </div>
-            <div class="row-gap">
-              <button class="ghost" disabled={runningDoctor()} onClick={() => void runDoctor()}>
-                {runningDoctor() ? "Checking…" : "Check for problems"}
-              </button>
-              <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
-                {rebuilding() ? "Rebuilding…" : "Rebuild search"}
-              </button>
-            </div>
-            <Show when={doctorReport()}>
-              <pre class="mono report-pre">{doctorReport()}</pre>
-              <div class="row-gap">
-                <button class="ghost small" onClick={() => setDoctorReport(null)}>Dismiss report</button>
-              </div>
-            </Show>
-          </section>
-
-          <section class="panel">
-            <div class="panel-title-row">
-              <div>
-                <h2>Signed in</h2>
-                <p class="dim">
-                  Signing out only affects this browser. Anything already running carries on.
+              <Show
+                when={rulesReported(config())}
+                fallback={
+                  <Show when={!config.loading}>
+                    <div class="rule-lists">
+                      <p class="dim">
+                        Specific rules not reported by this server build. Rules in <code>config.toml</code> remain active.
+                      </p>
+                    </div>
+                  </Show>
+                }
+              >
+                <div class="rule-lists">
+                  <For each={RULE_SECTIONS}>
+                    {({ decision, title, empty }) => (
+                      <div>
+                        <span class="eyebrow">{title}</span>
+                        <Show
+                          when={rulesFor(decision).length > 0}
+                          fallback={<p class="dim">{empty}</p>}
+                        >
+                          <div class="chip-stack">
+                            <For each={rulesFor(decision)}>{(r) => <RuleChip rule={r} />}</For>
+                          </div>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+                <p class="dim" style="margin-top:10px">
+                  Hover a rule to see its pattern. To inspect apps, open <a href="#/integrations">Extensions</a>.
                 </p>
-              </div>
-            </div>
-            <div class="row-gap">
-              <button class="danger" onClick={() => void signOut()}>Sign out</button>
-            </div>
-          </section>
+                <RuleEditor scope={configScope()} onSaved={() => void refetchConfig()} />
+              </Show>
+            </section>
+          </div>
         </div>
-      </div>
+      </Show>
+
+      <Show when={activeTab() === "infrastructure"}>
+        <div class="two-col">
+          <div class="stack">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Event Bus Fabric</h2>
+                  <p class="dim">
+                    Distributed event fabric (<code>crates/vak-bus</code>, docs/design/53). NATS Core + JetStream
+                    enables multi-server synchronization; leave blank for in-process memory backend.
+                  </p>
+                </div>
+                <Show when={busData()}>
+                  <span class={`chip chip-tone-${busData()?.runtime?.connected ? "success" : "warning"}`}>
+                    {busData()?.runtime?.backend === "nats" ? "connected (nats)" : busData()?.runtime?.backend === "memory" ? "in-process (memory)" : "not connected"}
+                  </span>
+                </Show>
+              </div>
+              <Show when={busData()} fallback={
+                <div class="error-state" role="alert">
+                  <strong>Event bus configuration unavailable.</strong>
+                  <p>{busData.error ? String(busData.error) : "No configuration response was returned."}</p>
+                  <button class="ghost small" type="button" onClick={() => void refetchBus()}>Retry bus settings</button>
+                </div>
+              }>
+                <div class="form-row">
+                  <label>NATS URL</label>
+                  <input
+                    type="url"
+                    placeholder="nats://localhost:4222"
+                    value={busData()?.nats_url ?? ""}
+                    onInput={(e) => setBusUrl(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="form-row">
+                  <label>Credentials JWT (optional)</label>
+                  <input
+                    type="password"
+                    autocomplete="off"
+                    placeholder="ey..."
+                    value={busJwt()}
+                    onInput={(e) => setBusJwt(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="form-row">
+                  <label>NKey Seed (optional)</label>
+                  <input
+                    type="password"
+                    autocomplete="off"
+                    placeholder="SU..."
+                    value={busNkey()}
+                    onInput={(e) => setBusNkey(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="form-row">
+                  <label>Workspace Secret Env Var Name</label>
+                  <input
+                    type="text"
+                    class="mono"
+                    placeholder="VAK_ENCRYPTION_SECRET"
+                    value={busSecretEnv()}
+                    onInput={(e) => setBusSecretEnv(e.currentTarget.value)}
+                  />
+                </div>
+                <Show when={busData()?.encrypted}>
+                  <p class="dim" style="margin-top:8px">
+                    <span class="chip chip-tone-success">Envelope Encrypted</span>{" "}
+                    AES-256-GCM envelope security is active for this workspace.
+                  </p>
+                </Show>
+                <div class="row-gap" style="margin-top:12px">
+                  <button disabled={savingBus()} onClick={() => void saveBus()}>
+                    {savingBus() ? "Saving…" : "Save bus config"}
+                  </button>
+                  <Show when={busData()?.encrypted || (busData()?.nats_url ?? "").trim() !== ""}>
+                    <button class="danger small" onClick={() => void clearBus()}>
+                      Remove credentials
+                    </button>
+                  </Show>
+                </div>
+                <p class="dim" style="margin-top:8px">
+                  Credentials written to <code>.vak/env</code>. Takes effect on next server restart.
+                </p>
+              </Show>
+            </section>
+          </div>
+
+          <div class="stack">
+            <Show when={configScope() === "project"}>
+              <section class="panel">
+                <div class="panel-title-row">
+                  <div>
+                    <h2>Inherited Capabilities</h2>
+                    <p class="dim">Workspace inherits Global capabilities. Toggle off to scope to this workspace only.</p>
+                  </div>
+                </div>
+                <div class="capability-inheritance-list">
+                  <For each={[
+                    ["inherit_mcp", "Connected apps (MCP)"],
+                    ["inherit_hooks", "Automations (hooks)"],
+                    ["inherit_skills", "Skills"],
+                    ["inherit_plugins", "Plugins"],
+                  ] as const}>
+                    {([key, label]) => {
+                      const inherited = () => layer()?.capabilities?.[key] !== false;
+                      return (
+                        <label class="inherit-toggle capability-inheritance-row">
+                          <input
+                            type="checkbox"
+                            checked={inherited()}
+                            onChange={(event) => void guard(
+                              () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }),
+                              event.currentTarget.checked ? `${label} now inherit Global` : `${label} inheritance disabled`,
+                            )}
+                          />
+                          <span><strong>{label}</strong><small>{inherited() ? "Inherited from Global" : "Workspace-only"}</small></span>
+                        </label>
+                      );
+                    }}
+                  </For>
+                </div>
+              </section>
+            </Show>
+
+            <div class="settings-info-box">
+              <h3>⚡ Distributed Fabric Topology</h3>
+              <p>
+                The distributed bus handles multi-tenant events with Merkle/W3C causal lineage and dead-letter queues.
+                Local nodes fall back to high-throughput shared-memory channels when NATS is not configured.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={activeTab() === "preferences"}>
+        <div class="two-col">
+          <div class="stack">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Appearance</h2>
+                  <p class="dim">Theme preferences for this browser session.</p>
+                </div>
+              </div>
+              <div class="theme-grid">
+                <For
+                  each={[
+                    { id: "warm", label: "Warm dark", class: "" },
+                    { id: "dark", label: "Midnight", class: "dark" },
+                    { id: "contrast", label: "High contrast", class: "contrast" },
+                  ] as const}
+                >
+                  {(t) => (
+                    <button class="theme-choice" classList={{ active: theme() === t.id }} onClick={() => setTheme(t.id)}>
+                      <span class={`theme-preview ${t.class}`}><i /><i /><i /></span>
+                      <strong>{t.label}</strong>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Execution Limits</h2>
+                  <p class="dim">Run ceiling and delegation boundaries.</p>
+                </div>
+              </div>
+              <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /></div>}>
+                <div class="form-row">
+                  <label>Max turns per run</label>
+                  <input
+                    class="mono"
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={maxTurnsInput()}
+                    onInput={(e) => setMaxTurnsInput(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="row-gap" style="margin-top:10px; margin-bottom:14px">
+                  <button
+                    disabled={
+                      savingMaxTurns() ||
+                      !maxTurnsInput().trim() ||
+                      !(Number(maxTurnsInput()) >= 1 && Number(maxTurnsInput()) <= 1000)
+                    }
+                    onClick={() => {
+                      setSavingMaxTurns(true);
+                      void guard(
+                        () => api.patchConfigScope(configScope(), { max_turns: Number(maxTurnsInput()) }),
+                        `Max turns set to ${maxTurnsInput()}`,
+                      ).finally(() => setSavingMaxTurns(false));
+                    }}
+                  >
+                    {savingMaxTurns() ? "Saving…" : "Save Limit"}
+                  </button>
+                </div>
+                <label class="inherit-toggle">
+                  <input
+                    type="checkbox"
+                    checked={config()?.subagents ?? false}
+                    disabled={togglingSubagents()}
+                    onChange={(e) => {
+                      const next = e.currentTarget.checked;
+                      setTogglingSubagents(true);
+                      void guard(
+                        () => api.patchConfigScope(configScope(), { subagents: next }),
+                        next ? "Sub-agents enabled" : "Sub-agents disabled",
+                      ).finally(() => setTogglingSubagents(false));
+                    }}
+                  />
+                  Sub-agents — allow delegating tasks to child workers
+                </label>
+              </Show>
+            </section>
+          </div>
+
+          <div class="stack">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Housekeeping & Diagnostics</h2>
+                  <p class="dim">Routine system integrity checks and search re-indexing.</p>
+                </div>
+              </div>
+              <div class="row-gap">
+                <button class="ghost" disabled={runningDoctor()} onClick={() => void runDoctor()}>
+                  {runningDoctor() ? "Checking…" : "Run Doctor Check"}
+                </button>
+                <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
+                  {rebuilding() ? "Rebuilding…" : "Rebuild Search Index"}
+                </button>
+              </div>
+              <Show when={doctorReport()}>
+                <pre class="mono report-pre">{doctorReport()}</pre>
+                <div class="row-gap" style="margin-top:8px">
+                  <button class="ghost small" onClick={() => setDoctorReport(null)}>Dismiss report</button>
+                </div>
+              </Show>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Session & Authentication</h2>
+                  <p class="dim">
+                    Signing out ends this browser's session. Background daemons continue uninterrupted.
+                  </p>
+                </div>
+              </div>
+              <div class="row-gap">
+                <button class="danger" onClick={() => void signOut()}>Sign out</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
@@ -6771,6 +6913,20 @@ const operationsTab = () => {
   const exact = OPERATIONS_TABS.find((tab) => current === tab.hash);
   if (exact) return exact.hash;
   return OPERATIONS_TABS.slice(1).find((tab) => current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
+};
+
+const SETTINGS_TABS = [
+  { hash: "#/settings", label: "Model & Keys" },
+  { hash: "#/settings/permissions", label: "Access & Security" },
+  { hash: "#/settings/infrastructure", label: "Infrastructure" },
+  { hash: "#/settings/preferences", label: "Preferences" },
+] as const;
+
+const settingsTab = () => {
+  const current = route().split("?", 1)[0] || "#/settings";
+  const exact = SETTINGS_TABS.find((tab) => current === tab.hash);
+  if (exact) return exact.hash;
+  return SETTINGS_TABS.slice(1).find((tab) => current.startsWith(`${tab.hash}/`))?.hash ?? "#/settings";
 };
 
 function navHref(hash: string): string {
@@ -6832,7 +6988,15 @@ const NAV: NavItem[] = [
     children: KNOWLEDGE_TABS,
     activeChild: knowledgeTab,
   },
-  { group: "Configure", hash: "#/settings", label: "Model & providers", icon: ICONS.settings, scope: "layered" },
+  {
+    group: "Configure",
+    hash: "#/settings",
+    label: "Model & providers",
+    icon: ICONS.settings,
+    scope: "layered",
+    children: SETTINGS_TABS,
+    activeChild: settingsTab,
+  },
   { group: "System", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
 ];
 
