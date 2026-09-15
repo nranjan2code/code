@@ -1168,34 +1168,34 @@ async fn run_exec(
             return 2;
         }
     };
-    if let Some(agent_id) = &agent {
-        if agent_id != "vak" {
-            let profiles = match vak_server::agents::effective(&core) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("error: failed to load agents: {e}");
-                    return 2;
-                }
-            };
-            let Some(profile) = profiles
-                .into_iter()
-                .find(|p| p.id == *agent_id || p.name.eq_ignore_ascii_case(agent_id))
-            else {
-                eprintln!(
-                    "error: agent '{agent_id}' not found. Run 'vak agents list' to view configured agents."
-                );
-                return 2;
-            };
-            if !profile.is_admissible() {
-                eprintln!(
-                    "error: agent '{agent_id}' is {:?} and cannot execute runs",
-                    profile.lifecycle
-                );
+    if let Some(agent_id) = &agent
+        && agent_id != "vak"
+    {
+        let profiles = match vak_server::agents::effective(&core) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: failed to load agents: {e}");
                 return 2;
             }
-            eprintln!("▸ agent: {} ({})", profile.name, profile.id);
-            core = core.with_agent_identity(Some(profile.identity()));
+        };
+        let Some(profile) = profiles
+            .into_iter()
+            .find(|p| p.id == *agent_id || p.name.eq_ignore_ascii_case(agent_id))
+        else {
+            eprintln!(
+                "error: agent '{agent_id}' not found. Run 'vak agents list' to view configured agents."
+            );
+            return 2;
+        };
+        if !profile.is_admissible() {
+            eprintln!(
+                "error: agent '{agent_id}' is {:?} and cannot execute runs",
+                profile.lifecycle
+            );
+            return 2;
         }
+        eprintln!("▸ agent: {} ({})", profile.name, profile.id);
+        core = core.with_agent_identity(Some(profile.identity()));
     }
     print_config_warnings(&core);
     update_check::maybe_check_update(core.config());
@@ -1242,16 +1242,16 @@ async fn run_exec(
                     );
                     return 2;
                 }
-                if let Some(agent_id) = &agent {
-                    if let Some(h_agent) = s.header().and_then(|h| h.agent.as_ref()) {
-                        if h_agent.id != *agent_id && *agent_id != "vak" {
-                            eprintln!(
-                                "error: session '{sid}' was created for agent '{}', but you requested agent '{agent_id}'",
-                                h_agent.id
-                            );
-                            return 2;
-                        }
-                    }
+                if let Some(agent_id) = &agent
+                    && let Some(h_agent) = s.header().and_then(|h| h.agent.as_ref())
+                    && h_agent.id != *agent_id
+                    && *agent_id != "vak"
+                {
+                    eprintln!(
+                        "error: session '{sid}' was created for agent '{}', but you requested agent '{agent_id}'",
+                        h_agent.id
+                    );
+                    return 2;
                 }
                 eprintln!("▸ resuming session {sid}");
                 s
