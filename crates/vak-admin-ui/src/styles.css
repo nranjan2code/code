@@ -1884,85 +1884,405 @@ a.tab-btn {
 .prompt-editor:focus { outline: none; border-color: var(--border-focus); }
 .guardrail-sources { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 0; padding: 0; list-style: none; }
 
-/* ---- Setup wizard (docs/design/46 Part IV) ------------------------------
-   One decision per line, and a step's state readable without colour alone:
-   the mark spells it out, so the page works for a reader who cannot
-   distinguish the tints. */
-.setup-steps {
-  list-style: none;
-  margin: 1rem 0 0;
-  padding: 0;
+/* ---- Setup & Readiness Center (docs/design/46 Part IV & Navigation Reallocation) ---- */
+.setup-center-view {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.5rem;
 }
-.setup-step {
-  border: 1px solid var(--line);
-  border-left: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.75rem 0.9rem;
-  background: var(--surface);
-}
-.setup-step[data-state="satisfied"] { border-left-color: var(--ok, #3f7d58); }
-.setup-step[data-state="incomplete"] { border-left-color: var(--warn, #b8762e); }
-.setup-step[data-state="not_applicable"] { opacity: 0.72; }
-.setup-step-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+
+.setup-readiness-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
 }
-.setup-step-mark {
-  font-size: 0.78rem;
+
+.setup-kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.setup-kpi-label {
+  font-size: 0.72rem;
+  font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   color: var(--dim);
+}
+
+.setup-kpi-value-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.setup-kpi-val {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.setup-kpi-pct {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: auto;
+}
+
+.setup-kpi-sub {
+  font-size: 0.78rem;
+  color: var(--dim);
+  line-height: 1.35;
+}
+
+.setup-workspace-tag {
+  font-size: 0.8rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
 }
-.setup-step p { margin: 0.25rem 0 0; }
-.setup-step-detail { font-size: 0.92rem; }
-.setup-step-problem { margin-top: 0.4rem; }
-.setup-step-repair { font-weight: 600; }
-.setup-step-problem details { margin-top: 0.4rem; }
-.setup-step-problem pre {
-  white-space: pre-wrap;
+
+.setup-progress-meter {
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.25rem;
+}
+
+.setup-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.setup-phases-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.setup-phase-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.setup-phase-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.85rem;
+  margin-bottom: 1.15rem;
+}
+
+.setup-phase-eyebrow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.setup-phase-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb, 80, 140, 240), 0.1);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+
+.setup-phase-counter {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.setup-phase-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.setup-phase-subtitle {
+  margin: 0.2rem 0 0;
   font-size: 0.82rem;
-  margin: 0.35rem 0 0;
-}
-.setup-wizard .row-gap { margin-top: 1.25rem; }
-
-@media (max-width: 640px) {
-  /* An operator approving their first chat is often holding the phone
-     that sent the message (doc 46 D10). */
-  .setup-step-head { flex-direction: column; gap: 0.15rem; }
+  color: var(--dim);
 }
 
-.setup-step-actions { margin-top: 0.7rem; }
+.setup-step-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.setup-step-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.setup-step-card[data-state="satisfied"] {
+  border-left: 3px solid var(--ok, #3f7d58);
+}
+
+.setup-step-card[data-state="incomplete"] {
+  border-left: 3px solid var(--warn, #b8762e);
+  background: rgba(184, 118, 46, 0.03);
+}
+
+.setup-step-card[data-state="not_applicable"] {
+  border-left: 3px solid var(--dim, #888);
+  opacity: 0.82;
+}
+
+.setup-step-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setup-step-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.setup-step-card-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.setup-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.setup-status-satisfied {
+  background: rgba(63, 125, 88, 0.15);
+  color: var(--ok, #3f7d58);
+}
+
+.setup-status-incomplete {
+  background: rgba(184, 118, 46, 0.16);
+  color: var(--warn, #b8762e);
+}
+
+.setup-status-not_applicable {
+  background: var(--line);
+  color: var(--dim);
+}
+
+.setup-step-card-why {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+.setup-step-card-body {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.setup-result-box {
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.86rem;
+}
+
+.setup-result-box.satisfied {
+  background: rgba(63, 125, 88, 0.06);
+  border: 1px solid rgba(63, 125, 88, 0.2);
+}
+
+.setup-result-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.setup-result-detail {
+  font-weight: 550;
+  color: var(--text);
+}
+
+.setup-provenance-tag {
+  font-size: 0.78rem;
+  color: var(--dim);
+}
+
+.setup-result-box.na {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-style: italic;
+}
+
+.setup-result-box.problem {
+  background: rgba(184, 118, 46, 0.08);
+  border: 1px solid rgba(184, 118, 46, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.setup-problem-header strong {
+  color: var(--warn, #b8762e);
+  font-weight: 650;
+}
+
+.setup-problem-preserved {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.setup-problem-repair {
+  font-size: 0.82rem;
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 0.15rem;
+}
+
+.repair-kicker {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb, 80, 140, 240), 0.12);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  margin-right: 0.3rem;
+}
+
+.setup-problem-detail details {
+  margin-top: 0.4rem;
+}
+
+.setup-problem-detail summary {
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.setup-problem-detail pre {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.setup-step-card-actions {
+  margin-top: 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+}
+
 .setup-action-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
-.setup-action-grid input { min-width: 22rem; flex: 1 1 22rem; }
+
+.setup-action-grid input {
+  min-width: 18rem;
+  flex: 1 1 18rem;
+}
+
 .setup-postures {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 0.5rem;
 }
+
 .setup-postures button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.15rem;
+  gap: 0.2rem;
   text-align: left;
-  padding: 0.6rem 0.8rem;
-  flex: 1 1 14rem;
+  padding: 0.6rem 0.75rem;
 }
-.setup-postures button .dim { font-weight: 400; font-size: 0.85rem; }
-@media (max-width: 640px) {
-  .setup-action-grid input { min-width: 0; flex-basis: 100%; }
-  .setup-postures { flex-direction: column; }
+
+.setup-postures button .dim {
+  font-weight: 400;
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.setup-operational-footer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.15rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.setup-footer-content strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.2rem;
+}
+
+.setup-footer-content p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+@media (max-width: 768px) {
+  .setup-readiness-deck {
+    grid-template-columns: 1fr;
+  }
+  .setup-step-grid {
+    grid-template-columns: 1fr;
+  }
+  .setup-operational-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* ---- Home -----------------------------------------------------------------

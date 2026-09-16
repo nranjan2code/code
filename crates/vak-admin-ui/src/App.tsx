@@ -4792,11 +4792,55 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
   );
 }
 
+const SETUP_PHASES: {
+  id: string;
+  name: string;
+  subtitle: string;
+  keys: (keyof OnboardingState)[];
+}[] = [
+  {
+    id: "foundation",
+    name: "Phase 1: Environment & Host Foundation",
+    subtitle: "App binaries, local dependencies, workspace folder containment, and configuration trust.",
+    keys: ["install", "dependencies", "workspace", "trust"],
+  },
+  {
+    id: "dispatch",
+    name: "Phase 2: AI Dispatch & Boundary Sandbox",
+    subtitle: "LLM credentials, active model route, permission ceiling, and OS sandbox containment.",
+    keys: ["provider", "route", "permission", "sandbox"],
+  },
+  {
+    id: "extensions",
+    name: "Phase 3: Capabilities & Integrations",
+    subtitle: "Starter skills, connected external apps (MCP / search), and inbound messaging bots.",
+    keys: ["capabilities", "integrations", "channels"],
+  },
+  {
+    id: "runtime",
+    name: "Phase 4: Runtime Activation & First Flight",
+    subtitle: "Service manager background daemons and initial read-only verification flight.",
+    keys: ["services", "first_result"],
+  },
+];
+
 function SetupWizard() {
   const [state, { refetch }] = createResource(() => api.onboarding());
   const [activating, setActivating] = createSignal(false);
 
   const step = (key: keyof OnboardingState) => state()?.[key] as StepState | undefined;
+
+  const satisfiedCount = createMemo(() => {
+    const s = state();
+    if (!s) return 0;
+    return SETUP_STEPS.filter((m) => step(m.key)?.state === "satisfied").length;
+  });
+
+  const progressPct = createMemo(() => {
+    const total = SETUP_STEPS.length;
+    if (total === 0) return 0;
+    return Math.round((satisfiedCount() / total) * 100);
+  });
 
   const activate = async () => {
     setActivating(true);
@@ -4817,91 +4861,222 @@ function SetupWizard() {
   };
 
   return (
-    <section class="panel setup-wizard">
-      <div class="panel-title-row">
-        <div>
-          <span class="eyebrow">Setup</span>
-          <h2>{state()?.core_ready ? "You are set up" : "Let us get you running"}</h2>
-          <p class="dim">
-            {state()?.core_ready
-              ? "Everything needed to run a task is in place. Change anything below."
-              : "Each line below is one thing vak needs. Anything marked with a dot is optional."}
-          </p>
-        </div>
-        <span class={`chip ${state()?.core_ready ? "chip-ok" : "chip-warn"}`}>
-          {state()?.core_ready ? "ready" : "setup needed"}
-        </span>
-      </div>
+    <div class="view setup-center-view">
+      <PageHeader
+        title="Setup & Readiness"
+        description="Verify host prerequisites, AI model dispatch, sandbox containment, and platform service registration."
+        actions={
+          <div class="row-gap">
+            <button class="ghost small" onClick={() => void refetch()}>
+              Re-check Readiness
+            </button>
+            <button class="small" disabled={activating()} onClick={() => void activate()}>
+              {activating() ? "Activating…" : "Activate Background Services"}
+            </button>
+          </div>
+        }
+      />
 
-      <Show when={state()} fallback={<div class="skel skel-block" />}>
-        <ol class="setup-steps">
-          <For each={SETUP_STEPS}>
-            {(meta) => {
-              const st = () => step(meta.key);
+      <Show when={state()} fallback={<div class="skel skel-block" style={{ height: "240px", margin: "1rem 0" }} />}>
+        {/* Executive Readiness KPI Deck */}
+        <div class="setup-readiness-deck">
+          <div class="setup-kpi-card">
+            <span class="setup-kpi-label">Core Readiness</span>
+            <div class="setup-kpi-value-row">
+              <span class={`dot ${state()?.core_ready ? "dot-connected" : "dot-disconnected"}`} />
+              <strong class="setup-kpi-val">{state()?.core_ready ? "Ready for Work" : "Action Needed"}</strong>
+            </div>
+            <span class="setup-kpi-sub">
+              {state()?.core_ready ? "All prerequisites satisfied to execute tasks" : "Essential steps pending below"}
+            </span>
+          </div>
+
+          <div class="setup-kpi-card">
+            <span class="setup-kpi-label">Unattended Daemons</span>
+            <div class="setup-kpi-value-row">
+              <span class={`chip ${state()?.unattended_ready ? "chip-tone-success" : "chip-tone-neutral"}`}>
+                {state()?.unattended_ready ? "Active & Healthy" : "Interactive Only"}
+              </span>
+            </div>
+            <span class="setup-kpi-sub">
+              {state()?.unattended_ready ? "Launchd / systemd services registered" : "Click Activate to enable background runs"}
+            </span>
+          </div>
+
+          <div class="setup-kpi-card">
+            <span class="setup-kpi-label">Requirements Verified</span>
+            <div class="setup-kpi-value-row">
+              <strong class="setup-kpi-val">{satisfiedCount()} / {SETUP_STEPS.length}</strong>
+              <span class="setup-kpi-pct mono">{progressPct()}%</span>
+            </div>
+            <div class="setup-progress-meter">
+              <div class="setup-progress-bar" style={{ width: `${progressPct()}%` }} />
+            </div>
+          </div>
+
+          <div class="setup-kpi-card">
+            <span class="setup-kpi-label">Target Workspace</span>
+            <div class="setup-kpi-value-row">
+              <span class="mono setup-workspace-tag">
+                {step("workspace")?.state === "satisfied"
+                  ? (step("workspace") as { detail: string }).detail
+                  : "Not configured"}
+              </span>
+            </div>
+            <span class="setup-kpi-sub">
+              Canonical working directory for sessions & state
+            </span>
+          </div>
+        </div>
+
+        {/* 4-Phase Step Hierarchy */}
+        <div class="setup-phases-container">
+          <For each={SETUP_PHASES}>
+            {(phase) => {
+              const phaseSteps = () =>
+                SETUP_STEPS.filter((m) => phase.keys.includes(m.key));
+              const phaseSatisfied = () =>
+                phaseSteps().filter((m) => step(m.key)?.state === "satisfied").length;
+
               return (
-                <li class="setup-step" data-state={st()?.state ?? "unknown"}>
-                  <div class="setup-step-head">
-                    <strong>{meta.title}</strong>
-                    <span class="setup-step-mark">
-                      {st()?.state === "satisfied" ? "done" : st()?.state === "not_applicable" ? "not needed" : "to do"}
-                    </span>
-                  </div>
-                  <p class="dim">{meta.why}</p>
-                  <Switch>
-                    <Match when={st()?.state === "satisfied"}>
-                      <p class="setup-step-detail">
-                        {(st() as { detail: string }).detail}
-                        <Show when={(st() as { provenance?: string | null }).provenance}>
-                          {(p) => <span class="dim"> · set in the {p()} </span>}
-                        </Show>
-                      </p>
-                    </Match>
-                    <Match when={st()?.state === "not_applicable"}>
-                      <p class="setup-step-detail dim">{(st() as { reason: string }).reason}</p>
-                    </Match>
-                    <Match when={st()?.state === "incomplete"}>
-                      {/* All four fields, always: what failed, what is
-                          still safe, the one repair, and the technical
-                          detail behind disclosure. A single "setup
-                          failed" line is what this shape prevents. */}
-                      <div class="setup-step-problem">
-                        <p>{(st() as { what: string }).what}</p>
-                        <p class="dim">{(st() as { preserved: string }).preserved}</p>
-                        <p class="setup-step-repair">{(st() as { repair: string }).repair}</p>
-                        <Show when={(st() as { detail?: string | null }).detail}>
-                          {(d) => (
-                            <details>
-                              <summary class="dim">What exactly went wrong?</summary>
-                              <pre class="mono">{d()}</pre>
-                            </details>
-                          )}
-                        </Show>
+                <section class="setup-phase-section">
+                  <div class="setup-phase-header">
+                    <div class="setup-phase-titles">
+                      <div class="setup-phase-eyebrow-row">
+                        <span class="setup-phase-tag">{phase.id.toUpperCase()}</span>
+                        <span class="setup-phase-counter">
+                          {phaseSatisfied()} of {phaseSteps().length} satisfied
+                        </span>
                       </div>
-                    </Match>
-                  </Switch>
-                  <Show when={st()?.state !== "satisfied"}>
-                    <div class="setup-step-actions">
-                      <SetupActions step={meta.key} done={() => refetch()} />
+                      <h3 class="setup-phase-title">{phase.name}</h3>
+                      <p class="setup-phase-subtitle dim">{phase.subtitle}</p>
                     </div>
-                  </Show>
-                </li>
+                  </div>
+
+                  <div class="setup-step-grid">
+                    <For each={phaseSteps()}>
+                      {(meta) => {
+                        const st = () => step(meta.key);
+                        const sState = () => st()?.state ?? "incomplete";
+
+                        return (
+                          <div class="setup-step-card" data-state={sState()}>
+                            <div class="setup-step-card-head">
+                              <div class="setup-step-card-title-row">
+                                <div class={`setup-status-badge setup-status-${sState()}`}>
+                                  <Switch>
+                                    <Match when={sState() === "satisfied"}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+                                        <polyline points="20 6 9 17 4 12" />
+                                      </svg>
+                                    </Match>
+                                    <Match when={sState() === "not_applicable"}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="5" y1="12" x2="19" y2="12" />
+                                      </svg>
+                                    </Match>
+                                    <Match when={sState() === "incomplete"}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <line x1="12" y1="8" x2="12" y2="12" />
+                                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                                      </svg>
+                                    </Match>
+                                  </Switch>
+                                  <span class="setup-status-text">
+                                    {sState() === "satisfied"
+                                      ? "SATISFIED"
+                                      : sState() === "not_applicable"
+                                      ? "N/A"
+                                      : "ACTION REQUIRED"}
+                                  </span>
+                                </div>
+                                <strong class="setup-step-card-title">{meta.title}</strong>
+                              </div>
+                            </div>
+
+                            <p class="setup-step-card-why dim">{meta.why}</p>
+
+                            <div class="setup-step-card-body">
+                              <Switch>
+                                <Match when={sState() === "satisfied"}>
+                                  <div class="setup-result-box satisfied">
+                                    <div class="setup-result-content">
+                                      <span class="setup-result-detail">
+                                        {(st() as { detail: string }).detail}
+                                      </span>
+                                      <Show when={(st() as { provenance?: string | null }).provenance}>
+                                        {(p) => <span class="setup-provenance-tag">· {p()}</span>}
+                                      </Show>
+                                    </div>
+                                  </div>
+                                </Match>
+
+                                <Match when={sState() === "not_applicable"}>
+                                  <div class="setup-result-box na">
+                                    <span class="setup-result-reason dim">
+                                      {(st() as { reason: string }).reason}
+                                    </span>
+                                  </div>
+                                </Match>
+
+                                <Match when={sState() === "incomplete"}>
+                                  <div class="setup-result-box problem">
+                                    <div class="setup-problem-header">
+                                      <strong>{(st() as { what: string }).what}</strong>
+                                    </div>
+                                    <p class="setup-problem-preserved dim">
+                                      {(st() as { preserved: string }).preserved}
+                                    </p>
+                                    <div class="setup-problem-repair">
+                                      <span class="repair-kicker">REPAIR:</span> {(st() as { repair: string }).repair}
+                                    </div>
+                                    <Show when={(st() as { detail?: string | null }).detail}>
+                                      {(d) => (
+                                        <details class="setup-problem-detail">
+                                          <summary class="dim">Technical Diagnostics</summary>
+                                          <pre class="mono">{d()}</pre>
+                                        </details>
+                                      )}
+                                    </Show>
+                                  </div>
+                                </Match>
+                              </Switch>
+
+                              <Show when={sState() !== "satisfied"}>
+                                <div class="setup-step-card-actions">
+                                  <SetupActions step={meta.key} done={() => refetch()} />
+                                </div>
+                              </Show>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </section>
               );
             }}
           </For>
-        </ol>
-
-        <div class="row-gap">
-          <button disabled={activating()} onClick={() => void activate()}>
-            {activating() ? "Activating…" : "Activate background services"}
-          </button>
-          <button class="ghost small" onClick={() => refetch()}>Re-check</button>
         </div>
-        <p class="dim">
-          Nothing you configure starts running on its own. Activating is the one
-          step that registers vak with this machine's service manager.
-        </p>
+
+        {/* Operational Footer Notice */}
+        <div class="setup-operational-footer">
+          <div class="setup-footer-content">
+            <strong>Service Manager Registration Contract</strong>
+            <p class="dim">
+              Configuration files remain inert until background services are explicitly synchronized with launchd/systemd.
+              Activating writes durable service units from the canonical workspace.
+            </p>
+          </div>
+          <div class="setup-footer-actions">
+            <button class="small" disabled={activating()} onClick={() => void activate()}>
+              {activating() ? "Activating…" : "Activate Background Services"}
+            </button>
+          </div>
+        </div>
       </Show>
-    </section>
+    </div>
   );
 }
 
@@ -6460,7 +6635,6 @@ function navHref(hash: string): string {
 const NAV: NavItem[] = [
   { group: "Overview", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
   { group: "Overview", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
-  { group: "Overview", hash: "#/setup", label: "Setup", icon: ICONS.overview, scope: "project" },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
   {
@@ -6519,6 +6693,7 @@ const NAV: NavItem[] = [
     children: SETTINGS_TABS,
     activeChild: settingsTab,
   },
+  { group: "System", hash: "#/setup", label: "Setup", icon: ICONS.setup, scope: "project" },
   { group: "System", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
 ];
 
