@@ -450,31 +450,108 @@ function Row(props: {
 
 const PRESET_INTENT_PROMPTS = [
   {
+    id: "code-fix",
+    icon: "code",
+    category: "Engineering",
     title: "Code Bug Fix & Test",
+    summary: "Worker pool race condition & cargo test suite",
     prompt: "Fix the race condition in the worker pool and run all cargo integration tests.",
   },
   {
+    id: "direct-query",
+    icon: "chat",
+    category: "Direct Query",
     title: "Direct Query",
+    summary: "Capital of France & local time query",
     prompt: "What is the capital of France and what is the current local time there?",
   },
   {
+    id: "db-refactor",
+    icon: "database",
+    category: "Long Horizon",
     title: "Database Refactoring",
+    summary: "Multi-currency billing schema with backward compatibility",
     prompt: "Migrate the billing schema to add support for multiple currencies, with backward compatibility.",
   },
   {
+    id: "security-audit",
+    icon: "shield",
+    category: "Governance",
     title: "Security Audit",
+    summary: "Auth logs inspection for failed SSH logins",
     prompt: "Inspect system authentication logs for failed SSH logins and generate a summary report.",
   },
   {
+    id: "exec-briefing",
+    icon: "chart",
+    category: "Synthesis",
     title: "Executive Briefing",
+    summary: "Quarterly stability & token burn leadership briefing",
     prompt: "Draft a quarterly executive briefing for leadership on platform stability and token burn.",
   },
 ];
+
+const DELIVERY_SURFACES = [
+  { id: "", label: "Default (CLI / Local Interactive)" },
+  { id: "telegram", label: "Telegram Bridge" },
+  { id: "discord", label: "Discord Bridge" },
+  { id: "slack", label: "Slack Workspace Bridge" },
+  { id: "web_chat", label: "Web Chat Console" },
+  { id: "daemon", label: "Automated Daemon / Watchdog" },
+];
+
+function renderPresetSvg(icon: string) {
+  switch (icon) {
+    case "code":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="preset-icon">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+      );
+    case "chat":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="preset-icon">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case "database":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="preset-icon">
+          <ellipse cx="12" cy="5" rx="9" ry="3" />
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+        </svg>
+      );
+    case "shield":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="preset-icon">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      );
+    case "chart":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="preset-icon">
+          <line x1="18" y1="20" x2="18" y2="10" />
+          <line x1="12" y1="20" x2="12" y2="4" />
+          <line x1="6" y1="20" x2="6" y2="14" />
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="preset-icon">
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+      );
+  }
+}
 
 function IntentSimulator() {
   const [testPrompt, setTestPrompt] = createSignal(PRESET_INTENT_PROMPTS[0].prompt);
   const [debouncedPrompt, setDebouncedPrompt] = createSignal(PRESET_INTENT_PROMPTS[0].prompt);
   const [surface, setSurface] = createSignal("");
+  const [showSignals, setShowSignals] = createSignal(false);
+  const [copiedFraming, setCopiedFraming] = createSignal(false);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
@@ -493,179 +570,534 @@ function IntentSimulator() {
     },
   );
 
+  const copyFraming = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedFraming(true);
+    setTimeout(() => setCopiedFraming(false), 2000);
+  };
+
+  const horizonRank = (h: string) => {
+    switch (h) {
+      case "immediate": return 1;
+      case "turn": return 2;
+      case "session": return 3;
+      case "durable": return 4;
+      default: return 2;
+    }
+  };
+
+  const stakesRank = (s: string) => {
+    switch (s) {
+      case "inert": return 1;
+      case "reversible": return 2;
+      case "costly": return 3;
+      case "irreversible": return 4;
+      default: return 1;
+    }
+  };
+
+  const evidenceRank = (e: string) => {
+    switch (e) {
+      case "none": return 0;
+      case "cited": return 1;
+      case "verified":
+      case "observed": return 2;
+      case "audited":
+      case "attested": return 3;
+      default: return 0;
+    }
+  };
+
   return (
     <div class="intent-sim-container">
+      {/* Top Controller Panel */}
       <div class="panel">
         <div class="panel-title-row">
           <div>
             <h2>Intent Kernel & 7-Axis Classifier</h2>
             <p class="dim">
               The commitment kernel analyzes work requests across 7 orthogonal axes before any turn runs,
-              determining capability slicing, commitment promotion, and satisfaction standards.
+              determining capability slicing, commitment promotion, and satisfaction standards (docs/design/47).
             </p>
           </div>
         </div>
 
-        {/* Presets */}
-        <div class="eyebrow" style={{ "margin-bottom": "6px" }}>Sample Request Presets</div>
+        {/* Presets Grid */}
+        <div class="eyebrow" style={{ "margin-bottom": "8px" }}>Interactive Work Request Presets</div>
         <div class="intent-presets-grid">
           <For each={PRESET_INTENT_PROMPTS}>
             {(preset) => (
               <button
                 type="button"
-                class="intent-preset-btn"
+                class="intent-preset-card"
                 classList={{ active: testPrompt() === preset.prompt }}
                 onClick={() => setTestPrompt(preset.prompt)}
               >
-                <span class="intent-preset-title">{preset.title}</span>
-                <span class="intent-preset-prompt">{preset.prompt}</span>
+                <div class="intent-preset-top">
+                  <span class="intent-preset-icon-wrap">{renderPresetSvg(preset.icon)}</span>
+                  <span class="intent-preset-category">{preset.category}</span>
+                </div>
+                <div class="intent-preset-title" title={preset.title}>{preset.title}</div>
+                <div class="intent-preset-summary" title={preset.summary}>{preset.summary}</div>
               </button>
             )}
           </For>
         </div>
 
-        {/* Custom Input */}
-        <div class="form-row" style={{ "margin-top": "14px" }}>
-          <label>Test Prompt</label>
-          <textarea
-            rows={2}
-            value={testPrompt()}
-            onInput={(e) => setTestPrompt(e.currentTarget.value)}
-            placeholder="Type any instruction to test intent classification..."
-            style={{ "width": "100%", "font-family": "var(--font-sans)", "font-size": "13px" }}
-          />
+        {/* Custom Input & Surface Bar */}
+        <div class="intent-input-section" style={{ "margin-top": "16px" }}>
+          <div class="intent-input-header">
+            <label class="font-semibold" style={{ "font-size": "12.5px" }}>Test Work Instruction Prompt</label>
+            <div class="intent-surface-picker">
+              <span class="dim" style={{ "font-size": "11.5px" }}>Delivery Surface:</span>
+              <select
+                value={surface()}
+                onChange={(e) => setSurface(e.currentTarget.value)}
+                class="intent-surface-select"
+              >
+                <For each={DELIVERY_SURFACES}>
+                  {(s) => <option value={s.id}>{s.label}</option>}
+                </For>
+              </select>
+            </div>
+          </div>
+          <div class="textarea-wrap" style={{ "position": "relative", "margin-top": "6px" }}>
+            <textarea
+              rows={3}
+              value={testPrompt()}
+              onInput={(e) => setTestPrompt(e.currentTarget.value)}
+              placeholder="Type any work request to evaluate 7-axis intent classification..."
+              class="intent-test-textarea"
+            />
+            <Show when={testPrompt()}>
+              <button
+                type="button"
+                class="button ghost small clear-input-btn"
+                onClick={() => setTestPrompt("")}
+                title="Clear input"
+              >
+                Clear
+              </button>
+            </Show>
+          </div>
         </div>
       </div>
 
       <Show when={explain.loading}>
-        <div class="skeleton-rows">
-          <div class="skeleton-row" />
-          <div class="skeleton-row" />
+        <div class="skeleton-rows" style={{ "margin": "16px 0" }}>
+          <div class="skeleton-row" style={{ "height": "120px" }} />
+          <div class="skeleton-row" style={{ "height": "80px" }} />
         </div>
       </Show>
 
       <Show when={explain()}>
         {(exp: () => IntentExplain) => (
           <>
-            {/* 7-Axes Radar Deck */}
+            {/* 7-Axes Behavioral Reading Deck */}
             <div class="panel">
               <div class="panel-title-row">
                 <div>
                   <h3>7-Axis Behavioral Reading</h3>
-                  <p class="dim">Inferred work characteristics driving runtime subsystems.</p>
+                  <p class="dim">Inferred orthogonal characteristics governing all downstream runtime subsystems.</p>
                 </div>
-                <span class="chip chip-tone-success">zero-cost classification</span>
+                <div style={{ "display": "flex", "align-items": "center", "gap": "8px" }}>
+                  <span class="chip chip-tone-success">
+                    {exp().provenance.tier === "signals"
+                      ? "⚡ zero-cost signals (tier-1)"
+                      : `${exp().provenance.tier} (tier-${exp().provenance.tier === "declared" ? 0 : 2})`}
+                  </span>
+                  <button
+                    type="button"
+                    class="button ghost small"
+                    onClick={() => setShowSignals(!showSignals())}
+                  >
+                    {showSignals() ? "Hide Evidence" : `Inference Signals (${exp().provenance.signals?.length ?? 0})`}
+                  </button>
+                </div>
               </div>
 
+              {/* Collapsible Signals Evidence */}
+              <Show when={showSignals()}>
+                <div class="signals-evidence-drawer">
+                  <div class="signals-header">
+                    <span class="eyebrow">Classifier Provenance &amp; Signals</span>
+                    <span class="dim small mono">
+                      Resolver v{exp().provenance.resolver_version} ·{" "}
+                      {exp().provenance.reproducible ? "Deterministic Replay Verified" : "Model-Assisted Inference"}
+                    </span>
+                  </div>
+                  <Show
+                    when={(exp().provenance.signals ?? []).length > 0}
+                    fallback={<div class="dim small">No specific lexical signals triggered; fell back to default baseline posture.</div>}
+                  >
+                    <div class="signals-list">
+                      <For each={exp().provenance.signals}>
+                        {(sig) => (
+                          <div class="signal-item">
+                            <div class="signal-left">
+                              <span class="signal-bullet">◈</span>
+                              <strong class="signal-name">{sig.name}</strong>
+                              <span class="signal-kind chip mono">{sig.kind}</span>
+                            </div>
+                            <div class="signal-right">
+                              <span class="signal-weight mono">w: {sig.weight.toFixed(2)}</span>
+                              <span class="signal-detail dim">{sig.detail}</span>
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
+              {/* The 7 Cards Grid */}
               <div class="intent-axes-grid">
+                {/* 1. ACT */}
                 <div class="axis-card act">
                   <div class="axis-header">
-                    <span class="axis-name">Act</span>
+                    <span class="axis-name">1. Act</span>
+                    <span class="axis-tag">Categorical</span>
                   </div>
-                  <span class="axis-val">{exp().reading.act}</span>
-                  <span class="axis-desc">Drives capability slice & stop profile</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.act}</span>
+                  </div>
+                  <span class="axis-desc">
+                    {exp().reading.act === "modify" || exp().reading.act === "operate"
+                      ? "Effectful mutation: file edits & command executions."
+                      : exp().reading.act === "verify"
+                      ? "Testing & verification: test suites & checks."
+                      : exp().reading.act === "analyze" || exp().reading.act === "locate"
+                      ? "Read-only inspection: search & symbol tracing."
+                      : "Direct conversational prose response."}
+                  </span>
+                  <div class="axis-footer-chip">
+                    <span class="mono dim">subsystem: capability slice</span>
+                  </div>
                 </div>
 
+                {/* 2. HORIZON */}
                 <div class="axis-card horizon">
                   <div class="axis-header">
-                    <span class="axis-name">Horizon</span>
+                    <span class="axis-name">2. Horizon</span>
+                    <span class="axis-level mono">L{horizonRank(exp().reading.horizon)}/4</span>
                   </div>
-                  <span class="axis-val">{exp().reading.horizon}</span>
-                  <span class="axis-desc">Drives managed admission & commitment creation</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.horizon}</span>
+                    <span
+                      class="chip"
+                      classList={{
+                        "chip-tone-success": horizonRank(exp().reading.horizon) >= 3,
+                        "chip-phrase": horizonRank(exp().reading.horizon) < 3,
+                      }}
+                    >
+                      {horizonRank(exp().reading.horizon) >= 3 ? "durable" : "ephemeral"}
+                    </span>
+                  </div>
+                  <div class="axis-pip-meter">
+                    <For each={[1, 2, 3, 4]}>
+                      {(level) => (
+                        <span
+                          class="pip"
+                          classList={{ active: level <= horizonRank(exp().reading.horizon) }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <span class="axis-desc">
+                    {horizonRank(exp().reading.horizon) >= 3
+                      ? "Opens managed commitment; outlives single turn."
+                      : "Resolves within current turn; zero ledger debt."}
+                  </span>
                 </div>
 
+                {/* 3. STAKES */}
                 <div class="axis-card stakes">
                   <div class="axis-header">
-                    <span class="axis-name">Stakes</span>
+                    <span class="axis-name">3. Stakes</span>
+                    <span class="axis-level mono">L{stakesRank(exp().reading.stakes)}/4</span>
                   </div>
-                  <span class="axis-val">{exp().reading.stakes}</span>
-                  <span class="axis-desc">Drives approval ceiling & checkpoint requirement</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.stakes}</span>
+                    <span
+                      class="chip"
+                      classList={{
+                        "chip-tone-alert": exp().reading.stakes === "irreversible",
+                        "chip-tone-warning": exp().reading.stakes === "costly",
+                        "chip-tone-info": exp().reading.stakes === "reversible",
+                        "chip-phrase": exp().reading.stakes === "inert",
+                      }}
+                    >
+                      {exp().reading.stakes}
+                    </span>
+                  </div>
+                  <div class="axis-pip-meter">
+                    <For each={[1, 2, 3, 4]}>
+                      {(level) => (
+                        <span
+                          class="pip"
+                          classList={{
+                            active: level <= stakesRank(exp().reading.stakes),
+                            "pip-danger": exp().reading.stakes === "irreversible" && level === 4,
+                            "pip-warn": exp().reading.stakes === "costly" && level === 3,
+                          }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <span class="axis-desc">
+                    {exp().reading.stakes === "irreversible"
+                      ? "Requires mandatory human sign-off; never bypassed."
+                      : exp().reading.stakes === "costly"
+                      ? "Metered cloud budget & approval checkpoint."
+                      : exp().reading.stakes === "reversible"
+                      ? "Filesystem jail with snapshot rollback diff."
+                      : "Zero-risk read operation."}
+                  </span>
                 </div>
 
+                {/* 4. EVIDENCE */}
                 <div class="axis-card evidence">
                   <div class="axis-header">
-                    <span class="axis-name">Evidence</span>
+                    <span class="axis-name">4. Evidence</span>
+                    <span class="axis-level mono">L{evidenceRank(exp().reading.evidence)}/3</span>
                   </div>
-                  <span class="axis-val">{exp().reading.evidence}</span>
-                  <span class="axis-desc">Minimum satisfaction strength to close</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.evidence}</span>
+                  </div>
+                  <div class="axis-pip-meter">
+                    <For each={[1, 2, 3]}>
+                      {(level) => (
+                        <span
+                          class="pip"
+                          classList={{ active: level <= evidenceRank(exp().reading.evidence) }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <span class="axis-desc">
+                    {exp().reading.evidence === "audited"
+                      ? "Third-party cryptographic affirmation required."
+                      : exp().reading.evidence === "verified"
+                      ? "Host runtime check (test pass, exit code 0)."
+                      : exp().reading.evidence === "cited"
+                      ? "Model output accompanied by verified sources."
+                      : "Unverified model assertion accepted."}
+                  </span>
                 </div>
 
+                {/* 5. CLARITY */}
                 <div class="axis-card clarity">
                   <div class="axis-header">
-                    <span class="axis-name">Clarity</span>
+                    <span class="axis-name">5. Clarity</span>
+                    <span class="axis-tag">Categorical</span>
                   </div>
-                  <span class="axis-val">{exp().reading.clarity}</span>
-                  <span class="axis-desc">Ask vs. state-an-assumption rule</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.clarity}</span>
+                  </div>
+                  <span class="axis-desc">
+                    {exp().reading.clarity === "clear"
+                      ? "Instructions explicit; proceeds without asking."
+                      : exp().reading.clarity === "ambiguous"
+                      ? exp().reading.stakes === "irreversible"
+                        ? "Ambiguity on high stakes: blocks & asks user."
+                        : "Ambiguity on low stakes: states assumption & runs."
+                      : "Underspecified: falls back to cautious default."}
+                  </span>
+                  <div class="axis-footer-chip">
+                    <span class="mono dim">strategy: {exp().engagement.posture.clarify}</span>
+                  </div>
                 </div>
 
+                {/* 6. MODALITY */}
                 <div class="axis-card modality">
                   <div class="axis-header">
-                    <span class="axis-name">Modality</span>
+                    <span class="axis-name">6. Modality</span>
+                    <span class="axis-tag">Filter</span>
                   </div>
-                  <span class="axis-val">{exp().engagement.limits.required_modalities.join(", ") || "text"}</span>
-                  <span class="axis-desc">Ladder model filtering & format</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val mono" style={{ "font-size": "12px" }}>
+                      {exp().engagement.limits.required_modalities.join(", ") || "text"}
+                    </span>
+                  </div>
+                  <span class="axis-desc">
+                    Drives frozen ladder routing and model selection filter.
+                  </span>
+                  <div class="axis-footer-chip">
+                    <span class="mono dim">route requirement</span>
+                  </div>
                 </div>
 
+                {/* 7. ATTENDANCE */}
                 <div class="axis-card attendance">
                   <div class="axis-header">
-                    <span class="axis-name">Attendance</span>
+                    <span class="axis-name">7. Attendance</span>
+                    <span class="axis-tag">Cadence</span>
                   </div>
-                  <span class="axis-val">{exp().reading.attendance}</span>
-                  <span class="axis-desc">HIL mode & delivery cadence</span>
+                  <div class="axis-val-row">
+                    <span class="axis-val">{exp().reading.attendance}</span>
+                  </div>
+                  <span class="axis-desc">
+                    {exp().reading.attendance === "unattended"
+                      ? "Unattended daemon: fails closed or defers to inbox."
+                      : exp().reading.attendance === "supervised"
+                      ? "Supervised bridge: notified on completion/milestones."
+                      : "Interactive user present: synchronous stream."}
+                  </span>
+                  <div class="axis-footer-chip">
+                    <span class="mono dim">hil: {exp().engagement.posture.hil}</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Derived Engagement & Narrowing */}
+            {/* Commitment Engine Promotion Decision Callout */}
+            <div
+              class="commitment-promotion-banner"
+              classList={{
+                "banner-promoted": exp().engagement.posture.open_commitment,
+                "banner-ephemeral": !exp().engagement.posture.open_commitment,
+              }}
+            >
+              <div class="banner-icon-wrap">
+                <Show
+                  when={exp().engagement.posture.open_commitment}
+                  fallback={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="banner-icon">
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                    </svg>
+                  }
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="banner-icon">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 14 14" />
+                  </svg>
+                </Show>
+              </div>
+              <div class="banner-body">
+                <div class="banner-title">
+                  <strong>
+                    {exp().engagement.posture.open_commitment
+                      ? "Commitment Engine: Promotion to Durable Obligation"
+                      : "Commitment Engine: Ephemeral Interactive Turn"}
+                  </strong>
+                  <span
+                    class="chip"
+                    classList={{
+                      "chip-tone-success": exp().engagement.posture.open_commitment,
+                      "chip-tone-info": !exp().engagement.posture.open_commitment,
+                    }}
+                  >
+                    {exp().engagement.posture.open_commitment ? "durable commitment" : "direct dispatch"}
+                  </span>
+                </div>
+                <div class="banner-desc">
+                  <Show
+                    when={exp().engagement.posture.open_commitment}
+                    fallback={
+                      <>
+                        This request is classified as single-turn work (horizon: <strong>{exp().reading.horizon}</strong>).
+                        The agent executes it directly in-memory. Zero commitment debt is created, keeping your portfolio
+                        ledger clean and avoiding unnecessary scheduled polling or inbox reminders.
+                      </>
+                    }
+                  >
+                    <>
+                      Because horizon is <strong>{exp().reading.horizon}</strong> (≥ session), vak promotes this work
+                      into a durable, tracked <strong>Commitment</strong> with independent audit lineage. Work cannot
+                      close as fulfilled until satisfaction criteria achieve at least{" "}
+                      <span class="chip chip-phrase">{exp().engagement.limits.min_satisfaction}</span> evidence.
+                    </>
+                  </Show>
+                </div>
+              </div>
+            </div>
+
+            {/* Derived Safety Envelope & Capability Slicing Grid */}
             <div class="intent-engagement-grid">
+              {/* Left Column: Safety Posture & Envelope */}
               <div class="panel">
                 <div class="panel-title-row">
                   <div>
-                    <h3>Derived Engagement Posture</h3>
-                    <p class="dim">Safety boundaries calculated from the 7 axes.</p>
+                    <h3>Derived Safety Posture &amp; Limits</h3>
+                    <p class="dim">Calculated boundary contract restricting what the model is allowed to do.</p>
                   </div>
                 </div>
-                <div style={{ "display": "grid", "grid-template-columns": "140px 1fr", "gap": "10px", "font-size": "12px" }}>
-                  <span class="dim">Managed Mode:</span>
-                  <span><strong>{exp().engagement.posture.managed ? "Yes (Durable Session)" : "No (Direct)"}</strong></span>
-
-                  <span class="dim">Open Commitment:</span>
-                  <span><strong>{exp().engagement.posture.open_commitment ? "Yes" : "No"}</strong></span>
-
-                  <span class="dim">Approval Ceiling:</span>
-                  <span><span class="chip chip-phrase">{exp().engagement.limits.approval_ceiling}</span></span>
-
-                  <span class="dim">Permission Ceiling:</span>
-                  <span><span class="chip chip-phrase">{exp().engagement.limits.permission_ceiling}</span></span>
-
-                  <span class="dim">Stop Condition:</span>
-                  <span><code>{exp().engagement.posture.stop}</code></span>
-
-                  <span class="dim">Context Profile:</span>
-                  <span><code>{exp().engagement.posture.context}</code></span>
-
-                  <span class="dim">Delivery Cadence:</span>
-                  <span>{exp().engagement.posture.delivery.cadence} ({exp().engagement.posture.delivery.urgency})</span>
+                <div class="posture-specs-table">
+                  <div class="spec-row">
+                    <span class="spec-label">Managed Execution:</span>
+                    <span class="spec-val">
+                      <strong>{exp().engagement.posture.managed ? "Yes (Durable Session)" : "No (Direct Interactive)"}</strong>
+                    </span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Approval Ceiling:</span>
+                    <span class="spec-val">
+                      <span
+                        class="chip"
+                        classList={{
+                          "chip-tone-danger": exp().engagement.limits.approval_ceiling === "ask",
+                          "chip-tone-warning": exp().engagement.limits.approval_ceiling === "approve-safe",
+                          "chip-tone-success": exp().engagement.limits.approval_ceiling === "auto-approve",
+                        }}
+                      >
+                        {exp().engagement.limits.approval_ceiling}
+                      </span>
+                    </span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Permission Ceiling:</span>
+                    <span class="spec-val">
+                      <span class="chip chip-phrase">{exp().engagement.limits.permission_ceiling}</span>
+                    </span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Pre-Effect Checkpoint:</span>
+                    <span class="spec-val mono">
+                      {exp().engagement.posture.checkpoint_before_effect ? "Enforced Snapshot (disk)" : "None"}
+                    </span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Human-in-the-Loop Mode:</span>
+                    <span class="spec-val">
+                      <code>{exp().engagement.posture.hil}</code>
+                    </span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Stop Profile:</span>
+                    <span class="spec-val mono">{exp().engagement.posture.stop}</span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Context Window Slicing:</span>
+                    <span class="spec-val mono">{exp().engagement.posture.context}</span>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Delivery Cadence:</span>
+                    <span class="spec-val">
+                      {exp().engagement.posture.delivery.cadence} ({exp().engagement.posture.delivery.urgency})
+                    </span>
+                  </div>
                 </div>
               </div>
 
+              {/* Right Column: Progressive Capability Slicing */}
               <div class="panel">
                 <div class="panel-title-row">
                   <div>
                     <h3>Progressive Capability Slicing</h3>
-                    <p class="dim">What this request narrows versus doing nothing.</p>
+                    <p class="dim">Active narrowing applied to tool advertising (Invariant 10 &amp; 14).</p>
                   </div>
                 </div>
 
                 <Show
                   when={exp().narrows.length > 0}
-                  fallback={<p class="dim">No additional restrictions applied beyond default posture.</p>}
+                  fallback={<p class="dim small" style={{ "margin-top": "6px" }}>No capability narrowing restrictions applied beyond default authority.</p>}
                 >
                   <div class="narrowing-list">
                     <For each={exp().narrows}>
                       {(narrow) => (
                         <div class="narrowing-item">
-                          <span class="narrowing-bullet">·</span>
+                          <span class="narrowing-bullet">◈</span>
                           <span>{narrow}</span>
                         </div>
                       )}
@@ -673,12 +1105,20 @@ function IntentSimulator() {
                   </div>
                 </Show>
 
+                {/* Model Visible Framing */}
                 <Show when={exp().model_visible}>
-                  <div style={{ "margin-top": "12px" }}>
-                    <span class="eyebrow">Model Visible Framing</span>
-                    <pre style={{ "background": "var(--surface-raised)", "padding": "8px 10px", "border-radius": "4px", "font-size": "11px", "white-space": "pre-wrap", "margin": "4px 0 0" }}>
-                      {exp().model_visible}
-                    </pre>
+                  <div class="model-visible-section">
+                    <div class="model-visible-header">
+                      <span class="eyebrow">Model-Visible Intent Framing (Prompt Injected)</span>
+                      <button
+                        type="button"
+                        class="button ghost small"
+                        onClick={() => copyFraming(exp().model_visible!)}
+                      >
+                        {copiedFraming() ? "Copied ✓" : "Copy Framing"}
+                      </button>
+                    </div>
+                    <pre class="model-visible-code mono">{exp().model_visible}</pre>
                   </div>
                 </Show>
               </div>
@@ -886,11 +1326,21 @@ export function Commitments() {
           <span class="stat-card-label">Evidence Satisfaction</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
-              {metrics().metRatio}%
+              {(data()?.commitments.length ?? 0) > 0 ? `${metrics().metRatio}%` : "—"}
             </strong>
-            <span class="chip chip-tone-success">standards met</span>
+            <span
+              class="chip"
+              classList={{
+                "chip-tone-success": (data()?.commitments.length ?? 0) > 0,
+                "chip-phrase": (data()?.commitments.length ?? 0) === 0,
+              }}
+            >
+              {(data()?.commitments.length ?? 0) > 0 ? "standards met" : "idle (0 tracked)"}
+            </span>
           </div>
-          <span class="stat-card-hint">Lattice verified</span>
+          <span class="stat-card-hint">
+            {(data()?.commitments.length ?? 0) > 0 ? "Lattice verified" : "Lattice active on durable work"}
+          </span>
         </div>
 
         <div class="stat-card">
@@ -1031,13 +1481,81 @@ export function Commitments() {
           </Match>
           <Match when={(data()?.commitments.length ?? 0) === 0}>
             <div class="empty empty-teach">
-              <strong>No commitments open.</strong>
-              <p>
-                vak opens one when a request reads as lasting beyond this session —
-                something recurring, or work with a done-condition worth checking
-                later. Short tasks never create one, so an empty list here usually
-                means everything asked of it so far was finishable in the moment.
-              </p>
+              <div class="teach-header">
+                <strong>No commitments currently tracked in portfolio</strong>
+                <p>
+                  vak opens a durable commitment when a request reads as lasting beyond the current session —
+                  such as recurring crons, complex migrations, or work with an explicit done-condition to verify later.
+                  Short interactive tasks resolve ephemerally without creating persistent ledger debt.
+                </p>
+              </div>
+
+              {/* Satisfaction Lattice Standards Guide */}
+              <div class="lattice-guide-card">
+                <div class="lattice-guide-title">
+                  <span>Satisfaction Lattice: The 4 Truth Standards (docs/design/47)</span>
+                  <span class="chip chip-phrase">Invariant 3: Verifiable Proof</span>
+                </div>
+                <div class="lattice-levels-grid">
+                  <div class="lattice-level-item l-asserted">
+                    <div class="level-badge-row">
+                      <span class="level-num">Level 1</span>
+                      <span class="level-name">Asserted</span>
+                    </div>
+                    <p class="level-desc">“The model said so.”</p>
+                    <span class="level-sub">Unverified semantic judgement. Minimal standard for non-critical chat.</span>
+                  </div>
+                  <div class="lattice-level-item l-cited">
+                    <div class="level-badge-row">
+                      <span class="level-num">Level 2</span>
+                      <span class="level-name">Cited</span>
+                    </div>
+                    <p class="level-desc">“With verified sources.”</p>
+                    <span class="level-sub">Model output accompanied by verified quotations, URLs, or file snippets.</span>
+                  </div>
+                  <div class="lattice-level-item l-observed">
+                    <div class="level-badge-row">
+                      <span class="level-num">Level 3</span>
+                      <span class="level-name">Observed</span>
+                    </div>
+                    <p class="level-desc">“Runtime verified reality.”</p>
+                    <span class="level-sub">Checked against host system: file exists, tests pass, cargo check succeeds.</span>
+                  </div>
+                  <div class="lattice-level-item l-attested">
+                    <div class="level-badge-row">
+                      <span class="level-num">Level 4</span>
+                      <span class="level-name">Attested</span>
+                    </div>
+                    <p class="level-desc">“Independent affirmation.”</p>
+                    <span class="level-sub">Signed external receipt, human approval token, or third-party oracle proof.</span>
+                  </div>
+                </div>
+
+                <div class="lifecycle-flow-card">
+                  <span class="eyebrow">Commitment Lifecycle State Machine</span>
+                  <div class="lifecycle-steps">
+                    <span class="step-badge">Proposed</span>
+                    <span class="step-arrow">→</span>
+                    <span class="step-badge step-active">Active</span>
+                    <span class="step-arrow">⇄</span>
+                    <span class="step-badge step-waiting">Suspended / Blocked</span>
+                    <span class="step-arrow">→</span>
+                    <span class="step-badge step-satisfying">Satisfying</span>
+                    <span class="step-arrow">→</span>
+                    <span class="step-badge step-closed">Closed &#123;fulfilled, partial, failed&#125;</span>
+                  </div>
+                </div>
+
+                <div class="teach-actions" style={{ "margin-top": "16px" }}>
+                  <button
+                    type="button"
+                    class="button small"
+                    onClick={() => switchTab("intent")}
+                  >
+                    Test Intent Classification in 7-Axis Simulator →
+                  </button>
+                </div>
+              </div>
             </div>
           </Match>
           <Match when={filteredCommitments().length === 0}>
