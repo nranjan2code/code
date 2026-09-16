@@ -82,32 +82,126 @@ impl CapabilitySlice {
     }
 }
 
-/// Intersect two domain requirements, treating empty as "unconstrained".
+/// Which domain capabilities this turn may see.
 ///
-/// Empty is the top element here, not the bottom: a turn that names no
-/// domains admits everything. Intersecting with it must therefore leave the
-/// other side alone rather than collapsing to nothing.
-fn meet_domains(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeSet<String> {
-    if a.is_empty() {
-        return b.clone();
-    }
-    if b.is_empty() {
-        return a.clone();
-    }
-    a.intersection(b).cloned().collect()
+/// Forms a meet-semilattice:
+/// - `All` is the top element (unconstrained, admits any domain).
+/// - `Only(set)` restricts to the specified domains.
+/// - `Empty` is the bottom element (admits no domain).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum DomainSet {
+    /// No domain restriction: any capability domain is admitted.
+    #[serde(rename = "all")]
+    #[default]
+    All,
+    /// Only capabilities declaring at least one of these domains are admitted.
+    #[serde(rename = "only")]
+    Only { names: BTreeSet<String> },
+    /// No domain admitted.
+    #[serde(rename = "empty")]
+    Empty,
 }
 
-/// Whether `self` admits nothing `baseline` forbids.
-fn domains_at_most(mine: &BTreeSet<String>, baseline: &BTreeSet<String>) -> bool {
-    if baseline.is_empty() {
-        // Baseline admits everything, so any requirement is at most that.
-        return true;
+impl DomainSet {
+    pub fn all() -> Self {
+        DomainSet::All
     }
-    if mine.is_empty() {
-        // Unconstrained against a constrained baseline is a widening.
-        return false;
+
+    pub fn only<I, S>(names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let names: BTreeSet<String> = names.into_iter().map(Into::into).collect();
+        if names.is_empty() {
+            DomainSet::Empty
+        } else {
+            DomainSet::Only { names }
+        }
     }
-    mine.is_subset(baseline)
+
+    pub fn empty() -> Self {
+        DomainSet::Empty
+    }
+
+    pub fn allows(&self, domain: &str) -> bool {
+        match self {
+            DomainSet::All => true,
+            DomainSet::Only { names } => names.contains(domain),
+            DomainSet::Empty => false,
+        }
+    }
+
+    pub fn contains(&self, domain: &str) -> bool {
+        self.allows(domain)
+    }
+
+    pub fn is_unconstrained(&self) -> bool {
+        matches!(self, DomainSet::All)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            DomainSet::All => false,
+            DomainSet::Only { names } => names.is_empty(),
+            DomainSet::Empty => true,
+        }
+    }
+
+    pub fn iter(&self) -> std::collections::btree_set::Iter<'_, String> {
+        static EMPTY_SET: std::sync::LazyLock<BTreeSet<String>> =
+            std::sync::LazyLock::new(BTreeSet::new);
+        match self {
+            DomainSet::All | DomainSet::Empty => EMPTY_SET.iter(),
+            DomainSet::Only { names } => names.iter(),
+        }
+    }
+
+    /// Greatest lower bound (meet).
+    pub fn meet(&self, other: &DomainSet) -> DomainSet {
+        match (self, other) {
+            (DomainSet::All, other) => other.clone(),
+            (this, DomainSet::All) => this.clone(),
+            (DomainSet::Empty, _) | (_, DomainSet::Empty) => DomainSet::Empty,
+            (DomainSet::Only { names: a }, DomainSet::Only { names: b }) => {
+                let inter: BTreeSet<String> = a.intersection(b).cloned().collect();
+                if inter.is_empty() {
+                    DomainSet::Empty
+                } else {
+                    DomainSet::Only { names: inter }
+                }
+            }
+        }
+    }
+
+    /// Whether self admits nothing other forbids (self ⊑ other).
+    pub fn is_at_most(&self, other: &DomainSet) -> bool {
+        match (self, other) {
+            (_, DomainSet::All) => true,
+            (DomainSet::Empty, _) => true,
+            (DomainSet::All, _) => false,
+            (DomainSet::Only { .. }, DomainSet::Empty) => false,
+            (DomainSet::Only { names: a }, DomainSet::Only { names: b }) => a.is_subset(b),
+        }
+    }
+}
+
+impl<S: Into<String>> FromIterator<S> for DomainSet {
+    fn from_iter<T: IntoIterator<Item = S>>(iter: T) -> Self {
+        let names: BTreeSet<String> = iter.into_iter().map(Into::into).collect();
+        if names.is_empty() {
+            DomainSet::All
+        } else {
+            DomainSet::Only { names }
+        }
+    }
+}
+
+impl From<BTreeSet<String>> for DomainSet {
+    fn from(names: BTreeSet<String>) -> Self {
+        DomainSet::only(names)
+    }
 }
 
 /// Take the smaller of two optional caps, treating `None` as "no cap".
@@ -147,18 +241,11 @@ pub struct Limits {
     /// Kinds of work this turn plausibly needs, as domain names a capability
     /// can declare itself against (`crate::capability::domain` in vak-core).
     ///
-    /// Empty means "unconstrained", the top element — every capability
-    /// survives. Listing *more* domains admits *more* capabilities, so this
-    /// narrows in the opposite direction to `required_modalities`: the meet
-    /// is intersection.
-    ///
-    /// Domains rather than tool names is the whole point. The previous
-    /// design held a static table mapping each act to built-in tool names,
-    /// which could never mention a capability the user installed, so every
-    /// new integration needed a harness edit and only got one after somebody
-    /// reported a confidently wrong answer.
+    /// Managed as a meet-semilattice ([`DomainSet`]): `All` admits everything,
+    /// `Only(names)` narrows to declared domains, and disjoint meets collapse
+    /// to `Empty`.
     #[serde(default)]
-    pub required_domains: BTreeSet<String>,
+    pub required_domains: DomainSet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_ceiling_usd: Option<f64>,
     #[serde(default)]
@@ -191,7 +278,7 @@ impl Limits {
             capabilities: CapabilitySlice::All,
             ladder_limit: None,
             required_modalities: BTreeSet::new(),
-            required_domains: BTreeSet::new(),
+            required_domains: DomainSet::All,
             spend_ceiling_usd: None,
             approval_ceiling: ApprovalCeiling::AutoApprove,
             permission_ceiling: PermissionCeiling::FullAccess,
@@ -210,7 +297,7 @@ impl Limits {
         Limits {
             capabilities: self.capabilities.meet(&other.capabilities),
             ladder_limit: meet_cap(self.ladder_limit, other.ladder_limit),
-            required_domains: meet_domains(&self.required_domains, &other.required_domains),
+            required_domains: self.required_domains.meet(&other.required_domains),
             required_modalities: self
                 .required_modalities
                 .union(&other.required_modalities)
@@ -240,7 +327,7 @@ impl Limits {
             && baseline
                 .required_modalities
                 .is_subset(&self.required_modalities)
-            && domains_at_most(&self.required_domains, &baseline.required_domains)
+            && self.required_domains.is_at_most(&baseline.required_domains)
             && cap_is_at_most(self.spend_ceiling_usd, baseline.spend_ceiling_usd)
             && self.approval_ceiling.rank() <= baseline.approval_ceiling.rank()
             && self.permission_ceiling.rank() <= baseline.permission_ceiling.rank()
@@ -263,6 +350,17 @@ impl Limits {
                     names.len(),
                     names.iter().cloned().collect::<Vec<_>>().join(", ")
                 )),
+            }
+        }
+        if self.required_domains != baseline.required_domains {
+            match &self.required_domains {
+                DomainSet::All => {}
+                DomainSet::Only { names } => out.push(format!(
+                    "domains limited to {} ({})",
+                    names.len(),
+                    names.iter().cloned().collect::<Vec<_>>().join(", ")
+                )),
+                DomainSet::Empty => out.push("no tool domains admitted".into()),
             }
         }
         if self.ladder_limit != baseline.ladder_limit
@@ -397,7 +495,7 @@ mod tests {
     #[test]
     fn widening_any_field_is_rejected() {
         let narrow = Limits {
-            required_domains: BTreeSet::new(),
+            required_domains: DomainSet::only(["filesystem"]),
             capabilities: CapabilitySlice::only(["read"]),
             ladder_limit: Some(1),
             spend_ceiling_usd: Some(0.5),
@@ -409,6 +507,10 @@ mod tests {
             required_modalities: BTreeSet::from([Modality::Image]),
         };
         let widened = [
+            Limits {
+                required_domains: DomainSet::All,
+                ..narrow.clone()
+            },
             Limits {
                 capabilities: CapabilitySlice::All,
                 ..narrow.clone()

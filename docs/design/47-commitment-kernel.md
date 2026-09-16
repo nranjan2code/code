@@ -317,7 +317,10 @@ evidence tunes the ladder. *(Phase I8, not yet wired.)*
    approval floor. Never grant, extend, raise a cap, or lower a floor. `Limits`
    is a meet semilattice whose top element reproduces pre-kernel behaviour;
    `meet` is the only composition operator offered and there is deliberately no
-   `join`.
+   `join`. `Limits.required_domains` is typed as a bounded semilattice `DomainSet`
+   ($\bot = \text{Empty} \le \text{Only}(names) \le \top = \text{All}$); disjoint domain
+   intersections collapse strictly to $\bot$ (`Empty`) rather than widening to unconstrained $\top$,
+   guaranteeing $\text{meet}(a, b) \sqsubseteq a$ across all inputs.
 2. **Intent never gates the permission engine.** Permission is evaluated
    exactly as before; intent may only add an approval requirement. Nothing in
    the kernel can authorize anything.

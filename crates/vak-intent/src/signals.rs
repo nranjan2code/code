@@ -599,9 +599,89 @@ fn stems(word: &str) -> Vec<&str> {
     out
 }
 
+/// Check if a token matches a target word, accounting for English inflection
+/// and silent-'e' stem alterations (e.g. "writing" -> "write", "deploying" -> "deploy",
+/// "auditing" -> "audited", "ensuring" -> "ensure", "proved" -> "prove").
+fn token_matches(token: &str, target: &str) -> bool {
+    if token == target {
+        return true;
+    }
+    let token_stems = stems(token);
+    if token_stems.contains(&target) {
+        return true;
+    }
+    // Silent 'e' deletion: e.g. "writing" has stem "writ", matching target "write"
+    for s in &token_stems {
+        if target.strip_suffix('e') == Some(*s) {
+            return true;
+        }
+    }
+    let target_stems = stems(target);
+    for ts in &target_stems {
+        if token == *ts || token_stems.contains(ts) {
+            return true;
+        }
+        if token.strip_suffix('e') == Some(*ts) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether any token in the request matches `word`, allowing inflection.
 fn token_position(tokens: &[String], word: &str) -> Option<usize> {
-    tokens.iter().position(|token| stems(token).contains(&word))
+    tokens.iter().position(|token| token_matches(token, word))
+}
+
+/// Strip leading conversational preambles and polite requests so that the
+/// true operational verb lands at index 0 and receives the 1.6x imperative bonus.
+fn strip_conversational_preamble(mut text: &str) -> &str {
+    let preambles = [
+        "could you please",
+        "can you please",
+        "would you please",
+        "would you mind",
+        "could you",
+        "can you",
+        "please",
+        "help me to",
+        "help me",
+        "i would like you to",
+        "i'd like you to",
+        "i want you to",
+        "i need you to",
+        "i want to",
+        "i need to",
+        "we need to",
+        "let's",
+        "lets",
+    ];
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let trimmed = text.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        for preamble in preambles {
+            if lower.starts_with(preamble) {
+                let rest = &trimmed[preamble.len()..];
+                if rest.is_empty()
+                    || rest.starts_with(|c: char| c.is_whitespace() || c == ',' || c == ':')
+                {
+                    let mut after = rest.trim_start();
+                    if after.starts_with(',') || after.starts_with(':') {
+                        after = after[1..].trim_start();
+                    }
+                    if !after.is_empty() {
+                        text = after;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    text
 }
 
 /// Strip prompt scaffolding and runner control blocks before extracting intent.
@@ -640,7 +720,8 @@ fn clean_request_text(raw: &str) -> String {
             break;
         }
     }
-    text
+    let stripped = strip_conversational_preamble(text.trim());
+    stripped.to_string()
 }
 
 /// Tier 1. A pure function of `request`.
@@ -709,7 +790,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         let hit = if phrase.contains(' ') {
             lower.contains(phrase)
         } else {
-            tokens.iter().any(|t| t == phrase)
+            tokens.iter().any(|t| token_matches(t, phrase))
         };
         if hit {
             out.evidence.add(*evidence, *weight);

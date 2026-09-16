@@ -79,7 +79,7 @@ pub use engage::{
 };
 pub use engage::{FLOOR_DOMAINS, ORIENTATION_FLOOR};
 pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update};
-pub use limits::{CapabilitySlice, Limits};
+pub use limits::{CapabilitySlice, DomainSet, Limits};
 pub use outcome::{
     CompletionVerdict, EvidenceReceipt, EvidenceState, InterventionDecision,
     InterventionEvaluation, InterventionKind, InterventionRequest, OutcomeRequirement, OutcomeSpec,

@@ -455,7 +455,7 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
             domains.insert("live-data".into());
             domains.insert("web".into());
         }
-        limits.required_domains = domains;
+        limits.required_domains = crate::limits::DomainSet::only(domains);
     }
 
     // --- modality ------------------------------------------------------
@@ -568,7 +568,7 @@ fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
     }
     // Nobody to ask and somewhere to park the question: wait rather than fail.
     if authority.gate_fallback(reading.horizon) == GateFallback::Defer
-        && reading.stakes.rank() >= Stakes::Costly.rank()
+        && reading.stakes == Stakes::Costly
     {
         return HilMode::Defer;
     }
@@ -801,10 +801,7 @@ mod tests {
         // what is in front of it.
         assert_eq!(
             engagement.limits.required_domains,
-            FLOOR_DOMAINS
-                .iter()
-                .map(|d| (*d).to_string())
-                .collect::<BTreeSet<_>>()
+            crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied())
         );
         assert_eq!(engagement.limits.ladder_limit, Some(1));
         assert_eq!(engagement.posture.context, ContextProfile::Minimal);
@@ -858,23 +855,17 @@ mod tests {
         // More domains admits more capabilities, so composing two limits
         // must take the intersection or `meet` would widen.
         let wide = Limits {
-            required_domains: ["web", "live-data", "code-exec"]
-                .iter()
-                .map(|d| d.to_string())
-                .collect(),
+            required_domains: crate::limits::DomainSet::only(["web", "live-data", "code-exec"]),
             ..Limits::unrestricted()
         };
         let narrow = Limits {
-            required_domains: ["web"].iter().map(|d| d.to_string()).collect(),
+            required_domains: crate::limits::DomainSet::only(["web"]),
             ..Limits::unrestricted()
         };
         let met = wide.meet(&narrow);
         assert_eq!(
             met.required_domains,
-            ["web"]
-                .iter()
-                .map(|d| d.to_string())
-                .collect::<BTreeSet<_>>()
+            crate::limits::DomainSet::only(["web"])
         );
         assert!(met.is_at_most(&wide));
         assert!(!wide.is_at_most(&narrow), "widening must not validate");

@@ -139,10 +139,10 @@ pub fn resolve_turn(
 /// saves context, it does not enforce policy, so failing open is correct.
 pub fn slice_capabilities(
     admitted: &[CapabilityDescriptor],
-    required_domains: &std::collections::BTreeSet<String>,
+    required_domains: &vak_intent::DomainSet,
     declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<CapabilityDescriptor> {
-    if required_domains.is_empty() {
+    if required_domains.is_unconstrained() {
         return admitted.to_vec();
     }
     let required: std::collections::BTreeSet<crate::capability::Domain> = required_domains
@@ -151,7 +151,9 @@ pub fn slice_capabilities(
         .collect();
     let narrowed: Vec<CapabilityDescriptor> = admitted
         .iter()
-        .filter(|capability| keep_capability(capability, &required, declared_serves))
+        .filter(|capability| {
+            keep_capability(capability, &required, required_domains, declared_serves)
+        })
         .cloned()
         .collect();
     debug_assert!(
@@ -171,6 +173,7 @@ pub fn slice_capabilities(
 fn keep_capability(
     capability: &CapabilityDescriptor,
     required: &std::collections::BTreeSet<crate::capability::Domain>,
+    required_domains: &vak_intent::DomainSet,
     declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> bool {
     use vak_session::types::CapabilityKind;
@@ -187,8 +190,12 @@ fn keep_capability(
         // Undeclared fails open.
         None => true,
         Some(serves) => {
-            let mine = crate::capability::Domain::parse_list(serves);
-            mine.intersection(required).next().is_some()
+            if required_domains.is_empty() {
+                false
+            } else {
+                let mine = crate::capability::Domain::parse_list(serves);
+                mine.intersection(required).next().is_some()
+            }
         }
     }
 }
@@ -364,8 +371,8 @@ mod tests {
         }
     }
 
-    fn domains(values: &[&str]) -> std::collections::BTreeSet<String> {
-        values.iter().map(|v| v.to_string()).collect()
+    fn domains(values: &[&str]) -> vak_intent::DomainSet {
+        vak_intent::DomainSet::only(values.iter().copied())
     }
 
     fn serves(pairs: &[(&str, &[&str])]) -> std::collections::BTreeMap<String, Vec<String>> {
@@ -405,7 +412,7 @@ mod tests {
         assert_eq!(
             slice_capabilities(
                 &admitted,
-                &std::collections::BTreeSet::new(),
+                &vak_intent::DomainSet::All,
                 &std::collections::BTreeMap::new()
             )
             .len(),

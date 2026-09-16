@@ -4767,7 +4767,9 @@ impl Core {
         // contract → domain slice). Previously each kind had its own assembly
         // path, and MCP aliases bypassed the domain slice entirely.
         let required_domains: std::collections::BTreeSet<capability::Domain> =
-            if self.inner.config.intent.enabled && !engagement.limits.required_domains.is_empty() {
+            if self.inner.config.intent.enabled
+                && !engagement.limits.required_domains.is_unconstrained()
+            {
                 engagement
                     .limits
                     .required_domains

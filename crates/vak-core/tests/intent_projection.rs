@@ -6,7 +6,8 @@
 
 use vak_core::intent;
 use vak_intent::{
-    ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, PermissionCeiling, Stakes,
+    ApprovalCeiling, Authority, Autonomy, DomainSet, Envelope, Escalation, PermissionCeiling,
+    Stakes,
 };
 
 fn envelope(ceiling: PermissionCeiling) -> Envelope {
@@ -103,8 +104,7 @@ fn a_capability_slice_only_ever_subtracts() {
             configuration: serde_json::Value::Null,
         })
         .collect();
-    let required: std::collections::BTreeSet<String> =
-        ["code-exec"].into_iter().map(str::to_string).collect();
+    let required = DomainSet::only(["code-exec"]);
     let declared: std::collections::BTreeMap<String, Vec<String>> = [
         ("bash".to_string(), vec!["code-exec".to_string()]),
         ("deploy_to_prod".to_string(), vec!["code-exec".to_string()]),

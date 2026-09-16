@@ -310,25 +310,19 @@ capability-related. This caused test confusion.
 
 ## 6. Recommendations
 
-### Immediate (already fixed in this review)
+### Immediate & Hardened Enhancements (shipped)
 1. ✅ `derive_hil` — Irreversible check before Defer check
 2. ✅ `approval_ceiling` — envelope liveness check via `now` parameter
 3. ✅ General fallback — preserve surface-derived attendance
 4. ✅ `FLOOR_DOMAINS` — exported for test verification
+5. ✅ **Stemming & Inflection matching**: `token_matches` with bidirectional suffix and silent-'e' deletion (`"ensuring"` → `"ensure"`, `"audited"` → `"audit"`) applied to `EVIDENCE_WORDS` and token positions.
+6. ✅ **Structural HIL isolation**: `derive_hil` Costly check set to `== Costly`, structurally isolating `Irreversible` from the `Defer` branch.
+7. ✅ **Conversational Preamble Stripping**: `strip_conversational_preamble` eliminates polite conversational fluff ("please", "could you please", "can you help me") so operational verbs retain the 1.6x leading imperative bonus.
+8. ✅ **Bounded `DomainSet` Semilattice**: Replaced overloaded `BTreeSet<String>` with `DomainSet { All, Only { names }, Empty }`. Meets between disjoint domain sets collapse strictly to $\bot$ (`Empty`) rather than widening to unconstrained $\top$, guaranteeing $\text{meet}(a, b) \sqsubseteq a$ and $\text{meet}(a, b) \sqsubseteq b$ universally.
 
-### Short-term
-5. **Apply `stems()` to EVIDENCE_WORDS matching** so inflected forms ("audited",
-   "proved", "ensured") are recognized. Currently only exact tokens match.
-6. **Change Derive check from `>= Costly` to `== Costly`** in `derive_hil` to
-   structurally prevent Irreversible from falling into the Defer branch.
-7. **Rename `ORIENTATION_FLOOR`** to something that doesn't conflate it with
+### Remaining Roadmap
+9. **Rename `ORIENTATION_FLOOR`** to something that doesn't conflate it with
    `FLOOR_DOMAINS`, or document the relationship clearly.
-
-### Medium-term
-8. **Introduce a `DomainSet` type** that distinguishes `Unconstrained` (top)
-   from `Empty` (bottom), making the meet-semilattice well-formed even when
-   domain sets don't overlap. This eliminates the class of bug where non-
-   overlapping domain intersections produce a widening.
 9. **Add lexicon coverage tests** — automated tests that verify every act
    verb, evidence word, stakes word, and horizon phrase in the lexicon
    is exercised by at least one scenario test.

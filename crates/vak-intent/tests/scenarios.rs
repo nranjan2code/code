@@ -31,7 +31,7 @@ use vak_intent::engage::{
 use vak_intent::goal::{
     GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update,
 };
-use vak_intent::limits::{CapabilitySlice, Limits};
+use vak_intent::limits::{CapabilitySlice, DomainSet, Limits};
 use vak_intent::outcome::{
     CompletionVerdict, EvidenceState, OutcomeSpec, OutcomeStatus, RequirementEvaluation,
     RequirementStatus, evaluate_completion, evaluate_requirements, evidence_state_from_age,
@@ -1210,7 +1210,7 @@ fn resolution_provisional_reading_withholds_slicing() {
     );
     let intent = resolution.peek();
     assert!(
-        intent.engagement.limits.required_domains.is_empty(),
+        intent.engagement.limits.required_domains.is_unconstrained(),
         "provisional reading must not narrow domains"
     );
 }
@@ -2028,7 +2028,7 @@ fn lattice_unrestricted_is_identity() {
 #[test]
 fn lattice_widening_any_field_is_detected() {
     let narrow = Limits {
-        required_domains: BTreeSet::new(),
+        required_domains: DomainSet::only(["filesystem"]),
         capabilities: CapabilitySlice::Only {
             names: BTreeSet::from(["read".to_string()]),
         },
@@ -2042,6 +2042,10 @@ fn lattice_widening_any_field_is_detected() {
         required_modalities: BTreeSet::from([Modality::Image]),
     };
     let widened = vec![
+        Limits {
+            required_domains: DomainSet::All,
+            ..narrow.clone()
+        },
         Limits {
             capabilities: CapabilitySlice::All,
             ..narrow.clone()
@@ -2907,7 +2911,7 @@ fn slicing_empty_domains_is_identity() {
         Evidence::None,
     );
     let engagement = derive(&r, &Authority::default(), false);
-    assert!(engagement.limits.required_domains.is_empty());
+    assert!(engagement.limits.required_domains.is_unconstrained());
 }
 
 #[test]
@@ -2920,7 +2924,7 @@ fn slicing_unrestricted_when_confidence_below_floor() {
     );
     let intent = resolution.intent();
     assert_eq!(intent.provenance.tier, Tier::General);
-    assert!(intent.engagement.limits.required_domains.is_empty());
+    assert!(intent.engagement.limits.required_domains.is_unconstrained());
 }
 
 // ================================================================
@@ -3539,9 +3543,9 @@ fn thousands_of_capability_slice_intersections() {
     for i in 0..domains_list.len() {
         for j in 0..domains_list.len() {
             let mut a = Limits::unrestricted();
-            a.required_domains = domains_list[i].iter().map(|d| d.to_string()).collect();
+            a.required_domains = DomainSet::only(domains_list[i].iter().copied());
             let mut b = Limits::unrestricted();
-            b.required_domains = domains_list[j].iter().map(|d| d.to_string()).collect();
+            b.required_domains = DomainSet::only(domains_list[j].iter().copied());
             let met = a.meet(&b);
             assert!(met.is_at_most(&a), "meet not below lhs: {} & {}", i, j);
             assert!(met.is_at_most(&b), "meet not below rhs: {} & {}", i, j);
@@ -3884,4 +3888,40 @@ fn authority_stakes_autonomy_hil_matrix() {
         }
     }
     assert!(checked >= 4 * 4 * 3 * 2, "checked {checked} combinations");
+}
+
+#[test]
+fn regression_polite_preamble_preserves_imperative_verb() {
+    let intent_polite = resolve_text("please refactor the parser");
+    let intent_direct = resolve_text("refactor the parser");
+    assert_eq!(intent_polite.reading.act, Act::Modify);
+    assert_eq!(intent_direct.reading.act, Act::Modify);
+    assert!(intent_polite.reading.axis_confidence.act >= 0.7);
+}
+
+#[test]
+fn regression_inflected_evidence_words_match() {
+    let intent = resolve_text("please fix the bug, ensuring all tests pass");
+    assert_eq!(intent.reading.evidence, Evidence::Verified);
+    assert_eq!(
+        intent.engagement.limits.min_satisfaction,
+        Satisfaction::Observed
+    );
+}
+
+#[test]
+fn regression_disjoint_domain_meet_collapses_to_empty() {
+    let a = Limits {
+        required_domains: DomainSet::only(["vcs"]),
+        ..Limits::unrestricted()
+    };
+    let b = Limits {
+        required_domains: DomainSet::only(["live-data"]),
+        ..Limits::unrestricted()
+    };
+    let met = a.meet(&b);
+    assert_eq!(met.required_domains, DomainSet::Empty);
+    assert!(met.is_at_most(&a));
+    assert!(met.is_at_most(&b));
+    assert!(met.is_at_most(&Limits::unrestricted()));
 }

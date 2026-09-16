@@ -771,9 +771,13 @@ mod tests {
             &Authority::default(),
             &config,
         );
-        assert_eq!(
-            resolution.peek().engagement.limits.required_domains,
-            std::collections::BTreeSet::new(),
+        assert!(
+            resolution
+                .peek()
+                .engagement
+                .limits
+                .required_domains
+                .is_unconstrained(),
             "a provisional reading must not narrow what the turn can reach"
         );
     }
