@@ -4905,6 +4905,166 @@ function SetupWizard() {
   );
 }
 
+function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
+  const allowedCount = createMemo(() => props.ctx.entries().filter((e) => e.status === "allowed").length);
+  const pendingCount = createMemo(() => props.ctx.entries().filter((e) => e.status === "pending").length);
+  const deniedCount = createMemo(() => props.ctx.entries().filter((e) => e.status === "denied").length);
+  const bots = () => props.ctx.bots();
+  const st = () => props.ctx.status();
+  const surfaces = () => chatSurfaces();
+
+  return (
+    <section class="channel-topology-panel">
+      <div class="panel-title-row">
+        <div>
+          <span class="eyebrow">Architecture & Delivery Flow</span>
+          <h2>Channel & Multi-Bot Topology Matrix</h2>
+          <p class="dim">
+            4-tier inheritance chain (Global → Workspace → Bot → Chat). A chat can only narrow access, never escalate beyond its workspace ceiling (docs/design/34).
+          </p>
+        </div>
+        <span
+          class="chip"
+          classList={{
+            "chip-tone-success": st()?.enabled,
+            "chip-phrase": !st()?.enabled,
+          }}
+        >
+          {st()?.enabled ? "Gateway Active" : "Gateway Disabled"}
+        </span>
+      </div>
+
+      <div class="channel-topology-matrix">
+        {/* Tier 1: Global Baseline */}
+        <div class="topology-tier-card">
+          <div class="topology-tier-header">
+            <span class="topology-tier-tag">Tier 1</span>
+            <span class="chip chip-phrase">Global</span>
+          </div>
+          <strong class="topology-tier-title">Global Baseline</strong>
+          <div class="topology-tier-body">
+            <div>
+              <span class="dim">Default Route:</span>{" "}
+              <strong class="mono" style={{ "color": "var(--text)" }}>
+                {st()?.default_route ? `${st()!.default_route.provider} / ${st()!.default_route.model}` : "Default"}
+              </strong>
+            </div>
+            <div>
+              <span class="dim">Chat Allowlist Mode:</span>{" "}
+              <span class={`chip ${st()?.chat_allowlist_open ? "chip-tone-warning" : "chip-tone-success"}`}>
+                {st()?.chat_allowlist_open ? "Open (Allow All)" : "Strict (Review Required)"}
+              </span>
+            </div>
+            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+              Baseline route and security floor inherited by every workspace.
+            </p>
+          </div>
+        </div>
+
+        {/* Tier 2: Workspace Policy */}
+        <div class="topology-tier-card">
+          <div class="topology-tier-header">
+            <span class="topology-tier-tag">Tier 2</span>
+            <span class="chip chip-phrase">Workspace</span>
+          </div>
+          <strong class="topology-tier-title">Workspace Policy</strong>
+          <div class="topology-tier-body">
+            <div>
+              <span class="dim">Root Directory:</span>
+              <span class="mono wrap" style={{ "display": "block", "font-size": "11px", "color": "var(--text)" }}>
+                {st()?.workspace || "—"}
+              </span>
+            </div>
+            <div>
+              <span class="dim">CorePool Occupancy:</span>{" "}
+              <strong class="mono" style={{ "color": "var(--text)" }}>
+                {st()?.core_pool ? `${st()!.core_pool.entries.length} warm / ${st()!.core_pool.max} max` : "—"}
+              </strong>
+            </div>
+            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+              Isolates concurrent tenants into warm Core instances with distinct memory.
+            </p>
+          </div>
+        </div>
+
+        {/* Tier 3: Bot Identities */}
+        <div class="topology-tier-card">
+          <div class="topology-tier-header">
+            <span class="topology-tier-tag">Tier 3</span>
+            <span class="chip chip-tone-info">{bots().length} bot{bots().length === 1 ? "" : "s"}</span>
+          </div>
+          <strong class="topology-tier-title">Bot Identities</strong>
+          <div class="topology-tier-body">
+            <Show
+              when={bots().length > 0}
+              fallback={<p class="dim" style={{ "font-size": "11.5px" }}>No bots configured yet. Add a bot in the Bots tab.</p>}
+            >
+              <div class="topology-entity-list">
+                <For each={bots()}>
+                  {(b) => (
+                    <div class="topology-entity-item">
+                      <div>
+                        <strong>{b.label}</strong>
+                        <span class="dim mono" style={{ "font-size": "10.5px", "margin-left": "4px" }}>({b.surface})</span>
+                      </div>
+                      <span class={`chip chip-tone-${b.token_configured ? "success" : "warning"}`} style={{ "font-size": "10px" }}>
+                        {b.token_configured ? "token set" : "no token"}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </div>
+
+        {/* Tier 4: Chat Endpoints */}
+        <div class="topology-tier-card">
+          <div class="topology-tier-header">
+            <span class="topology-tier-tag">Tier 4</span>
+            <span class="chip chip-phrase">{props.ctx.entries().length} registered</span>
+          </div>
+          <strong class="topology-tier-title">Chat Endpoints</strong>
+          <div class="topology-tier-body">
+            <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "flex-wrap": "wrap" }}>
+              <span class="chip chip-tone-success">{allowedCount()} allowed</span>
+              <Show when={pendingCount() > 0}>
+                <a href="#/gateway/connect" class="chip chip-tone-warning" style={{ "text-decoration": "none" }}>
+                  {pendingCount()} pending review
+                </a>
+              </Show>
+              <Show when={deniedCount() > 0}>
+                <span class="chip chip-tone-danger">{deniedCount()} denied</span>
+              </Show>
+            </div>
+            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+              Keys are <code>surface:chat:bot_id</code>. Policy chains: chat capped by bot capped by workspace.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Surface Transports Strip */}
+      <div class="topology-surfaces-bar">
+        <span class="eyebrow" style={{ "margin": "0" }}>Discovered Chat Transports:</span>
+        <Show
+          when={surfaces().length > 0}
+          fallback={<span class="dim" style={{ "font-size": "11.5px" }}>No channel transports discovered.</span>}
+        >
+          <For each={surfaces()}>
+            {(s) => (
+              <span class="topology-surface-pill">
+                <span class="topology-surface-dot" />
+                <span>{s.label}</span>
+              </span>
+            )}
+          </For>
+        </Show>
+      </div>
+    </section>
+  );
+}
+
 function GatewaySection() {
   // The transport list comes from the server, once, and every channel
   // control in this section reads it. Nothing here names a channel.
@@ -4968,18 +5128,7 @@ function GatewaySection() {
           </p>
         </section>
       </Show>
-      <section class="panel channel-inheritance-note" style="margin-bottom:14px">
-        <div class="panel-title-row">
-          <div>
-            <h2>Inheritance chain</h2>
-              <p class="dim">Global defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
-          </div>
-          <span class="chip chip-tone-success">restrictive only</span>
-        </div>
-        <div class="inheritance-chain" aria-label="Global to workspace to bot to chat">
-          <span>Global</span><span aria-hidden="true">→</span><span>Workspace</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
-        </div>
-      </section>
+      <ChannelTopologyMatrix ctx={ctx} />
       <div class="tab-bar">
         <For each={GATEWAY_TABS}>
           {(t) => (
@@ -5343,6 +5492,47 @@ function Settings() {
   const [maxTurnsInput, setMaxTurnsInput] = createSignal("");
   const [savingMaxTurns, setSavingMaxTurns] = createSignal(false);
   const [togglingSubagents, setTogglingSubagents] = createSignal(false);
+  const [probing, setProbing] = createSignal(false);
+  const [probeResult, setProbeResult] = createSignal<{
+    ok: boolean;
+    latency_ms: number;
+    model_count: number;
+    has_active_model: boolean;
+    message: string;
+  } | null>(null);
+
+  const testProviderConnection = async () => {
+    const prov = selectedProvider();
+    const mod = selectedModel();
+    setProbing(true);
+    const start = performance.now();
+    try {
+      const res = await api.models(prov);
+      const latency = Math.round(performance.now() - start);
+      const models = res.models ?? [];
+      const hasActive = models.includes(mod);
+      setProbeResult({
+        ok: true,
+        latency_ms: latency,
+        model_count: models.length,
+        has_active_model: hasActive,
+        message: hasActive
+          ? `Successfully reached ${providerLabel(prov)} API (${latency}ms) and verified active model "${mod}".`
+          : `Reached ${providerLabel(prov)} API (${models.length} models discovered), but selected model "${mod}" was not listed in the catalogue.`,
+      });
+    } catch (err) {
+      const latency = Math.round(performance.now() - start);
+      setProbeResult({
+        ok: false,
+        latency_ms: latency,
+        model_count: 0,
+        has_active_model: false,
+        message: `Connection failed: ${err}`,
+      });
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const [busData, { refetch: refetchBus }] = createResource(() => api.busConfig());
   const [busUrl, setBusUrl] = createSignal("");
@@ -5683,6 +5873,53 @@ function Settings() {
                   <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
                     {loadingModels() ? "Checking…" : `Refresh list (${discoveredModels().length})`}
                   </button>
+                </div>
+
+                <div class="route-probe-panel">
+                  <div class="route-probe-header">
+                    <div>
+                      <strong style={{ "font-size": "12.5px" }}>Live Connection Probe</strong>
+                      <span class="dim" style={{ "font-size": "11px", "display": "block" }}>
+                        Direct round-trip authentication and model availability ping.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="button ghost small"
+                      disabled={probing()}
+                      onClick={() => void testProviderConnection()}
+                    >
+                      {probing() ? "Probing Route…" : "Test Provider Connection"}
+                    </button>
+                  </div>
+
+                  <Show when={probeResult()}>
+                    {(res) => (
+                      <div class="route-probe-results">
+                        <div class="route-probe-stat">
+                          <span class="route-probe-label">Status</span>
+                          <span class={`route-probe-val ${res().ok ? "text-good" : "text-bad"}`}>
+                            {res().ok ? "Reachable (200 OK)" : "Auth/Network Error"}
+                          </span>
+                        </div>
+                        <div class="route-probe-stat">
+                          <span class="route-probe-label">Round-Trip Latency</span>
+                          <span class="route-probe-val">{res().latency_ms} ms</span>
+                        </div>
+                        <div class="route-probe-stat">
+                          <span class="route-probe-label">Catalogue Verification</span>
+                          <span class="route-probe-val">
+                            {res().model_count} models {res().has_active_model ? "✓ verified" : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </Show>
+                  <Show when={probeResult()?.message}>
+                    <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+                      {probeResult()!.message}
+                    </p>
+                  </Show>
                 </div>
               </Show>
             </section>

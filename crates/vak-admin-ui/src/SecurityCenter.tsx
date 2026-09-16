@@ -7,6 +7,7 @@ import type {
   ConfigInfo,
   ConfigScope,
   GatewayApprovalPolicy,
+  HealthInfo,
   PermissionMode,
   SecurityEvent,
 } from "./types";
@@ -683,6 +684,222 @@ export function GateSimulator(props: {
   );
 }
 
+function SandboxArchitectureDeck(props: {
+  health: () => HealthInfo | undefined;
+  config: () => ConfigInfo | undefined;
+  permissionMode: string;
+}) {
+  const sandboxName = () => props.health()?.sandbox || props.config()?.sandbox || "Seatbelt";
+  const cwd = () => props.health()?.cwd || "—";
+  const isFullAccess = () => props.permissionMode === "FullAccess";
+
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>OS Sandbox & Boundary Architecture</h2>
+          <p class="dim">
+            Kernel-level process isolation, filesystem containment, and execution barriers (AGENTS.md Invariants 10, 12, 14).
+          </p>
+        </div>
+        <span
+          class="chip"
+          classList={{
+            "chip-tone-danger": isFullAccess(),
+            "chip-tone-success": !isFullAccess(),
+          }}
+        >
+          {isFullAccess() ? "FullAccess (Unsandboxed)" : `${sandboxName()} Active`}
+        </span>
+      </div>
+
+      <div class="sandbox-architecture-deck">
+        {/* Layer 1 */}
+        <div class="sandbox-layer-card" classList={{ "active-jail": !isFullAccess() }}>
+          <div class="sandbox-layer-top">
+            <div class="sandbox-layer-title-wrap">
+              <span class="sandbox-layer-num">L1</span>
+              <strong class="sandbox-layer-name">OS Kernel Process Sandbox</strong>
+            </div>
+            <span
+              class="chip"
+              classList={{
+                "chip-tone-danger": isFullAccess(),
+                "chip-tone-info": !isFullAccess(),
+              }}
+            >
+              {isFullAccess() ? "bypassed" : sandboxName()}
+            </span>
+          </div>
+          <p class="sandbox-layer-desc">
+            {isFullAccess()
+              ? "FullAccess explicitly bypasses OS containment. Child processes run with full ambient host permissions."
+              : "Subprocesses run under Apple Seatbelt (deny default) profile / Linux Landlock ABI. Socket creation, system binary writes, and daemon launches are denied at the kernel syscall boundary."}
+          </p>
+          <div class="sandbox-layer-meta">
+            <span>engine: {sandboxName()}</span>
+            <span>·</span>
+            <span>scope: all child processes</span>
+          </div>
+        </div>
+
+        {/* Layer 2 */}
+        <div class="sandbox-layer-card" classList={{ "active-jail": !isFullAccess() }}>
+          <div class="sandbox-layer-top">
+            <div class="sandbox-layer-title-wrap">
+              <span class="sandbox-layer-num">L2</span>
+              <strong class="sandbox-layer-name">Workspace Filesystem Root Containment</strong>
+            </div>
+            <span class="chip chip-phrase mono">{cwd()}</span>
+          </div>
+          <p class="sandbox-layer-desc">
+            Invariant 10: Automatic read, write, edit, glob, and grep tools resolve strictly within this canonical directory. Parent traversals (<code>../</code>) and escaping symlinks fail closed.
+          </p>
+          <div class="sandbox-layer-meta">
+            <span>invariant: 10</span>
+            <span>·</span>
+            <span>enforcement: path_in_workspace</span>
+          </div>
+        </div>
+
+        {/* Layer 3 */}
+        <div class="sandbox-layer-card">
+          <div class="sandbox-layer-top">
+            <div class="sandbox-layer-title-wrap">
+              <span class="sandbox-layer-num">L3</span>
+              <strong class="sandbox-layer-name">Quarantined Scratch Sandbox</strong>
+            </div>
+            <span class="chip chip-tone-info mono">.vak/scratch/</span>
+          </div>
+          <p class="sandbox-layer-desc">
+            2026 Unified Sandboxed Runtime: Ephemeral bash executions, compiler artifacts, and test runners run isolated in <code>.vak/scratch/</code>. Modified files require explicit operator promotion before altering the project workspace.
+          </p>
+          <div class="sandbox-layer-meta">
+            <span>isolation: quarantined scratch</span>
+            <span>·</span>
+            <span>telemetry: 500ms process monitor</span>
+          </div>
+        </div>
+
+        {/* Layer 4 */}
+        <div class="sandbox-layer-card">
+          <div class="sandbox-layer-top">
+            <div class="sandbox-layer-title-wrap">
+              <span class="sandbox-layer-num">L4</span>
+              <strong class="sandbox-layer-name">Operational Environment Allowlist</strong>
+            </div>
+            <span class="chip chip-tone-success">Scrubbed (No Passthrough)</span>
+          </div>
+          <p class="sandbox-layer-desc">
+            Invariant 12: Secrets are never ambient tool state. LLM provider keys, gateway credentials, and session tokens are scrubbed from child process environments. Only explicit variables (<code>PATH</code>, <code>HOME</code>, <code>LANG</code>, <code>TMPDIR</code>) pass through.
+          </p>
+          <div class="sandbox-layer-meta">
+            <span>invariant: 12</span>
+            <span>·</span>
+            <span>credentials: recipient-scoped only</span>
+          </div>
+        </div>
+
+        {/* Layer 5 */}
+        <div class="sandbox-layer-card">
+          <div class="sandbox-layer-top">
+            <div class="sandbox-layer-title-wrap">
+              <span class="sandbox-layer-num">L5</span>
+              <strong class="sandbox-layer-name">Brokered Worker Process Group</strong>
+            </div>
+            <span class="chip chip-tone-info mono">__tool_worker</span>
+          </div>
+          <p class="sandbox-layer-desc">
+            Invariant 14: Built-in tools and MCP servers execute across a brokered boundary in disposable process groups with process-group kill capability (<code>setpgid</code>). Workers never hold policy engines, session stores, or control-plane handles.
+          </p>
+          <div class="sandbox-layer-meta">
+            <span>invariant: 14</span>
+            <span>·</span>
+            <span>boundary: brokered RPC</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PrecedenceFlowchartCard() {
+  return (
+    <div class="precedence-flowchart-card">
+      <div class="panel-title-row">
+        <div>
+          <h3>5-Stage Authorization Precedence</h3>
+          <p class="dim">
+            The deterministic cascade evaluated by the PermissionEngine on every action before tool dispatch.
+          </p>
+        </div>
+        <span class="chip chip-tone-info">Deterministic Cascade</span>
+      </div>
+      <div class="precedence-steps-grid">
+        <div class="precedence-step">
+          <div class="precedence-step-head">
+            <span class="precedence-step-num">STAGE 1</span>
+            <span class="chip chip-tone-danger" style={{ "font-size": "9.5px" }}>Deny</span>
+          </div>
+          <strong class="precedence-step-title">Explicit Deny</strong>
+          <p class="precedence-step-desc">Checked first. If tool matches any <code>deny</code> pattern, refused immediately.</p>
+          <div class="precedence-step-outcome">
+            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Fails closed</span>
+          </div>
+        </div>
+
+        <div class="precedence-step">
+          <div class="precedence-step-head">
+            <span class="precedence-step-num">STAGE 2</span>
+            <span class="chip chip-tone-warning" style={{ "font-size": "9.5px" }}>Ask</span>
+          </div>
+          <strong class="precedence-step-title">Explicit Ask</strong>
+          <p class="precedence-step-desc">If tool matches any <code>ask</code> pattern, forces approval gate escalation.</p>
+          <div class="precedence-step-outcome">
+            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Raises Ask</span>
+          </div>
+        </div>
+
+        <div class="precedence-step">
+          <div class="precedence-step-head">
+            <span class="precedence-step-num">STAGE 3</span>
+            <span class="chip chip-tone-success" style={{ "font-size": "9.5px" }}>Allow</span>
+          </div>
+          <strong class="precedence-step-title">Explicit Allow</strong>
+          <p class="precedence-step-desc">If tool matches any <code>allow</code> pattern, executes without prompting.</p>
+          <div class="precedence-step-outcome">
+            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Dispatches</span>
+          </div>
+        </div>
+
+        <div class="precedence-step">
+          <div class="precedence-step-head">
+            <span class="precedence-step-num">STAGE 4</span>
+            <span class="chip chip-phrase" style={{ "font-size": "9.5px" }}>Mode</span>
+          </div>
+          <strong class="precedence-step-title">Authority Mode</strong>
+          <p class="precedence-step-desc">No rule match. Mode decides: ReadOnly refuses writes; WorkspaceWrite permits workspace writes.</p>
+          <div class="precedence-step-outcome">
+            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Baseline rule</span>
+          </div>
+        </div>
+
+        <div class="precedence-step">
+          <div class="precedence-step-head">
+            <span class="precedence-step-num">STAGE 5</span>
+            <span class="chip chip-phrase" style={{ "font-size": "9.5px" }}>Gate</span>
+          </div>
+          <strong class="precedence-step-title">Approval Strategy</strong>
+          <p class="precedence-step-desc">Resolves raised Ask: auto-approve, approve-safe, or forwards to human chat approver.</p>
+          <div class="precedence-step-outcome">
+            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Final verdict</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SecurityCenter(props: { scope: () => ConfigScope }) {
   type SecTab = "execution" | "rules" | "approvals" | "audit";
   const [activeTab, setActiveTab] = createSignal<SecTab>("execution");
@@ -703,6 +920,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
   const [layer, { refetch: refetchLayer }] = createResource(props.scope, (scope) => api.configLayer(scope));
   const [gatewayPolicy, { refetch: refetchPolicy }] = createResource(() => api.gatewayApprovals());
+  const [health, { refetch: refetchHealth }] = createResource(() => api.health());
 
   // Audit Events
   const [kind, setKind] = createSignal("");
@@ -952,41 +1170,19 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
           </div>
 
           <div class="stack">
-            <section class="panel">
-              <div class="panel-title-row">
-                <div>
-                  <h2>OS Sandbox & Boundaries</h2>
-                  <p class="dim">Process isolation and containment telemetry.</p>
-                </div>
-                <span class="chip chip-tone-info">{config()?.sandbox ?? "Seatbelt"}</span>
-              </div>
-              <div style={{ "display": "flex", "flex-direction": "column", "gap": "10px", "font-size": "12px", "color": "var(--text-soft)" }}>
-                <div>
-                  <strong style={{ "color": "var(--text)" }}>Workspace Containment (Invariant 10):</strong>
-                  <p class="dim" style={{ "margin": "3px 0 0" }}>
-                    In read-only and workspace-write modes, all automatic read, glob, and grep operations resolve strictly within the workspace boundary. Path traversal and symlink escapes fail closed.
-                  </p>
-                </div>
-                <div>
-                  <strong style={{ "color": "var(--text)" }}>Broker Boundary (Invariant 14):</strong>
-                  <p class="dim" style={{ "margin": "3px 0 0" }}>
-                    Built-in tools run through disposable worker processes. Workers are denied policy engines, session stores, provider keys, and credentials.
-                  </p>
-                </div>
-                <div>
-                  <strong style={{ "color": "var(--text)" }}>Secret Isolation (Invariant 12):</strong>
-                  <p class="dim" style={{ "margin": "3px 0 0" }}>
-                    Subprocesses receive a minimal environment allowlist. Ambient host credentials are scrubbed prior to dispatch.
-                  </p>
-                </div>
-              </div>
-            </section>
+            <SandboxArchitectureDeck
+              health={health}
+              config={config}
+              permissionMode={selectedPermissionMode()}
+            />
           </div>
         </div>
       </Show>
 
       {/* Tab 2: Security Rulebook & Simulator */}
       <Show when={activeTab() === "rules"}>
+        <PrecedenceFlowchartCard />
+
         <GateSimulator
           rules={rules()}
           mode={config()?.permission_mode ?? "workspace-write"}

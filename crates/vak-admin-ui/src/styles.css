@@ -6415,6 +6415,340 @@ button.inbox-meta-tag:hover {
   outline: none;
 }
 
+/* ==========================================================================
+   13. Security Center: 5-Layer Sandbox Architecture & Precedence Flowchart
+   ========================================================================== */
+
+.sandbox-architecture-deck {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.sandbox-layer-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease;
+}
+
+.sandbox-layer-card:hover {
+  border-color: var(--border-strong);
+}
+
+.sandbox-layer-card.active-jail {
+  border-left: 3px solid var(--accent);
+}
+
+.sandbox-layer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sandbox-layer-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sandbox-layer-num {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.sandbox-layer-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sandbox-layer-desc {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.sandbox-layer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-family: var(--font-mono, monospace);
+  margin-top: 2px;
+}
+
+/* Precedence Flowchart */
+.precedence-flowchart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.precedence-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  position: relative;
+}
+
+@media (max-width: 1100px) {
+  .precedence-steps-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.precedence-step {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.precedence-step.step-hit {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-subtle, rgba(59, 130, 246, 0.2));
+}
+
+.precedence-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.precedence-step-num {
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.precedence-step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.precedence-step-desc {
+  font-size: 11px;
+  color: var(--text-soft);
+  line-height: 1.35;
+  margin: 0;
+}
+
+.precedence-step-outcome {
+  margin-top: 4px;
+}
+
+/* ==========================================================================
+   14. Channels & Gateway: Interactive Multi-Bot Topology Matrix
+   ========================================================================== */
+
+.channel-topology-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.channel-topology-matrix {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+@media (max-width: 1024px) {
+  .channel-topology-matrix {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .channel-topology-matrix {
+    grid-template-columns: 1fr;
+  }
+}
+
+.topology-tier-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.topology-tier-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.topology-tier-tag {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.topology-tier-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.topology-tier-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.topology-entity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.topology-entity-item {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+}
+
+.topology-surfaces-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+}
+
+.topology-surface-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  padding: 3px 10px;
+  color: var(--text);
+}
+
+.topology-surface-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+/* ==========================================================================
+   15. Settings: Real Model Route Probe & Latency Verifier
+   ========================================================================== */
+
+.route-probe-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-probe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.route-probe-results {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+@media (max-width: 640px) {
+  .route-probe-results {
+    grid-template-columns: 1fr;
+  }
+}
+
+.route-probe-stat {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.route-probe-label {
+  font-size: 10.5px;
+  color: var(--faint);
+  text-transform: uppercase;
+  font-family: var(--font-mono, monospace);
+}
+
+.route-probe-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+}
+
+
 
 
 
