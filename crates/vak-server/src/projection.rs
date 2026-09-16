@@ -2263,7 +2263,7 @@ mod tests {
             message: Message::user_text("User query 1"),
             meta: None,
         })
-        .unwrap();
+        .expect("append user message");
 
         log.append_message(MessageRecord {
             message: Message {
@@ -2274,14 +2274,14 @@ mod tests {
             },
             meta: None,
         })
-        .unwrap();
+        .expect("append assistant message");
 
         // Synthetic stop-hook nudge (should NOT increment turn count)
         log.append_message(MessageRecord {
             message: Message::user_text("[stop-hook]: hook said continue\nPlease continue."),
             meta: None,
         })
-        .unwrap();
+        .expect("append stop-hook message");
 
         log.append_message(MessageRecord {
             message: Message {
@@ -2292,7 +2292,7 @@ mod tests {
             },
             meta: None,
         })
-        .unwrap();
+        .expect("append assistant message 2");
 
         let timeline = snapshot("synthetic-turns", &log);
         // There should only be 1 user message projected, not 2
