@@ -4953,101 +4953,92 @@ function SetupWizard() {
                     </div>
                   </div>
 
-                  <div class="setup-step-grid">
+                  <div class="setup-checklist">
                     <For each={phaseSteps()}>
                       {(meta) => {
                         const st = () => step(meta.key);
                         const sState = () => st()?.state ?? "incomplete";
 
                         return (
-                          <div class="setup-step-card" data-state={sState()}>
-                            <div class="setup-step-card-head">
-                              <div class="setup-step-card-title-row">
-                                <div class={`setup-status-badge setup-status-${sState()}`}>
-                                  <Switch>
-                                    <Match when={sState() === "satisfied"}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
-                                        <polyline points="20 6 9 17 4 12" />
-                                      </svg>
-                                    </Match>
-                                    <Match when={sState() === "not_applicable"}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                                        <line x1="5" y1="12" x2="19" y2="12" />
-                                      </svg>
-                                    </Match>
-                                    <Match when={sState() === "incomplete"}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10" />
-                                        <line x1="12" y1="8" x2="12" y2="12" />
-                                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                                      </svg>
-                                    </Match>
-                                  </Switch>
-                                  <span class="setup-status-text">
-                                    {sState() === "satisfied"
-                                      ? "SATISFIED"
-                                      : sState() === "not_applicable"
-                                      ? "N/A"
-                                      : "ACTION REQUIRED"}
-                                  </span>
-                                </div>
-                                <strong class="setup-step-card-title">{meta.title}</strong>
-                              </div>
+                          <div class="setup-item-row" data-state={sState()}>
+                            <div class="setup-item-status-col">
+                              <span class={`setup-item-indicator setup-item-${sState()}`} title={sState()}>
+                                <Switch>
+                                  <Match when={sState() === "satisfied"}>
+                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3">
+                                      <polyline points="20 6 9 17 4 12" />
+                                    </svg>
+                                  </Match>
+                                  <Match when={sState() === "not_applicable"}>
+                                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5">
+                                      <line x1="5" y1="12" x2="19" y2="12" />
+                                    </svg>
+                                  </Match>
+                                  <Match when={sState() === "incomplete"}>
+                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5">
+                                      <circle cx="12" cy="12" r="9" />
+                                      <line x1="12" y1="8" x2="12" y2="12" />
+                                      <line x1="12" y1="15" x2="12.01" y2="15" />
+                                    </svg>
+                                  </Match>
+                                </Switch>
+                              </span>
                             </div>
 
-                            <p class="setup-step-card-why dim">{meta.why}</p>
+                            <div class="setup-item-main">
+                              <div class="setup-item-head">
+                                <span class="setup-item-title">{meta.title}</span>
+                                <span class="setup-item-why">{meta.why}</span>
+                              </div>
 
-                            <div class="setup-step-card-body">
-                              <Switch>
-                                <Match when={sState() === "satisfied"}>
-                                  <div class="setup-result-box satisfied">
-                                    <div class="setup-result-content">
-                                      <span class="setup-result-detail">
+                              <div class="setup-item-body">
+                                <Switch>
+                                  <Match when={sState() === "satisfied"}>
+                                    <div class="setup-item-satisfied">
+                                      <span class="setup-item-detail mono">
                                         {(st() as { detail: string }).detail}
                                       </span>
                                       <Show when={(st() as { provenance?: string | null }).provenance}>
-                                        {(p) => <span class="setup-provenance-tag">· {p()}</span>}
+                                        {(p) => <span class="setup-item-prov">· {p()}</span>}
                                       </Show>
                                     </div>
-                                  </div>
-                                </Match>
+                                  </Match>
 
-                                <Match when={sState() === "not_applicable"}>
-                                  <div class="setup-result-box na">
-                                    <span class="setup-result-reason dim">
-                                      {(st() as { reason: string }).reason}
-                                    </span>
-                                  </div>
-                                </Match>
-
-                                <Match when={sState() === "incomplete"}>
-                                  <div class="setup-result-box problem">
-                                    <div class="setup-problem-header">
-                                      <strong>{(st() as { what: string }).what}</strong>
+                                  <Match when={sState() === "not_applicable"}>
+                                    <div class="setup-item-na">
+                                      <span class="dim">{(st() as { reason: string }).reason}</span>
                                     </div>
-                                    <p class="setup-problem-preserved dim">
-                                      {(st() as { preserved: string }).preserved}
-                                    </p>
-                                    <div class="setup-problem-repair">
-                                      <span class="repair-kicker">REPAIR:</span> {(st() as { repair: string }).repair}
-                                    </div>
-                                    <Show when={(st() as { detail?: string | null }).detail}>
-                                      {(d) => (
-                                        <details class="setup-problem-detail">
-                                          <summary class="dim">Technical Diagnostics</summary>
-                                          <pre class="mono">{d()}</pre>
-                                        </details>
-                                      )}
-                                    </Show>
-                                  </div>
-                                </Match>
-                              </Switch>
+                                  </Match>
 
-                              <Show when={sState() !== "satisfied"}>
-                                <div class="setup-step-card-actions">
-                                  <SetupActions step={meta.key} done={() => refetch()} />
-                                </div>
-                              </Show>
+                                  <Match when={sState() === "incomplete"}>
+                                    <div class="setup-item-problem">
+                                      <div class="setup-problem-desc">
+                                        <strong>{(st() as { what: string }).what}</strong>
+                                        <Show when={(st() as { preserved: string }).preserved}>
+                                          {(p) => <span class="dim"> — {p()}</span>}
+                                        </Show>
+                                      </div>
+                                      <div class="setup-problem-repair-line">
+                                        <span class="repair-tag">FIX</span> {(st() as { repair: string }).repair}
+                                      </div>
+                                      <Show when={(st() as { detail?: string | null }).detail}>
+                                        {(d) => (
+                                          <details class="setup-diag-details">
+                                            <summary class="dim">Diagnostic details</summary>
+                                            <pre class="mono">{d()}</pre>
+                                          </details>
+                                        )}
+                                      </Show>
+                                    </div>
+                                  </Match>
+                                </Switch>
+
+                                <Show when={sState() !== "satisfied"}>
+                                  <div class="setup-item-inline-actions">
+                                    <SetupActions step={meta.key} done={() => refetch()} />
+                                  </div>
+                                </Show>
+                              </div>
                             </div>
                           </div>
                         );
