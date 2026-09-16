@@ -235,9 +235,63 @@ For managed goals, completion is **never self-reported**:
 
 ---
 
+## 8. Preserving Intent Across Long Horizons: Surviving Context Bloat & Attention Drift
+
+In production agent systems, decoding multi-intent on Turn 1 is only half the battle. The harder challenge is **horizon survival**: what happens when an agent executes 20 or 50 turns to satisfy those intents?
+
+As an agent edits files, runs build commands, encounters linter errors, and reads stack traces, the context window floods with thousands of tokens of ephemeral tool outputs. In naive agents, this leads to **attention drift** and **intent amnesia**: the LLM becomes entirely consumed by the latest error output on line 42 and forgets the user's second and third intents entirely.
+
+![Preserving Multi-Intent Across Long Horizons](context_bloat_intent_preservation.svg)
+
+To ensure multi-intent goals and results are never lost—even when the context window bloats and compacts multiple times—Vak implements a **six-layer architectural defense**:
+
+### 1. The Immutable Append-Only Ledger (`vak-session`)
+Per Non-Negotiable Invariants 1 & 2: *Model-visible means logged; sessions are append-only.*
+* The original user prompt (whether a quick command or a ten-paragraph specification) is permanently written to the session JSONL file as a `SessionEntry::UserMessage`.
+* The ledger is never rewritten or pruned on disk. No matter how many turns or tool calls elapse, the full causal parent chain is permanently preserved and reconstructable via `derive_messages()`.
+
+### 2. Deterministic Compaction with Mandatory Task Preservation (`context.rs`)
+When a long-running session approaches the model's context threshold, Vak triggers context compaction. Unlike naive systems that either drop early messages or summarize transcripts arbitrarily, Vak enforces two mathematical invariants:
+1. **API-Valid Boundary Snapping:** The compactor snaps the boundary forward so it never splits an assistant `tool_use` and user `tool_result` pair, ensuring the kept history is always 100% syntactically valid for provider APIs.
+2. **The Task Preservation Contract:** The compaction engine executes under a strict system prompt that mandates:
+   > *"Keep: the original task, current state, what was created or changed (files with paths, plus any other artifact or external effect), key decisions, errors hit and their fixes, and open items. Drop pleasantries and redundant tool output. Maximum 400 words."*
+3. **Permanent Head Projection:** The generated `<context_summary>` is recorded as an append-only `EntryPayload::Compaction` entry. On every subsequent turn, `derive_messages()` projects:
+   $$\text{Context} = [\langle\text{context\_summary}\rangle] \;+\; [\text{kept verbatim recent tail}]$$
+   The original multi-intent goals and remaining open items remain permanently pinned at index 0 of the model's context window.
+
+### 3. The External Commitment Kernel (`vak-commit`)
+When an objective has a horizon beyond a single turn (`horizon >= session`), Vak promotes the multi-intent reading into a **durable Commitment** stored in `<sessions_home>/commitments/`—completely decoupled from conversational tokens.
+* The commitment lives in its own append-only state machine: `Proposed → Active ⇄ Suspended ⇄ Blocked → Satisfying → Closed{verdict}`.
+* It evaluates acceptance criteria against the formal **satisfaction lattice**:
+  $$\text{Asserted} < \text{Cited} < \text{Observed} < \text{Attested}$$
+* **The Closure Invariant:** A commitment cannot close as `fulfilled` below the strength its evidence axis demands. If an intent required verification (`Observed`), only runtime command executions (exit 0) or file assertions can close it. A model hallucinating *"I'm done"* in prose carries only `Asserted` weight and is rejected at append time.
+
+### 4. Managed Work Contracts & Forbidden Self-Certification (`work.rs`)
+For multi-phase tasks, compound requests compile into a `WorkContract` DAG containing typed `WorkItemDefinition`s with explicit dependencies and criteria.
+* In Vak, **models are strictly forbidden from marking their own work items succeeded**:
+  ```rust
+  #[error("work item '{0}' cannot be marked succeeded by a model event")]
+  ModelCompletion(String),
+  ```
+* Only the runtime verification harness (`verify_managed_criteria`) can transition an item from pending to succeeded based on concrete execution receipts. Context fatigue cannot fool the contract.
+
+### 5. Runtime Stop-Guards (`stop_policy.rs`)
+Even if context pressure causes the model to abandon an intent and attempt an early exit, the runtime stop-guard audits its `ReceiptSummary`:
+* **`TruncatedPlan`:** Triggers if unsatisfied work items or unexecuted intents remain in the active contract.
+* **`VerificationMissing`:** Triggers if files were edited but zero test or verification commands were run.
+* **`VerificationStale`:** Triggers if edits were made after the last test run.
+The stop-guard intercepts the exit and injects an assertive steering prompt back into the loop until all committed intents are verified.
+
+### 6. Architectural Delegation via `TaskTool` (Context De-Bloating)
+For complex multi-intent tasks (e.g., *"Refactor the auth middleware, update 12 integration tests, and benchmark performance"*), forcing all work into a single context window is an anti-pattern.
+* Vak delegates heavy sub-intents to depth-1 subagents via `TaskTool`.
+* Each subagent operates in an **isolated session ledger** with its own dedicated token budget (`subagent_budget`).
+* The subagent can run dozens of exploratory turns, compiles, and retries in its own environment. When finished, it returns only a concise, typed `TaskOutcome` receipt to the parent session.
+* Thousands of intermediate exploratory tokens never enter the parent agent's context, eliminating context bloating at the architectural boundary.
+
 ---
 
-## 8. Why This Architecture Is Mathematically & Operationally Solid
+## 9. Why This Architecture Is Mathematically & Operationally Solid
 
 When building autonomous software, claiming that a multi-intent system works is not enough. You have to prove that compound intents cannot widen permissions, cause capability leaks, or create deadlocks.
 
@@ -268,7 +322,7 @@ True reliability means knowing exactly where an architecture's boundaries lie:
 
 ---
 
-## 9. Summary: The Engineering Principles of Multi-Intent
+## 10. Summary: The Engineering Principles of Multi-Intent
 
 If you are designing an AI agent system meant for production use, these architectural invariants are essential:
 
