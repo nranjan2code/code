@@ -816,7 +816,7 @@ mod tests {
             let engagement = derive(&r, &Authority::default(), true);
             for domain in FLOOR_DOMAINS {
                 assert!(
-                    engagement.limits.required_domains.contains(*domain),
+                    engagement.limits.required_domains.contains(domain),
                     "{act:?} lost `{domain}` and cannot orient itself"
                 );
             }

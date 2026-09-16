@@ -1559,7 +1559,7 @@ fn engagement_domain_requirements_per_act() {
         let engagement = derive(&r, &Authority::default(), true);
         for domain in *expected_domains {
             assert!(
-                engagement.limits.required_domains.contains(*domain),
+                engagement.limits.required_domains.contains(domain),
                 "{:?} should require domain `{domain}`",
                 act
             );
@@ -2895,7 +2895,7 @@ fn slicing_keeps_orientation_floor() {
     let engagement = derive(&r, &Authority::default(), true);
     for domain in vak_intent::FLOOR_DOMAINS.iter() {
         assert!(
-            engagement.limits.required_domains.contains(*domain),
+            engagement.limits.required_domains.contains(domain),
             "floor domain `{}` must survive slicing",
             domain
         );
