@@ -22,6 +22,7 @@ pub mod layout;
 pub mod manifest;
 pub mod transaction;
 
+#[cfg(not(test))]
 use std::io::{IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -54,16 +55,24 @@ const COMPONENTS: &[ComponentSpec] = &[
 ];
 
 fn confirm(prompt: &str, yes: bool) -> bool {
-    if yes || !std::io::stdin().is_terminal() {
-        // Non-interactive without --yes is a refusal, not an assumption:
-        // a script must say so explicitly before anything is replaced.
+    #[cfg(test)]
+    {
+        let _ = prompt;
         return yes;
     }
-    print!("{prompt} [y/N] ");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    line.trim().eq_ignore_ascii_case("y")
+    #[cfg(not(test))]
+    {
+        if yes || !std::io::stdin().is_terminal() {
+            // Non-interactive without --yes is a refusal, not an assumption:
+            // a script must say so explicitly before anything is replaced.
+            return yes;
+        }
+        print!("{prompt} [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        line.trim().eq_ignore_ascii_case("y")
+    }
 }
 
 // ---------------------------------------------------------------- install

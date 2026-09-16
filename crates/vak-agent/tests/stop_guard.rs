@@ -382,3 +382,39 @@ async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard
         "ledger must record model-visible stop-guard nudge: {messages:?}"
     );
 }
+
+#[tokio::test]
+async fn universal_task_with_verify_completes_without_bash_guard() {
+    let mut h = harness(
+        Some(StopPolicy {
+            marker_gate: true,
+            verify_gate: true,
+            max_blocks: 1,
+        }),
+        vec![ScriptedResponse::Message(text_msg(
+            "Here is the brewing guide: grind size, water-to-coffee ratio, and brew temperature. I have verified that water temperature should be kept between 90°C and 96°C for optimal extraction.",
+        ))],
+    );
+
+    let outcome = h
+        .agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "Explain the 3 main coffee brewing variables and verify that water temperature recommendations are included.",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    // Must complete in 1 call without being falsely trapped by VerificationMissing demanding bash
+    assert_eq!(h.requests.lock().unwrap().len(), 1);
+    assert!(
+        drain_events(&mut h)
+            .into_iter()
+            .all(|e| !matches!(e, AgentEvent::StopHookContinuation { .. }))
+    );
+}
+

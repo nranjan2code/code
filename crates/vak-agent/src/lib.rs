@@ -16,7 +16,7 @@ pub mod workspace;
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
-pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy};
+pub use stop_policy::{is_code_path, BlockReason, ReceiptSummary, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 pub use workspace::WorkspaceDelta;
 
@@ -1343,6 +1343,16 @@ impl Agent {
                     "write" | "edit" | "patch" | "remember" | "propose_skill"
                 ) {
                     receipts.files_modified += 1;
+                    let path = call.input.get("path").and_then(|v| v.as_str());
+                    if let Some(p) = path {
+                        if stop_policy::is_code_path(p) {
+                            receipts.code_files_modified += 1;
+                        } else {
+                            receipts.doc_files_modified += 1;
+                        }
+                    } else {
+                        receipts.doc_files_modified += 1;
+                    }
                 } else if matches!(
                     call.name.as_str(),
                     "read"
@@ -1371,9 +1381,16 @@ impl Agent {
                         .map(|cmd| (c.id.clone(), cmd.to_string()))
                 })
                 .collect();
-            let mutation_ids: Vec<String> = calls
+            let code_mutation_ids: Vec<String> = calls
                 .iter()
-                .filter(|call| matches!(call.name.as_str(), "edit" | "write"))
+                .filter(|call| matches!(call.name.as_str(), "edit" | "write" | "patch"))
+                .filter(|call| {
+                    call.input
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .map(stop_policy::is_code_path)
+                        .unwrap_or(false)
+                })
                 .map(|call| call.id.clone())
                 .collect();
             let task_assignments: Vec<(String, String, String)> = calls
@@ -1423,7 +1440,7 @@ impl Agent {
                         receipts.unresolved_error = None;
                         if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
                             verification_stale = false;
-                        } else if mutation_ids.iter().any(|mutation_id| mutation_id == id) {
+                        } else if code_mutation_ids.iter().any(|mutation_id| mutation_id == id) {
                             verification_stale = true;
                         }
                         if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)

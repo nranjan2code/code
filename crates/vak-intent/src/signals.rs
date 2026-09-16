@@ -490,7 +490,14 @@ impl<T: AxisValue> Votes<T> {
         }
         ranked
             .into_iter()
-            .filter(|(_, weight)| *weight >= best * (1.0 - band))
+            .filter(|(_, weight)| {
+                // The winner is always retained.
+                // Contenders must meet the absolute signal floor (ESCALATION_FLOOR = 0.5) to reject sub-0.5 noise,
+                // and either fall within the relative band of the winner OR carry strong independent signal (>= 1.0).
+                *weight >= best
+                    || (*weight >= Self::ESCALATION_FLOOR
+                        && (*weight >= best * (1.0 - band) || *weight >= 1.0))
+            })
             .map(|(value, _)| value)
             .collect()
     }
@@ -633,6 +640,40 @@ fn token_position(tokens: &[String], word: &str) -> Option<usize> {
     tokens.iter().position(|token| token_matches(token, word))
 }
 
+/// Checks whether a token position corresponds to an imperative clause head in English.
+/// This includes the very first word (index 0), as well as verbs that immediately follow
+/// coordinating conjunctions ("and", "then", "also", "plus", "next", "after", "or")
+/// or clause delimiters (commas, semicolons, colons, newlines, dashes).
+fn is_clause_initial(tokens: &[String], position: usize, cleaned_text: &str) -> bool {
+    if position == 0 {
+        return true;
+    }
+    if position > 0 {
+        let prev = tokens[position - 1].as_str();
+        if matches!(prev, "and" | "then" | "also" | "plus" | "next" | "after" | "or") {
+            return true;
+        }
+    }
+    if position > 1 && tokens[position - 2] == "and" && tokens[position - 1] == "then" {
+        return true;
+    }
+    let target = &tokens[position];
+    let lower = cleaned_text.to_ascii_lowercase();
+    for (idx, _) in lower.match_indices(target) {
+        let before = &lower[..idx];
+        let after = &lower[idx + target.len()..];
+        let is_word_start = before.is_empty() || before.ends_with(|c: char| !c.is_ascii_alphanumeric());
+        let is_word_end = after.is_empty() || after.starts_with(|c: char| !c.is_ascii_alphanumeric());
+        if is_word_start && is_word_end {
+            let trimmed = before.trim_end();
+            if trimmed.ends_with(|c: char| matches!(c, ',' | ';' | ':' | '.' | '\n' | '-')) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Strip leading conversational preambles and polite requests so that the
 /// true operational verb lands at index 0 and receives the 1.6x imperative bonus.
 fn strip_conversational_preamble(mut text: &str) -> &str {
@@ -757,8 +798,8 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         let Some(position) = token_position(&tokens, word) else {
             continue;
         };
-        let leading = position == 0;
-        let weight = if leading {
+        let is_head = is_clause_initial(&tokens, position, &cleaned_text);
+        let weight = if is_head {
             weight * IMPERATIVE_BONUS
         } else {
             *weight
@@ -768,8 +809,10 @@ pub fn extract(request: &Request<'_>) -> Extraction {
             SignalKind::Lexical,
             format!("verb:{word}"),
             weight,
-            if leading {
+            if position == 0 {
                 format!("`{word}` (leading verb) ⇒ {}", act.as_str())
+            } else if is_head {
+                format!("`{word}` (clause head verb) ⇒ {}", act.as_str())
             } else {
                 format!("`{word}` ⇒ {}", act.as_str())
             },

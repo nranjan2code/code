@@ -72,6 +72,10 @@ pub struct ReceiptSummary {
     pub substantive_bash_calls: u32,
     /// Number of files modified/written (via edit, write, etc.).
     pub files_modified: u32,
+    /// Number of code files modified/written.
+    pub code_files_modified: u32,
+    /// Number of documentation/content/non-code files modified/written.
+    pub doc_files_modified: u32,
     /// Number of inspection/read tool calls (read_file, glob, grep, etc.).
     pub read_or_inspected: u32,
     /// Most recent unresolved tool failure, if any.
@@ -232,27 +236,25 @@ impl StopPolicy {
         None
     }
 
-    /// True when the prompt itself asks for executed verification or sandbox execution.
-    fn demands_verification(prompt: &str) -> bool {
+    /// True when the prompt itself explicitly asks for executed verification, testing, or sandbox commands.
+    pub fn demands_code_execution(prompt: &str) -> bool {
         let stripped = if let Some(idx) = prompt.find("[Scheduled-run context:") {
             &prompt[..idx]
         } else {
             prompt
         };
-        const DEMANDS: [&str; 13] = [
+        const DEMANDS: [&str; 11] = [
             "must pass",
             "tests pass",
+            "test pass",
             "run it",
             "run them",
+            "run the test",
+            "run tests",
             "verify by running",
             "prove by running",
-            "in sandbox",
-            "in the sandbox",
-            "show in sandbox",
             "run in sandbox",
             "execute in sandbox",
-            "verify the",
-            "verify that",
         ];
         let p = stripped.to_ascii_lowercase();
         if DEMANDS.iter().any(|d| p.contains(d)) {
@@ -265,12 +267,44 @@ impl StopPolicy {
         {
             return true;
         }
+        if p.contains("cargo test")
+            || p.contains("pytest")
+            || p.contains("npm test")
+            || p.contains("go test")
+            || p.contains("python -m unittest")
+        {
+            return true;
+        }
         p.contains("run ")
             && [
                 "test", "tests", "command", "script", "check", "app", "code", "python", "cargo",
+                "binary",
             ]
             .iter()
             .any(|word| p.contains(word))
+    }
+
+    /// True when the prompt asks for any verification (code or universal/content).
+    pub fn demands_verification(prompt: &str) -> bool {
+        if Self::demands_code_execution(prompt) {
+            return true;
+        }
+        let stripped = if let Some(idx) = prompt.find("[Scheduled-run context:") {
+            &prompt[..idx]
+        } else {
+            prompt
+        };
+        let p = stripped.to_ascii_lowercase();
+        const VERIFY_MARKERS: [&str; 7] = [
+            "verify that",
+            "verify the",
+            "double check",
+            "double-check",
+            "make sure that",
+            "check that",
+            "verify whether",
+        ];
+        VERIFY_MARKERS.iter().any(|m| p.contains(m))
     }
 
     /// True when the assistant response claims execution or emits shell scripts without tool calls having run.
@@ -350,11 +384,13 @@ impl StopPolicy {
                     && verification_stale
                     && (spec.requires_execution() || Self::demands_verification(prompt))
                 {
-                    return Some(BlockReason::VerificationStale);
+                    if receipts.code_files_modified > 0 || Self::demands_code_execution(prompt) {
+                        return Some(BlockReason::VerificationStale);
+                    }
                 }
             } else if spec.requires_inspection() {
                 let direct_substantive = final_text.trim().len() >= 80
-                    && !Self::demands_verification(prompt)
+                    && !Self::demands_code_execution(prompt)
                     && !Self::claims_execution_unexecuted(final_text);
                 if !receipts.has_inspection_receipt() && !direct_substantive {
                     let act = spec.deliverable_act().unwrap_or("inspection").to_string();
@@ -365,7 +401,7 @@ impl StopPolicy {
                 }
             } else if spec.requires_tool() && !receipts.has_any_receipt() {
                 let direct_substantive = final_text.trim().len() >= 80
-                    && !Self::demands_verification(prompt)
+                    && !Self::demands_code_execution(prompt)
                     && !Self::claims_execution_unexecuted(final_text);
                 if !direct_substantive {
                     return Some(BlockReason::ExecutionReceiptMissing {
@@ -378,13 +414,49 @@ impl StopPolicy {
 
         // Verification and execution gate: runs whenever verify_gate is enabled.
         if self.verify_gate {
-            if receipts.substantive_bash_calls == 0
-                && (Self::demands_verification(prompt)
-                    || Self::claims_execution_unexecuted(final_text))
-            {
+            let demands_code = Self::demands_code_execution(prompt);
+            let claims_exec = Self::claims_execution_unexecuted(final_text);
+
+            if claims_exec {
                 return Some(BlockReason::VerificationMissing);
             }
-            if verification_stale && Self::demands_verification(prompt) {
+
+            if demands_code && receipts.substantive_bash_calls == 0 {
+                return Some(BlockReason::VerificationMissing);
+            }
+
+            if Self::demands_verification(prompt) && receipts.substantive_bash_calls == 0 {
+                // If code files were touched, verification commands are required.
+                if receipts.code_files_modified > 0 {
+                    return Some(BlockReason::VerificationMissing);
+                }
+                // If no tools were called and the text is not a substantive direct answer:
+                let direct_substantive = final_text.trim().len() >= 80;
+                if !receipts.has_any_receipt() && !direct_substantive {
+                    return Some(BlockReason::VerificationMissing);
+                }
+                // If an execution deliverable was required or a specific file target was requested,
+                // but no files were modified or inspected:
+                let lower_p = prompt.to_ascii_lowercase();
+                let mentions_file_target = lower_p.contains(".md")
+                    || lower_p.contains(".txt")
+                    || lower_p.contains(".json")
+                    || lower_p.contains(".csv")
+                    || lower_p.contains("into ")
+                    || lower_p.contains("in file")
+                    || lower_p.contains("in the file");
+                if (outcome.map(|s| s.requires_execution()).unwrap_or(false) || mentions_file_target)
+                    && receipts.files_modified == 0
+                    && receipts.read_or_inspected == 0
+                {
+                    return Some(BlockReason::VerificationMissing);
+                }
+                // Universal tasks (documentation, research synthesis, lifestyle, notes, recipes,
+                // explanations) where content was inspected, written, or substantively answered
+                // are NOT falsely blocked on non-existent bash commands.
+            }
+
+            if verification_stale && (receipts.code_files_modified > 0 || demands_code) {
                 return Some(BlockReason::VerificationStale);
             }
         }
@@ -419,6 +491,8 @@ impl StopPolicy {
     ) -> Option<BlockReason> {
         let receipts = ReceiptSummary {
             substantive_bash_calls: bash_calls_this_run,
+            code_files_modified: if verification_stale { 1 } else { 0 },
+            files_modified: if verification_stale { 1 } else { 0 },
             successful_tool_calls: if bash_calls_this_run > 0 {
                 bash_calls_this_run
             } else {
@@ -427,6 +501,24 @@ impl StopPolicy {
             ..Default::default()
         };
         self.evaluate_receipts(prompt, final_text, None, &receipts, verification_stale)
+    }
+}
+
+/// Checks whether a file path points to an executable, compilable, or script source file
+/// (as opposed to documentation, notes, recipes, data, or content assets).
+pub fn is_code_path(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    match p.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()) {
+        Some(ext) => matches!(
+            ext.as_str(),
+            "rs" | "py" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx"
+                | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp"
+                | "go" | "java" | "kt" | "kts" | "rb" | "php"
+                | "swift" | "scala" | "sh" | "bash" | "zsh" | "fish"
+                | "ps1" | "bat" | "cmd" | "lua" | "pl" | "pm"
+                | "r" | "jl" | "dart" | "zig" | "nim" | "sql"
+        ),
+        None => false,
     }
 }
 
@@ -764,5 +856,93 @@ mod tests {
             blocked_empty,
             Some(BlockReason::ExecutionReceiptMissing { .. })
         ));
+    }
+
+    #[test]
+    fn test_is_code_path_accurately_classifies_code_vs_doc_paths() {
+        assert!(is_code_path("src/main.rs"));
+        assert!(is_code_path("backend/app.py"));
+        assert!(is_code_path("web/index.ts"));
+        assert!(is_code_path("scripts/deploy.sh"));
+
+        assert!(!is_code_path("README.md"));
+        assert!(!is_code_path("docs/architecture.md"));
+        assert!(!is_code_path("recipes/sourdough.txt"));
+        assert!(!is_code_path("data/analysis.csv"));
+        assert!(!is_code_path("notes.org"));
+    }
+
+    #[test]
+    fn test_universal_doc_modification_with_verify_not_blocked_on_bash() {
+        let p = StopPolicy::default();
+        let prompt = "Update README.md to describe the release steps and verify that all links are formatted correctly.";
+        let final_text = "Updated README.md with release steps and verified that the Markdown links match the repository structure.";
+
+        let receipts = ReceiptSummary {
+            total_tool_calls: 2,
+            successful_tool_calls: 2,
+            files_modified: 1,
+            code_files_modified: 0,
+            doc_files_modified: 1,
+            read_or_inspected: 1,
+            ..Default::default()
+        };
+
+        // Even though prompt says "verify that", since no code was modified and no code execution was demanded,
+        // it must NOT block on non-existent bash commands or stale verification!
+        let blocked = p.evaluate_receipts(prompt, final_text, None, &receipts, false);
+        assert_eq!(blocked, None);
+
+        let blocked_stale = p.evaluate_receipts(prompt, final_text, None, &receipts, true);
+        assert_eq!(blocked_stale, None);
+    }
+
+    #[test]
+    fn test_universal_research_and_lifestyle_with_verify_not_blocked() {
+        let p = StopPolicy::default();
+        let prompt = "Compare the top 3 pour-over drippers and verify that the brew ratios are accurate.";
+        let final_text = "Here is a detailed comparison of Hario V60, Kalita Wave, and Chemex. All brew ratios are verified between 1:15 and 1:17 for balanced extraction across light and medium roasts.";
+
+        let receipts = ReceiptSummary {
+            total_tool_calls: 1,
+            successful_tool_calls: 1,
+            read_or_inspected: 1,
+            ..Default::default()
+        };
+
+        let blocked = p.evaluate_receipts(prompt, final_text, None, &receipts, false);
+        assert_eq!(blocked, None);
+    }
+
+    #[test]
+    fn test_code_modification_with_verify_blocked_without_execution() {
+        let p = StopPolicy::default();
+        let prompt = "Fix the off-by-one bug in quicksort.py and verify that the sort works correctly.";
+        let final_text = "I fixed the index in quicksort.py.";
+
+        let receipts = ReceiptSummary {
+            total_tool_calls: 1,
+            successful_tool_calls: 1,
+            files_modified: 1,
+            code_files_modified: 1,
+            doc_files_modified: 0,
+            ..Default::default()
+        };
+
+        // Code was modified and prompt asks to "verify that" -> must block with VerificationMissing
+        let blocked = p.evaluate_receipts(prompt, final_text, None, &receipts, false);
+        assert_eq!(blocked, Some(BlockReason::VerificationMissing));
+
+        // If code files were modified after test ran, stale verification blocks
+        let with_bash = ReceiptSummary {
+            total_tool_calls: 2,
+            successful_tool_calls: 2,
+            substantive_bash_calls: 1,
+            files_modified: 1,
+            code_files_modified: 1,
+            ..Default::default()
+        };
+        let blocked_stale = p.evaluate_receipts(prompt, final_text, None, &with_bash, true);
+        assert_eq!(blocked_stale, Some(BlockReason::VerificationStale));
     }
 }
