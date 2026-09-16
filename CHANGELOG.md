@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.94 — 2026-09-16
+
+- Presentation & delivery output normalization: scrubbed synthetic `[stop-guard]` and `[stop-hook]` user messages across client and server projection pipelines, preventing them from creating phantom turns or rendering as user bubbles.
+- Outcome density intermediate message filtering: suppressed intermediate narration before subsequent assistant messages in outcome density across both `ChatPane` and `PresentationRenderer`, keeping the continuous chat canvas outcome-first while retaining operational details in Workbench.
+- Scaffolding-free channel delivery & routine summaries: added comprehensive control block and scaffolding stripping across `vak-delivery`, `delivery.rs`, and background routine summaries in `lib.rs` for Telegram, Discord, and Slack channels.
+- Filtered retry telemetry in outcome density: moved `RetryScheduled` notifications from the main chat canvas to activity details.
+
 ## 3.0.93 — 2026-09-15
 
 - FinOps dashboard modernization: transformed the FinOps view into a high-density, real-time command dashboard with a responsive 5-column executive KPI strip, eliminating vertical layout inflation.
