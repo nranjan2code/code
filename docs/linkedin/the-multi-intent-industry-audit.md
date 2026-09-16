@@ -1,191 +1,144 @@
-# The State of Multi-Intent AI Agents in 2026: An Architectural Audit & Benchmark
+# The Multi-Intent Problem in AI Agents: An Architectural Taxonomy & Honest Audit
 
-*A critical comparison of how Vak, LangGraph, Claude Code, CrewAI, AutoGen, and Devin handle compound requests, context bloating, and audited completion across long horizons.*
-
----
-
-## Executive Summary & Comparative Scorecard
-
-Over the past two years, the AI agent ecosystem transitioned from toy chatbot loops to autonomous digital workers executing long-horizon tasks. However, the industry has hit a universal inflection point known as **the compound intent problem**:
-
-> When a human provides a complex prompt with multiple interdependent instructions—combining search, modification, verification, and reporting—how does the agent guarantee that *every* intent is decoded, *all* required tools are available, permissions are *never* widened, context bloat does not induce amnesia, and completion is *machine-verified* rather than hallucinated?
-
-Below is an objective, critical benchmark evaluating six leading agent frameworks across the six pillars of compound intent execution:
-
-### The 2026 Framework Comparison Matrix
-
-![The 2026 Multi-Intent Agent Architecture Benchmark](multi_intent_industry_benchmark.svg)
-
-| Architectural Dimension | **Vak (v3.1)** | **LangGraph** | **Claude Code** | **CrewAI** | **AutoGen** | **Devin / Coding Agents** |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Multi-Intent Decoding** | **9.5/10**<br>(7-axis kernel + 50% contender band) | **7.5/10**<br>(Pre-wired conditional edges / subgraphs) | **7.0/10**<br>(Prompt-level plan parsing via `CLAUDE.md`) | **6.0/10**<br>(Manager agent natural language delegation) | **5.0/10**<br>(Conversational turn-taking in GroupChat) | **8.0/10**<br>(Plan/task decomposition checklist) |
-| **2. Security & Capability Slicing** | **10/10**<br>(Bounded meet-semilattice: $\bot \le \text{Only} \le \top$) | **6.0/10**<br>(Node-level code isolation; no lattice proof) | **7.5/10**<br>(Bash/file sandbox + prompt auto-mode) | **4.0/10**<br>(Ambient agent tools; no algebraic bounds) | **4.0/10**<br>(Subprocess exec; ambient credentials) | **8.0/10**<br>(Containerized sandboxes; root jail) |
-| **3. Context Anti-Bloating & Compaction** | **9.0/10**<br>(API boundary snapping + mandatory pinned summary) | **7.5/10**<br>(Checkpointer state persistence + rolling summaries) | **8.0/10**<br>(`/compact` at 95% threshold + file history) | **4.0/10**<br>(Heavy token churn between chatty agents) | **4.5/10**<br>(Fast context exhaust from group chatter) | **8.5/10**<br>(Specialized diff-aware context pruning) |
-| **4. Long-Horizon Commitment State** | **9.5/10**<br>(External ledger + satisfaction lattice) | **7.0/10**<br>(External Postgres/Sqlite checkpointer) | **6.0/10**<br>(In-session memory + markdown plan files) | **5.0/10**<br>(Memory storage; no formal satisfaction levels) | **4.0/10**<br>(No durable commitment engine outside chat) | **8.5/10**<br>(Persistent state machine with browser/shell logs) |
-| **5. Anti-Hallucination & Stop Guards** | **9.5/10**<br>(StopGuard triad: `VerificationStale`, `TruncatedPlan`) | **6.5/10**<br>(Developer-written guard nodes) | **7.0/10**<br>(Lifecycle stop hooks; user-scripted) | **5.0/10**<br>(Manager review loop via LLM prompt) | **4.0/10**<br>(String matching: `TERMINATE` token) | **8.5/10**<br>(Test runner output inspection) |
-| **6. Zero-Token Latency & Ergonomics** | **8.5/10**<br>(Microsecond Tier-1 lexicon; typed Rust harness) | **7.0/10**<br>(High flexibility; verbose Python boilerplate) | **9.0/10**<br>(Frictionless CLI UX; model-dependent) | **5.5/10**<br>(High token burn; multiple LLM calls per step) | **5.0/10**<br>(Slow convergence in group chat loops) | **8.0/10**<br>(Polished UI; proprietary cloud runtime) |
-| **OVERALL COMPOSITE RATING** | **9.2 / 10** | **7.0 / 10** | **7.4 / 10** | **4.9 / 10** | **4.4 / 10** | **8.2 / 10** |
+*A critical comparison of how modern agent architectures—from LangGraph and Claude Code to Vak—handle compound requests, context degradation, and completion verification.*
 
 ---
 
-## 1. The 2026 Industry Landscape: Why Compound Intent Is Breaking Naive Agents
+## Executive Summary: The Realities of Compound Intent
 
-In the research literature of 2025–2026 (such as the *Context-Compound-Intent (CCI) Stack* and *StateAct* benchmarks), production agent failures are no longer attributed to raw LLM reasoning deficits. Frontier models (Claude 3.7 Sonnet, GPT-4.5, Gemini 2.5 Pro) are more than capable of writing code and analyzing data.
+Over the past two years, the AI agent ecosystem transitioned from simple single-turn chatbot loops to systems executing multi-step workflows. Yet every practitioner building autonomous agents encounters the same underlying wall: **compound requests**.
 
-Instead, production regressions stem from **harness engineering gaps**:
+When a user submits a realistic, multi-clause instruction:
+> *"Search the repo for the authentication token parsing bug, refactor the parser to support the new claims schema, and verify that the integration test suite passes."*
 
-1. **The "God Agent" vs. "Swarm Sprawl" Dichotomy:**
-   * **God Agents (Single LLM Loop):** When given three tasks in one prompt, a single-loop agent suffers from *attention drift*. It fixates on the first error it encounters, burning context tokens until it runs out of memory, completely forgetting the remaining goals.
-   * **Swarm Sprawl (CrewAI / AutoGen):** To prevent God Agents, frameworks split the work across 4–6 specialized agents. But this introduces massive latency and token churn. The agents spend 80% of their token budget talking to each other, negotiating handoffs, and arguing over JSON schemas, while compounding security risks through chained prompt injections.
-2. **The Single-Label Argmax Trap:**
-   Most routers treat intent classification as single-label classification. A prompt like *"Find the memory leak in the parser, patch it, and verify the integration test suite"* is classified as `Modify`. Observability tools (`grep`, `read`) are stripped to save tokens, starving the agent of the instruments it needs to locate the bug.
-3. **The "Done" Illusion:**
-   Models are trained to be helpful and agreeable. When context gets crowded, an agent routinely outputs *"I have implemented the changes and all tests pass"* without ever running a single shell command. In 70% of open-source frameworks, the harness accepts this prose at face value and terminates.
+Production systems routinely break down in one of three ways:
+1. **Tool Starvation:** A router classifies the prompt as a single action (e.g. `Modify`), stripping observability tools (`grep`, `read`) to reduce token bloat, blinding the agent.
+2. **The "Done" Illusion:** An agent edits code, hallucinates that tests passed, and exits without executing a single terminal verification command.
+3. **Context Amnesia:** After 15 turns of debugging compiler errors, the agent completely forgets the user's secondary and tertiary requirements.
 
----
-
-## 2. In-Depth Comparative Analysis Across Core Dimensions
-
-### Dimension 1: Compound Intent Decoding & Contender Resolution
-
-#### The Competitors
-* **LangGraph:** Decomposes complex tasks using developer-defined DAGs. The human developer must manually configure the edges (`start -> triage -> coder -> tester -> end`). If a user gives a compound prompt that does not fit the developer's pre-compiled graph topology, the graph fails to route appropriately.
-* **CrewAI & AutoGen:** Rely on LLM-driven multi-agent routing. A "manager agent" reads the prompt and writes task assignments for worker agents. This incurs 2–4 seconds of LLM inference latency and hundreds of tokens before the first tool is ever invoked.
-* **Claude Code:** Relies on the underlying model's internal instruction-following with `CLAUDE.md` guidelines. It does not employ an explicit mathematical intent kernel, leaving multi-clause tracking to the model's self-attention.
-
-#### The Vak Method
-Vak solves this with a zero-token **Tier-1 Morphological Lexicon** and the **50% Contender Band**:
-* In microseconds (0 LLM tokens burned), the input is parsed across seven orthogonal axes (`act`, `horizon`, `stakes`, `evidence`, `clarity`, `modality`, `attendance`).
-* Rather than picking a single argmax winner, any act scoring $\ge 50\%$ of the primary joins the active contender set:
-  $$\text{Acts} = \{\text{Primary} \cup \text{Alternates}\}$$
-* **Capability Slicing** unions all tools required by every contender (`read`, `edit`, `bash`), while keeping the immutable orientation floor (`filesystem`, `memory`) active.
-* **Verdict:** Vak achieves the tool availability of a multi-agent swarm within a single execution loop, with zero token cost.
+This report evaluates four major architectural paradigms for addressing this problem:
+* **The Static Graph Paradigm** (*LangGraph, LlamaIndex Workflows*)
+* **The Conversational Swarm Paradigm** (*CrewAI, AutoGen*)
+* **The Native CLI Harness Paradigm** (*Claude Code, Cursor/Devin*)
+* **The Algebraic Intent Kernel Paradigm** (*Vak*)
 
 ---
 
-### Dimension 2: Security & Capability Slicing (The Meet-Semilattice)
+## 1. Architectural Taxonomy: Four Ways to Handle Compound Requests
 
-#### The Competitors
-* **LangGraph:** Security boundaries exist only at the custom node level (Python functions). If a node has access to a tool, that tool is ambiently accessible. Merging state between nodes has no algebraic guarantee against privilege escalation.
-* **CrewAI / AutoGen:** Highly vulnerable to "compound contamination". When an external input triggers an action across chained agents, tools with irreversible permissions (database writes, terminal execution) are often ambiently available to the worker agent.
-* **Devin / Claude Code:** Excellent OS sandboxing (Docker containers or OS-level restricted process groups). However, permissions are generally binary (interactive approval prompt vs. auto mode), without a fine-grained mathematical lattice.
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                           COMPOUND USER REQUEST                                   │
+│     "Find bug in auth.rs, refactor parser, verify tests, and document changes"    │
+└─────────────────────────────────────┬─────────────────────────────────────────────┘
+                                      │
+         ┌────────────────────────────┼────────────────────────────┐
+         ▼                            ▼                            ▼
+┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
+│   STATIC DAGS    │         │ MULTI-AGENT SWARM│         │ ALGEBRAIC KERNEL │
+│   (LangGraph)    │         │ (CrewAI/AutoGen) │         │      (Vak)       │
+├──────────────────┤         ├──────────────────┤         ├──────────────────┤
+│ Pre-compiled     │         │ Manager agent    │         │ 7-axis scoring;  │
+│ workflow nodes   │         │ delegates to N   │         │ contender band   │
+│ & conditional    │         │ chatty workers   │         │ unions tools in  │
+│ edges.           │         │ in natural prose.│         │ single loop.     │
+├──────────────────┤         ├──────────────────┤         ├──────────────────┤
+│ Rigid if prompt  │         │ High token churn;│         │ Fast zero-token; │
+│ violates graph   │         │ latency; context │         │ but sequential   │
+│ topology.        │         │ exhaustion.      │         │ execution only.  │
+└──────────────────┘         └──────────────────┘         └──────────────────┘
+```
 
-#### The Vak Method
-Vak models capability limits as a formal **bounded meet-semilattice**:
-$$\bot = \text{Empty} \le \text{Only}(names) \le \top = \text{All}$$
+### Paradigm 1: Pre-Compiled Workflow Graphs (LangGraph, LlamaIndex Workflows)
+* **Mechanism:** Developers manually construct directed acyclic graphs (DAGs) in Python/TypeScript. A triage node classifies the request and routes along conditional edges to specialized nodes (`coder_node`, `test_node`).
+* **Strengths:** Predictable, easy to debug, production-proven checkpointer persistence (Postgres/Redis), excellent for structured business processes.
+* **Failure Modes:** Extremely fragile when exposed to open-ended human prompts. If a user's prompt combines three steps that don't match a pre-wired edge, the system either forces the entire request into a single generic "fallback" node or deadlocks.
 
-* The composition operator $\text{meet}(\cdot)$ is strictly monotonic in the restrictive direction:
-  $$\text{meet}(a, b) \sqsubseteq a \quad \text{and} \quad \text{meet}(a, b) \sqsubseteq b$$
-* **Mathematical Proof:** Combining multiple intents can **never widen** what an agent is permitted to touch. If intent $A$ requires `vcs` and intent $B$ requires `live-data`, but the human authority envelope only permits `vcs`, the meet collapses to `vcs`. If their intersection is empty, it collapses to $\bot$ (`Empty`) rather than escalating to unconstrained $\top$.
-* **Ordered Safety Axes:** On ordered axes (`stakes`, `evidence`), Vak applies the **highest-caution dominance principle**: an irreversible act (deploy) paired with an inert act (search) forces the entire turn to execute under the strict approval ceiling of `Irreversible`.
-* **Verdict:** Vak provides mathematical guarantees where competitors rely on prompt-level promises or coarse binary approvals.
+### Paradigm 2: Conversational Multi-Agent Swarms (CrewAI, AutoGen)
+* **Mechanism:** A supervisor or "manager" agent uses an LLM call to decompose the prompt into discrete tasks, passing them to specialized sub-agents (`Researcher`, `Coder`, `QA`).
+* **Strengths:** Intuitive role-based abstraction; highly flexible for brainstorming and content workflows.
+* **Failure Modes:** Severe token bloat and high latency. Sub-agents communicate via natural language chat, burning context on handoff negotiations. Security boundaries suffer from "compound contamination"—if one agent in the chain is tricked, ambient tools across the swarm can be compromised.
 
----
+### Paradigm 3: Implicit Attention in Unified Harnesses (Claude Code, Devin)
+* **Mechanism:** A single agent loop with full tool access (read, write, bash). Relies on frontier model self-attention, instruction-following prompts (e.g. `CLAUDE.md`), and system-level hooks to track multi-part goals.
+* **Strengths:** Zero classification overhead; natural fluid execution; tightly coupled to terminal and file diffs.
+* **Failure Modes:** Relies entirely on the LLM's willingness to keep track of its own plan. When context fills with large tool outputs (compiler logs, stack traces), attention drifts toward the immediate error, causing the agent to quietly drop remaining goals.
 
-### Dimension 3: Long-Horizon Context Bloat & Compaction
-
-#### The Competitors
-* **LangGraph:** Offers checkpointers (saving state to Postgres/SQLite). For context reduction, developers typically configure custom rolling summarization prompts. However, naive summarization frequently suffers from "governance decay", where safety policies or original user constraints are accidentally dropped from the summary.
-* **CrewAI:** Suffers severely from context bloat. Because agents communicate via back-and-forth conversational turns, transcripts grow exponentially. Compaction often breaks inter-agent message references.
-* **Claude Code:** Features a polished `/compact` mechanism that automatically triggers when the context window reaches ~95% capacity. It summarizes conversation history and re-injects `CLAUDE.md` rules and recent file edit buffers. However, compaction remains somewhat lossy for complex multi-part requirements not captured in files.
-
-#### The Vak Method
-Vak enforces a deterministic, two-part anti-bloat defense:
-1. **API-Boundary Snapping:**
-   `plan_compaction` snaps the boundary forward so it never bisects an assistant `tool_use` and user `tool_result` pair. This ensures the kept transcript is always 100% syntactically valid for provider APIs, preventing mid-run provider parse crashes.
-2. **Mandatory Task Preservation System Prompt:**
-   The compaction engine runs under a strict contract:
-   > *"Keep: the original task, current state, what was created or changed (files with paths, plus any other artifact or external effect), key decisions, errors hit and their fixes, and open items. Drop pleasantries and redundant tool output. Maximum 400 words."*
-3. **Permanent Head Projection:**
-   The generated `<context_summary>` is recorded as an immutable, append-only ledger entry. On every subsequent turn, `derive_messages()` reconstructs:
-   $$\text{Context} = [\langle\text{context\_summary}\rangle] \;+\; [\text{kept verbatim recent tail}]$$
-   The original compound goals and open items remain pinned at index 0 of the model's visible context across unlimited turns.
-4. **Architectural Delegation via `TaskTool`:**
-   For heavy exploratory tasks, Vak spawns depth-1 subagents with isolated session ledgers. The child agent can burn 30 turns compiling and testing, but reports back only a concise, typed `TaskOutcome` receipt to the parent session. Zero bloat tokens pollute the parent context.
-* **Verdict:** Vak treats compaction as a deterministic system invariant rather than an optional prompt trick.
-
----
-
-### Dimension 4: Verification, Stop-Guards, and Anti-Hallucination
-
-#### The Competitors
-* **AutoGen:** Uses string-based termination matching (e.g. searching for the word `"TERMINATE"` in the LLM response). This is notoriously brittle: agents either terminate prematurely when quoting a prompt, or loop endlessly when forgetting to say the magic keyword.
-* **LangGraph:** Relies on conditional edge functions written by the developer. If the developer doesn't explicitly program an automated test gate, the model's claim of completion is accepted by default.
-* **Claude Code:** Implements extensible stop hooks that fire when a turn or task finishes. Users can attach custom bash scripts to verify results, which is powerful but requires manual configuration.
-* **Devin:** Strong test-runner integration. It inspects test commands and diffs, but is closed-source and cannot be extended into non-coding operational workflows.
-
-#### The Vak Method
-Vak decouples "done" from model prose entirely using **three independent audit gates**:
-
-1. **The Stop-Guard Triad (`stop_policy.rs`):**
-   Before an agent turn can return `Completed`, its execution `ReceiptSummary` is audited:
-   * **`TruncatedPlan`:** Blocks exits if the response ends with an unclosed thought or forward-looking plan marker (*"I will now run the tests:"*).
-   * **`VerificationMissing`:** Blocks completion if code was modified but no test or verification command was observed.
-   * **`VerificationStale`:** Blocks completion if the agent ran tests, **and then edited a source file afterward**. The exit is intercepted, and the agent is nudged:
-     > `[stop-guard]: The task changed files after its last verification command. Call bash to verify again before finishing.`
-2. **The `ModelCompletion` Prohibition (`work.rs`):**
-   In managed contracts, work items form a dependency DAG. Vak enforces:
-   ```rust
-   #[error("work item '{0}' cannot be marked succeeded by a model event")]
-   ModelCompletion(String),
-   ```
-   A model event claiming success in text is rejected at compile time. Only runtime execution receipts can transition an item to `Succeeded`.
-3. **The External Commitment Kernel & Satisfaction Lattice (`vak-commit`):**
-   Durable commitments evaluate criteria against an objective satisfaction lattice:
-   $$\text{Asserted} < \text{Cited} < \text{Observed} < \text{Attested}$$
-   A commitment whose evidence axis requires `Observed` can **never close** based on semantic prose (`Asserted`).
-* **Verdict:** Vak is the only open-source agent harness with a zero-trust stop policy that mathematically enforces test freshness (`VerificationStale`).
+### Paradigm 4: Algebraic Intent Kernels (Vak)
+* **Mechanism:** A typed systems harness that resolves intent across 7 orthogonal axes using microsecond lexical heuristics, admits sibling contenders within a 50% score band, unions capabilities, and enforces stop-guards.
+* **Strengths:** Zero token latency for extraction; formal mathematical proofs against privilege widening (bounded semilattice); hard refusal of model self-completion.
+* **Failure Modes:** Sequential turn bottleneck (cannot execute independent sub-tasks in parallel); English-centric lexical heuristics; arbitrary heuristic thresholds (e.g. 0.5 band).
 
 ---
 
-## 3. Critical Examination: Where Vak Trades Off and Where Gaps Remain
+## 2. Comparative Matrix: Trade-offs Across Engineering Dimensions
 
-An honest engineering audit must be transparent about its limitations. Vak is not a silver bullet, and its design makes deliberate trade-offs:
-
-### 1. Sequential Turn Execution vs. Parallel Fanout
-* **Trade-off:** Within a single turn loop, Vak executes compound intents sequentially (search $\rightarrow$ edit $\rightarrow$ test).
-* **Rationale:** In software engineering and system administration, sequential execution preserves causality and prevents file race conditions.
-* **The Limitation:** For *completely independent* compound intents (e.g. *"Search stock prices for Apple AND fetch the current weather in Tokyo"*), Vak executes them in sequential turns rather than firing parallel asynchronous requests, resulting in higher overall latency than a parallel graph node in LangGraph.
-
-### 2. English-Centric Lexical Heuristics (Tier 1)
-* **Trade-off:** Vak’s ultra-fast Tier-1 extractor relies on English imperative verbs, polite preamble stripping, and English morphological inflections (`-ing`, `-ed`, `-s`).
-* **The Limitation:** For inputs in languages with different morphological structures (e.g., German compound words, Japanese non-concatenative morphology), Tier 1 cannot reliably detect compound acts. It falls open to the baseline orientation floor or escalates to Tier-2/Tier-3 model classifiers, incurring token latency.
-
-### 3. Direct Mode vs. Managed Contract Threshold
-* **Trade-off:** Vak uses structural indicators (length $\ge 400$ chars, bulleted lists, explicit verbs) to promote a turn into a managed `WorkContract`.
-* **The Limitation:** If a user submits a very short, deceptively dense prompt (e.g., *"Patch CVE-2024-1234, fuzz it, update docs"* under 60 characters), it may remain in Direct Mode. While the stop-guards will still catch missing verifications, it will not construct a full visual dependency DAG in the session ledger unless the user explicitly ran `/goal`.
-
-### 4. Authoring Curve & Ecosystem Size
-* **Trade-off:** Vak is written in strict, high-performance Rust (`#![deny(unsafe_code)]`, strict compile flags, zero-panic invariants).
-* **The Limitation:** Compared to Python frameworks like LangGraph or CrewAI, authoring custom native tools and extensions in Vak requires Rust familiarity. While Vak supports standard MCP (Model Context Protocol) servers in any language, extending the core intent kernel requires systems-level programming.
+| Engineering Dimension | **LangGraph** | **Claude Code** | **CrewAI / AutoGen** | **Vak (Current State)** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Multi-Intent Handling** | Pre-wired conditional edges. Rigid if input breaks graph topology. | Implicit model attention + markdown plan files. Prone to drift under bloat. | Manager agent natural language delegation. High latency, heavy token churn. | **Contender Band (50%).** Unions tools in single turn loop. Fast, but sequential only. |
+| **Capability Security** | Node-level function isolation. No formal non-widening lattice. | Process groups + interactive approval prompt. Binary auto-mode. | Ambient toolsets per agent. Vulnerable to chained injection. | **Bounded Meet-Semilattice.** Mathematically proves $\text{meet}(a, b) \sqsubseteq a$. Never widens perms. |
+| **Context Compaction** | Checkpointer state saving + custom rolling summary prompts. | Automatic `/compact` at ~95% token threshold. Somewhat lossy. | Conversational history duplication. Rapidly exhausts context. | **Boundary Snapping.** Never splits `tool_use`/`result`. Mandatory task preservation contract. |
+| **Completion Audit** | Developer-written conditional assertion nodes. | User-extensible bash stop hooks. Model can self-certify. | Subjective manager agent prose review. Prone to loops. | **StopGuard Triad.** Audits `VerificationStale`, `TruncatedPlan`. Rejects prose completion. |
+| **Production Maturity** | **High.** Battle-tested across millions of enterprise runs. | **High.** Polished terminal UX backed by frontier foundation models. | **Moderate.** Broad community adoption, primarily prototyping. | **Experimental.** 0 external production users; validated on synthetic test suites only. |
 
 ---
 
-## 4. Final Verdict & Rating
+## 3. A Critical, Honest Audit of Vak's Architecture
 
-| Framework | Rating | Best Used For | Primary Architectural Failure Mode |
-| :--- | :---: | :--- | :--- |
-| **Vak (v3.1)** | **9.2 / 10** | High-reliability autonomous engineering, production servers, safety-critical agent harnesses | Sequential execution of independent intents; authoring curve for custom Rust extensions. |
-| **Claude Code** | **7.4 / 10** | Interactive developer terminal workflows, fast interactive code generation | Lossy context compaction; lack of formal satisfaction lattice; model self-certification. |
-| **LangGraph** | **7.0 / 10** | Custom enterprise Python workflows with complex human-in-the-loop DAGs | Static graph fragility; lack of automated post-edit verification staleness guards. |
-| **Devin** | **8.2 / 10** | Autonomous software engineering benchmarks (SWE-bench) | Proprietary closed-source SaaS; restricted to coding domain; cannot run self-hosted. |
-| **CrewAI** | **4.9 / 10** | Multi-role brainstorming, content creation, quick prototypes | Extreme token churn; chatty deadlock loops; no mathematical capability bounds. |
-| **AutoGen** | **4.4 / 10** | Research on conversational multi-agent dynamics | Brittle string termination (`TERMINATE`); lack of formal verification auditing. |
+To build a genuinely reliable system, we must be brutally transparent about Vak's current flaws, blind spots, and architectural trade-offs:
+
+### Flaw 1: The Contender Band (0.5) is an Arbitrary Heuristic
+In `vak-intent`, an act joins the active capability set if:
+$$\text{weight} \ge 0.5 \times \text{winner\_weight}$$
+* **The Reality:** The constant `0.5` is an uncalibrated engineering guess. It was not derived from empirical optimization across 100,000 real-world developer conversations.
+* **The Risk:** 
+  - On dense multi-task prompts, subtle secondary intents with weights at 0.48 will be discarded (false negative), causing tool starvation.
+  - On ambiguous prompts, weak noise words can cross the 0.5 threshold, loading unnecessary tools and increasing prompt token overhead (false positive).
+
+### Flaw 2: The Sequential Turn Bottleneck
+* **The Reality:** Vak executes compound intents sequentially within a single turn loop (e.g. search $\rightarrow$ edit $\rightarrow$ test).
+* **The Failure Mode:** When a user asks for two completely independent operations:
+  > *"Check the staging deployment on Kubernetes, and fetch the open bugs from GitHub issues."*
+  LangGraph or a multi-agent swarm can fire both requests concurrently in 800ms. Vak executes them in sequence across multiple turns, incurring a 2x–3x latency penalty.
+
+### Flaw 3: English-Centric Lexical Brittleness (Tier 1)
+* **The Reality:** Vak's zero-token Tier-1 extractor relies on regexes, English imperative verb lists, and English inflectional stemming (`-ing`, `-ed`, `-s`).
+* **The Failure Mode:**
+  - Non-English prompts (e.g. German compound verbs, Japanese non-concatenative morphology) fail Tier-1 extraction completely and fall back to ambient floors or require cloud model classification.
+  - Colloquialisms, typos, or passive phrasing (*"It would be great if the tests were looked at"*) defeat the regex heuristics.
+
+### Flaw 4: Stop-Guard False-Positive Traps
+* **The Reality:** The `VerificationMissing` stop-guard checks if files were changed and requires a verification tool call if verification intent was detected.
+* **The Failure Mode:** For documentation updates or trivial text changes (*"Fix typo in README.md and verify formatting"*), the agent has no automated test suite to run. A rigid stop-guard can trap the agent in an exit-blocked loop where it wastes tokens apologizing or trying to run irrelevant bash commands.
+
+### Flaw 5: Synthetic Test Isolation vs. Wild Human Inputs
+* **The Reality:** Vak's test suite boasts 154 integration tests and over 100,000 combinatorial assertions.
+* **The Limitation:** All of these tests were written by the same team that wrote the harness. They test the system against our own assumptions. They do not prove that Vak will handle the ambiguity, chaotic typos, and contradictory instructions of real human operators in the wild.
 
 ---
 
-### Conclusion: The 2026 Golden Standard for AI Agents
+## 4. What Vak Genuinely Gets Right
 
-The era of trusting an LLM's self-reported success is over. 
+Despite these limitations, Vak introduces three architectural ideas that address real gaps in today's agent ecosystem:
 
-Production AI systems in 2026 require:
-1. **Contender bands** instead of single-label argmax classification.
-2. **Bounded meet-semilattices** that guarantee multi-intent requests never widen authority.
-3. **API-boundary snapped compaction** that pins original goals permanently at the head of context.
-4. **Zero-trust stop guards** that reject prose-only claims and enforce test freshness (`VerificationStale`).
-
-Vak’s intent kernel and commitment architecture prove that with the right harness engineering, autonomous agents can execute compound, long-horizon tasks with mathematical precision.
+1. **The Bounded Meet-Semilattice Guarantee (`vak-intent`):**
+   Modeling capabilities as $\bot = \text{Empty} \le \text{Only}(names) \le \top = \text{All}$ with monotonic meet operations guarantees that resolving complex compound intents can *never* accidentally escalate privileges or widen sandbox boundaries.
+2. **Rejection of Model Self-Certification (`work.rs`):**
+   Enforcing `#[error("work item '{0}' cannot be marked succeeded by a model event")] ModelCompletion` at the session layer ensures that an agent cannot talk its way into completing a contract. Completion requires concrete runtime execution receipts.
+3. **Verification Staleness Auditing (`stop_policy.rs`):**
+   Detecting when an agent modified source files *after* running tests prevents one of the most common failure modes in autonomous coding: the unverified post-test tweak.
 
 ---
 
-*Vak is open source. Read the implementation, review the formal lattice proofs, and run the test suite at [github.com/nranjan2code/code](https://github.com/nranjan2code/code).*
+## 5. Next Steps: The Roadmap to Fix Vak's System
+
+To move from an interesting architectural experiment to a production-grade system, our immediate engineering focus must be:
+
+1. **Calibrate the Contender Threshold:** Replace the hardcoded `0.5` constant with dynamic calibration or multi-label ranking evaluated against public agent benchmarks.
+2. **Parallel Sub-Task Dispatch:** Implement parallel branching within `CorePool` / `TaskTool` for independent sibling intents that do not share disk or state dependencies.
+3. **Context-Aware Stop Guards:** Refine `VerificationMissing` to distinguish between executable code changes (requiring tests) and non-executable documentation edits (requiring visual/formatting inspection).
+4. **Empirical Benchmark Qualification:** Run Vak against standard public benchmarks (SWE-bench Lite / Verified, ToolBench) to evaluate real-world compound task completion against industry peers.
+
+---
+
+*Vak is an open-source research agent harness developed in Rust. Source code, formal proofs, and architecture documents are available at [github.com/nranjan2code/code](https://github.com/nranjan2code/code).*
