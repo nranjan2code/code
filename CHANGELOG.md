@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.99 — 2026-09-16
+
+- 3D Citadel tour modal isolation: resolved CSS class specificity clash on `.world-modal` and `.world-tooltip` overriding the `[hidden]` attribute, ensuring the Ask modal remains hidden on page load and dismisses cleanly on approval or denial.
+- Resilient display state management: coupled HTML `[hidden]`, `.is-hidden` class styling, and inline `style.display` across tour lifecycle events and interactive missions.
+- Full stack local macOS release: synchronized binaries, verified manifests, and updated launchd services.
+
 ## 3.0.98 — 2026-09-16
 
 - Interactive 3D Citadel World Tour (`/tour`): Procedural zero-dependency 3D vector engine with perspective projection, painter's algorithm depth sorting, and 10 explorable architectural megastructures representing each subsystem of the Vak turn pipeline.
