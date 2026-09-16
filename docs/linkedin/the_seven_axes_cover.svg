@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap');
+      .font { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+      .bg { fill: #171d26; }
+      .bg-split { fill: #202836; }
+      .card-white { fill: #fbfbf9; stroke: #e2e8f0; stroke-width: 2; rx: 16px; }
+      .card-dark { fill: #1e293b; stroke: #334155; stroke-width: 2; rx: 16px; }
+      .text-hero { font-size: 58px; font-weight: 800; fill: #ffffff; letter-spacing: -1.5px; line-height: 1.15; }
+      .text-sub { font-size: 24px; font-weight: 400; fill: #94a3b8; line-height: 1.4; }
+      .card-title { font-size: 20px; font-weight: 700; fill: #0f172a; letter-spacing: 0.5px; text-transform: uppercase; }
+      .row-label { font-size: 19px; font-weight: 600; fill: #1e293b; }
+      .row-value { font-size: 16px; font-weight: 600; }
+      .badge-bg { rx: 6px; }
+      .pill { rx: 8px; }
+      .check { fill: none; stroke: #10b981; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Background with subtle angular split matching Banner 1 -->
+  <rect width="1920" height="1080" class="bg" />
+  <path d="M 1050,0 L 1920,0 L 1920,1080 L 850,1080 Z" class="bg-split" opacity="0.6" />
+
+  <!-- LEFT SIDE: Title & Conceptual Contrast -->
+  <g transform="translate(120, 140)">
+    <!-- Title Text -->
+    <text x="0" y="80" class="font text-hero">
+      <tspan x="0" dy="0">Beyond Semantic Routing:</tspan>
+      <tspan x="0" dy="74">The 7 Axes of AI Agent Intent</tspan>
+    </text>
+    
+    <text x="0" y="210" class="font text-sub">
+      <tspan x="0" dy="0">Why subject-matter taxonomies fail in production autonomy,</tspan>
+      <tspan x="0" dy="36">and how behavioral physics makes delegation reliable.</tspan>
+    </text>
+
+    <!-- Terminal Comparison Card (Left Bottom) -->
+    <g transform="translate(0, 320)" filter="url(#shadow)">
+      <rect width="720" height="420" class="card-white" rx="16" />
+      
+      <!-- Window Controls -->
+      <circle cx="36" cy="36" r="8" fill="#ef4444" />
+      <circle cx="62" cy="36" r="8" fill="#f59e0b" />
+      <circle cx="88" cy="36" r="8" fill="#10b981" />
+      <line x1="0" y1="68" x2="720" y2="68" stroke="#e2e8f0" stroke-width="1.5" />
+      <text x="120" y="43" class="font" font-size="15" font-weight="600" fill="#64748b">1D ROUTING VS. 7D BEHAVIORAL INTENT</text>
+
+      <!-- Comparison Rows -->
+      <!-- Item 1 -->
+      <g transform="translate(36, 100)">
+        <rect width="648" height="85" fill="#f1f5f9" rx="10" />
+        <text x="24" y="32" class="font" font-size="14" font-weight="700" fill="#dc2626">TRADITIONAL 1D TOPIC MATCHING</text>
+        <text x="24" y="60" class="font" font-size="16" fill="#334155">Cosine similarity says "research" → loads 50 tools → silent failure</text>
+      </g>
+
+      <!-- Arrow Down -->
+      <path d="M 360, 200 L 360, 225 M 350, 215 L 360, 225 L 370, 215" stroke="#94a3b8" stroke-width="2.5" fill="none" stroke-linecap="round" />
+
+      <!-- Item 2 -->
+      <g transform="translate(36, 245)">
+        <rect width="648" height="125" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5" rx="10" />
+        <text x="24" y="32" class="font" font-size="14" font-weight="700" fill="#059669">7-AXIS BEHAVIORAL INTENT (VAK HARNESS)</text>
+        <text x="24" y="62" class="font" font-size="16" font-weight="500" fill="#065f46">
+          • Isolates Act to `Locate` → Capability slicing: exposes only search tools
+        </text>
+        <text x="24" y="92" class="font" font-size="16" font-weight="500" fill="#065f46">
+          • Evaluates Stakes vs. Clarity → Ambiguous + Inert: proceeds without nagging
+        </text>
+      </g>
+    </g>
+  </g>
+
+  <!-- RIGHT SIDE: The 7-Axis Intent Card (Matching Cover 1 Architectural Ledger) -->
+  <g transform="translate(980, 140)" filter="url(#shadow)">
+    <rect width="820" height="740" class="card-white" rx="18" />
+
+    <!-- Ledger Header -->
+    <g transform="translate(48, 50)">
+      <text x="0" y="0" class="font card-title" font-size="24">ARCHITECTURAL INTENT METER</text>
+      <text x="0" y="26" class="font" font-size="15" fill="#64748b">RUNTIME STATE CLASSIFICATION MATRIX</text>
+      <line x1="0" y1="44" x2="724" y2="44" stroke="#0f172a" stroke-width="2" />
+    </g>
+
+    <!-- 7 Axis Rows -->
+    <g transform="translate(48, 125)">
+      
+      <!-- Header Row -->
+      <rect width="724" height="42" fill="#f8fafc" stroke="#e2e8f0" rx="6" />
+      <text x="20" y="27" class="font" font-size="14" font-weight="700" fill="#475569">DIMENSION</text>
+      <text x="260" y="27" class="font" font-size="14" font-weight="700" fill="#475569">MAPPED VALUE</text>
+      <text x="560" y="27" class="font" font-size="14" font-weight="700" fill="#475569">RUNTIME IMPACT</text>
+
+      <!-- Row 1: Act -->
+      <g transform="translate(0, 52)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">1. Act</text>
+        <rect x="250" y="16" width="160" height="32" fill="#dbeafe" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#1e40af">Modify / Author</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Capability Slicing</text>
+      </g>
+
+      <!-- Row 2: Horizon -->
+      <g transform="translate(0, 126)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">2. Horizon</text>
+        <rect x="250" y="16" width="160" height="32" fill="#ede9fe" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#6b21a8">Durable Session</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Commitment Gate</text>
+      </g>
+
+      <!-- Row 3: Stakes -->
+      <g transform="translate(0, 200)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">3. Stakes</text>
+        <rect x="250" y="16" width="160" height="32" fill="#fee2e2" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#991b1b">Reversible</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Auto-Checkpoint</text>
+      </g>
+
+      <!-- Row 4: Evidence -->
+      <g transform="translate(0, 274)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">4. Evidence</text>
+        <rect x="250" y="16" width="160" height="32" fill="#dcfce7" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#166534">Verified Proof</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Machine Receipt</text>
+      </g>
+
+      <!-- Row 5: Clarity -->
+      <g transform="translate(0, 348)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">5. Clarity</text>
+        <rect x="250" y="16" width="160" height="32" fill="#fef3c7" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#92400e">Underspecified</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Assume (Inert)</text>
+      </g>
+
+      <!-- Row 6: Modality -->
+      <g transform="translate(0, 422)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">6. Modality</text>
+        <rect x="250" y="16" width="160" height="32" fill="#f1f5f9" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#334155">Text &amp; Data</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Model Dispatch</text>
+      </g>
+
+      <!-- Row 7: Attendance -->
+      <g transform="translate(0, 496)">
+        <rect width="724" height="64" fill="#ffffff" stroke="#f1f5f9" rx="8" />
+        <text x="20" y="38" class="font row-label">7. Attendance</text>
+        <rect x="250" y="16" width="160" height="32" fill="#e0e7ff" rx="6" />
+        <text x="270" y="38" class="font row-value" fill="#3730a3">Supervised</text>
+        <text x="560" y="38" class="font" font-size="15" font-weight="500" fill="#0f172a">Notification Mode</text>
+      </g>
+    </g>
+
+    <!-- Bottom Status Bar -->
+    <g transform="translate(48, 695)">
+      <line x1="0" y1="0" x2="724" y2="0" stroke="#e2e8f0" stroke-width="1.5" />
+      <text x="0" y="24" class="font" font-size="14" font-weight="700" fill="#059669">✓ CLASSIFICATION RESOLVED DETERMINISTICALLY (TIER 1 · &lt;1ms)</text>
+    </g>
+  </g>
+</svg>

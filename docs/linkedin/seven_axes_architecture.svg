@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .card-bg { fill: #1e293b; stroke: #334155; stroke-width: 1.5; rx: 8px; }
+      .card-header { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 700; fill: #f8fafc; letter-spacing: 0.5px; text-transform: uppercase; }
+      .card-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; fill: #94a3b8; line-height: 1.4; }
+      .card-badge { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 600; fill: #38bdf8; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 26px; font-weight: 800; fill: #ffffff; letter-spacing: -0.5px; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; fill: #64748b; }
+      .accent-green { fill: #10b981; }
+      .accent-amber { fill: #f59e0b; }
+      .accent-blue { fill: #38bdf8; }
+      .accent-purple { fill: #a855f7; }
+      .matrix-box { rx: 6px; stroke-width: 1.5; }
+      .matrix-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="675" class="bg" />
+
+  <!-- Header -->
+  <text x="60" y="55" class="title">The Seven Behavioral Axes of Agent Intent</text>
+  <text x="60" y="80" class="subtitle">Orthogonal operational physics replacing 1D subject-matter semantic routers</text>
+
+  <!-- Left Column: The 7 Axes Grid (Cards) -->
+  <!-- Axis 1: Act -->
+  <g transform="translate(60, 115)">
+    <rect width="320" height="68" class="card-bg" />
+    <circle cx="22" cy="24" r="6" fill="#38bdf8" />
+    <text x="36" y="28" class="card-header">1. Act</text>
+    <text x="270" y="28" class="card-badge">Tools</text>
+    <text x="22" y="50" class="card-body">Converse · Locate · Author · Modify · Operate</text>
+  </g>
+
+  <!-- Axis 2: Horizon -->
+  <g transform="translate(60, 195)">
+    <rect width="320" height="68" class="card-bg" />
+    <circle cx="22" cy="24" r="6" fill="#a855f7" />
+    <text x="36" y="28" class="card-header">2. Horizon</text>
+    <text x="255" y="28" class="card-badge">Lifecycle</text>
+    <text x="22" y="50" class="card-body">Immediate · Turn · Session · Durable</text>
+  </g>
+
+  <!-- Axis 3: Stakes -->
+  <g transform="translate(60, 275)">
+    <rect width="320" height="68" class="card-bg" />
+    <circle cx="22" cy="24" r="6" fill="#ef4444" />
+    <text x="36" y="28" class="card-header">3. Stakes</text>
+    <text x="265" y="28" class="card-badge">Safety</text>
+    <text x="22" y="50" class="card-body">Inert · Reversible · Costly · Irreversible</text>
+  </g>
+
+  <!-- Axis 4: Evidence -->
+  <g transform="translate(60, 355)">
+    <rect width="320" height="68" class="card-bg" />
+    <circle cx="22" cy="24" r="6" fill="#10b981" />
+    <text x="36" y="28" class="card-header">4. Evidence</text>
+    <text x="270" y="28" class="card-badge">Proof</text>
+    <text x="22" y="50" class="card-body">None · Cited · Verified · Audited</text>
+  </g>
+
+  <!-- Axis 5: Clarity -->
+  <g transform="translate(60, 435)">
+    <rect width="320" height="68" class="card-bg" />
+    <circle cx="22" cy="24" r="6" fill="#f59e0b" />
+    <text x="36" y="28" class="card-header">5. Clarity</text>
+    <text x="250" y="28" class="card-badge">Precision</text>
+    <text x="22" y="50" class="card-body">Clear · Underspecified · Ambiguous</text>
+  </g>
+
+  <!-- Axis 6 & 7 Split -->
+  <g transform="translate(60, 515)">
+    <rect width="155" height="68" class="card-bg" />
+    <circle cx="18" cy="24" r="5" fill="#06b6d4" />
+    <text x="30" y="28" class="card-header" font-size="12">6. Modality</text>
+    <text x="18" y="50" class="card-body">Text · Screen · Data</text>
+  </g>
+  <g transform="translate(225, 515)">
+    <rect width="155" height="68" class="card-bg" />
+    <circle cx="18" cy="24" r="5" fill="#eab308" />
+    <text x="30" y="28" class="card-header" font-size="12">7. Attendance</text>
+    <text x="18" y="50" class="card-body">Interactive · Unattended</text>
+  </g>
+
+  <!-- Right Top: The Interruption Matrix -->
+  <g transform="translate(420, 115)">
+    <rect width="720" height="248" class="card-bg" />
+    <text x="30" y="35" class="card-header" font-size="16">The Interruption Matrix: Clarity × Stakes</text>
+    <text x="30" y="58" class="card-body">Eliminates nagging on harmless tasks while ensuring human guardrails on irreversible actions.</text>
+
+    <!-- Matrix Table -->
+    <g transform="translate(30, 80)">
+      <!-- Column Headers (Stakes) -->
+      <text x="200" y="20" class="card-body" font-weight="700" fill="#94a3b8">Inert (Read-Only)</text>
+      <text x="490" y="20" class="card-body" font-weight="700" fill="#f87171">Irreversible (Deploy / Delete)</text>
+
+      <!-- Row 1: Clear -->
+      <text x="20" y="65" class="card-body" font-weight="700">Clear</text>
+      <rect x="110" y="40" width="250" height="42" fill="#064e3b" stroke="#059669" class="matrix-box" />
+      <text x="235" y="66" class="matrix-text" fill="#34d399">EXECUTE SILENTLY</text>
+
+      <rect x="380" y="40" width="280" height="42" fill="#064e3b" stroke="#059669" class="matrix-box" />
+      <text x="520" y="66" class="matrix-text" fill="#34d399">EXECUTE (WITH CHECKPOINT)</text>
+
+      <!-- Row 2: Ambiguous -->
+      <text x="20" y="125" class="card-body" font-weight="700">Ambiguous</text>
+      <rect x="110" y="100" width="250" height="42" fill="#1e3a8a" stroke="#2563eb" class="matrix-box" />
+      <text x="235" y="122" class="matrix-text" fill="#60a5fa">PROCEED ON ASSUMPTION</text>
+      <text x="235" y="134" class="card-body" font-size="9" fill="#93c5fd" text-anchor="middle">(Don't annoy the user)</text>
+
+      <rect x="380" y="100" width="280" height="42" fill="#7f1d1d" stroke="#dc2626" class="matrix-box" />
+      <text x="520" y="122" class="matrix-text" fill="#fca5a5">STOP AND ASK HUMAN</text>
+      <text x="520" y="134" class="card-body" font-size="9" fill="#fca5a5" text-anchor="middle">(Mandatory escalation gate)</text>
+    </g>
+  </g>
+
+  <!-- Right Bottom: Resolution Cascade -->
+  <g transform="translate(420, 385)">
+    <rect width="720" height="198" class="card-bg" />
+    <text x="30" y="35" class="card-header" font-size="16">The Zero-Token Resolution Cascade</text>
+    <text x="30" y="58" class="card-body">Resolves 80%+ of turns deterministically before a model prompt is even formulated.</text>
+
+    <!-- Cascade Steps -->
+    <g transform="translate(30, 85)">
+      <!-- Tier 0 -->
+      <rect x="0" y="0" width="150" height="85" fill="#0f172a" stroke="#334155" rx="6" />
+      <text x="75" y="24" class="matrix-text" fill="#38bdf8">TIER 0: DECLARED</text>
+      <text x="75" y="44" class="card-body" font-size="10" text-anchor="middle">CLI Flags / Policy</text>
+      <text x="75" y="68" class="card-badge" fill="#10b981" text-anchor="middle">0ms · Free</text>
+
+      <text x="165" y="45" font-size="16" fill="#475569">→</text>
+
+      <!-- Tier 1 -->
+      <rect x="180" y="0" width="150" height="85" fill="#0f172a" stroke="#334155" rx="6" />
+      <text x="255" y="24" class="matrix-text" fill="#38bdf8">TIER 1: SIGNALS</text>
+      <text x="255" y="44" class="card-body" font-size="10" text-anchor="middle">Lexical &amp; Workspace</text>
+      <text x="255" y="68" class="card-badge" fill="#10b981" text-anchor="middle">&lt;1ms · Free</text>
+
+      <text x="345" y="45" font-size="16" fill="#475569">→</text>
+
+      <!-- Tier 2 -->
+      <rect x="360" y="0" width="150" height="85" fill="#0f172a" stroke="#334155" rx="6" />
+      <text x="435" y="24" class="matrix-text" fill="#a855f7">TIER 2: LOCAL SLM</text>
+      <text x="435" y="44" class="card-body" font-size="10" text-anchor="middle">Strict JSON Classifier</text>
+      <text x="435" y="68" class="card-badge" fill="#a855f7" text-anchor="middle">~50ms · Local</text>
+
+      <text x="525" y="45" font-size="16" fill="#475569">→</text>
+
+      <!-- Tier 3 -->
+      <rect x="540" y="0" width="120" height="85" fill="#0f172a" stroke="#334155" rx="6" />
+      <text x="600" y="24" class="matrix-text" fill="#f59e0b">TIER 3: CLOUD</text>
+      <text x="600" y="44" class="card-body" font-size="10" text-anchor="middle">Fallback Model</text>
+      <text x="600" y="68" class="card-badge" fill="#f59e0b" text-anchor="middle">Metered</text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <text x="60" y="630" class="card-body" font-size="11">Architecture: vak-intent runtime kernel · Non-collapsing lattice algebra</text>
+</svg>
