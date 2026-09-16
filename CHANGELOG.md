@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.96 — 2026-09-16
+
+- Custom agent outcome-density parity: preserved substantive answers, reports, and detailed prose alongside structured presentation cards, filtering only truly fleeting transitional commentary.
+- Resilient structured output extraction: relaxed transport fence parsing to tolerate indentation, CRLF newlines, and embedded JSON while strictly preventing raw transport blocks from rendering as syntax-highlighted code.
+- Calm conversational controls: suppressed developer harness controls (`Plan v0`, `Change plan`) during direct conversational Q&A and custom agent interactions, displaying plan controls only when an active multi-step contract exists.
+- Stop-guard non-interference: refined `evaluate_receipts` to allow substantive direct answers without forcing continuation loops when tool verification is not demanded by the prompt.
+- Full stack local macOS release: synchronized binaries, verified manifests, and updated launchd services.
+
 ## 3.0.95 — 2026-09-16
 
 - Scaffolding cleanup refinement: ensured `clean_scaffolding` trims both leading and trailing whitespace/empty lines created when control blocks are stripped from the beginning or end of model responses while preserving trailing newlines.
