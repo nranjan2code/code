@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap');
+      .font { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+      .mono { font-family: 'JetBrains Mono', monospace; }
+      .bg { fill: #0f172a; }
+      .bg-split { fill: #1e293b; }
+      .card-white { fill: #ffffff; stroke: #e2e8f0; stroke-width: 2; rx: 16px; }
+      .card-vak { fill: #0f172a; stroke: #3b82f6; stroke-width: 3; rx: 16px; }
+      .card-row { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 1.5; rx: 12px; }
+      .badge-pass { fill: #dcfce7; stroke: #86efac; stroke-width: 1; rx: 6px; }
+      .badge-warn { fill: #fef9c3; stroke: #fde047; stroke-width: 1; rx: 6px; }
+      .badge-fail { fill: #fee2e2; stroke: #fca5a5; stroke-width: 1; rx: 6px; }
+      .text-hero { font-size: 46px; font-weight: 800; fill: #ffffff; letter-spacing: -1.2px; }
+      .text-sub { font-size: 20px; font-weight: 400; fill: #94a3b8; }
+    </style>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1920" height="1080" class="bg" />
+  <path d="M 1300,0 L 1920,0 L 1920,1080 L 1100,1080 Z" class="bg-split" opacity="0.6" />
+
+  <!-- HEADER -->
+  <g transform="translate(80, 60)">
+    <text x="0" y="40" class="font text-hero">The 2026 Multi-Intent Agent Architecture Benchmark</text>
+    <text x="0" y="75" class="font text-sub">Evaluating compound task resolution, capability bounding, context anti-bloat, and audited completion</text>
+  </g>
+
+  <!-- BENCHMARK TABLE -->
+  <g transform="translate(80, 160)" filter="url(#shadow)">
+    <!-- Header Row -->
+    <rect width="1760" height="70" fill="#1e293b" rx="14" />
+    <text x="30" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">FRAMEWORK</text>
+    <text x="320" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">INTENT DECODING</text>
+    <text x="630" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">CAPABILITY SECURITY</text>
+    <text x="960" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">CONTEXT ANTI-BLOAT</text>
+    <text x="1270" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">STOP-GUARD AUDITING</text>
+    <text x="1590" y="44" class="font" font-size="16" font-weight="700" fill="#94a3b8">OVERALL</text>
+
+    <!-- ROW 1: VAK (HIGHLIGHTED HERO) -->
+    <g transform="translate(0, 90)">
+      <rect width="1760" height="130" fill="#1e293b" stroke="#3b82f6" stroke-width="2.5" rx="14" />
+      
+      <!-- Framework -->
+      <text x="30" y="55" class="font" font-size="24" font-weight="800" fill="#ffffff">Vak v3.1</text>
+      <text x="30" y="85" class="mono" font-size="13" fill="#60a5fa">Typed Rust Harness</text>
+
+      <!-- Intent Decoding -->
+      <g transform="translate(320, 25)">
+        <rect width="270" height="80" class="badge-pass" fill="#064e3b" stroke="#059669" />
+        <text x="15" y="32" class="font" font-size="14" font-weight="700" fill="#a7f3d0">7-Axis + Contender Band</text>
+        <text x="15" y="54" class="font" font-size="12" fill="#6ee7b7">50% band unions all sibling acts</text>
+        <text x="15" y="70" class="font" font-size="11" fill="#34d399">0 tokens · microsecond speed</text>
+      </g>
+
+      <!-- Capability Security -->
+      <g transform="translate(630, 25)">
+        <rect width="290" height="80" class="badge-pass" fill="#064e3b" stroke="#059669" />
+        <text x="15" y="32" class="font" font-size="14" font-weight="700" fill="#a7f3d0">Bounded Meet-Semilattice</text>
+        <text x="15" y="54" class="font" font-size="12" fill="#6ee7b7">meet(a,b) ⊑ a (never widens)</text>
+        <text x="15" y="70" class="font" font-size="11" fill="#34d399">Highest caution on ordered axes</text>
+      </g>
+
+      <!-- Context Anti-Bloat -->
+      <g transform="translate(960, 25)">
+        <rect width="270" height="80" class="badge-pass" fill="#064e3b" stroke="#059669" />
+        <text x="15" y="32" class="font" font-size="14" font-weight="700" fill="#a7f3d0">API Boundary Snapping</text>
+        <text x="15" y="54" class="font" font-size="12" fill="#6ee7b7">Mandatory task preservation prompt</text>
+        <text x="15" y="70" class="font" font-size="11" fill="#34d399">Pinned head summary + Subagents</text>
+      </g>
+
+      <!-- Stop-Guard Auditing -->
+      <g transform="translate(1270, 25)">
+        <rect width="280" height="80" class="badge-pass" fill="#064e3b" stroke="#059669" />
+        <text x="15" y="32" class="font" font-size="14" font-weight="700" fill="#a7f3d0">Zero-Trust StopGuard Triad</text>
+        <text x="15" y="54" class="font" font-size="12" fill="#6ee7b7">VerificationStale &amp; TruncatedPlan</text>
+        <text x="15" y="70" class="font" font-size="11" fill="#34d399">Model self-completion forbidden</text>
+      </g>
+
+      <!-- Overall Score -->
+      <text x="1590" y="60" class="font" font-size="34" font-weight="900" fill="#38bdf8">9.2</text>
+      <text x="1650" y="58" class="font" font-size="16" fill="#64748b">/ 10</text>
+      <text x="1590" y="85" class="font" font-size="12" font-weight="700" fill="#38bdf8">GOLD STANDARD</text>
+    </g>
+
+    <!-- ROW 2: DEVIN / CODING AGENTS -->
+    <g transform="translate(0, 240)">
+      <rect width="1760" height="110" fill="#182234" stroke="#334155" stroke-width="1.5" rx="14" />
+      <text x="30" y="50" class="font" font-size="20" font-weight="700" fill="#f8fafc">Devin / SWE Agents</text>
+      <text x="30" y="75" class="mono" font-size="12" fill="#94a3b8">Proprietary Coding SaaS</text>
+
+      <g transform="translate(320, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Plan / Task Checklist</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Stepwise markdown breakdown</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 8.0/10</text>
+      </g>
+      <g transform="translate(630, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Docker Sandbox Jail</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Containerized runtime; coarse perms</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 8.0/10</text>
+      </g>
+      <g transform="translate(960, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Diff-Aware Pruning</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Specialized for code &amp; test outputs</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 8.5/10</text>
+      </g>
+      <g transform="translate(1270, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Test Runner Inspection</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Validates test terminal exits</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 8.5/10</text>
+      </g>
+
+      <text x="1590" y="55" class="font" font-size="28" font-weight="800" fill="#e2e8f0">8.2</text>
+      <text x="1640" y="54" class="font" font-size="14" fill="#64748b">/ 10</text>
+    </g>
+
+    <!-- ROW 3: CLAUDE CODE -->
+    <g transform="translate(0, 370)">
+      <rect width="1760" height="110" fill="#182234" stroke="#334155" stroke-width="1.5" rx="14" />
+      <text x="30" y="50" class="font" font-size="20" font-weight="700" fill="#f8fafc">Claude Code</text>
+      <text x="30" y="75" class="mono" font-size="12" fill="#94a3b8">Anthropic CLI Harness</text>
+
+      <g transform="translate(320, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">CLAUDE.md Guidelines</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Model self-attention over prompt rules</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 7.0/10</text>
+      </g>
+      <g transform="translate(630, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Process Group &amp; Auto Mode</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">OS process isolation; prompt auto-accept</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 7.5/10</text>
+      </g>
+      <g transform="translate(960, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">/compact at ~95%</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Summarizes history; lossy for nuance</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 8.0/10</text>
+      </g>
+      <g transform="translate(1270, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">User Stop Hooks</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Extensible user-written bash hooks</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 7.0/10</text>
+      </g>
+
+      <text x="1590" y="55" class="font" font-size="28" font-weight="800" fill="#e2e8f0">7.4</text>
+      <text x="1640" y="54" class="font" font-size="14" fill="#64748b">/ 10</text>
+    </g>
+
+    <!-- ROW 4: LANGGRAPH -->
+    <g transform="translate(0, 500)">
+      <rect width="1760" height="110" fill="#182234" stroke="#334155" stroke-width="1.5" rx="14" />
+      <text x="30" y="50" class="font" font-size="20" font-weight="700" fill="#f8fafc">LangGraph</text>
+      <text x="30" y="75" class="mono" font-size="12" fill="#94a3b8">StateGraph Workflow</text>
+
+      <g transform="translate(320, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Pre-Wired Graphs / DAGs</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Fragile when prompt breaks topology</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 7.5/10</text>
+      </g>
+      <g transform="translate(630, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Node-Level Code Scope</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">No formal non-widening guarantees</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 6.0/10</text>
+      </g>
+      <g transform="translate(960, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Checkpointer &amp; Summaries</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Postgres persistence; governance decay</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 7.5/10</text>
+      </g>
+      <g transform="translate(1270, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Conditional Edge Nodes</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Developer-coded programmatic branches</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 6.5/10</text>
+      </g>
+
+      <text x="1590" y="55" class="font" font-size="28" font-weight="800" fill="#e2e8f0">7.0</text>
+      <text x="1640" y="54" class="font" font-size="14" fill="#64748b">/ 10</text>
+    </g>
+
+    <!-- ROW 5: CREWAI -->
+    <g transform="translate(0, 630)">
+      <rect width="1760" height="110" fill="#182234" stroke="#334155" stroke-width="1.5" rx="14" />
+      <text x="30" y="50" class="font" font-size="20" font-weight="700" fill="#f8fafc">CrewAI</text>
+      <text x="30" y="75" class="mono" font-size="12" fill="#94a3b8">Multi-Agent Roles</text>
+
+      <g transform="translate(320, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Manager Agent Delegation</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">High token overhead; slow LLM triage</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 6.0/10</text>
+      </g>
+      <g transform="translate(630, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Ambient Agent Toolsets</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Compound contamination risks</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 4.0/10</text>
+      </g>
+      <g transform="translate(960, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Chatty Agent Memory</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Rapid context bloating from chatter</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 4.0/10</text>
+      </g>
+      <g transform="translate(1270, 18)">
+        <text x="0" y="25" class="font" font-size="14" font-weight="600" fill="#f8fafc">Manager Prose Review</text>
+        <text x="0" y="48" class="font" font-size="12" fill="#94a3b8">Subjective evaluation; deadlocks</text>
+        <text x="0" y="68" class="font" font-size="11" fill="#cbd5e1">Score: 5.0/10</text>
+      </g>
+
+      <text x="1590" y="55" class="font" font-size="28" font-weight="800" fill="#f87171">4.9</text>
+      <text x="1640" y="54" class="font" font-size="14" fill="#64748b">/ 10</text>
+    </g>
+
+    <!-- ROW 6: AUTOGEN -->
+    <g transform="translate(0, 760)">
+      <rect width="1760" height="90" fill="#182234" stroke="#334155" stroke-width="1.5" rx="14" />
+      <text x="30" y="45" class="font" font-size="20" font-weight="700" fill="#f8fafc">AutoGen</text>
+      <text x="30" y="70" class="mono" font-size="12" fill="#94a3b8">GroupChat Engine</text>
+
+      <g transform="translate(320, 15)">
+        <text x="0" y="22" class="font" font-size="13" font-weight="600" fill="#f8fafc">GroupChat Turn-Taking</text>
+        <text x="0" y="42" class="font" font-size="11" fill="#94a3b8">Unstructured conversational debate</text>
+      </g>
+      <g transform="translate(630, 15)">
+        <text x="0" y="22" class="font" font-size="13" font-weight="600" fill="#f8fafc">Ambient Subprocess Exec</text>
+        <text x="0" y="42" class="font" font-size="11" fill="#94a3b8">No bounded permissions</text>
+      </g>
+      <g transform="translate(960, 15)">
+        <text x="0" y="22" class="font" font-size="13" font-weight="600" fill="#f8fafc">Full History Duplication</text>
+        <text x="0" y="42" class="font" font-size="11" fill="#94a3b8">Fast token exhaustion</text>
+      </g>
+      <g transform="translate(1270, 15)">
+        <text x="0" y="22" class="font" font-size="13" font-weight="600" fill="#f8fafc">"TERMINATE" String Match</text>
+        <text x="0" y="42" class="font" font-size="11" fill="#94a3b8">Brittle keyword exits</text>
+      </g>
+
+      <text x="1590" y="50" class="font" font-size="26" font-weight="800" fill="#f87171">4.4</text>
+      <text x="1640" y="49" class="font" font-size="14" fill="#64748b">/ 10</text>
+    </g>
+  </g>
+</svg>
