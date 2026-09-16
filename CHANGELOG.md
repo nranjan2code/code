@@ -1,5 +1,12 @@
 # Changelog
  
+## 3.1.2 — 2026-09-16
+
+- Bulk presentation activation runtime: added atomic `POST /presentations/activate-all` and `POST /presentations/deactivate-all` endpoints to `vak-server` with single-write store persistence.
+- Settings UI bulk presentation controls: added `Activate all` and `Deactivate all` controls to `vak-client-ui` presentation toolbar with responsive styling, working states, and toast notifications.
+- Global presentation pack activation: enabled all 72 built-in presentation definitions for the global `Shared` scope on local installations.
+- Full stack local macOS release: synchronized binaries, verified manifests, and updated launchd services.
+
 ## 3.1.1 — 2026-09-16
 
 - Clause-initial imperative verb balancing: implemented `is_clause_initial` in `vak-intent` to recognize coordinating clause heads (following `and`, `then`, `also`, `plus`, `,`, `;`, `:`, `\n`, `-`), granting all coordinate operational clauses equal $1.6\times$ imperative footing with opening verbs.

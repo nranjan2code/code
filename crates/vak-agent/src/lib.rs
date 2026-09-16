@@ -16,7 +16,7 @@ pub mod workspace;
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
-pub use stop_policy::{is_code_path, BlockReason, ReceiptSummary, StopPolicy};
+pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 pub use workspace::WorkspaceDelta;
 
@@ -1440,7 +1440,10 @@ impl Agent {
                         receipts.unresolved_error = None;
                         if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
                             verification_stale = false;
-                        } else if code_mutation_ids.iter().any(|mutation_id| mutation_id == id) {
+                        } else if code_mutation_ids
+                            .iter()
+                            .any(|mutation_id| mutation_id == id)
+                        {
                             verification_stale = true;
                         }
                         if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)

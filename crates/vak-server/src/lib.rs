@@ -631,6 +631,14 @@ fn router_with_state(state: AppState) -> Router {
         .route("/presentations/export", get(export_presentations))
         .route("/presentations/import", post(import_presentations))
         .route(
+            "/presentations/activate-all",
+            post(activate_all_presentations),
+        )
+        .route(
+            "/presentations/deactivate-all",
+            post(deactivate_all_presentations),
+        )
+        .route(
             "/presentations/{id}/{revision}/activate",
             post(activate_presentation),
         )
@@ -8208,6 +8216,76 @@ async fn deactivate_presentation(
             library.deactivate(&id, body.scope, &body.owner);
             match store.save(&library) {
                 Ok(()) => Json(serde_json::json!({ "deactivated": true })).into_response(),
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn activate_all_presentations(
+    State(state): State<AppState>,
+    Json(body): Json<PresentationScopeBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    let result = store.load().and_then(|mut library| {
+        let mut latest_by_id: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+        for def in library.definitions() {
+            let entry = latest_by_id
+                .entry(def.spec.id.clone())
+                .or_insert(def.spec.revision);
+            if def.spec.revision > *entry {
+                *entry = def.spec.revision;
+            }
+        }
+        let mut activated = 0;
+        for (id, rev) in latest_by_id {
+            if library.activate(&id, rev, body.scope, &body.owner).is_ok() {
+                activated += 1;
+            }
+        }
+        store.save(&library)?;
+        Ok(activated)
+    });
+    match result {
+        Ok(count) => Json(serde_json::json!({ "activated": count })).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn deactivate_all_presentations(
+    State(state): State<AppState>,
+    Json(body): Json<PresentationScopeBody>,
+) -> axum::response::Response {
+    let store = presentation_store(&state);
+    match store.load() {
+        Ok(mut library) => {
+            let before = library.activations().len();
+            let spec_ids: Vec<String> = library
+                .activations()
+                .iter()
+                .filter(|a| a.scope == body.scope && a.owner == body.owner)
+                .map(|a| a.spec_id.clone())
+                .collect();
+            for id in spec_ids {
+                library.deactivate(&id, body.scope, &body.owner);
+            }
+            let removed = before.saturating_sub(library.activations().len());
+            match store.save(&library) {
+                Ok(()) => Json(serde_json::json!({ "deactivated": removed })).into_response(),
                 Err(error) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({ "error": error.to_string() })),
@@ -15852,5 +15930,52 @@ mod sandbox_promotion_tests {
         assert_eq!(found[0].cmd, "python3");
         assert_eq!(found[0].args, vec!["-m", "http.server", "8080"]);
         assert_eq!(found[0].port, Some(8080));
+    }
+
+    #[tokio::test]
+    async fn activate_all_and_deactivate_all_presentations() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            vak_store::presentation::PresentationStore::new(dir.path().join("presentations.json"));
+        let mut library = vak_presentation::PresentationLibrary::default();
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            library.register(seed).unwrap();
+        }
+        store.save(&library).unwrap();
+
+        // Verify activate all
+        let mut latest_by_id: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+        for def in library.definitions() {
+            let entry = latest_by_id
+                .entry(def.spec.id.clone())
+                .or_insert(def.spec.revision);
+            if def.spec.revision > *entry {
+                *entry = def.spec.revision;
+            }
+        }
+        let mut activated = 0;
+        for (id, rev) in latest_by_id {
+            if library
+                .activate(&id, rev, vak_presentation::LibraryScope::User, "user")
+                .is_ok()
+            {
+                activated += 1;
+            }
+        }
+        assert_eq!(activated, 72);
+        assert_eq!(library.activations().len(), 72);
+
+        // Verify deactivate all
+        let spec_ids: Vec<String> = library
+            .activations()
+            .iter()
+            .filter(|a| a.scope == vak_presentation::LibraryScope::User && a.owner == "user")
+            .map(|a| a.spec_id.clone())
+            .collect();
+        for id in spec_ids {
+            library.deactivate(&id, vak_presentation::LibraryScope::User, "user");
+        }
+        assert_eq!(library.activations().len(), 0);
     }
 }

@@ -3928,11 +3928,22 @@ fn regression_disjoint_domain_meet_collapses_to_empty() {
 
 #[test]
 fn regression_compound_clause_heads_receive_imperative_bonus() {
-    let extraction = extract(&req("search for the bug and refactor the parser then verify the tests"));
+    let extraction = extract(&req(
+        "search for the bug and refactor the parser then verify the tests",
+    ));
     let contenders = extraction.act.contenders(0.5);
-    assert!(contenders.contains(&Act::Locate), "Locate must be in contenders");
-    assert!(contenders.contains(&Act::Modify), "Modify must be in contenders");
-    assert!(contenders.contains(&Act::Verify), "Verify must be in contenders");
+    assert!(
+        contenders.contains(&Act::Locate),
+        "Locate must be in contenders"
+    );
+    assert!(
+        contenders.contains(&Act::Modify),
+        "Modify must be in contenders"
+    );
+    assert!(
+        contenders.contains(&Act::Verify),
+        "Verify must be in contenders"
+    );
 
     // Test with commas and newlines
     let comma_extraction = extract(&req("locate the issue, patch the code, test everything"));
@@ -3948,7 +3959,11 @@ fn regression_contenders_absolute_floor_and_strong_bypass() {
     votes.add(Act::Modify, 0.4);
     votes.add(Act::Answer, 0.2); // 0.2 >= 0.4 * 0.5, but < 0.5 absolute floor!
     let contenders = votes.contenders(0.5);
-    assert_eq!(contenders, vec![Act::Modify], "0.2 noise must not join contenders below absolute floor");
+    assert_eq!(
+        contenders,
+        vec![Act::Modify],
+        "0.2 noise must not join contenders below absolute floor"
+    );
 
     // Test strong signal bypass (>= 1.0) when winner is inflated
     let mut inflated: vak_intent::signals::Votes<Act> = vak_intent::signals::Votes::default();
@@ -3956,5 +3971,8 @@ fn regression_contenders_absolute_floor_and_strong_bypass() {
     inflated.add(Act::Verify, 1.2); // 1.2 < 3.5 * 0.5 = 1.75, but 1.2 >= 1.0 strong signal!
     let inflated_contenders = inflated.contenders(0.5);
     assert!(inflated_contenders.contains(&Act::Modify));
-    assert!(inflated_contenders.contains(&Act::Verify), "Strong act (>= 1.0) must bypass inflated winner gap");
+    assert!(
+        inflated_contenders.contains(&Act::Verify),
+        "Strong act (>= 1.0) must bypass inflated winner gap"
+    );
 }

@@ -256,6 +256,38 @@ export default function Settings() {
       else if (presentationActivation(type.id)?.revision !== type.latest.spec.revision) await activatePresentation(type.latest);
     }
   }
+  async function activateAllPresentations() {
+    if (presentationBusy()) return;
+    setPresentationBusy("all");
+    try {
+      await api.activateAllPresentations(presentationScope(), presentationOwner());
+      await refetchPresentations();
+      setNotice({
+        kind: "info",
+        text: `All presentation packs activated for ${presentationScope() === "user" ? "Shared" : "This workspace"}`,
+      });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not activate all presentations: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setPresentationBusy(null);
+    }
+  }
+  async function deactivateAllPresentations() {
+    if (presentationBusy()) return;
+    setPresentationBusy("all");
+    try {
+      await api.deactivateAllPresentations(presentationScope(), presentationOwner());
+      await refetchPresentations();
+      setNotice({
+        kind: "info",
+        text: `All presentation packs deactivated for ${presentationScope() === "user" ? "Shared" : "This workspace"}`,
+      });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not deactivate presentations: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setPresentationBusy(null);
+    }
+  }
   async function exportPresentationPack() {
     try {
       const pack = await api.exportPresentations();
@@ -1098,6 +1130,10 @@ export default function Settings() {
                       <label class="presentation-search"><Icon name="search" size={14} /><input aria-label="Search presentations" placeholder="Search by name or capability…" value={presentationQuery()} onInput={(event) => setPresentationQuery(event.currentTarget.value)} /></label>
                       <div class="presentation-filters" role="group" aria-label="Presentation filter">
                         <For each={[{ id: "all", label: "All" }, { id: "active", label: "Active" }, { id: "inactive", label: "Inactive" }] as const}>{(filter) => <button type="button" classList={{ active: presentationFilter() === filter.id }} aria-pressed={presentationFilter() === filter.id} onClick={() => setPresentationFilter(filter.id)}>{filter.label}</button>}</For>
+                      </div>
+                      <div class="presentation-bulk-actions">
+                        <button type="button" class="settings-button" disabled={presentationBusy() !== null} onClick={() => void activateAllPresentations()}>{presentationBusy() === "all" ? "Working…" : "Activate all"}</button>
+                        <button type="button" class="settings-button subtle" disabled={presentationBusy() !== null || activePresentationCount() === 0} onClick={() => void deactivateAllPresentations()}>Deactivate all</button>
                       </div>
                     </div>
                     <div class="presentation-scope-note"><Icon name={presentationScope() === "user" ? "layers" : "folder"} /><span>Managing <strong>{presentationScope() === "user" ? "Shared" : "This workspace"}</strong>. These activations are selected before broader workspace fallbacks.</span></div>

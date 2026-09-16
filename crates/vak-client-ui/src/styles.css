@@ -2114,6 +2114,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .presentation-filters button { min-height: 25px; padding: 3px 8px; border-radius: 5px; color: var(--muted); font-size: 10.5px; }
 .presentation-filters button:hover { color: var(--text-soft); background: var(--surface-hover); }
 .presentation-filters button.active { color: var(--text); background: var(--surface-active); }
+.presentation-bulk-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 .presentation-scope-note { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border-bottom: 1px solid var(--border-soft); color: var(--muted); font-size: 10.5px; line-height: 1.4; }
 .presentation-scope-note .icon { flex: none; color: var(--accent-bright); }
 .presentation-scope-note strong { color: var(--text-soft); font-weight: 600; }
@@ -2146,6 +2147,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .presentation-empty { padding: 25px 16px; color: var(--muted); font-size: 11px; text-align: center; }
 @media (max-width: 720px) {
   .presentation-toolbar { align-items: stretch; flex-direction: column; }
+  .presentation-bulk-actions { justify-content: flex-end; width: 100%; }
   .presentation-group-header { align-items: flex-start; flex-wrap: wrap; }
   .presentation-group-count { margin-left: 30px; }
   .presentation-group-header .settings-button { margin-left: auto; }

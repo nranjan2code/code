@@ -445,7 +445,8 @@ impl StopPolicy {
                     || lower_p.contains("into ")
                     || lower_p.contains("in file")
                     || lower_p.contains("in the file");
-                if (outcome.map(|s| s.requires_execution()).unwrap_or(false) || mentions_file_target)
+                if (outcome.map(|s| s.requires_execution()).unwrap_or(false)
+                    || mentions_file_target)
                     && receipts.files_modified == 0
                     && receipts.read_or_inspected == 0
                 {
@@ -508,15 +509,50 @@ impl StopPolicy {
 /// (as opposed to documentation, notes, recipes, data, or content assets).
 pub fn is_code_path(path: &str) -> bool {
     let p = std::path::Path::new(path);
-    match p.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()) {
+    match p
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+    {
         Some(ext) => matches!(
             ext.as_str(),
-            "rs" | "py" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx"
-                | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp"
-                | "go" | "java" | "kt" | "kts" | "rb" | "php"
-                | "swift" | "scala" | "sh" | "bash" | "zsh" | "fish"
-                | "ps1" | "bat" | "cmd" | "lua" | "pl" | "pm"
-                | "r" | "jl" | "dart" | "zig" | "nim" | "sql"
+            "rs" | "py"
+                | "js"
+                | "mjs"
+                | "cjs"
+                | "ts"
+                | "tsx"
+                | "jsx"
+                | "c"
+                | "cpp"
+                | "cc"
+                | "cxx"
+                | "h"
+                | "hpp"
+                | "go"
+                | "java"
+                | "kt"
+                | "kts"
+                | "rb"
+                | "php"
+                | "swift"
+                | "scala"
+                | "sh"
+                | "bash"
+                | "zsh"
+                | "fish"
+                | "ps1"
+                | "bat"
+                | "cmd"
+                | "lua"
+                | "pl"
+                | "pm"
+                | "r"
+                | "jl"
+                | "dart"
+                | "zig"
+                | "nim"
+                | "sql"
         ),
         None => false,
     }
@@ -900,7 +936,8 @@ mod tests {
     #[test]
     fn test_universal_research_and_lifestyle_with_verify_not_blocked() {
         let p = StopPolicy::default();
-        let prompt = "Compare the top 3 pour-over drippers and verify that the brew ratios are accurate.";
+        let prompt =
+            "Compare the top 3 pour-over drippers and verify that the brew ratios are accurate.";
         let final_text = "Here is a detailed comparison of Hario V60, Kalita Wave, and Chemex. All brew ratios are verified between 1:15 and 1:17 for balanced extraction across light and medium roasts.";
 
         let receipts = ReceiptSummary {
@@ -917,7 +954,8 @@ mod tests {
     #[test]
     fn test_code_modification_with_verify_blocked_without_execution() {
         let p = StopPolicy::default();
-        let prompt = "Fix the off-by-one bug in quicksort.py and verify that the sort works correctly.";
+        let prompt =
+            "Fix the off-by-one bug in quicksort.py and verify that the sort works correctly.";
         let final_text = "I fixed the index in quicksort.py.";
 
         let receipts = ReceiptSummary {

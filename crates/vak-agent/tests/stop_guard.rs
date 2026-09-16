@@ -417,4 +417,3 @@ async fn universal_task_with_verify_completes_without_bash_guard() {
             .all(|e| !matches!(e, AgentEvent::StopHookContinuation { .. }))
     );
 }
-

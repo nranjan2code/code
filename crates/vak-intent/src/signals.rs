@@ -650,7 +650,10 @@ fn is_clause_initial(tokens: &[String], position: usize, cleaned_text: &str) -> 
     }
     if position > 0 {
         let prev = tokens[position - 1].as_str();
-        if matches!(prev, "and" | "then" | "also" | "plus" | "next" | "after" | "or") {
+        if matches!(
+            prev,
+            "and" | "then" | "also" | "plus" | "next" | "after" | "or"
+        ) {
             return true;
         }
     }
@@ -662,8 +665,10 @@ fn is_clause_initial(tokens: &[String], position: usize, cleaned_text: &str) -> 
     for (idx, _) in lower.match_indices(target) {
         let before = &lower[..idx];
         let after = &lower[idx + target.len()..];
-        let is_word_start = before.is_empty() || before.ends_with(|c: char| !c.is_ascii_alphanumeric());
-        let is_word_end = after.is_empty() || after.starts_with(|c: char| !c.is_ascii_alphanumeric());
+        let is_word_start =
+            before.is_empty() || before.ends_with(|c: char| !c.is_ascii_alphanumeric());
+        let is_word_end =
+            after.is_empty() || after.starts_with(|c: char| !c.is_ascii_alphanumeric());
         if is_word_start && is_word_end {
             let trimmed = before.trim_end();
             if trimmed.ends_with(|c: char| matches!(c, ',' | ';' | ':' | '.' | '\n' | '-')) {

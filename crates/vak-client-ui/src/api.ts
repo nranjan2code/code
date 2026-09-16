@@ -1548,8 +1548,22 @@ export function activatePresentation(id: string, revision: number, scope: "user"
   });
 }
 
+export function activateAllPresentations(scope: "user" | "workspace", owner: string): Promise<{ activated: number }> {
+  return req("/presentations/activate-all", {
+    method: "POST",
+    body: JSON.stringify({ scope, owner }),
+  });
+}
+
 export function deactivatePresentation(id: string, scope: "user" | "workspace", owner: string): Promise<unknown> {
   return req(`/presentations/${encodeURIComponent(id)}/deactivate`, {
+    method: "POST",
+    body: JSON.stringify({ scope, owner }),
+  });
+}
+
+export function deactivateAllPresentations(scope: "user" | "workspace", owner: string): Promise<{ deactivated: number }> {
+  return req("/presentations/deactivate-all", {
     method: "POST",
     body: JSON.stringify({ scope, owner }),
   });
