@@ -22,6 +22,51 @@ export function safeUrl(value: string, media = false): boolean {
 }
 
 /**
+ * Test whether a target URL/path represents a safe local workspace file or artifact reference.
+ * Rejects dangerous or web schemes (javascript:, data:, vbscript:, http:, https:, //).
+ */
+export function isLocalArtifactPath(target: string): boolean {
+  if (!target) return false;
+  const raw = target.trim();
+  const lower = raw.toLowerCase();
+  if (
+    lower.startsWith("javascript:") ||
+    lower.startsWith("vbscript:") ||
+    lower.startsWith("data:") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("//")
+  ) {
+    return false;
+  }
+  const clean = lower.startsWith("file://") ? lower.slice(7) : lower;
+  const stripped = clean.replace(/[.,;:!?)]'"`]+$/, "").trim();
+  if (!stripped || stripped === "#") return false;
+  return (
+    stripped.startsWith("./") ||
+    stripped.startsWith(".vak/") ||
+    stripped.includes(".vak/scratch") ||
+    /^[\w@.-]+(\/[\w@.-]+)*\.\w{1,6}$/.test(stripped) ||
+    /^\.[\w/-]+$/.test(stripped)
+  );
+}
+
+/**
+ * Clean a local file/artifact reference to a relative workspace or scratch path.
+ */
+export function cleanArtifactPath(target: string): string {
+  let clean = target.trim();
+  if (clean.toLowerCase().startsWith("file://")) {
+    clean = clean.slice(7);
+  }
+  if (clean.startsWith("./")) {
+    clean = clean.slice(2);
+  }
+  return clean.replace(/[.,;:!?)]'"`]+$/, "").trim();
+}
+
+/**
  * Constrain generated document previews. `sandbox` isolates the document
  * origin, while this CSP makes the network/media/script policy explicit
  * instead of merely displaying a claimed `connect-src` value in the chrome.

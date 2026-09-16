@@ -383,6 +383,61 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
   return false;
 }
 
+/**
+ * Locate in-turn code block content matching a path (e.g. HTML/SVG or named block)
+ * so that referenced deliverables can be previewed even before or if they are on disk.
+ */
+export function extractCodeBlockForPath(text: string, path: string): string | undefined {
+  if (!text || !path) return undefined;
+  const filename = path.split("/").pop() || path;
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+
+  // 1. Look for a fenced code block with an explicit filename matching this path
+  const escapedName = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const namedRegex = new RegExp("```(?:\\w+[:\\s]+)?" + escapedName + "[ \\t]*\\n([\\s\\S]*?)```", "i");
+  const namedMatch = text.match(namedRegex);
+  if (namedMatch && namedMatch[1]?.trim()) {
+    return namedMatch[1].trim();
+  }
+
+  // 2. Look for code blocks matching the file extension (e.g. html, svg, csv, tsv)
+  if (ext === "html" || ext === "htm") {
+    const htmlBlock = text.match(/```(?:html?|xml|xhtml)[ \t]*\n([\s\S]*?)```/i);
+    if (htmlBlock && htmlBlock[1]?.trim()) {
+      return htmlBlock[1].trim();
+    }
+    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
+    if (anyBlock) {
+      for (const b of anyBlock) {
+        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
+        if (/<!doctype\s+html/i.test(inner) || /<html[\s>]/i.test(inner)) {
+          return inner;
+        }
+      }
+    }
+  } else if (ext === "svg") {
+    const svgBlock = text.match(/```(?:svg|xml)[ \t]*\n([\s\S]*?)```/i);
+    if (svgBlock && svgBlock[1]?.trim()) {
+      return svgBlock[1].trim();
+    }
+    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
+    if (anyBlock) {
+      for (const b of anyBlock) {
+        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
+        if (/<svg[\s>]/i.test(inner)) {
+          return inner;
+        }
+      }
+    }
+  } else if (ext === "csv" || ext === "tsv") {
+    const dataBlock = text.match(new RegExp("```(?:" + ext + "|text)[ \\t]*\\n([\\s\\S]*?)```", "i"));
+    if (dataBlock && dataBlock[1]?.trim()) {
+      return dataBlock[1].trim();
+    }
+  }
+  return undefined;
+}
+
 /** Open any artifact path directly in the Artifact Canvas. */
 export function openArtifactPathInCanvas(path: string, html?: string) {
   let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
@@ -401,12 +456,29 @@ export function openArtifactPathInCanvas(path: string, html?: string) {
       break;
     }
   }
+
+  let resolvedHtml = html;
+  if (!resolvedHtml) {
+    const sid = activeId();
+    const items = itemsOf(sid);
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.kind === "assistant" && item.text) {
+        const found = extractCodeBlockForPath(item.text, clean);
+        if (found) {
+          resolvedHtml = found;
+          break;
+        }
+      }
+    }
+  }
+
   const filename = clean.split("/").pop() || "Artifact Preview";
   openArtifactCanvas({
     id: clean,
     title: filename,
     artifactPath: clean,
-    html,
+    html: resolvedHtml,
     timestamp: Date.now(),
   });
 }

@@ -189,8 +189,22 @@ export default function ArtifactCanvas() {
 
       // 4. Source / Text-only document handling
       if (kind === "code") {
-        const text = artifact.html ?? (artifact.artifactPath ? (await api.readFile(artifact.artifactPath)).content : undefined);
-        if (text === undefined) throw new Error("Document content is unavailable.");
+        let text = artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
+        if (artifact.artifactPath) {
+          try {
+            const fileRes = await api.readFile(artifact.artifactPath);
+            if (fileRes.content !== undefined) text = fileRes.content;
+          } catch {
+            // Keep inline content if disk file was not found
+          }
+        }
+        if (text === undefined) {
+          throw new Error(
+            artifact.artifactPath
+              ? `Document "${artifact.artifactPath}" has not been created on disk yet.`
+              : "Document content is unavailable."
+          );
+        }
         if (generation !== request) return;
         setRawText(text);
         setViewMode("source");
@@ -198,17 +212,35 @@ export default function ArtifactCanvas() {
       }
 
       // 5. Static / HTML preview handling
-      const content =
-        (artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined) ??
-        (artifact.artifactPath
-          ? (await api.readFile(artifact.artifactPath)).content
-          : undefined);
-      if (content === undefined)
-        throw new Error("Preview file is unavailable.");
+      let content = artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
+      if (artifact.artifactPath) {
+        try {
+          const fileRes = await api.readFile(artifact.artifactPath);
+          if (fileRes.content !== undefined) {
+            content = fileRes.content;
+          }
+        } catch {
+          // Keep inline content if disk read fails (e.g. file referenced before save)
+        }
+      }
 
-      const prepared = artifact.artifactPath
-        ? await artifactPreviewHtml(artifact.artifactPath, content, artifact.connectSrc)
-        : sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
+      if (content === undefined) {
+        throw new Error(
+          artifact.artifactPath
+            ? `File "${artifact.artifactPath}" has not been created on disk yet.`
+            : "Preview content is unavailable."
+        );
+      }
+
+      let prepared: string;
+      try {
+        prepared = artifact.artifactPath
+          ? await artifactPreviewHtml(artifact.artifactPath, content, artifact.connectSrc)
+          : sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
+      } catch {
+        // If relative asset resolution fails, fall back to pure sandboxed srcdoc
+        prepared = sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
+      }
 
       if (generation !== request) return;
       setRawText(content);

@@ -18,12 +18,13 @@ import {
   uiPreferences,
   isPreviewableArtifact,
   openArtifactPathInCanvas,
+  openArtifactCanvas,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
-import { safeUrl } from "../safeUrl";
+import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "../safeUrl";
 import * as api from "../api";
 import { highlight, languageForFence } from "../highlight";
 import ResearchCards, { type ResearchData } from "./presentation/ResearchCards";
@@ -158,16 +159,48 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
               </code>
             );
           }
-          case "link":
-            return node.safe && safeUrl(node.url) ? (
-              <a class="semantic-link" href={node.url} target="_blank" rel="noreferrer noopener" title={node.title ?? node.url}>
-                <InlineSequence nodes={node.label} />
-              </a>
-            ) : (
+          case "link": {
+            if (node.safe && safeUrl(node.url)) {
+              return (
+                <a class="semantic-link" href={node.url} target="_blank" rel="noreferrer noopener" title={node.title ?? node.url}>
+                  <InlineSequence nodes={node.label} />
+                </a>
+              );
+            }
+            if (isLocalArtifactPath(node.url)) {
+              const targetPath = cleanArtifactPath(node.url);
+              const isDir = isDirectoryPath(targetPath);
+              const isScratch = isScratchDirectory(targetPath);
+              const isPreview = !isDir && isPreviewableArtifact(targetPath);
+              const handleArtifactClick = (e: MouseEvent) => {
+                e.preventDefault();
+                if (isScratch || (isDir && targetPath.includes(".vak/scratch"))) {
+                  openWorkbenchFolder(targetPath);
+                } else if (isPreview) {
+                  openArtifactPathInCanvas(targetPath);
+                } else {
+                  void openFileSmart(targetPath);
+                }
+              };
+              const titleText = node.title ?? (isPreview ? `Open ${targetPath} in Artifact Canvas` : `Open ${targetPath} in editor`);
+              return (
+                <a
+                  class="semantic-link semantic-artifact-link"
+                  href="#"
+                  onClick={handleArtifactClick}
+                  title={titleText}
+                  role="button"
+                >
+                  <InlineSequence nodes={node.label} />
+                </a>
+              );
+            }
+            return (
               <span class="semantic-unsafe-link" title="Unsafe link omitted">
                 <InlineSequence nodes={node.label} />
               </span>
             );
+          }
           case "image":
             return node.safe && uiPreferences.externalMedia && safeUrl(node.url, true) ? <img class="semantic-image" src={node.url} alt={node.alt} title={node.title ?? undefined} loading="lazy" /> : <span>{node.alt || "Image unavailable"}</span>;
           case "soft_break":
@@ -229,11 +262,45 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
     }
     setTimeout(() => (button.textContent = "Copy"), 900);
   };
+
+  const canPreview = () => {
+    const lang = (props.language || "").toLowerCase();
+    const name = (props.filename || "").toLowerCase();
+    if (props.diff) return false;
+    return (
+      lang === "html" ||
+      lang === "xhtml" ||
+      lang === "svg" ||
+      name.endsWith(".html") ||
+      name.endsWith(".htm") ||
+      name.endsWith(".svg") ||
+      /<!doctype\s+html/i.test(props.content) ||
+      /<html[\s>]/i.test(props.content) ||
+      /<svg[\s>]/i.test(props.content)
+    );
+  };
+
+  const openPreview = () => {
+    const title = props.filename || (props.language ? `${props.language.toUpperCase()} Preview` : "Artifact Preview");
+    openArtifactCanvas({
+      id: `code-${Date.now()}`,
+      title,
+      artifactPath: props.filename || "",
+      html: props.content,
+      timestamp: Date.now(),
+    });
+  };
+
   return (
     <div class="semantic-code" classList={{ diff: !!props.diff }}>
       <div class="semantic-code-head">
         <span>{props.filename ?? props.language ?? (props.diff ? "diff" : "text")}</span>
-        <button type="button" onClick={(event) => copy(event.currentTarget)}>Copy</button>
+        <div style={{ display: "flex", gap: "6px", "margin-left": "auto" }}>
+          <Show when={canPreview()}>
+            <button type="button" onClick={openPreview} title="Open interactive preview in Artifact Canvas">Preview</button>
+          </Show>
+          <button type="button" onClick={(event) => copy(event.currentTarget)}>Copy</button>
+        </div>
       </div>
       <pre ref={pre}><code>{props.content}</code></pre>
     </div>

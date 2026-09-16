@@ -5,6 +5,7 @@ import {
   uiPreferences,
   isPreviewableArtifact,
   openArtifactPathInCanvas,
+  openArtifactCanvas,
   openWorkbenchFolder,
   isScratchDirectory,
 } from "../store";
@@ -78,6 +79,18 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
 
   const onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
+    if (target.classList.contains("cb-preview")) {
+      const codeContent = target.getAttribute("data-preview") ?? "";
+      const lang = target.getAttribute("data-lang") ?? "html";
+      openArtifactCanvas({
+        id: `inline-cb-${Date.now()}`,
+        title: `${lang.toUpperCase()} Preview`,
+        artifactPath: "",
+        html: codeContent,
+        timestamp: Date.now(),
+      });
+      return;
+    }
     if (target.classList.contains("cb-copy")) {
       void navigator.clipboard.writeText(target.getAttribute("data-copy") ?? "")
         .then(() => {
@@ -88,6 +101,23 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
           target.textContent = "copy failed";
           setTimeout(() => (target.textContent = "copy"), 1400);
         });
+      return;
+    }
+    const link = target.closest("a.artifact-lnk[data-path]");
+    if (link) {
+      event.preventDefault();
+      const p = link.getAttribute("data-clean-path") || (link.getAttribute("data-path") ?? "").trim();
+      const isDir = link.getAttribute("data-dir") === "true";
+      const isScratch = link.getAttribute("data-scratch") === "true" || isScratchDirectory(p);
+      if (p) {
+        if (isScratch || (isDir && p.includes(".vak/scratch"))) {
+          openWorkbenchFolder(p);
+        } else if (!isDir && isPreviewableArtifact(p)) {
+          openArtifactPathInCanvas(p);
+        } else {
+          void openFileSmart(p);
+        }
+      }
       return;
     }
     const code = target.closest("code.ic[data-path]");

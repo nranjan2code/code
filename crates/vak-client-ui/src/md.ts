@@ -10,7 +10,7 @@
 // doesn't visibly reflow the moment it settles. If you add a construct here,
 // add it to crates/vak-delivery/src/presentation.rs too (and vice versa).
 
-import { safeUrl } from "./safeUrl";
+import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "./safeUrl";
 
 function esc(s: string): string {
   return s
@@ -66,8 +66,30 @@ function inline(s: string): string {
   // links → real anchors, gated by the same scheme allow-list as the settled
   // (server-compiled) renderer, so behavior doesn't change once a turn settles
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, url: string) => {
-    if (!safeUrl(url)) return m;
-    return `<a class="lnk" href="${url}" target="_blank" rel="noreferrer noopener">${label}</a>`;
+    if (safeUrl(url)) {
+      return `<a class="lnk" href="${url}" target="_blank" rel="noreferrer noopener">${label}</a>`;
+    }
+    if (isLocalArtifactPath(url)) {
+      const targetPath = cleanArtifactPath(url);
+      const isDir =
+        targetPath.endsWith("/") ||
+        targetPath === ".vak/scratch" ||
+        targetPath.endsWith("/.vak/scratch") ||
+        targetPath === ".vak";
+      const isScratch =
+        targetPath === ".vak/scratch" ||
+        targetPath === ".vak/scratch/" ||
+        targetPath.includes(".vak/scratch/");
+      const isPreview =
+        !isDir &&
+        (/\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp|csv|tsv)$/i.test(targetPath) ||
+          (isScratch && /\.\w{1,6}$/.test(targetPath)));
+      const title = isDir
+        ? (isScratch ? "open in Workbench folder view" : "open in editor")
+        : (isPreview ? "open in Artifact Canvas" : "open in editor");
+      return `<a class="lnk artifact-lnk" data-path="${esc(targetPath)}" data-clean-path="${esc(targetPath)}" data-dir="${isDir ? 'true' : 'false'}" data-scratch="${isScratch ? 'true' : 'false'}" data-previewable="${isPreview ? 'true' : 'false'}" title="${title}" role="button" href="#">${label}</a>`;
+    }
+    return m;
   });
   return out;
 }
@@ -83,7 +105,15 @@ export function renderMarkdown(src: string): string {
     else {
       const lang = parts[i - 1] || "";
       const code = parts[i].replace(/\n$/, "");
-      html += `<div class="cb"><div class="cb-h"><span>${esc(lang || "text")}</span><button type="button" class="cb-copy" data-copy="${esc(code)}">copy</button></div><pre><code>${esc(code)}</code></pre></div>`;
+      const langLower = (lang || "").toLowerCase();
+      const canPreview =
+        langLower === "html" ||
+        langLower === "xhtml" ||
+        langLower === "svg" ||
+        /<!doctype\s+html/i.test(code) ||
+        /<html[\s>]/i.test(code) ||
+        /<svg[\s>]/i.test(code);
+      html += `<div class="cb"><div class="cb-h"><span>${esc(lang || "text")}</span><div style="display:flex;gap:6px;margin-left:auto;">${canPreview ? `<button type="button" class="cb-preview" data-preview="${esc(code)}" data-lang="${esc(lang || "html")}">preview</button>` : ""}<button type="button" class="cb-copy" data-copy="${esc(code)}">copy</button></div></div><pre><code>${esc(code)}</code></pre></div>`;
     }
   }
   return html;

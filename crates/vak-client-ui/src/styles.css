@@ -553,6 +553,10 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .cb-h span { color: var(--text-soft); }
 .cb-copy { padding: 2px 6px; border: 1px solid transparent; border-radius: 5px; color: var(--faint); background: transparent; font-family: var(--sans); font-size: 10px; cursor: pointer; }
 .cb-copy:hover { color: var(--text); border-color: var(--border); background: var(--surface-hover); }
+.cb-preview { padding: 2px 7px; border: 1px solid var(--border-soft); border-radius: 5px; color: var(--accent-bright, var(--text)); background: var(--surface); font-family: var(--sans); font-size: 10px; font-weight: 500; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease; }
+.cb-preview:hover { color: var(--text); border-color: var(--border); background: var(--surface-hover); }
+.semantic-artifact-link, a.artifact-lnk { color: var(--accent-bright); text-decoration: underline; text-underline-offset: 3px; font-weight: 500; cursor: pointer; }
+.semantic-artifact-link:hover, a.artifact-lnk:hover { color: var(--text); }
 .cb pre { min-height: 38px; margin: 0; padding: 14px 15px; overflow-x: auto; color: var(--text); font-size: 12px; line-height: 1.65; tab-size: 2; }
 /* File-shaped tool calls name their file and can show it inline: a card that
    only says "wrote 902 bytes" hides the thing the user wants to see. */
