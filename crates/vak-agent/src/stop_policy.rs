@@ -353,7 +353,10 @@ impl StopPolicy {
                     return Some(BlockReason::VerificationStale);
                 }
             } else if spec.requires_inspection() {
-                if !receipts.has_inspection_receipt() {
+                let direct_substantive = final_text.trim().len() >= 80
+                    && !Self::demands_verification(prompt)
+                    && !Self::claims_execution_unexecuted(final_text);
+                if !receipts.has_inspection_receipt() && !direct_substantive {
                     let act = spec.deliverable_act().unwrap_or("inspection").to_string();
                     return Some(BlockReason::ExecutionReceiptMissing {
                         act,
@@ -361,10 +364,15 @@ impl StopPolicy {
                     });
                 }
             } else if spec.requires_tool() && !receipts.has_any_receipt() {
-                return Some(BlockReason::ExecutionReceiptMissing {
-                    act: "tool execution".into(),
-                    hint: "execute relevant tools".into(),
-                });
+                let direct_substantive = final_text.trim().len() >= 80
+                    && !Self::demands_verification(prompt)
+                    && !Self::claims_execution_unexecuted(final_text);
+                if !direct_substantive {
+                    return Some(BlockReason::ExecutionReceiptMissing {
+                        act: "tool execution".into(),
+                        hint: "execute relevant tools".into(),
+                    });
+                }
             }
         }
 
@@ -720,4 +728,38 @@ mod tests {
         );
         assert_eq!(reported, None);
     }
+
+    #[test]
+    fn test_direct_substantive_answer_not_blocked_for_inspection_spec() {
+        let p = StopPolicy::default();
+        let mut reading = vak_intent::Reading::general();
+        reading.act = vak_intent::Act::Locate;
+        let spec = vak_intent::OutcomeSpec::from_reading("explain the architectural differences", &reading, 1);
+        let receipts = ReceiptSummary::default();
+
+        // Substantive direct analysis without false tool claims or execution demands -> allowed
+        let substantive_answer = "Optimistic locking assumes multiple transactions can complete without affecting each other. It verifies no other transaction has modified the data before committing. In contrast, pessimistic locking acquires locks immediately upon reading.";
+        let blocked = p.evaluate_receipts(
+            "explain the architectural differences",
+            substantive_answer,
+            Some(&spec),
+            &receipts,
+            false,
+        );
+        assert_eq!(blocked, None);
+
+        // Empty or non-substantive answer -> blocked
+        let blocked_empty = p.evaluate_receipts(
+            "explain the architectural differences",
+            "Okay",
+            Some(&spec),
+            &receipts,
+            false,
+        );
+        assert!(matches!(
+            blocked_empty,
+            Some(BlockReason::ExecutionReceiptMissing { .. })
+        ));
+    }
 }
+

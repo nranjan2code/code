@@ -9,7 +9,7 @@ import MessageActions from "./MessageActions";
 import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
 import * as api from "../api";
 import "../focusTrap";
-import { assistantParts, cleanAssistantText, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, cleanAssistantText, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -199,17 +199,19 @@ function visibleItems(list: Item[]): Item[] {
         if (it.streaming) return true;
         const scrubbed = cleanAssistantText(it.text);
         if (!scrubbed.trim()) return false;
-        // In outcome density, intermediate narration before subsequent
-        // assistant messages in the same turn belongs in Details/Workbench,
-        // not as a separate answer bubble.
-        for (let j = i + 1; j < cleanList.length; j++) {
-          const next = cleanList[j];
-          if (next.kind === "user") break;
-          if (
-            next.kind === "assistant" &&
-            (next.streaming || Boolean(cleanAssistantText(next.text).trim()))
-          ) {
-            return false;
+        // In outcome density, suppress earlier assistant items in the same turn
+        // ONLY if they are fleeting narration (e.g. "I'll search for that...").
+        // Substantive answers, analyses, and reports must NEVER be hidden.
+        if (isFleetingNarration(it.text)) {
+          for (let j = i + 1; j < cleanList.length; j++) {
+            const next = cleanList[j];
+            if (next.kind === "user") break;
+            if (
+              next.kind === "assistant" &&
+              (next.streaming || Boolean(cleanAssistantText(next.text).trim()))
+            ) {
+              return false;
+            }
           }
         }
         return true;
@@ -290,14 +292,16 @@ function RunControls(props: { sessionId: string }) {
     <div class="run-controls" aria-label="Live task controls">
       <button type="button" class="run-control" disabled={busy()} onClick={() => void toggle()}>{paused() ? "Resume" : "Pause"}</button>
       <button type="button" class="run-control danger" disabled={busy()} onClick={() => void api.cancelRun(props.sessionId).catch((error) => setNotice({ kind: "error", text: `Could not cancel this task: ${error instanceof Error ? error.message : String(error)}` }))}>Cancel</button>
-      <button type="button" class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
-      <span class="run-revision" title="Active outcome plan revision">Plan v{revision()}</span>
+      <Show when={revision() > 0}>
+        <button type="button" class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
+        <span class="run-revision" title="Active outcome plan revision">Plan v{revision()}</span>
+      </Show>
       <Show when={paused()}><span class="run-paused" role="status">Paused at safe boundary</span></Show>
     </div>
     <Show when={controlError()}>
       <div class="inline-error" role="alert">{controlError()} Refreshing will retry; the server remains authoritative.</div>
     </Show>
-    <Show when={changing()}>
+    <Show when={changing() && revision() > 0}>
       <form class="plan-change" onSubmit={(event) => { event.preventDefault(); void submitChange(); }}>
         <select aria-label="Plan change type" value={changeKind()} onChange={(event) => setChangeKind(event.currentTarget.value)}>
           <option value="replan">Replan</option>

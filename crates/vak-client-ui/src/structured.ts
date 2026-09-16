@@ -84,14 +84,28 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
     }
   };
 
-  const fences = /^```(\w*)[^\n]*\n([\s\S]*?)(^```[^\n]*(?:\n|$)|(?![\s\S]))/gm;
+  const fences = /^[ \t]*```(\w*)[^\n]*\r?\n([\s\S]*?)(^[ \t]*```[^\n]*(?:\r?\n|$)|(?![\s\S]))/gim;
   let cursor = 0;
   for (const match of text.matchAll(fences)) {
     processSegment(text.slice(cursor, match.index));
-    const explicit = match[1] === "vak" || ((match[1] === "json" || !match[1]) && match[2].includes('"semantic_type"'));
+    const lang = (match[1] || "").toLowerCase().trim();
+    const explicit = lang === "vak" || ((lang === "json" || !lang) && match[2].includes('"semantic_type"'));
     const output = explicit ? parseVakFence(match[2]) : null;
-    if (output) appendCard(output, match[2]);
-    else if (!(explicit && streaming && !match[3])) appendText(match[0]);
+    if (output) {
+      appendCard(output, match[2]);
+    } else if (explicit) {
+      // If it's an explicit vak/semantic transport fence:
+      // While streaming and not closed, suppress it so raw incomplete JSON doesn't flicker on screen.
+      // If completed, attempt a relaxed parse; never dump raw control fence JSON into user chat prose.
+      if (!streaming) {
+        const recovered = parseVakFence(match[2]);
+        if (recovered) {
+          appendCard(recovered, match[2]);
+        }
+      }
+    } else {
+      appendText(match[0]);
+    }
     cursor = match.index! + match[0].length;
   }
   processSegment(text.slice(cursor));
@@ -128,6 +142,10 @@ export function stripControlScaffolding(text: string): string {
  */
 export function cleanAssistantText(text: string): string {
   const normalized = stripControlScaffolding(text)
+    // Strip transport-layer code fences so structured cards don't leave raw JSON artifacts in prose.
+    .replace(/^[ \t]*```(?:vak|json)[^\n]*\r?\n[\s\S]*?(?:^[ \t]*```[^\n]*(?:\r?\n|$)|$)/gim, (fence) => {
+      return fence.includes('"semantic_type"') ? "" : fence;
+    })
     // Keep the chat focused on the result. Execution narration belongs in
     // Workbench and approval details, not in the assistant's answer bubble.
     .replace(/^\s*I will write and execute this within the sandbox[^\n]*\.?\s*$/gim, "")
@@ -154,20 +172,29 @@ export function cleanAssistantText(text: string): string {
 
 /**
  * Attempts to parse a raw JSON fragment as a valid StructuredOutput card.
- * Invalid transport data is preserved as a fallback, never repaired into a claim.
+ * Handles leading/trailing whitespace, surrounding markdown, and nested JSON.
  */
 export function parseVakFence(rawContent: string): StructuredOutput | null {
   try {
-    const trimmed = rawContent.trim();
+    let trimmed = rawContent.trim();
+    if (trimmed.startsWith("```")) {
+      trimmed = trimmed.replace(/^```[^\n]*\r?\n?/, "").replace(/\r?\n?```$/, "").trim();
+    }
+    const firstBrace = trimmed.indexOf("{");
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      trimmed = trimmed.slice(firstBrace, lastBrace + 1);
+    }
     if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
     const parsed = JSON.parse(trimmed);
     if (
       parsed &&
       typeof parsed === "object" &&
       typeof parsed.semantic_type === "string" &&
-      (parsed.schema_version === undefined || parsed.schema_version === 2) &&
+      (parsed.schema_version === undefined || Number(parsed.schema_version) >= 1) &&
       parsed.payload &&
-      typeof parsed.payload === "object" && !Array.isArray(parsed.payload)
+      typeof parsed.payload === "object" &&
+      !Array.isArray(parsed.payload)
     ) {
       return {
         semantic_type: parsed.semantic_type,
@@ -181,4 +208,41 @@ export function parseVakFence(rawContent: string): StructuredOutput | null {
     // Incomplete or invalid JSON
   }
   return null;
+}
+
+/**
+ * Determines whether an assistant message is short, fleeting transitional commentary
+ * (e.g. "I'll search for that...", "Let me check the files...") that can be tucked into
+ * execution details when a subsequent substantive answer or card is present.
+ * Substantive prose, reports, lists, headings, and actual answers are NEVER considered fleeting.
+ */
+export function isFleetingNarration(text: string): boolean {
+  if (!text) return true;
+  const cleaned = cleanAssistantText(text).trim();
+  if (!cleaned) return true;
+  if (cleaned.length > 180) return false;
+  if (/^#{1,6}\s+/m.test(cleaned)) return false;
+  if (/^[-*+]\s+/m.test(cleaned)) return false;
+  if (/^\d+\.\s+/m.test(cleaned)) return false;
+  if (/```|\|.*\|/.test(cleaned)) return false;
+  if (cleaned.split(/\n\s*\n/).length > 1) return false;
+
+  const lower = cleaned.toLowerCase();
+  const transitionalStarters = [
+    "i will ",
+    "i'll ",
+    "let me ",
+    "looking into ",
+    "searching ",
+    "analyzing ",
+    "running ",
+    "checking ",
+    "now checking ",
+    "reading ",
+    "writing ",
+    "fetching ",
+    "inspecting ",
+    "querying ",
+  ];
+  return transitionalStarters.some((prefix) => lower.startsWith(prefix));
 }

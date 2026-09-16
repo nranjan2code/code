@@ -41,7 +41,7 @@ import UniversalCard, { PresentationValue } from "./presentation/UniversalCard";
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
 import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
-import { assistantParts, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -450,6 +450,17 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             if (block.language === "vak" || block.language === "json" || block.content.includes('"semantic_type"')) {
               const structured = parseVakFence(block.content);
               if (structured) return <StructuredView output={structured} fallback={block.content} />;
+              // If it has vak language or semantic_type, attempt recovery and never leak as a raw code block
+              if (block.language === "vak" || block.content.includes('"semantic_type"')) {
+                const match = block.content.match(/\{[\s\S]*"semantic_type"[\s\S]*\}/);
+                if (match) {
+                  const recovered = parseVakFence(match[0]);
+                  if (recovered) return <StructuredView output={recovered} fallback={block.content} />;
+                }
+                if (!showOperatorChrome()) {
+                  return null;
+                }
+              }
             }
             if (block.language === "mermaid") {
               return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
@@ -1253,20 +1264,28 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       return true;
     });
 
-    // In a settled turn, find the last real assistant answer index.
-    // Preceding assistant items in the same turn are intermediate commentary.
-    let lastAssistantIdx = -1;
-    for (let i = 0; i < filtered.length; i++) {
-      const item = filtered[i];
-      if (item.role === "assistant" && isRealAnswer(item.content)) {
-        lastAssistantIdx = i;
+    const isFleetingAssistantItem = (item: OutputItem): boolean => {
+      if (item.role !== "assistant") return false;
+      if (item.content.type === "document") {
+        return isFleetingNarration(item.content.document.source_markdown);
       }
-    }
-    if (lastAssistantIdx === -1) return filtered;
+      if (item.content.type === "outcome") {
+        return !item.content.document || isFleetingNarration(item.content.document.source_markdown);
+      }
+      return false;
+    };
 
     return filtered.filter((item, idx) => {
-      if (item.role === "assistant" && isRealAnswer(item.content)) {
-        return idx === lastAssistantIdx;
+      // In outcome density, suppress earlier assistant items in the same turn
+      // ONLY if they are fleeting narration and a subsequent real assistant answer exists.
+      // Substantive documents, answers, and structured cards must never be hidden.
+      if (isFleetingAssistantItem(item)) {
+        for (let j = idx + 1; j < filtered.length; j++) {
+          const next = filtered[j];
+          if (next.role === "assistant" && isRealAnswer(next.content) && !isFleetingAssistantItem(next)) {
+            return false;
+          }
+        }
       }
       return true;
     });

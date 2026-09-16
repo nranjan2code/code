@@ -8,8 +8,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 UI="$ROOT_DIR/crates/vak-client-ui"
 ADMIN="$ROOT_DIR/crates/vak-admin-ui"
 fail() { printf '✗ %s\n' "$*" >&2; exit 1; }
-require() { rg -q --fixed-strings "$1" "$2" || fail "missing $1 in $2"; }
-reject() { ! rg -q --fixed-strings "$1" "$2" || fail "unexpected $1 in $2"; }
+require() { (command -v rg >/dev/null && rg -q --fixed-strings "$1" "$2") || grep -q -F -- "$1" "$2" || fail "missing $1 in $2"; }
+reject() { if command -v rg >/dev/null; then ! rg -q --fixed-strings "$1" "$2" || fail "unexpected $1 in $2"; else ! grep -q -F -- "$1" "$2" || fail "unexpected $1 in $2"; fi; }
 
 require 'class="workspace-details-button"' "$UI/src/components/WorkspaceHeader.tsx"
 require 'aria-label="More ways to work"' "$UI/src/components/Composer.tsx"
@@ -22,7 +22,7 @@ require 'id="voice-synthesis-model"' "$ADMIN/src/App.tsx"
 require 'for="voice-synthesis-model"' "$ADMIN/src/App.tsx"
 require 'id="voice-realtime-model"' "$ADMIN/src/App.tsx"
 require 'for="voice-realtime-model"' "$ADMIN/src/App.tsx"
-require 'Conversations' "$UI/src/components/Sidebar.tsx"
+require 'Your agents' "$UI/src/components/Sidebar.tsx"
 require 'aria-label={label}' "$UI/src/App.tsx"
 require 'aria-label={label} aria-pressed' "$UI/src/App.tsx"
 require 'role="complementary"' "$UI/src/App.tsx"
@@ -56,10 +56,19 @@ require 'use:trapFocus' "$ROOT_DIR/crates/vak-admin-ui/src/OperationsCenter.tsx"
 
 # The desktop and embedded web hosts ship generated bundles. Keep this gate
 # honest about that boundary: a source-only pass must not hide a stale bundle.
-if ! rg -q --fixed-strings 'advanced-workspace-dock' "$UI/dist/assets"/*.js; then
+has_hook() {
+  local target="$1"
+  shift
+  if command -v rg >/dev/null; then
+    rg -q --fixed-strings "$target" "$@"
+  else
+    grep -q -F -- "$target" "$@"
+  fi
+}
+if ! has_hook 'advanced-workspace-dock' "$UI/dist/assets"/*.js; then
   fail 'Tauri bundle is missing the task details dock hook; rebuild crates/vak-client-ui'
 fi
-if ! rg -q --fixed-strings 'advanced-workspace-dock' "$UI/dist-web/assets"/*.js; then
+if ! has_hook 'advanced-workspace-dock' "$UI/dist-web/assets"/*.js; then
   fail 'web bundle is missing the task details dock hook; rebuild crates/vak-client-ui'
 fi
 
