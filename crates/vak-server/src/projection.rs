@@ -1035,6 +1035,13 @@ pub(crate) fn clean_scaffolding(text: &str) -> String {
         .lines()
         .filter(|line| !is_scaffolding_line(line))
         .collect::<Vec<_>>();
+    while let Some(first) = lines.first() {
+        if first.trim().is_empty() {
+            lines.remove(0);
+        } else {
+            break;
+        }
+    }
     while let Some(last) = lines.last() {
         if last.trim().is_empty() {
             lines.pop();
