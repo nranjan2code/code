@@ -734,7 +734,11 @@ mod tests {
         let p = StopPolicy::default();
         let mut reading = vak_intent::Reading::general();
         reading.act = vak_intent::Act::Locate;
-        let spec = vak_intent::OutcomeSpec::from_reading("explain the architectural differences", &reading, 1);
+        let spec = vak_intent::OutcomeSpec::from_reading(
+            "explain the architectural differences",
+            &reading,
+            1,
+        );
         let receipts = ReceiptSummary::default();
 
         // Substantive direct analysis without false tool claims or execution demands -> allowed
@@ -762,4 +766,3 @@ mod tests {
         ));
     }
 }
-
