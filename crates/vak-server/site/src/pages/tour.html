@@ -1,0 +1,188 @@
+<div class="tour-page-shell">
+  <!-- 3D Game World Viewport -->
+  <div class="world-viewport" id="world-viewport">
+    <canvas id="world-canvas" aria-label="Interactive 3D Virtual World Tour of Vak"></canvas>
+
+    <!-- Game HUD: Top Bar -->
+    <div class="game-hud-top">
+      <div class="hud-brand-chip">
+        <span class="hud-dot live"></span>
+        <span class="hud-title">VAK CITADEL · 3D SYSTEM TOUR</span>
+        <span class="hud-badge" id="hud-status-badge">ORBIT MODE</span>
+      </div>
+
+      <div class="hud-controls-group">
+        <button type="button" class="game-btn active" id="btn-mode-tour" title="Cinematic camera tour through all 10 sectors">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Cinematic Tour
+        </button>
+        <button type="button" class="game-btn" id="btn-mode-orbit" title="Free roam with mouse orbit and WASD controls">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>
+          Free Roam (WASD)
+        </button>
+        <button type="button" class="game-btn active" id="btn-music" title="Toggle cybernetic generative ambient soundtrack [Key: M]">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span id="music-label">Music: ON</span>
+        </button>
+        <button type="button" class="game-btn active" id="btn-sound" title="Toggle cybernetic synth audio FX [Key: S]">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="sound-icon-on"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+          <span id="sound-label">SFX: ON</span>
+        </button>
+        <button type="button" class="game-btn" id="btn-reset-cam" title="Reset camera to sector 1 [Key: R]">
+          Reset
+        </button>
+      </div>
+    </div>
+
+    <!-- Cinematic Letterbox Borders (Active during Tour mode) -->
+    <div class="cinematic-letterbox top" id="cine-top"></div>
+    <div class="cinematic-letterbox bottom" id="cine-bottom"></div>
+
+    <!-- Hovered Sector 3D Reticle Tooltip -->
+    <div class="world-tooltip" id="world-tooltip" hidden>
+      <span class="tooltip-badge" id="tt-num">SECTOR 01</span>
+      <span class="tooltip-title" id="tt-title">Surface Bastion</span>
+      <span class="tooltip-hint">Click to warp camera</span>
+    </div>
+
+    <!-- Game HUD: Quest & Scenario Selector (Top Right) -->
+    <div class="game-quest-panel" id="quest-panel">
+      <div class="quest-header">
+        <span class="quest-icon">⚔</span>
+        <span class="quest-title">SIMULATED MISSIONS</span>
+      </div>
+      <div class="quest-list" role="radiogroup" aria-label="Mission selector">
+        <button type="button" class="quest-btn active" data-quest="nominal" aria-checked="true">
+          <span class="q-num">01</span>
+          <span class="q-info">
+            <span class="q-name">The Standard Turn</span>
+            <span class="q-desc">CLI request · Model inference · Cargo test · Settled receipt</span>
+          </span>
+        </button>
+        <button type="button" class="quest-btn" data-quest="deny" aria-checked="false">
+          <span class="q-num">02</span>
+          <span class="q-info">
+            <span class="q-name">Rogue rm -rf Attack</span>
+            <span class="q-desc">Sector 9 Tribunal fires instant Deny repulsor</span>
+          </span>
+        </button>
+        <button type="button" class="quest-btn" data-quest="ask" aria-checked="false">
+          <span class="q-num">03</span>
+          <span class="q-info">
+            <span class="q-name">Out-of-Bounds Write</span>
+            <span class="q-desc">Sector 9 halts turn at Ask gate for human approval</span>
+          </span>
+        </button>
+        <button type="button" class="quest-btn" data-quest="failover" aria-checked="false">
+          <span class="q-num">04</span>
+          <span class="q-info">
+            <span class="q-name">Provider 429 Blackout</span>
+            <span class="q-desc">Route ladder failover from Anthropic to OpenAI</span>
+          </span>
+        </button>
+        <button type="button" class="quest-btn" data-quest="swarm" aria-checked="false">
+          <span class="q-num">05</span>
+          <span class="q-info">
+            <span class="q-name">100-Turn Swarm Conduit</span>
+            <span class="q-desc">High-throughput storm across all 10 sectors</span>
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Game HUD: Minimap Radar (Bottom Left) -->
+    <div class="game-minimap-card">
+      <div class="minimap-title">CITADEL RADAR</div>
+      <canvas id="minimap-canvas" width="160" height="160" aria-label="City radar minimap"></canvas>
+      <div class="minimap-hint">WASD / Drag to fly · Click sector to warp</div>
+    </div>
+
+    <!-- Game HUD: Active Sector Holocron Drawer (Bottom Center / Right) -->
+    <div class="game-codex" id="game-codex">
+      <div class="codex-bar">
+        <div class="codex-sector-chip" id="codex-chip">SECTOR 01 · SURFACE BASTION</div>
+        <div class="codex-coords mono" id="codex-coords">X: +042 Y: +010 Z: -085</div>
+      </div>
+
+      <div class="codex-content">
+        <div class="codex-main">
+          <h3 class="codex-title" id="codex-title">The Surface Bastion & Request Port</h3>
+          <p class="codex-desc" id="codex-desc">
+            The external gateway port where requests land from the CLI, Telegram, Discord, Slack, PTY terminal, or cron scheduler. Inbound identities are resolved into strict three-segment bot keys (surface:chat:bot_id).
+          </p>
+          <div class="codex-rule" id="codex-rule">
+            <b>Contract Rule 24:</b> One physical chat served by several bots gets one identity per bot. Gateway binds to canonical workspace ~/vak-home.
+          </div>
+        </div>
+
+        <div class="codex-payload">
+          <div class="codex-code-label mono" id="codex-code-label">ACTIVE STRUCT // crates/vak-server/src/gateway.rs</div>
+          <pre class="codex-code mono" id="codex-code"><code>InboundRequest {
+    surface: Surface::Telegram,
+    chat_id: "chat_98241",
+    bot_id: Some("bot_sec_ops"),
+    sender: "alice",
+    text: "cargo test -p vak-parser",
+}</code></pre>
+        </div>
+      </div>
+
+      <!-- Tour Navigation Ribbon -->
+      <div class="codex-nav-ribbon" id="sector-nav-ribbon">
+        <!-- 10 sector quick buttons generated by JS -->
+      </div>
+    </div>
+
+    <!-- Interactive Ask Modal in 3D World -->
+    <div class="world-modal" id="world-ask-modal" hidden>
+      <div class="modal-box">
+        <div class="modal-tag">PERMISSION REQUIRED · SECTOR 09 TRIBUNAL</div>
+        <h4>The run has paused and is waiting for your authorization</h4>
+        <p class="modal-reason">Action: <code id="ask-action">write ~/.ssh/config</code></p>
+        <p class="modal-why">Workspace-write mode confines modifications to the canonical project tree. An out-of-bounds mutation halts the turn until approved.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn primary" id="btn-world-approve">Approve Action</button>
+          <button type="button" class="btn danger" id="btn-world-deny">Deny Action</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Educational System Overview Below 3D World -->
+  <div class="wrap" style="padding: 64px 26px 96px">
+    <div class="section-head">
+      <h2>How to read the Vak 3D Citadel</h2>
+      <p class="section-lead">
+        Each structure in the virtual world corresponds to a real Rust crate and architectural boundary in this repository.
+        Unlike traditional black-box agent loops where tools execute invisibly, Vak isolates every effect behind observable barriers.
+      </p>
+    </div>
+
+    <div class="facts" style="margin-top: 36px">
+      <div class="facts-row">
+        <span class="k">Sectors 1–3 · Ingress & Memory</span>
+        <span class="v">
+          <strong>The Surface Bastion, Security Citadel, and Append-Only Archive</strong> enforce that no stranger gains access without an allowlist entry, no chat escalates beyond its bot identity, and every model-visible byte is permanently logged in append-only JSONL before any model call is made.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k">Sectors 4–6 · Intent & Planning</span>
+        <span class="v">
+          <strong>The Intent Observatory, Route Spire, and Context Tokamak</strong> resolve what the user actually wants, narrow the capability slice, assemble a fresh route ladder on every single turn, enforce FinOps budget admission, and proactively compact overflowing tokens.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k">Sectors 7–8 · Inference & Containment</span>
+        <span class="v">
+          <strong>The Neural Core and Quarantined Subprocess Foundry</strong> manage streaming token deltas and snapshots. If the model invokes tools, the calls cross an IPC broker into disposable <code>__tool_worker</code> process groups with sanitized environments.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k">Sectors 9–10 · Precedence & Delivery</span>
+        <span class="v">
+          <strong>The Precedence Tribunal and Receipt Spaceport</strong> enforce the four-stage policy engine (Deny wins outright; Ask pauses execution). When finished, every dispatch writes a settled <code>WorkReceipt</code> with token usage, cost, and latency before output is delivered.
+        </span>
+      </div>
+    </div>
+  </div>
+</div>

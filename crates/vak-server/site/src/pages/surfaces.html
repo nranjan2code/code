@@ -9,6 +9,7 @@
     </p>
     <nav class="page-toc" aria-label="On this page">
       <a href="#three">The same run, three ways</a>
+      <a href="#engine">The turn in motion</a>
       <a href="#what">What each surface is</a>
       <a href="#absent">Absent, not broken</a>
       <a href="#contract">The contract they share</a>
@@ -124,6 +125,118 @@
         assumed, and a message from an unknown chat lands as a reviewable pending
         request rather than access granted by a config-file edit.
       </p>
+    </div>
+  </div>
+</section>
+
+<section id="engine" aria-labelledby="engine-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="engine-h" class="reveal">The turn in motion</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        What happens under the hood the millisecond a request enters from any surface.
+        From admission and intent resolution to provider streaming, sandboxed worker isolation,
+        permission engine evaluation, and work receipt settlement. Switch modes to inspect a single turn,
+        a multi-turn tool chain, or a 100-turn concurrent swarm.
+      </p>
+    </div>
+
+    <div class="turn-engine reveal" id="turn-engine" style="--d:100ms">
+      <div class="engine-bar">
+        <div class="engine-modes" role="tablist" aria-label="Simulation scale">
+          <button role="tab" type="button" class="btn-tab" data-scale="single" aria-selected="true">Single turn</button>
+          <button role="tab" type="button" class="btn-tab" data-scale="multi" aria-selected="false">Multi-turn chain</button>
+          <button role="tab" type="button" class="btn-tab" data-scale="swarm" aria-selected="false">100-turn swarm</button>
+        </div>
+
+        <div class="engine-surfaces" role="tablist" aria-label="Inbound surface">
+          <span class="engine-lbl">Surface:</span>
+          <button role="tab" type="button" class="btn-chip" data-surface="cli" aria-selected="true">CLI</button>
+          <button role="tab" type="button" class="btn-chip" data-surface="chat" aria-selected="false">Telegram/Slack</button>
+          <button role="tab" type="button" class="btn-chip" data-surface="web" aria-selected="false">Desktop/Web</button>
+          <button role="tab" type="button" class="btn-chip" data-surface="cron" aria-selected="false">Heartbeat</button>
+        </div>
+
+        <div class="engine-actions">
+          <button type="button" class="btn sm" id="te-play">Pause</button>
+          <button type="button" class="btn sm" id="te-step">Step</button>
+          <button type="button" class="btn sm" id="te-speed" data-speed="1">1×</button>
+          <button type="button" class="btn sm" id="te-reset">Reset</button>
+        </div>
+      </div>
+
+      <div class="engine-hud" id="te-hud">
+        <div class="hud-stat">
+          <span class="hud-k">Session</span>
+          <span class="hud-v mono" id="hud-sid">s_01K7Q4WCE2</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Dispatches</span>
+          <span class="hud-v mono" id="hud-turns">1 / 1</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Route Leg</span>
+          <span class="hud-v mono" id="hud-route">anthropic · claude-3-7-sonnet</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Tokens (In / Out)</span>
+          <span class="hud-v mono" id="hud-tokens">6,118 / 412</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Spend Gate</span>
+          <span class="hud-v mono" id="hud-spend">$0.021 / $5.00</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Ledger Entries</span>
+          <span class="hud-v mono" id="hud-entries">14 appended</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-k">Invariants</span>
+          <span class="hud-v ok" id="hud-invariants">100% audited</span>
+        </div>
+      </div>
+
+      <div class="engine-canvas-wrap">
+        <canvas id="te-canvas" width="1128" height="260" aria-label="Turn kinetic pipeline simulation"></canvas>
+      </div>
+
+      <div class="engine-pipeline" id="te-stages" role="tablist" aria-label="Pipeline stages"></div>
+
+      <div class="engine-lab">
+        <span class="engine-lbl">Simulate condition:</span>
+        <div class="lab-buttons">
+          <button type="button" class="btn sm" id="fault-rate-limit" title="Inject provider rate limit (429) to trigger turn-ladder failover">⚡ Inject 429 Overload</button>
+          <button type="button" class="btn sm" id="fault-deny-rule" title="Inject rm -rf / to verify explicit deny precedence">🛑 Inject rm -rf /</button>
+          <button type="button" class="btn sm" id="fault-ask-gate" title="Inject out-of-bounds write to trigger human approval gate">✋ Inject Out-of-Bounds Write</button>
+          <button type="button" class="btn sm" id="fault-context-spike" title="Inject context window overflow to trigger compaction & proactive retrieval">📦 Inject Context Overflow</button>
+        </div>
+        <span class="lab-status" id="te-status">Pipeline active · Nominal execution</span>
+      </div>
+
+      <div class="engine-inspector" id="te-inspector">
+        <div class="inspector-head">
+          <div class="inspector-badge" id="insp-badge">Stage 8 · Broker Boundary & Permission Engine</div>
+          <span class="inspector-source mono" id="insp-source">crates/vak-permission/src/engine.rs</span>
+        </div>
+        <div class="inspector-grid">
+          <div class="inspector-col">
+            <span class="inspector-label">What happens here</span>
+            <p class="inspector-desc" id="insp-desc">
+              Tools execute across a broker boundary into a disposable process group. Built-in tools use the versioned <code>__tool_worker</code> protocol; MCP tools run as separately sandboxed workers. The permission engine evaluates precedence: explicit deny rules, then ask rules, then allow rules, and only then the mode's own default.
+            </p>
+            <div class="inspector-rule" id="insp-rule">
+              <b>Non-negotiable Invariant 14:</b> Model tools cross a broker boundary. Never give a worker the policy engine, credentials, or control-plane handles.
+            </div>
+          </div>
+          <div class="inspector-col">
+            <span class="inspector-label">Live Rust Struct / Data Packet</span>
+            <pre class="inspector-code mono" id="insp-code"><code>Decision::Ask {
+    reason: "write outside canonical workspace path (~/.ssh/config)",
+    source: AskSource::ModeDefault,
+}</code></pre>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>

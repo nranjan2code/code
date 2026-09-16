@@ -90,6 +90,13 @@ PAGES = [
         "policy gate, the same ledger, whichever way you come in.",
     ),
     (
+        "tour.html",
+        "/tour",
+        "3D Tour",
+        "3D World Tour — vak",
+        "An interactive 3D virtual world tour of the vak harness. Walk through the 10 sectors of execution from inbound surface to settled receipt.",
+    ),
+    (
         "security.html",
         "/security",
         "Security",

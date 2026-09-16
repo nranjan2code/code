@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.98 — 2026-09-16
+
+- Interactive 3D Citadel World Tour (`/tour`): Procedural zero-dependency 3D vector engine with perspective projection, painter's algorithm depth sorting, and 10 explorable architectural megastructures representing each subsystem of the Vak turn pipeline.
+- Generative Web Audio synthesizer & tactile SFX: Native in-browser generative soundtrack cycling D-minor pentatonic modal progressions with analog sub-bass drones and spatial delay, paired with responsive tick, click, warp, ask, and deny audio feedback.
+- Kinetic pipeline simulation (`/surfaces`): 10-stage live telemetry HUD with Single Turn, 3-Turn Tool Chain, and 100-Turn Swarm modes alongside real-world fault injectors (429 overload, out-of-bounds shell, rm -rf denial, context flood).
+- Camera flight & landmark raycasting: Seamless switching between cinematic tour mode with letterbox framing and free-flight orbit mode with WASD flight, screen-space hover raycasting, tactical minimap radar, and click-to-warp.
+- Full stack local macOS release: Synchronized release binaries, verified manifests, and updated launchd services.
+
 ## 3.0.97 — 2026-09-16
 
 - Multi-runtime dev server auto-detection: expanded `detect_launch` across Python (FastAPI/Uvicorn, Flask, Streamlit, Django), Go, Rust, and modern JS/TS frameworks (Vite, Next, Astro, Nuxt, Remix) with package managers (`pnpm`, `bun`, `yarn`, `npm`) and default ports.
