@@ -1,7 +1,7 @@
 # vak: Technical & Investment Briefing Portal
 
 > **Document Class:** Technical Architecture Whitepaper & Strategic Investment Memorandum  
-> **Platform Version:** vak v3.0.99 (Enterprise & Sovereign Agent Harness)  
+> **Platform Version:** vak v3.1.0 (Enterprise & Sovereign Agent Harness)  
 > **Target Audiences:** 
 > 1. **Technical Community:** System Architects, AI/Security Engineers, Distributed Systems Researchers, and Open-Source Contributors.  
 > 2. **Institutional & Strategic Investors:** Venture Capitalists, Corporate Venture Arms, Enterprise CTOs, and Infrastructure Strategists.

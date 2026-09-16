@@ -1,7 +1,7 @@
 # Engineering Walkthrough: The Complete 10-Stage Agent Lifecycle
 
 > **Document Class:** Runtime Architecture & Execution Lifecycle Specification  
-> **Platform Version:** vak v3.0.99 (Edition 2024 Rust)  
+> **Platform Version:** vak v3.1.0 (Edition 2024 Rust)  
 > **Target Audience:** Systems Engineers, AI Infrastructure Leads, Core Runtime Developers & Security Auditors
 
 ---

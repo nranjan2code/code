@@ -2,7 +2,7 @@
 
 > **Document Class:** Enterprise Compliance, Security Architecture & Operational Policy  
 > **Target Audience:** Chief Information Security Officers (CISOs), Compliance Auditors, Enterprise Platform Directors & Infrastructure Architects  
-> **Platform Version:** vak v3.0.99
+> **Platform Version:** vak v3.1.0
 
 ---
 

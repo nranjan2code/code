@@ -1,7 +1,7 @@
 # System Architecture & 28-Crate Taxonomy Specification
 
 > **Document Class:** Systems Engineering Reference & Workspace Architecture Specification  
-> **Platform Version:** vak v3.0.99 (Edition 2024 Rust)  
+> **Platform Version:** vak v3.1.0 (Edition 2024 Rust)  
 > **Target Audience:** System Architects, Core Rust Engineers, Open-Source Contributors & Due-Diligence Auditors
 
 ---

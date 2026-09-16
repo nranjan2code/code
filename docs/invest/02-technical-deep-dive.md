@@ -2,7 +2,7 @@
 
 > **Document Class:** Technical Deep Dive & Systems Engineering Specification  
 > **Audience:** System Architects, Core Engineers, AI Researchers & Security Specialists  
-> **Platform Version:** vak v3.0.99 (Edition 2024 Rust)
+> **Platform Version:** vak v3.1.0 (Edition 2024 Rust)
 
 ---
 

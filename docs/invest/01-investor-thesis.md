@@ -2,7 +2,7 @@
 
 > **Document Class:** Strategic Investment Memorandum & Market Intelligence  
 > **Market Sector:** Enterprise AI Agent Infrastructure, Developer Tooling & Sovereign Compute  
-> **Subject Platform:** **vak** (v3.0.99)
+> **Subject Platform:** **vak** (v3.1.0)
 
 ---
 

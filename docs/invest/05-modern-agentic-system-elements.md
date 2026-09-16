@@ -1,7 +1,7 @@
 # Deep Dive: The 7 Core Elements of Modern Agentic Systems in vak
 
 > **Document Class:** Systems Engineering Deep Dive & Modern Agentic Architecture Guide  
-> **Platform Version:** vak v3.0.99 (Edition 2024 Rust)  
+> **Platform Version:** vak v3.1.0 (Edition 2024 Rust)  
 > **Target Audience:** System Architects, AI Researchers, Infrastructure Leads & Technical Evaluators
 
 ---

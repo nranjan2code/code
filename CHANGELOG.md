@@ -1,4 +1,12 @@
 # Changelog
+ 
+## 3.1.0 — 2026-09-16
+
+- Bounded `DomainSet` Semilattice: replaced overloaded `BTreeSet<String>` with formal algebraic enum `DomainSet { All, Only { names }, Empty }`, guaranteeing disjoint domain meets collapse strictly to bottom (`Empty`) rather than widening to unconstrained top (`All`), mathematically preserving $\text{meet}(a, b) \sqsubseteq a$.
+- Bidirectional inflection & silent-'e' stemming: upgraded `token_matches` to handle bidirectional suffixes (`-ing`, `-ed`, `-es`, `-s`) and silent-'e' deletion (`"ensuring"` → `"ensure"`, `"audited"` → `"audit"`, `"proved"` → `"prove"`) across evidence criteria and operational verbs.
+- Conversational preamble stripping: eliminated polite conversational fillers (*"please"*, *"could you please"*, *"can you help me"*) to preserve the $1.6\times$ leading imperative verb bonus on operational verbs.
+- Structural HIL isolation: hardened `derive_hil` with exact `Stakes::Costly` check, structurally isolating `Irreversible` actions from ever entering the `Defer` queue.
+- Full stack local macOS release: synchronized binaries, verified manifests, and updated launchd services.
 
 ## 3.0.99 — 2026-09-16
 
