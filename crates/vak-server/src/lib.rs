@@ -14435,25 +14435,152 @@ fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String>
     Ok(f.servers)
 }
 
-/// Sensible fallback when no launch.toml exists: a package.json dev script.
+/// Sensible fallback when no launch.toml exists across supported runtimes:
+/// Node/JS/TS (Vite, Next, Astro, React, Nuxt), Python (FastAPI/Uvicorn, Flask, Streamlit, Django),
+/// Rust (cargo run), Go (go run .), or static HTML (http.server).
 fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
+    let mut servers = Vec::new();
+
+    // 1. JavaScript / TypeScript projects (package.json)
     let pkg = cwd.join("package.json");
-    let Ok(raw) = std::fs::read_to_string(pkg) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Vec::new();
-    };
-    if v["scripts"]["dev"].is_string() {
-        vec![LaunchConfig {
-            name: "dev".into(),
-            cmd: "npm".into(),
-            args: vec!["run".into(), "dev".into()],
-            port: None,
-        }]
-    } else {
-        Vec::new()
+    if let Ok(raw) = std::fs::read_to_string(&pkg) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            let scripts = &v["scripts"];
+            let (script_name, dev_cmd) = if scripts["dev"].is_string() {
+                ("dev", "dev")
+            } else if scripts["start"].is_string() {
+                ("start", "start")
+            } else if scripts["serve"].is_string() {
+                ("serve", "serve")
+            } else {
+                ("", "")
+            };
+
+            if !script_name.is_empty() {
+                let pkg_manager = if cwd.join("pnpm-lock.yaml").exists() {
+                    ("pnpm", vec!["run".into(), dev_cmd.into()])
+                } else if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() {
+                    ("bun", vec!["run".into(), dev_cmd.into()])
+                } else if cwd.join("yarn.lock").exists() {
+                    ("yarn", vec![dev_cmd.into()])
+                } else {
+                    ("npm", vec!["run".into(), dev_cmd.into()])
+                };
+
+                let raw_lower = raw.to_ascii_lowercase();
+                let port = if raw_lower.contains("vite") {
+                    Some(5173)
+                } else if raw_lower.contains("astro") {
+                    Some(4321)
+                } else {
+                    Some(3000)
+                };
+
+                servers.push(LaunchConfig {
+                    name: script_name.into(),
+                    cmd: pkg_manager.0.into(),
+                    args: pkg_manager.1,
+                    port,
+                });
+            }
+        }
     }
+
+    // 2. Python projects
+    let manage_py = cwd.join("manage.py");
+    if manage_py.exists() {
+        servers.push(LaunchConfig {
+            name: "django".into(),
+            cmd: "python3".into(),
+            args: vec!["manage.py".into(), "runserver".into(), "8000".into()],
+            port: Some(8000),
+        });
+    }
+
+    let main_py = cwd.join("main.py");
+    let app_py = cwd.join("app.py");
+    let py_entry = if main_py.exists() {
+        Some(("main", "main.py"))
+    } else if app_py.exists() {
+        Some(("app", "app.py"))
+    } else {
+        None
+    };
+
+    if let Some((mod_name, file_name)) = py_entry {
+        let content = std::fs::read_to_string(cwd.join(file_name))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if content.contains("fastapi") || content.contains("uvicorn") {
+            servers.push(LaunchConfig {
+                name: "fastapi".into(),
+                cmd: "python3".into(),
+                args: vec![
+                    "-m".into(),
+                    "uvicorn".into(),
+                    format!("{mod_name}:app"),
+                    "--reload".into(),
+                    "--port".into(),
+                    "8000".into(),
+                ],
+                port: Some(8000),
+            });
+        } else if content.contains("flask") {
+            servers.push(LaunchConfig {
+                name: "flask".into(),
+                cmd: "python3".into(),
+                args: vec![file_name.into()],
+                port: Some(5000),
+            });
+        } else if content.contains("streamlit") {
+            servers.push(LaunchConfig {
+                name: "streamlit".into(),
+                cmd: "streamlit".into(),
+                args: vec![
+                    "run".into(),
+                    file_name.into(),
+                    "--server.port".into(),
+                    "8501".into(),
+                ],
+                port: Some(8501),
+            });
+        }
+    }
+
+    // 3. Rust projects
+    let cargo_toml = cwd.join("Cargo.toml");
+    if cargo_toml.exists() && (cwd.join("src/main.rs").exists() || cwd.join("src/bin").exists()) {
+        servers.push(LaunchConfig {
+            name: "cargo".into(),
+            cmd: "cargo".into(),
+            args: vec!["run".into()],
+            port: Some(8080),
+        });
+    }
+
+    // 4. Go projects
+    let go_mod = cwd.join("go.mod");
+    let main_go = cwd.join("main.go");
+    if go_mod.exists() || main_go.exists() {
+        servers.push(LaunchConfig {
+            name: "go".into(),
+            cmd: "go".into(),
+            args: vec!["run".into(), ".".into()],
+            port: Some(8080),
+        });
+    }
+
+    // 5. Static HTML fallback
+    if servers.is_empty() && cwd.join("index.html").exists() {
+        servers.push(LaunchConfig {
+            name: "static".into(),
+            cmd: "python3".into(),
+            args: vec!["-m".into(), "http.server".into(), "8080".into()],
+            port: Some(8080),
+        });
+    }
+
+    servers
 }
 
 async fn get_launch(
@@ -15660,5 +15787,66 @@ mod sandbox_promotion_tests {
         assert_eq!(lines.lines().count(), 2);
         assert!(lines.contains("child-session"));
         assert!(lines.contains("ExecutionFinished"));
+    }
+
+    #[test]
+    fn detect_launch_identifies_vite_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "scripts": { "dev": "vite" },
+            "devDependencies": { "vite": "^5.0.0" }
+        });
+        std::fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        let found = detect_launch(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "dev");
+        assert_eq!(found[0].cmd, "npm");
+        assert_eq!(found[0].args, vec!["run", "dev"]);
+        assert_eq!(found[0].port, Some(5173));
+    }
+
+    #[test]
+    fn detect_launch_identifies_python_fastapi_and_flask() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.py"),
+            "from fastapi import FastAPI\napp = FastAPI()\n",
+        )
+        .unwrap();
+        let found = detect_launch(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "fastapi");
+        assert_eq!(found[0].cmd, "python3");
+        assert_eq!(
+            found[0].args,
+            vec!["-m", "uvicorn", "main:app", "--reload", "--port", "8000"]
+        );
+        assert_eq!(found[0].port, Some(8000));
+    }
+
+    #[test]
+    fn detect_launch_identifies_cargo_and_go() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module demo\n").unwrap();
+
+        let found = detect_launch(dir.path());
+        let names: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"cargo"));
+        assert!(names.contains(&"go"));
+    }
+
+    #[test]
+    fn detect_launch_falls_back_to_static_html() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "<h1>Test</h1>\n").unwrap();
+        let found = detect_launch(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "static");
+        assert_eq!(found[0].cmd, "python3");
+        assert_eq!(found[0].args, vec!["-m", "http.server", "8080"]);
+        assert_eq!(found[0].port, Some(8080));
     }
 }

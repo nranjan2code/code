@@ -93,12 +93,12 @@ export default function PreviewPane() {
       }
       await refreshServers();
       const cfg = servers().find((s) => s.name === name);
+      setActiveServer(name);
+      setActiveTab("server");
       if (cfg?.port) {
-        setActiveServer(name);
         const u = `http://127.0.0.1:${cfg.port}`;
         setUrl(u);
         setUrlInput(u);
-        setActiveTab("server");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
