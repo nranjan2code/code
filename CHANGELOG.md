@@ -1,5 +1,12 @@
 # Changelog
  
+## 3.1.1 — 2026-09-16
+
+- Clause-initial imperative verb balancing: implemented `is_clause_initial` in `vak-intent` to recognize coordinating clause heads (following `and`, `then`, `also`, `plus`, `,`, `;`, `:`, `\n`, `-`), granting all coordinate operational clauses equal $1.6\times$ imperative footing with opening verbs.
+- Calibrated contender dual-gating: upgraded `contenders()` in `vak-intent` to enforce an absolute noise floor (`ESCALATION_FLOOR = 0.5`) while retaining strong explicit signals (`weight >= 1.0`), preventing secondary acts from being crowded out by winner score inflation.
+- Universal stop-guard hardening: differentiated code files from documentation/content (`is_code_path`), separated `code_files_modified` vs `doc_files_modified`, and disambiguated `demands_code_execution` from `demands_verification`. Documentation, research synthesis, notes, and lifestyle tasks with inspection or substantive content now complete cleanly without false-positive `bash` execution demands.
+- Interactive terminal test isolation: added `#[cfg(test)]` guards to `confirm()` in `vak::install` to prevent test suites from blocking on stdin when run in interactive terminal sessions.
+
 ## 3.1.0 — 2026-09-16
 
 - Bounded `DomainSet` Semilattice: replaced overloaded `BTreeSet<String>` with formal algebraic enum `DomainSet { All, Only { names }, Empty }`, guaranteeing disjoint domain meets collapse strictly to bottom (`Empty`) rather than widening to unconstrained top (`All`), mathematically preserving $\text{meet}(a, b) \sqsubseteq a$.

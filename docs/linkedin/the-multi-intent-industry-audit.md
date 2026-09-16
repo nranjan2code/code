@@ -85,41 +85,43 @@ This report evaluates four major architectural paradigms for addressing this pro
 
 ## 3. A Critical, Honest Audit of Vak's Architecture
 
-To build a genuinely reliable system, we must be brutally transparent about Vak's current flaws, blind spots, and architectural trade-offs:
+To build a genuinely reliable system, we must be brutally transparent about Vak's current trade-offs, solved problems, and remaining research frontiers:
 
-### Flaw 1: The Contender Band (0.5) is an Arbitrary Heuristic
-In `vak-intent`, an act joins the active capability set if:
-$$\text{weight} \ge 0.5 \times \text{winner\_weight}$$
-* **The Reality:** The constant `0.5` is an uncalibrated engineering guess. It was not derived from empirical optimization across 100,000 real-world developer conversations.
-* **The Risk:** 
-  - On dense multi-task prompts, subtle secondary intents with weights at 0.48 will be discarded (false negative), causing tool starvation.
-  - On ambiguous prompts, weak noise words can cross the 0.5 threshold, loading unnecessary tools and increasing prompt token overhead (false positive).
+### Flaw 1: Compound Clause Verb Imbalance & Contender Calibration [RESOLVED]
+* **The Past Reality:** Vak's lexical extractor originally only granted the 1.6x imperative boost to token index 0. In compound requests (*"Search for the bug, refactor the parser, and verify tests"*), trailing verbs suffered score depression. Simultaneously, the relative contender band ($0.5 \times \text{winner}$) could drop strong secondary acts if the winner's lexical vote was high, or admit sub-0.5 noise when the winner was weak.
+* **The Production Fix:**
+  1. **Clause-Initial Verb Balancing:** Implemented `is_clause_initial()` in `vak-intent`, detecting clause heads following conjunctions (`and`, `then`, `also`, `plus`, `next`, `after`, `or`) and punctuation (`,`, `;`, `:`, `\n`, `-`), granting equal imperative footing across all coordinating clauses.
+  2. **Dual-Gated Calibration:** Enforced an absolute noise floor (`ESCALATION_FLOOR = 0.5`) while introducing a strong-signal bypass (`weight >= 1.0`), ensuring verified explicit intents are never crowded out by winner score inflation.
 
-### Flaw 2: The Sequential Turn Bottleneck
+### Flaw 2: The Sequential Turn Bottleneck [OPEN RESEARCH]
 * **The Reality:** Vak executes compound intents sequentially within a single turn loop (e.g. search $\rightarrow$ edit $\rightarrow$ test).
-* **The Failure Mode:** When a user asks for two completely independent operations:
+* **The Trade-off:** When a user asks for two completely independent operations:
   > *"Check the staging deployment on Kubernetes, and fetch the open bugs from GitHub issues."*
-  LangGraph or a multi-agent swarm can fire both requests concurrently in 800ms. Vak executes them in sequence across multiple turns, incurring a 2x–3x latency penalty.
+  LangGraph or a multi-agent swarm can fire both requests concurrently in 800ms. Vak executes them in sequence across multiple turns, incurring a 2x–3x latency penalty. Parallel sub-task DAG branching remains an active development track.
 
-### Flaw 3: English-Centric Lexical Brittleness (Tier 1)
+### Flaw 3: English-Centric Lexical Extraction in Tier 1 [OPEN RESEARCH]
 * **The Reality:** Vak's zero-token Tier-1 extractor relies on regexes, English imperative verb lists, and English inflectional stemming (`-ing`, `-ed`, `-s`).
-* **The Failure Mode:**
-  - Non-English prompts (e.g. German compound verbs, Japanese non-concatenative morphology) fail Tier-1 extraction completely and fall back to ambient floors or require cloud model classification.
-  - Colloquialisms, typos, or passive phrasing (*"It would be great if the tests were looked at"*) defeat the regex heuristics.
+* **The Limitation:**
+  - Non-English prompts (e.g. German compound verbs, Japanese non-concatenative morphology) fail Tier-1 extraction and fall back to ambient floors or require cloud model classification.
+  - Colloquialisms, typos, or passive phrasing (*"It would be great if the tests were looked at"*) require Tier-2/Tier-3 model engagement.
 
-### Flaw 4: Stop-Guard False-Positive Traps
-* **The Reality:** The `VerificationMissing` stop-guard checks if files were changed and requires a verification tool call if verification intent was detected.
-* **The Failure Mode:** For documentation updates or trivial text changes (*"Fix typo in README.md and verify formatting"*), the agent has no automated test suite to run. A rigid stop-guard can trap the agent in an exit-blocked loop where it wastes tokens apologizing or trying to run irrelevant bash commands.
+### Flaw 4: Universal Stop-Guard Hardening [RESOLVED]
+* **The Past Reality:** The `VerificationMissing` stop-guard originally checked `receipts.substantive_bash_calls == 0` whenever `"verify that"` or `"verify the"` appeared in prompt text.
+* **The Failure Mode:** Vak is a **universal** agent harness spanning coding, research synthesis, system operations, lifestyle recipes, documentation, and data inspection. When an operator asked the agent to *"Write the summary in notes.md and verify the numbers match"*, demanding `bash` test execution created a false-positive dead-end trap.
+* **The Production Fix:**
+  1. **Path Disambiguation:** Added `is_code_path()` to differentiate compilable source code from universal content (`.md`, `.txt`, `.csv`, `.json`, etc.).
+  2. **Separated Receipt Accounting:** Differentiated `code_files_modified` from `doc_files_modified`.
+  3. **Demand Disambiguation:** Separated `demands_code_execution()` (tests/builds/sandbox) from universal `demands_verification()` ("verify that", "double check"). Universal documentation, research synthesis, and lifestyle tasks with inspection or substantive outputs now complete cleanly without false-positive bash blocks.
 
-### Flaw 5: Synthetic Test Isolation vs. Wild Human Inputs
-* **The Reality:** Vak's test suite boasts 154 integration tests and over 100,000 combinatorial assertions.
-* **The Limitation:** All of these tests were written by the same team that wrote the harness. They test the system against our own assumptions. They do not prove that Vak will handle the ambiguity, chaotic typos, and contradictory instructions of real human operators in the wild.
+### Flaw 5: Synthetic Test Isolation vs. Wild Human Inputs [ONGOING BENCHMARKING]
+* **The Reality:** Vak's test suite boasts over 150 integration tests and thousands of combinatorial lattice assertions.
+* **The Limitation:** Synthetic tests prove internal consistency and mathematical invariants. They do not substitute for large-scale empirical evaluation on uncurated developer benchmarks like SWE-bench Verified and ToolBench.
 
 ---
 
 ## 4. What Vak Genuinely Gets Right
 
-Despite these limitations, Vak introduces three architectural ideas that address real gaps in today's agent ecosystem:
+Despite these challenges, Vak introduces three architectural guarantees that solve core pain points in today's agent ecosystem:
 
 1. **The Bounded Meet-Semilattice Guarantee (`vak-intent`):**
    Modeling capabilities as $\bot = \text{Empty} \le \text{Only}(names) \le \top = \text{All}$ with monotonic meet operations guarantees that resolving complex compound intents can *never* accidentally escalate privileges or widen sandbox boundaries.
@@ -130,15 +132,15 @@ Despite these limitations, Vak introduces three architectural ideas that address
 
 ---
 
-## 5. Next Steps: The Roadmap to Fix Vak's System
+## 5. Next Steps: The Engineering Roadmap
 
-To move from an interesting architectural experiment to a production-grade system, our immediate engineering focus must be:
-
-1. **Calibrate the Contender Threshold:** Replace the hardcoded `0.5` constant with dynamic calibration or multi-label ranking evaluated against public agent benchmarks.
-2. **Parallel Sub-Task Dispatch:** Implement parallel branching within `CorePool` / `TaskTool` for independent sibling intents that do not share disk or state dependencies.
-3. **Context-Aware Stop Guards:** Refine `VerificationMissing` to distinguish between executable code changes (requiring tests) and non-executable documentation edits (requiring visual/formatting inspection).
-4. **Empirical Benchmark Qualification:** Run Vak against standard public benchmarks (SWE-bench Lite / Verified, ToolBench) to evaluate real-world compound task completion against industry peers.
+1. [x] **Clause-Initial Imperative Balancing:** Apply the 1.6x imperative boost to all clause heads in compound English prompts. *(Shipped)*
+2. [x] **Dual-Gated Contender Calibration:** Absolute floor (0.5) filtering with strong-signal bypass (>= 1.0). *(Shipped)*
+3. [x] **Universal Context-Aware Stop Guards:** Differentiate code execution from documentation, research synthesis, and lifestyle tasks. *(Shipped)*
+4. [ ] **Parallel Sub-Task Dispatch:** Implement parallel branching within `CorePool` / `TaskTool` for independent sibling intents that do not share disk or state dependencies.
+5. [ ] **Cross-Lingual Intent Kernel:** Add multi-lingual morphological stemmers for non-English operational verbs.
+6. [ ] **Empirical Benchmark Qualification:** Run Vak against standard public benchmarks (SWE-bench Lite / Verified, ToolBench) to evaluate real-world compound task completion against industry peers.
 
 ---
 
-*Vak is an open-source research agent harness developed in Rust. Source code, formal proofs, and architecture documents are available at [github.com/nranjan2code/code](https://github.com/nranjan2code/code).*
+*Vak is an open-source general-purpose agent harness developed in Rust. Source code, formal proofs, and architecture documents are available at [github.com/nranjan2code/code](https://github.com/nranjan2code/code).*

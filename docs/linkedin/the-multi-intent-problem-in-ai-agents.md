@@ -58,7 +58,7 @@ The consequence is immediate capability starvation:
 
 In Vak, intent resolution is treated as a **multi-dimensional decision space** rather than a winner-take-all classification.
 
-Instead of discarding runner-up acts, Vak’s intent kernel calculates an **Act Contender Band** using an algebraic threshold:
+Instead of discarding runner-up acts, Vak’s intent kernel calculates an **Act Contender Band** using dual-gated calibration:
 
 ```rust
 // crates/vak-intent/src/signals.rs
@@ -72,21 +72,28 @@ pub fn contenders(&self, band: f64) -> Vec<T> {
     }
     ranked
         .into_iter()
-        .filter(|(_, weight)| *weight >= best * (1.0 - band))
+        .filter(|(_, weight)| {
+            *weight >= best
+                || (*weight >= Self::ESCALATION_FLOOR
+                    && (*weight >= best * (1.0 - band) || *weight >= 1.0))
+        })
         .map(|(value, _)| value)
         .collect()
 }
 ```
 
-With `ACT_BAND = 0.5`, **any act that scores within 50% of the top winner is admitted as an active contender**.
+This dual gate enforces two critical invariants:
+1. **Absolute Noise Floor (`ESCALATION_FLOOR = 0.5`):** Sub-0.5 noise words are rejected, preventing spurious tools from inflating the prompt.
+2. **Strong Signal Bypass (`weight >= 1.0`):** Any act that receives strong, unambiguous lexical evidence is admitted, even if the primary winner has an inflated lexical score.
+3. **Clause-Initial Balancing:** Coordinating clause heads (verbs following `and`, `then`, `also`, `plus`, `,`, `;`) receive the full $1.6\times$ imperative bonus, putting downstream requests on equal footing with the opening verb.
 
 When a user submits:
 > *"Find the vulnerability, refactor the parser, and verify tests pass."*
 
 Vak's signal extractor evaluates the votes:
 * `Modify`: 3.2 (Primary Winner)
-* `Verify`: 2.8 ($\ge 50\%$ of 3.2 $\to$ Admitted Contender)
-* `Locate`: 2.4 ($\ge 50\%$ of 3.2 $\to$ Admitted Contender)
+* `Verify`: 2.8 ($\ge 50\%$ of 3.2 and $\ge 1.0 \to$ Admitted Contender)
+* `Locate`: 2.4 ($\ge 50\%$ of 3.2 and $\ge 1.0 \to$ Admitted Contender)
 
 The resulting `Reading` object captures both the primary act and its contenders:
 $$\text{Reading} = \{ \text{act}: \text{Modify}, \ \text{alternate\_acts}: \{\text{Verify}, \text{Locate}\} \}$$
