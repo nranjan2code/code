@@ -2239,7 +2239,7 @@ export function SessionForensics(props: { sessionId: string }) {
                 <h4>1. Admission Contract Snapshot</h4>
                 <div class="drift-row">
                   <span class="drift-label">App Version:</span>
-                  <span class="mono">{contract()?.app_version ?? "3.0.94"}</span>
+                  <span class="mono">{contract()?.app_version ?? "3.0.95"}</span>
                 </div>
                 <div class="drift-row">
                   <span class="drift-label">Admitted Provider:</span>

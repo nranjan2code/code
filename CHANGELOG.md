@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.95 — 2026-09-16
+
+- Scaffolding cleanup refinement: ensured `clean_scaffolding` trims both leading and trailing whitespace/empty lines created when control blocks are stripped from the beginning or end of model responses while preserving trailing newlines.
+- Presentation & projection test coverage: validated synthetic turn filtering and scaffolding stripping with zero-panic assertions across server test suites.
+- Release & local macOS installation: fresh clean-room release build with updated desktop and web bundles, full verification, and live services synchronization.
+
 ## 3.0.94 — 2026-09-16
 
 - Presentation & delivery output normalization: scrubbed synthetic `[stop-guard]` and `[stop-hook]` user messages across client and server projection pipelines, preventing them from creating phantom turns or rendering as user bubbles.
