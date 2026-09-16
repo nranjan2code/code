@@ -921,6 +921,89 @@ fn format_kind(kind: DeliveryKind) -> &'static str {
     }
 }
 
+fn is_scaffolding_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Surface:")
+        || trimmed.starts_with("Outcome:")
+        || trimmed.starts_with("primary deliverable:")
+        || trimmed.eq_ignore_ascii_case("completed")
+        || trimmed.starts_with("contract_id:")
+        || trimmed.eq_ignore_ascii_case("vak")
+        || trimmed.starts_with("[stop-guard]")
+        || trimmed.starts_with("[stop-hook]")
+        || trimmed.starts_with("I will write and execute this within the sandbox")
+}
+
+fn strip_control_blocks(text: &str) -> String {
+    let mut out = text.to_string();
+    let tags = [
+        "conversation_thread",
+        "context_summary",
+        "intent",
+        "work_contract",
+        "managed_work",
+        "context_packet",
+        "system_reminder",
+        "runtime_guidance",
+        "scratchpad",
+    ];
+    for tag in tags {
+        let open_pattern = format!("<{tag}");
+        let close_pattern = format!("</{tag}>");
+        while let Some(start) = out.find(&open_pattern) {
+            if let Some(end_offset) = out[start..].find(&close_pattern) {
+                let end = start + end_offset + close_pattern.len();
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+
+    for prefix in ["[stop-guard]:", "[stop-hook]:"] {
+        while let Some(start) = out.find(prefix) {
+            let remainder = &out[start..];
+            if let Some(end_offset) = remainder.find("Please continue.") {
+                let end = start + end_offset + "Please continue.".len();
+                out.replace_range(start..end, "");
+            } else if let Some(end_offset) = remainder.find("Please continue") {
+                let end = start + end_offset + "Please continue".len();
+                out.replace_range(start..end, "");
+            } else if let Some(newline_offset) = remainder.find('\n') {
+                let end = start + newline_offset + 1;
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+
+    out
+}
+
+pub fn clean_scaffolding(text: &str) -> String {
+    let had_trailing_newline = text.ends_with('\n');
+    let stripped = strip_control_blocks(text);
+    let mut lines = stripped
+        .lines()
+        .filter(|line| !is_scaffolding_line(line))
+        .collect::<Vec<_>>();
+    while let Some(last) = lines.last() {
+        if last.trim().is_empty() {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    let mut out = lines.join("\n");
+    if had_trailing_newline && !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 fn render_answer(
     answer: &AnswerDraft,
     markup: Markup,
@@ -954,11 +1037,12 @@ fn render_answer(
         ))
     });
     let notice = result_notice.or(metadata_notice);
-    let source = if project_structured {
+    let raw_source = if project_structured {
         project_structured_fences_with(&answer.source_markdown, skills)
     } else {
         answer.source_markdown.clone()
     };
+    let source = clean_scaffolding(&raw_source);
     match markup {
         Markup::Plain => format!(
             "{}{}",

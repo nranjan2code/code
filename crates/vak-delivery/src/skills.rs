@@ -994,6 +994,7 @@ pub(crate) fn find_semantic_json_spans(text: &str) -> Vec<(usize, usize)> {
                 let mut in_str = false;
                 let mut escape = false;
                 let mut closed_at = None;
+                #[allow(clippy::needless_range_loop)]
                 for j in i..len {
                     let b = bytes[j];
                     if escape {
@@ -1020,10 +1021,10 @@ pub(crate) fn find_semantic_json_spans(text: &str) -> Vec<(usize, usize)> {
                         }
                     }
                 }
-                if let Some(end_idx) = closed_at {
-                    if end_idx >= marker_pos {
-                        candidate = Some((i, end_idx + 1));
-                    }
+                if let Some(end_idx) = closed_at
+                    && end_idx >= marker_pos
+                {
+                    candidate = Some((i, end_idx + 1));
                 }
             }
         }

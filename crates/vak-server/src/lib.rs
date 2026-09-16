@@ -13223,10 +13223,11 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
         .rev()
         .find(|m| m.role == vak_llm::Role::Assistant)
         .map(|m| m.text_content())?;
-    if text.trim().is_empty() {
+    let cleaned = crate::projection::clean_scaffolding(&text);
+    if cleaned.trim().is_empty() {
         None
     } else {
-        Some(text)
+        Some(cleaned)
     }
 }
 

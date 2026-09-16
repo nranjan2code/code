@@ -1215,7 +1215,7 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const ordered = () => {
     const seen = new Set<string>();
-    return props.items
+    const nonProgress = props.items
       .filter((item) => !["progress", "retry", "information"].includes(item.kind))
       // A denied approval can produce both a permission error and a later
       // abort marker. Present one calm outcome in chat; full receipts remain
@@ -1228,6 +1228,24 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         seen.add("permission-stop");
         return true;
       });
+
+    // In a settled turn, find the last assistant document/outcome index.
+    // Preceding assistant items in the same turn are intermediate commentary.
+    let lastAssistantIdx = -1;
+    for (let i = 0; i < nonProgress.length; i++) {
+      const item = nonProgress[i];
+      if (item.role === "assistant" && ["document", "outcome"].includes(item.content.type)) {
+        lastAssistantIdx = i;
+      }
+    }
+    if (lastAssistantIdx === -1) return nonProgress;
+
+    return nonProgress.filter((item, idx) => {
+      if (item.role === "assistant" && ["document", "outcome"].includes(item.content.type)) {
+        return idx === lastAssistantIdx;
+      }
+      return true;
+    });
   };
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.role === "user" && item.content.type === "document") {

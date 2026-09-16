@@ -228,11 +228,10 @@ fn snapshot_inner(
         match &entry.payload {
             EntryPayload::Message(record) => {
                 if record.message.role == Role::User
-                    && record
-                        .message
-                        .content
-                        .iter()
-                        .any(|block| matches!(block, ContentBlock::Text { .. }))
+                    && record.message.content.iter().any(|block| match block {
+                        ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
+                        _ => false,
+                    })
                 {
                     scan_turn += 1;
                     pending_tool_context = None;
@@ -368,11 +367,10 @@ fn snapshot_inner(
         match &entry.payload {
             EntryPayload::Message(record) => {
                 if record.message.role == Role::User
-                    && record
-                        .message
-                        .content
-                        .iter()
-                        .any(|block| matches!(block, ContentBlock::Text { .. }))
+                    && record.message.content.iter().any(|block| match block {
+                        ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
+                        _ => false,
+                    })
                 {
                     turn += 1;
                 }
@@ -968,16 +966,20 @@ fn media_type_for_path(path: &str) -> Option<String> {
     )
 }
 
-fn is_scaffolding_line(line: &str) -> bool {
+pub(crate) fn is_scaffolding_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with("Surface:")
         || trimmed.starts_with("Outcome:")
         || trimmed.starts_with("primary deliverable:")
         || trimmed.eq_ignore_ascii_case("completed")
         || trimmed.starts_with("contract_id:")
+        || trimmed.eq_ignore_ascii_case("vak")
+        || trimmed.starts_with("[stop-guard]")
+        || trimmed.starts_with("[stop-hook]")
+        || trimmed.starts_with("I will write and execute this within the sandbox")
 }
 
-fn strip_control_blocks(text: &str) -> String {
+pub(crate) fn strip_control_blocks(text: &str) -> String {
     let mut out = text.to_string();
     let tags = [
         "conversation_thread",
@@ -1003,16 +1005,48 @@ fn strip_control_blocks(text: &str) -> String {
             }
         }
     }
+
+    for prefix in ["[stop-guard]:", "[stop-hook]:"] {
+        while let Some(start) = out.find(prefix) {
+            let remainder = &out[start..];
+            if let Some(end_offset) = remainder.find("Please continue.") {
+                let end = start + end_offset + "Please continue.".len();
+                out.replace_range(start..end, "");
+            } else if let Some(end_offset) = remainder.find("Please continue") {
+                let end = start + end_offset + "Please continue".len();
+                out.replace_range(start..end, "");
+            } else if let Some(newline_offset) = remainder.find('\n') {
+                let end = start + newline_offset + 1;
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+
     out
 }
 
-fn clean_scaffolding(text: &str) -> String {
+pub(crate) fn clean_scaffolding(text: &str) -> String {
+    let had_trailing_newline = text.ends_with('\n');
     let stripped = strip_control_blocks(text);
-    let lines = stripped
+    let mut lines = stripped
         .lines()
         .filter(|line| !is_scaffolding_line(line))
         .collect::<Vec<_>>();
-    lines.join("\n").trim().to_string()
+    while let Some(last) = lines.last() {
+        if last.trim().is_empty() {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    let mut out = lines.join("\n");
+    if had_trailing_newline && !out.is_empty() {
+        out.push('\n');
+    }
+    out
 }
 
 fn is_presentation_envelope(text: &str) -> bool {
@@ -2176,5 +2210,102 @@ mod tests {
             super::status_for_completion(Some("unknown")),
             OutputStatus::Partial
         );
+    }
+
+    #[test]
+    fn clean_scaffolding_strips_stop_hooks_and_scaffolding() {
+        let text =
+            "[stop-hook]: continue required by hook\nPlease continue.\nHere is the real answer.";
+        let cleaned = super::clean_scaffolding(text);
+        assert_eq!(cleaned, "Here is the real answer.");
+
+        let text2 = "[stop-guard]: goal not met\nPlease continue.\nSurface: desktop app\nDone.";
+        let cleaned2 = super::clean_scaffolding(text2);
+        assert_eq!(cleaned2, "Done.");
+
+        let text3 = "<intent>select</intent><context_packet>data</context_packet>Final result.";
+        let cleaned3 = super::clean_scaffolding(text3);
+        assert_eq!(cleaned3, "Final result.");
+    }
+
+    #[test]
+    fn synthetic_stop_messages_do_not_increment_turn_or_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("synthetic-turns.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "synthetic-turns".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+
+        // Real user turn 1
+        log.append_message(MessageRecord {
+            message: Message::user_text("User query 1"),
+            meta: None,
+        })
+        .unwrap();
+
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "Assistant answer 1".into(),
+                }],
+            },
+            meta: None,
+        })
+        .unwrap();
+
+        // Synthetic stop-hook nudge (should NOT increment turn count)
+        log.append_message(MessageRecord {
+            message: Message::user_text("[stop-hook]: hook said continue\nPlease continue."),
+            meta: None,
+        })
+        .unwrap();
+
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "Assistant answer 2".into(),
+                }],
+            },
+            meta: None,
+        })
+        .unwrap();
+
+        let timeline = snapshot("synthetic-turns", &log);
+        // There should only be 1 user message projected, not 2
+        let user_items: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::User)
+            .collect();
+        assert_eq!(
+            user_items.len(),
+            1,
+            "synthetic stop message must not be projected as user item"
+        );
+        assert_eq!(user_items[0].turn_id, "turn-1");
     }
 }

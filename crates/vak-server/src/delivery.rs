@@ -502,7 +502,9 @@ pub(crate) async fn render_response(
                     crate::projection::sandbox_artifact_markdown(&core.sessions_home(), id)
                 })
                 .unwrap_or_default();
-            let mut answer = AnswerDraft::from_markdown(format!("{markdown}{artifact_suffix}"));
+            let cleaned_markdown = crate::projection::clean_scaffolding(&markdown);
+            let mut answer =
+                AnswerDraft::from_markdown(format!("{cleaned_markdown}{artifact_suffix}"));
             if let Some(metadata) = outcome_metadata {
                 answer.metadata.extend(metadata.clone());
                 answer.document.metadata.extend(metadata);

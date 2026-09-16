@@ -3027,7 +3027,8 @@ pub(crate) async fn deliver_and_record_with_result(
         result_id,
         dedupe_key.as_deref(),
     );
-    let mut answer = AnswerDraft::from_markdown(text);
+    let cleaned_text = crate::projection::clean_scaffolding(text);
+    let mut answer = AnswerDraft::from_markdown(cleaned_text);
     if let Some(value) = task_id {
         answer.metadata.insert("vak_task_id".into(), value.into());
     }

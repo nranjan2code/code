@@ -188,7 +188,8 @@ function visibleItems(list: Item[]): Item[] {
           t.includes("compacting context") ||
           t.includes("context compacted") ||
           t.includes("route fallback") ||
-          t.includes("stop gate:")
+          t.includes("stop gate:") ||
+          t.includes("retrying")
         ) {
           return false;
         }
@@ -198,7 +199,21 @@ function visibleItems(list: Item[]): Item[] {
       if (it.kind === "assistant") {
         if (it.streaming) return true;
         const scrubbed = cleanAssistantText(it.text);
-        return Boolean(scrubbed.trim());
+        if (!scrubbed.trim()) return false;
+        // In outcome density, intermediate narration before subsequent
+        // assistant messages in the same turn belongs in Details/Workbench,
+        // not as a separate answer bubble.
+        for (let j = i + 1; j < cleanList.length; j++) {
+          const next = cleanList[j];
+          if (next.kind === "user") break;
+          if (
+            next.kind === "assistant" &&
+            (next.streaming || Boolean(cleanAssistantText(next.text).trim()))
+          ) {
+            return false;
+          }
+        }
+        return true;
       }
       if (it.kind === "tool" && !it.done && i === cleanList.length - 1) return true;
       return false;
@@ -794,7 +809,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const turns = createMemo(() => {
     const grouped: Item[][] = [[]];
     for (const item of itemsOf(sid())) {
-      if (item.kind === "user") grouped.push([]);
+      if (item.kind === "user") {
+        if (!stripControlScaffolding(item.text).trim()) continue;
+        grouped.push([]);
+      }
       grouped[grouped.length - 1].push(item);
     }
     return grouped;

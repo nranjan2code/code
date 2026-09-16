@@ -597,7 +597,10 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
         blocks.insert("guardrails".to_string(), render_guardrails(&guardrails));
     }
     if !surface_notes.is_empty() {
-        blocks.insert("surface-note".to_string(), render_guardrails(&surface_notes));
+        blocks.insert(
+            "surface-note".to_string(),
+            render_guardrails(&surface_notes),
+        );
     }
     Resolution {
         text,

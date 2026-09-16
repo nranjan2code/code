@@ -808,20 +808,21 @@ fn nodes_to_blocks(
                         });
                         continue;
                     }
-                    if let Some((s, e)) = crate::skills::find_semantic_json_spans(&content).into_iter().next() {
-                        if let Ok(output) = crate::skills::parse_fragment(&content[s..e]) {
-                            let fallback_markdown = crate::skills::structured_markdown(&output);
-                            blocks.push(DocumentBlock::Structured {
-                                id: ids.next(),
-                                output,
-                                fallback_markdown,
-                            });
-                            continue;
-                        }
+                    if let Some((s, e)) = crate::skills::find_semantic_json_spans(&content)
+                        .into_iter()
+                        .next()
+                        && let Ok(output) = crate::skills::parse_fragment(&content[s..e])
+                    {
+                        let fallback_markdown = crate::skills::structured_markdown(&output);
+                        blocks.push(DocumentBlock::Structured {
+                            id: ids.next(),
+                            output,
+                            fallback_markdown,
+                        });
+                        continue;
                     }
                     if language.as_deref() == Some("vak") {
-                        diagnostics
-                            .push("Structured block parsing suppressed".into());
+                        diagnostics.push("Structured block parsing suppressed".into());
                         continue;
                     }
                 }
@@ -1271,7 +1272,11 @@ mod tests {
     fn test_unfenced_vak_prefix() {
         let text = "Vak\n{\"semantic_type\":\"metric\",\"payload\":{\"title\":\"Delhi Weather Snapshot\",\"Temperature\":\"33.5°C\"}}\n\nSome prose.";
         let doc = compile_markdown(text);
-        assert!(doc.blocks.iter().any(|b| matches!(b, DocumentBlock::Structured { .. })));
+        assert!(
+            doc.blocks
+                .iter()
+                .any(|b| matches!(b, DocumentBlock::Structured { .. }))
+        );
     }
 
     #[test]
