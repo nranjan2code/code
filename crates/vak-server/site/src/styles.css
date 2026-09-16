@@ -1355,6 +1355,10 @@ html.js .reveal.in {
   z-index: 50;
   padding: 20px;
 }
+.world-modal[hidden],
+.world-modal.is-hidden {
+  display: none !important;
+}
 .modal-box {
   background: var(--surface);
   border: 1px solid var(--accent);
@@ -1424,6 +1428,10 @@ html.js .reveal.in {
   z-index: 30;
   box-shadow: var(--shadow-lg);
   transition: opacity 120ms ease;
+}
+.world-tooltip[hidden],
+.world-tooltip.is-hidden {
+  display: none !important;
 }
 .tooltip-badge {
   font-family: var(--mono);

@@ -1380,6 +1380,10 @@ html.js .reveal.in {
   z-index: 50;
   padding: 20px;
 }
+.world-modal[hidden],
+.world-modal.is-hidden {
+  display: none !important;
+}
 .modal-box {
   background: var(--surface);
   border: 1px solid var(--accent);
@@ -1449,6 +1453,10 @@ html.js .reveal.in {
   z-index: 30;
   box-shadow: var(--shadow-lg);
   transition: opacity 120ms ease;
+}
+.world-tooltip[hidden],
+.world-tooltip.is-hidden {
+  display: none !important;
 }
 .tooltip-badge {
   font-family: var(--mono);
@@ -3356,16 +3364,12 @@ html.js .reveal.in {
           lastHoveredSector = hoveredSector;
         }
         var hSec = SECTORS[hoveredSector];
-        if (ttNum) ttNum.textContent = "SECTOR " + hSec.num;
-        if (ttTitle) ttTitle.textContent = hSec.title.split(" & ")[0];
-        tooltip.style.left = closestScreenPos.x + "px";
-        tooltip.style.top = closestScreenPos.y + "px";
-        tooltip.hidden = false;
+        showTooltip(hSec, closestScreenPos);
         canvas.style.cursor = "pointer";
       } else {
         hoveredSector = null;
         lastHoveredSector = null;
-        if (tooltip) tooltip.hidden = true;
+        hideTooltip();
         canvas.style.cursor = "crosshair";
       }
     });
@@ -3373,7 +3377,7 @@ html.js .reveal.in {
     canvas.addEventListener("mouseleave", function () {
       hoveredSector = null;
       lastHoveredSector = null;
-      if (tooltip) tooltip.hidden = true;
+      hideTooltip();
       canvas.style.cursor = "crosshair";
     });
 
@@ -3412,6 +3416,44 @@ html.js .reveal.in {
       });
     }
 
+    function hideModal() {
+      if (modal) {
+        modal.hidden = true;
+        modal.classList.add("is-hidden");
+        modal.style.display = "none";
+      }
+      game.pausedForModal = false;
+    }
+
+    function showModal(actionText) {
+      if (modal) {
+        if (askActionText && actionText) askActionText.textContent = actionText;
+        modal.hidden = false;
+        modal.classList.remove("is-hidden");
+        modal.style.display = "grid";
+      }
+      game.pausedForModal = true;
+    }
+
+    function hideTooltip() {
+      if (tooltip) {
+        tooltip.hidden = true;
+        tooltip.classList.add("is-hidden");
+        tooltip.style.display = "none";
+      }
+    }
+
+    function showTooltip(sec, screenPos) {
+      if (!tooltip) return;
+      if (ttNum) ttNum.textContent = "SECTOR " + sec.num;
+      if (ttTitle) ttTitle.textContent = sec.title.split(" & ")[0];
+      tooltip.style.left = screenPos.x + "px";
+      tooltip.style.top = screenPos.y + "px";
+      tooltip.hidden = false;
+      tooltip.classList.remove("is-hidden");
+      tooltip.style.display = "flex";
+    }
+
     // Quest Mission Buttons
     $$(".quest-btn", root).forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -3422,8 +3464,7 @@ html.js .reveal.in {
         btn.classList.add("active");
         btn.setAttribute("aria-checked", "true");
         game.quest = btn.dataset.quest;
-        game.pausedForModal = false;
-        modal.hidden = true;
+        hideModal();
         initAudio();
         playSound("blip");
 
@@ -3487,16 +3528,14 @@ html.js .reveal.in {
     if (btnApprove) {
       btnApprove.addEventListener("click", function () {
         playSound("success");
-        modal.hidden = true;
-        game.pausedForModal = false;
+        hideModal();
         codexRule.innerHTML = "<b>Approval Granted:</b> Out-of-bounds mutation was approved by human operator · Recorded in append-only ledger.";
       });
     }
     if (btnDeny) {
       btnDeny.addEventListener("click", function () {
         playSound("deny");
-        modal.hidden = true;
-        game.pausedForModal = false;
+        hideModal();
         game.shockwave = { x: SECTORS[8].coords.x, z: SECTORS[8].coords.z, radius: 10, maxRadius: 160 };
         codexRule.innerHTML = "<b>Action Denied:</b> The run stopped, partial work was preserved, and denial was logged.";
       });
@@ -3718,8 +3757,7 @@ html.js .reveal.in {
             game.shockwave = { x: s1.coords.x, z: s1.coords.z, radius: 10, maxRadius: 180 };
           } else if (game.quest === "ask" && sIndex === 8) {
             playSound("ask");
-            game.pausedForModal = true;
-            modal.hidden = false;
+            showModal("write ~/.ssh/config");
           } else if (game.quest === "failover" && sIndex === 4) {
             playSound("blip");
             codexRule.innerHTML = "<b>Circuit Breaker Active:</b> Primary leg throttled (429) · Route ladder engages OpenAI GPT-4o failover.";
@@ -4002,11 +4040,11 @@ html.js .reveal.in {
     }
 
     // Initialize View & Start Engine Loop
+    hideModal();
+    hideTooltip();
     setMode("tour");
     warpToSector(0);
-    if (!reduce) {
-      requestAnimationFrame(renderWorld);
-    }
+    requestAnimationFrame(renderWorld);
   }
 
   ready(function () {
