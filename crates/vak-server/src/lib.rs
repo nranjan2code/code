@@ -14443,46 +14443,46 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
 
     // 1. JavaScript / TypeScript projects (package.json)
     let pkg = cwd.join("package.json");
-    if let Ok(raw) = std::fs::read_to_string(&pkg) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-            let scripts = &v["scripts"];
-            let (script_name, dev_cmd) = if scripts["dev"].is_string() {
-                ("dev", "dev")
-            } else if scripts["start"].is_string() {
-                ("start", "start")
-            } else if scripts["serve"].is_string() {
-                ("serve", "serve")
+    if let Ok(raw) = std::fs::read_to_string(&pkg)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw)
+    {
+        let scripts = &v["scripts"];
+        let (script_name, dev_cmd) = if scripts["dev"].is_string() {
+            ("dev", "dev")
+        } else if scripts["start"].is_string() {
+            ("start", "start")
+        } else if scripts["serve"].is_string() {
+            ("serve", "serve")
+        } else {
+            ("", "")
+        };
+
+        if !script_name.is_empty() {
+            let pkg_manager = if cwd.join("pnpm-lock.yaml").exists() {
+                ("pnpm", vec!["run".into(), dev_cmd.into()])
+            } else if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() {
+                ("bun", vec!["run".into(), dev_cmd.into()])
+            } else if cwd.join("yarn.lock").exists() {
+                ("yarn", vec![dev_cmd.into()])
             } else {
-                ("", "")
+                ("npm", vec!["run".into(), dev_cmd.into()])
             };
 
-            if !script_name.is_empty() {
-                let pkg_manager = if cwd.join("pnpm-lock.yaml").exists() {
-                    ("pnpm", vec!["run".into(), dev_cmd.into()])
-                } else if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() {
-                    ("bun", vec!["run".into(), dev_cmd.into()])
-                } else if cwd.join("yarn.lock").exists() {
-                    ("yarn", vec![dev_cmd.into()])
-                } else {
-                    ("npm", vec!["run".into(), dev_cmd.into()])
-                };
+            let raw_lower = raw.to_ascii_lowercase();
+            let port = if raw_lower.contains("vite") {
+                Some(5173)
+            } else if raw_lower.contains("astro") {
+                Some(4321)
+            } else {
+                Some(3000)
+            };
 
-                let raw_lower = raw.to_ascii_lowercase();
-                let port = if raw_lower.contains("vite") {
-                    Some(5173)
-                } else if raw_lower.contains("astro") {
-                    Some(4321)
-                } else {
-                    Some(3000)
-                };
-
-                servers.push(LaunchConfig {
-                    name: script_name.into(),
-                    cmd: pkg_manager.0.into(),
-                    args: pkg_manager.1,
-                    port,
-                });
-            }
+            servers.push(LaunchConfig {
+                name: script_name.into(),
+                cmd: pkg_manager.0.into(),
+                args: pkg_manager.1,
+                port,
+            });
         }
     }
 
