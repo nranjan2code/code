@@ -177,11 +177,10 @@ function visibleItems(list: Item[]): Item[] {
     // the pane reads as frozen for the entire stretch between the last
     // settled turn and this one's reply. A streaming assistant reply
     // (the outcome, forming) and the single most recent in-flight tool
-    // call are the two forms "current activity" can take here; both
-    // disappear from this density the moment they settle, exactly as
-    // before.
     return cleanList.filter((it, i) => {
-      if (it.kind === "user") return true;
+      if (it.kind === "user") {
+        return Boolean(stripControlScaffolding(it.text).trim());
+      }
       if (it.kind === "system") {
         const t = it.text.toLowerCase();
         if (
@@ -215,7 +214,8 @@ function visibleItems(list: Item[]): Item[] {
         }
         return true;
       }
-      if (it.kind === "tool" && !it.done && i === cleanList.length - 1) return true;
+      // In outcome density, intermediate tool executions remain in Workbench
+      // and task details rather than cluttering the chat canvas.
       return false;
     });
   }

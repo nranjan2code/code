@@ -1229,19 +1229,43 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         return true;
       });
 
-    // In a settled turn, find the last assistant document/outcome index.
+    const isRealAnswer = (content: import("../types").OutputContent): boolean => {
+      if (["document", "structured", "adaptive"].includes(content.type)) return true;
+      if (content.type === "outcome") return Boolean(content.document);
+      return false;
+    };
+
+    // Check if the turn has any real assistant answer
+    const hasAssistantAnswer = nonProgress.some(
+      (item) => item.role === "assistant" && isRealAnswer(item.content),
+    );
+
+    const filtered = nonProgress.filter((item) => {
+      // Suppress intermediate tool errors if the turn produced an assistant answer,
+      // or if operator chrome is off (tool errors belong in Workbench/Details).
+      if (item.role === "tool" && item.kind === "error") {
+        if (hasAssistantAnswer || !showOperatorChrome()) return false;
+      }
+      // Bare lifecycle outcomes without a document are internal control summaries
+      if (item.content.type === "outcome" && !item.content.document && !showOperatorChrome()) {
+        return false;
+      }
+      return true;
+    });
+
+    // In a settled turn, find the last real assistant answer index.
     // Preceding assistant items in the same turn are intermediate commentary.
     let lastAssistantIdx = -1;
-    for (let i = 0; i < nonProgress.length; i++) {
-      const item = nonProgress[i];
-      if (item.role === "assistant" && ["document", "outcome"].includes(item.content.type)) {
+    for (let i = 0; i < filtered.length; i++) {
+      const item = filtered[i];
+      if (item.role === "assistant" && isRealAnswer(item.content)) {
         lastAssistantIdx = i;
       }
     }
-    if (lastAssistantIdx === -1) return nonProgress;
+    if (lastAssistantIdx === -1) return filtered;
 
-    return nonProgress.filter((item, idx) => {
-      if (item.role === "assistant" && ["document", "outcome"].includes(item.content.type)) {
+    return filtered.filter((item, idx) => {
+      if (item.role === "assistant" && isRealAnswer(item.content)) {
         return idx === lastAssistantIdx;
       }
       return true;

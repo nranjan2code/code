@@ -106,9 +106,11 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
 export function stripControlScaffolding(text: string): string {
   if (!text) return "";
   return text
-    // Stop-policy nudges are model-visible ledger entries, but are control
-    // traffic rather than something a person should see as their own message.
+    // Stop-policy and repair directives are model-visible control traffic,
+    // not user or assistant messages.
     .replace(/\[stop-(?:guard|hook)[^\]]*\]:[\s\S]*?(?:Please continue\.?|$)/gi, "")
+    .replace(/\[repair directive\][\s\S]*$/gi, "")
+    .replace(/\[(?:recovery|post-tool-use hook)\][\s\S]*$/gi, "")
     .replace(/<conversation_thread[\s\S]*?(?:<\/conversation_thread>|$)/gi, "")
     .replace(/<context_summary[\s\S]*?(?:<\/context_summary>|$)/gi, "")
     .replace(/<intent[\s\S]*?(?:<\/intent>|$)/gi, "")
@@ -144,7 +146,7 @@ export function cleanAssistantText(text: string): string {
     .filter((line) => !/^\s*Outcome:\s+/i.test(line))
     .filter((line) => !/^\s*contract_id:\s+/i.test(line))
     .filter((line) => !/^\s*vak\s*$/i.test(line))
-    .filter((line) => !/^\s*\[stop-(?:guard|hook)/i.test(line))
+    .filter((line) => !/^\s*\[(?:stop-(?:guard|hook)|repair directive|recovery|post-tool-use hook)/i.test(line))
     .join("\n")
     .replace(/^\s*\n+|\n+\s*$/g, "")
     .trim();

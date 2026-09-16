@@ -931,6 +931,9 @@ fn is_scaffolding_line(line: &str) -> bool {
         || trimmed.eq_ignore_ascii_case("vak")
         || trimmed.starts_with("[stop-guard]")
         || trimmed.starts_with("[stop-hook]")
+        || trimmed.starts_with("[repair directive]")
+        || trimmed.starts_with("[recovery]")
+        || trimmed.starts_with("[post-tool-use hook]")
         || trimmed.starts_with("I will write and execute this within the sandbox")
 }
 
@@ -961,9 +964,19 @@ fn strip_control_blocks(text: &str) -> String {
         }
     }
 
-    for prefix in ["[stop-guard]:", "[stop-hook]:"] {
+    for prefix in [
+        "[stop-guard]:",
+        "[stop-hook]:",
+        "[repair directive]",
+        "[recovery]",
+        "[post-tool-use hook]:",
+    ] {
         while let Some(start) = out.find(prefix) {
             let remainder = &out[start..];
+            if prefix == "[repair directive]" || prefix == "[recovery]" {
+                out.truncate(start);
+                break;
+            }
             if let Some(end_offset) = remainder.find("Please continue.") {
                 let end = start + end_offset + "Please continue.".len();
                 out.replace_range(start..end, "");

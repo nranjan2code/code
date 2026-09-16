@@ -976,6 +976,9 @@ pub(crate) fn is_scaffolding_line(line: &str) -> bool {
         || trimmed.eq_ignore_ascii_case("vak")
         || trimmed.starts_with("[stop-guard]")
         || trimmed.starts_with("[stop-hook]")
+        || trimmed.starts_with("[repair directive]")
+        || trimmed.starts_with("[recovery]")
+        || trimmed.starts_with("[post-tool-use hook]")
         || trimmed.starts_with("I will write and execute this within the sandbox")
 }
 
@@ -1006,9 +1009,19 @@ pub(crate) fn strip_control_blocks(text: &str) -> String {
         }
     }
 
-    for prefix in ["[stop-guard]:", "[stop-hook]:"] {
+    for prefix in [
+        "[stop-guard]:",
+        "[stop-hook]:",
+        "[repair directive]",
+        "[recovery]",
+        "[post-tool-use hook]:",
+    ] {
         while let Some(start) = out.find(prefix) {
             let remainder = &out[start..];
+            if prefix == "[repair directive]" || prefix == "[recovery]" {
+                out.truncate(start);
+                break;
+            }
             if let Some(end_offset) = remainder.find("Please continue.") {
                 let end = start + end_offset + "Please continue.".len();
                 out.replace_range(start..end, "");
@@ -2301,8 +2314,26 @@ mod tests {
         })
         .expect("append assistant message 2");
 
+        // Synthetic repair directive nudge (should NOT increment turn count)
+        log.append_message(MessageRecord {
+            message: Message::user_text("[repair directive] The run is stuck on correctable tool failures...\nAdmitted tools: read"),
+            meta: None,
+        })
+        .expect("append repair directive message");
+
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "Assistant answer 3".into(),
+                }],
+            },
+            meta: None,
+        })
+        .expect("append assistant message 3");
+
         let timeline = snapshot("synthetic-turns", &log);
-        // There should only be 1 user message projected, not 2
+        // There should only be 1 user message projected, not 3
         let user_items: Vec<_> = timeline
             .items
             .iter()
@@ -2311,7 +2342,7 @@ mod tests {
         assert_eq!(
             user_items.len(),
             1,
-            "synthetic stop message must not be projected as user item"
+            "synthetic stop/repair messages must not be projected as user item"
         );
         assert_eq!(user_items[0].turn_id, "turn-1");
     }
