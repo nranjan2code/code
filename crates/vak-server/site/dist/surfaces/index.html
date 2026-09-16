@@ -3377,16 +3377,13 @@ html.js .reveal.in {
 
     // 3D Game World Camera & Flight State
     var camera = {
-      x: 0,
-      y: 190,
-      z: 360,
       targetX: -280,
-      targetY: 35,
+      targetY: 32,
       targetZ: -180,
-      pitch: 0.44, // rad
-      yaw: -0.85,  // rad
-      distance: 380,
-      fov: 460
+      pitch: 0.42, // rad (~24 deg down)
+      yaw: 0.6,    // rad
+      distance: 320,
+      fov: 520
     };
 
     var game = {
@@ -3476,12 +3473,13 @@ html.js .reveal.in {
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
 
-        if (game.mode === "tour") {
+        var totalDist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
+        if (totalDist > 8 && game.mode === "tour") {
           setMode("orbit");
         }
         camera.yaw += dx * 0.006;
         camera.pitch = Math.max(0.08, Math.min(1.4, camera.pitch - dy * 0.006));
-        if (tooltip) tooltip.hidden = true;
+        hideTooltip();
         return;
       }
 
@@ -3564,6 +3562,13 @@ html.js .reveal.in {
     if (btnOrbit) btnOrbit.addEventListener("click", function () { setMode("orbit"); playSound("blip"); });
     if (btnReset) {
       btnReset.addEventListener("click", function () {
+        camera.targetX = 0;
+        camera.targetY = 40;
+        camera.targetZ = 0;
+        camera.distance = 580;
+        camera.pitch = 0.52;
+        camera.yaw = 0;
+        setMode("tour");
         warpToSector(0);
         playSound("warp");
       });
@@ -3647,6 +3652,11 @@ html.js .reveal.in {
       game.activeSector = idx;
       game.tourProgress = idx / SECTORS.length;
       var sec = SECTORS[idx];
+      camera.targetX = sec.coords.x;
+      camera.targetY = sec.height * 0.5;
+      camera.targetZ = sec.coords.z;
+      camera.distance = 320;
+      camera.pitch = 0.44;
       game.droneTarget = { x: sec.coords.x, y: sec.height + 25, z: sec.coords.z };
       updateCodex(idx);
     }
@@ -3694,34 +3704,49 @@ html.js .reveal.in {
       });
     }
 
-    // 3D Math & Projection Utilities
+    // 3D Math & Projection Utilities (Full View-Projection Matrix)
     function project3D(x, y, z, width, height) {
-      // Translate relative to camera target
-      var dx = x - camera.targetX;
-      var dy = y - camera.targetY;
-      var dz = z - camera.targetZ;
-
-      // Rotate Yaw (around Y axis)
-      var cosY = Math.cos(camera.yaw);
-      var sinY = Math.sin(camera.yaw);
-      var x1 = dx * cosY - dz * sinY;
-      var z1 = dx * sinY + dz * cosY;
-
-      // Rotate Pitch (around X axis)
       var cosP = Math.cos(camera.pitch);
       var sinP = Math.sin(camera.pitch);
-      var y2 = dy * cosP - (z1 - camera.distance) * sinP;
-      var z2 = dy * sinP + (z1 - camera.distance) * cosP;
+      var cosY = Math.cos(camera.yaw);
+      var sinY = Math.sin(camera.yaw);
 
-      // Distance from camera plane
-      var depth = z2 + camera.distance;
-      if (depth <= 10) return null; // Behind camera
+      // Camera eye position in world space
+      var camEyeX = camera.targetX + camera.distance * cosP * sinY;
+      var camEyeY = camera.targetY + camera.distance * sinP;
+      var camEyeZ = camera.targetZ + camera.distance * cosP * cosY;
 
-      var scale = camera.fov / depth;
-      var px = width * 0.5 + x1 * scale;
-      var py = height * 0.5 - y2 * scale;
+      // Vector from camera eye to world vertex
+      var rx = x - camEyeX;
+      var ry = y - camEyeY;
+      var rz = z - camEyeZ;
 
-      return { x: px, y: py, depth: depth, scale: scale };
+      // Camera view matrix basis vectors
+      var rgtX = cosY;
+      var rgtY = 0;
+      var rgtZ = -sinY;
+
+      var upX = -sinY * sinP;
+      var upY = cosP;
+      var upZ = -cosY * sinP;
+
+      var fwdX = -sinY * cosP;
+      var fwdY = -sinP;
+      var fwdZ = -cosY * cosP;
+
+      // Coordinate in view space
+      var vx = rx * rgtX + ry * rgtY + rz * rgtZ;
+      var vy = rx * upX + ry * upY + rz * upZ;
+      var vz = rx * fwdX + ry * fwdY + rz * fwdZ;
+
+      // Clip vertices behind camera near plane
+      if (vz <= 20) return null;
+
+      var scale = camera.fov / vz;
+      var px = width * 0.5 + vx * scale;
+      var py = height * 0.5 - vy * scale;
+
+      return { x: px, y: py, depth: vz, scale: scale };
     }
 
     // Procedural 3D Polygonal Geometry Drawing
@@ -3751,7 +3776,7 @@ html.js .reveal.in {
           }
           if (strokeColor) {
             ctx.strokeStyle = strokeColor;
-            ctx.lineWidth = 1.2;
+            ctx.lineWidth = 1.6;
             ctx.stroke();
           }
         }
@@ -3778,14 +3803,17 @@ html.js .reveal.in {
       var topPoly = drawPolygon3D([v[3], v[2], v[6], v[7]], baseColor, wireColor, width, height);
       if (topPoly) polys.push(topPoly);
       // Front face
-      var frontPoly = drawPolygon3D([v[4], v[5], v[6], v[7]], "rgba(28, 28, 25, 0.9)", wireColor, width, height);
+      var frontPoly = drawPolygon3D([v[4], v[5], v[6], v[7]], "rgba(36, 33, 29, 0.95)", wireColor, width, height);
       if (frontPoly) polys.push(frontPoly);
       // Right face
-      var rightPoly = drawPolygon3D([v[1], v[5], v[6], v[2]], "rgba(22, 22, 19, 0.9)", wireColor, width, height);
+      var rightPoly = drawPolygon3D([v[1], v[5], v[6], v[2]], "rgba(26, 24, 21, 0.95)", wireColor, width, height);
       if (rightPoly) polys.push(rightPoly);
       // Left face
-      var leftPoly = drawPolygon3D([v[0], v[4], v[7], v[3]], "rgba(24, 24, 21, 0.9)", wireColor, width, height);
+      var leftPoly = drawPolygon3D([v[0], v[4], v[7], v[3]], "rgba(30, 28, 24, 0.95)", wireColor, width, height);
       if (leftPoly) polys.push(leftPoly);
+      // Back face
+      var backPoly = drawPolygon3D([v[0], v[1], v[2], v[3]], "rgba(22, 21, 19, 0.95)", wireColor, width, height);
+      if (backPoly) polys.push(backPoly);
 
       return polys;
     }
@@ -3800,9 +3828,9 @@ html.js .reveal.in {
       var b3 = { x: cx - hs, y: cy, z: cz + hs };
 
       var f1 = drawPolygon3D([b0, b1, apex], baseColor, wireColor, width, height);
-      var f2 = drawPolygon3D([b1, b2, apex], "rgba(35, 35, 30, 0.92)", wireColor, width, height);
-      var f3 = drawPolygon3D([b2, b3, apex], "rgba(28, 28, 25, 0.95)", wireColor, width, height);
-      var f4 = drawPolygon3D([b3, b0, apex], "rgba(32, 32, 28, 0.92)", wireColor, width, height);
+      var f2 = drawPolygon3D([b1, b2, apex], "rgba(38, 35, 30, 0.95)", wireColor, width, height);
+      var f3 = drawPolygon3D([b2, b3, apex], "rgba(28, 26, 23, 0.95)", wireColor, width, height);
+      var f4 = drawPolygon3D([b3, b0, apex], "rgba(32, 30, 26, 0.95)", wireColor, width, height);
 
       if (f1) polys.push(f1);
       if (f2) polys.push(f2);
@@ -3892,12 +3920,12 @@ html.js .reveal.in {
         // Smoothly glide camera focus target
         camera.targetX = s1.coords.x + (s2.coords.x - s1.coords.x) * sectorFrac;
         camera.targetZ = s1.coords.z + (s2.coords.z - s1.coords.z) * sectorFrac;
-        camera.targetY = (s1.height + s2.height) * 0.5 * 0.6;
+        camera.targetY = (s1.height + s2.height) * 0.5 * 0.5;
 
         // Cinematic rotating orbit angle
-        camera.yaw = -0.9 + Math.sin(game.tourProgress * Math.PI * 2) * 0.4;
-        camera.pitch = 0.42 + Math.cos(game.tourProgress * Math.PI * 2) * 0.1;
-        camera.distance = 360 + Math.sin(game.tourProgress * Math.PI * 4) * 40;
+        camera.yaw = (game.tourProgress * Math.PI * 2) + 0.5;
+        camera.pitch = 0.44 + Math.cos(game.tourProgress * Math.PI * 2) * 0.06;
+        camera.distance = 320 + Math.sin(game.tourProgress * Math.PI * 4) * 30;
 
         // Update active sector codex
         if (sIndex !== game.activeSector) {
