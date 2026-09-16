@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.97 — 2026-09-16
+
+- Multi-runtime dev server auto-detection: expanded `detect_launch` across Python (FastAPI/Uvicorn, Flask, Streamlit, Django), Go, Rust, and modern JS/TS frameworks (Vite, Next, Astro, Nuxt, Remix) with package managers (`pnpm`, `bun`, `yarn`, `npm`) and default ports.
+- PreviewPane dev server activation: enabled unconditional `activeServer` selection and immediate server tab switching on launch start, ensuring process logs stream seamlessly for both fixed and dynamic ports.
+- Artifact linking & presentation canvas parity: enabled inline artifact previews, code-block fallback extraction, and safe local path classification across all agents and file formats.
+- Full stack local macOS release: synchronized binaries, verified manifests, and updated launchd services.
+
 ## 3.0.96 — 2026-09-16
 
 - Custom agent outcome-density parity: preserved substantive answers, reports, and detailed prose alongside structured presentation cards, filtering only truly fleeting transitional commentary.
