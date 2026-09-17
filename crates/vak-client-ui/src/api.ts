@@ -72,6 +72,16 @@ export function listVoiceProviders(): Promise<VoiceProvidersResponse> {
   return req<VoiceProvidersResponse>("/voice/providers");
 }
 
+/** Append `&agent=`/`?agent=` to a URL that may already carry query
+ * params — mirrors `listMemory`'s existing `agent` param, threaded through
+ * hooks/MCP/plugins/commitments/finops the same way (see commit 15c9c256's
+ * memory/proposals precedent and its follow-on config-layer audit). */
+function withAgent(url: string, agent?: string): string {
+  if (!agent) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}agent=${encodeURIComponent(agent)}`;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -195,8 +205,8 @@ export interface FinopsStatus {
   by_model: { name: string; usd: number; calls: number }[];
 }
 
-export function finopsStatus(): Promise<FinopsStatus> {
-  return req("/finops");
+export function finopsStatus(agent?: string): Promise<FinopsStatus> {
+  return req(withAgent("/finops", agent));
 }
 
 // ---- learning (memory notes + skill proposals) -------------------------------
@@ -417,12 +427,12 @@ export function instantiateAgentTemplate(
   });
 }
 
-export function getHooks(): Promise<{ hooks: HookConfig[] }> {
-  return req("/config/hooks");
+export function getHooks(agent?: string): Promise<{ hooks: HookConfig[] }> {
+  return req(withAgent("/config/hooks", agent));
 }
 
-export function putHooks(hooks: HookConfig[]): Promise<{ saved: boolean; count: number }> {
-  return req("/config/hooks", { method: "PUT", body: JSON.stringify({ hooks }) });
+export function putHooks(hooks: HookConfig[], agent?: string): Promise<{ saved: boolean; count: number }> {
+  return req("/config/hooks", { method: "PUT", body: JSON.stringify({ hooks, agent }) });
 }
 
 export function listMemory(agent?: string): Promise<{ notes: NoteBlock[] }> {
@@ -796,13 +806,13 @@ export interface McpServerDef {
   network: boolean;
 }
 
-export function getMcpServers(): Promise<{ servers: Record<string, McpServerDef> }> {
-  return req("/config/mcp");
+export function getMcpServers(agent?: string): Promise<{ servers: Record<string, McpServerDef> }> {
+  return req(withAgent("/config/mcp", agent));
 }
 
 /** Replaces the whole running table and persists the project config. */
-export function putMcpServers(servers: Record<string, McpServerDef>): Promise<{ saved: boolean; count: number }> {
-  return req("/config/mcp", { method: "PUT", body: JSON.stringify({ servers }) });
+export function putMcpServers(servers: Record<string, McpServerDef>, agent?: string): Promise<{ saved: boolean; count: number }> {
+  return req("/config/mcp", { method: "PUT", body: JSON.stringify({ servers, agent }) });
 }
 
 /** User-scope inventory inherited by every project unless that project overrides it. */
@@ -864,48 +874,48 @@ export function listSkills(): Promise<{
   return req("/skills");
 }
 
-export function listPlugins(scope?: "user" | "workspace"): Promise<{ plugins: InstalledPlugin[] }> {
-  return req(`/plugins${scope ? `?scope=${scope}` : ""}`);
+export function listPlugins(scope?: "user" | "workspace", agent?: string): Promise<{ plugins: InstalledPlugin[] }> {
+  return req(withAgent(`/plugins${scope ? `?scope=${scope}` : ""}`, agent));
 }
 
-export function listPluginSources(scope?: "user" | "workspace"): Promise<{ sources: MarketplaceSource[] }> {
-  return req(`/plugins/sources${scope ? `?scope=${scope}` : ""}`);
+export function listPluginSources(scope?: "user" | "workspace", agent?: string): Promise<{ sources: MarketplaceSource[] }> {
+  return req(withAgent(`/plugins/sources${scope ? `?scope=${scope}` : ""}`, agent));
 }
 
-export function listPluginCatalog(query = "", scope?: "user" | "workspace"): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> {
+export function listPluginCatalog(query = "", scope?: "user" | "workspace", agent?: string): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> {
   const params = new URLSearchParams();
   if (query.trim()) params.set("q", query.trim());
   if (scope) params.set("scope", scope);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return req(`/plugins/catalog${suffix}`);
+  return req(withAgent(`/plugins/catalog${suffix}`, agent));
 }
 
-export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> {
-  return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) });
+export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }, agent?: string): Promise<MarketplaceSource> {
+  return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, trust: "manual-review", agent, ...(signature ?? {}) }) });
 }
 
-export function pluginKeyAction(keyId: string, action: "revoke" | "restore", scope: "user" | "workspace"): Promise<unknown> {
-  return req(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
+export function pluginKeyAction(keyId: string, action: "revoke" | "restore", scope: "user" | "workspace", agent?: string): Promise<unknown> {
+  return req(withAgent(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, agent), { method: "POST", body: "{}" });
 }
 
-export function pluginSourceAction(id: string, action: "enable" | "disable", scope: "user" | "workspace"): Promise<MarketplaceSource> {
-  return req(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
+export function pluginSourceAction(id: string, action: "enable" | "disable", scope: "user" | "workspace", agent?: string): Promise<MarketplaceSource> {
+  return req(withAgent(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, agent), { method: "POST", body: "{}" });
 }
 
-export function installPlugin(path: string, scope: "workspace" | "user"): Promise<InstalledPlugin> {
-  return req("/plugins/install", { method: "POST", body: JSON.stringify({ path, scope }) });
+export function installPlugin(path: string, scope: "workspace" | "user", agent?: string): Promise<InstalledPlugin> {
+  return req("/plugins/install", { method: "POST", body: JSON.stringify({ path, scope, agent }) });
 }
 
-export function updatePlugin(path: string, scope: "workspace" | "user"): Promise<InstalledPlugin> {
-  return req("/plugins/update", { method: "POST", body: JSON.stringify({ path, scope }) });
+export function updatePlugin(path: string, scope: "workspace" | "user", agent?: string): Promise<InstalledPlugin> {
+  return req("/plugins/update", { method: "POST", body: JSON.stringify({ path, scope, agent }) });
 }
 
-export function pluginAction(name: string, action: "enable" | "disable" | "rollback", scope: "user" | "workspace"): Promise<InstalledPlugin> {
-  return req(`/plugins/${encodeURIComponent(name)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
+export function pluginAction(name: string, action: "enable" | "disable" | "rollback", scope: "user" | "workspace", agent?: string): Promise<InstalledPlugin> {
+  return req(withAgent(`/plugins/${encodeURIComponent(name)}/${action}?scope=${scope}`, agent), { method: "POST", body: "{}" });
 }
 
-export function removePlugin(name: string, scope: "user" | "workspace"): Promise<InstalledPlugin> {
-  return req(`/plugins/${encodeURIComponent(name)}?scope=${scope}`, { method: "DELETE" });
+export function removePlugin(name: string, scope: "user" | "workspace", agent?: string): Promise<InstalledPlugin> {
+  return req(withAgent(`/plugins/${encodeURIComponent(name)}?scope=${scope}`, agent), { method: "DELETE" });
 }
 
 export interface FileResponse {
@@ -1519,14 +1529,14 @@ export interface CommitmentPriority {
   withheld?: string | null;
 }
 
-export function listCommitments(all = false): Promise<{ commitments: Commitment[]; priorities: CommitmentPriority[] }> {
-  return req(`/commitments?all=${all}`);
+export function listCommitments(all = false, agent?: string): Promise<{ commitments: Commitment[]; priorities: CommitmentPriority[] }> {
+  return req(withAgent(`/commitments?all=${all}`, agent));
 }
 
-export function closeCommitment(id: string, verdict: Verdict, note = ""): Promise<unknown> {
+export function closeCommitment(id: string, verdict: Verdict, note = "", agent?: string): Promise<unknown> {
   return req(`/commitments/${encodeURIComponent(id)}/close`, {
     method: "POST",
-    body: JSON.stringify({ verdict, note }),
+    body: JSON.stringify({ verdict, note, agent }),
   });
 }
 

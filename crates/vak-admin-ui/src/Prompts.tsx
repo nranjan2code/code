@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 
 import { api } from "./api";
+import { selectedAgentIdOrUndefined } from "./store";
 import type {
   ConfigScope,
   PromptBlock,
@@ -188,12 +189,12 @@ export function PromptsSection(props: {
 }) {
   const [layer, { refetch: refetchLayer }] = createResource(
     () => props.scope(),
-    (scope) => api.promptLayer(scope),
+    (scope) => api.promptLayer(scope, selectedAgentIdOrUndefined()),
   );
   const [effective, { refetch: refetchEffective }] = createResource<PromptEffective>(
     () => api.promptEffective(),
   );
-  const [roles, { refetch: refetchRoles }] = createResource(() => api.promptRoles());
+  const [roles, { refetch: refetchRoles }] = createResource(() => api.promptRoles(selectedAgentIdOrUndefined()));
 
   const [editing, setEditing] = createSignal<PromptBlock | null>(null);
   const [draft, setDraft] = createSignal("");
@@ -252,7 +253,7 @@ export function PromptsSection(props: {
     setBusy(true);
     const content = draft();
     try {
-      await api.putPromptBlock(props.scope(), block, content);
+      await api.putPromptBlock(props.scope(), block, content, selectedAgentIdOrUndefined());
       props.pushToast(
         "info",
         `${block} saved to ${scopeLabel(props.scope())}. Applies to new sessions.`,
@@ -278,7 +279,7 @@ export function PromptsSection(props: {
   async function reset(block: PromptBlock) {
     setBusy(true);
     try {
-      await api.putPromptBlock(props.scope(), block, null);
+      await api.putPromptBlock(props.scope(), block, null, selectedAgentIdOrUndefined());
       props.pushToast("info", `${block} reset; it is inherited again.`);
       setEditing(null);
       await Promise.all([refetchLayer(), refetchEffective()]);
@@ -291,7 +292,7 @@ export function PromptsSection(props: {
 
   async function runPreview(surface = previewSurface(), role = previewRole()) {
     try {
-      const res = await api.promptPreview(surface, role || undefined);
+      const res = await api.promptPreview(surface, role || undefined, selectedAgentIdOrUndefined());
       setPreview(res);
     } catch (e) {
       props.pushToast("alert", `Preview failed: ${(e as Error).message}`);

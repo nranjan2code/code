@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import * as api from "../api";
 import { host } from "../host";
+import { activeAgentId } from "../store";
 import Icon from "./Icon";
 
 function Status(props: { value: string; good?: boolean }) {
@@ -17,7 +18,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
   const refresh = async () => {
     setLoading(true);
     try {
-      const [next, spend, doc] = await Promise.all([api.opsDiagnostics(), api.finopsStatus(), api.doctor()]);
+      const [next, spend, doc] = await Promise.all([api.opsDiagnostics(), api.finopsStatus(activeAgentId()), api.doctor()]);
       setData(next); setFinops(spend); setDoctor(doc); setError(null);
       if (host.can("tray") && host.getAutostart) {
         const auto = await host.getAutostart();

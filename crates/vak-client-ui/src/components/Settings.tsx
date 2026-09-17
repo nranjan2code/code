@@ -523,7 +523,7 @@ export default function Settings() {
         setInheritedMcpServers({});
       } else {
         const [projectRes, globalRes] = await Promise.all([
-          api.getMcpServers(),
+          api.getMcpServers(activeAgentId()),
           api.getGlobalMcpServers(),
         ]);
         setMcpServers(projectRes.servers ?? {});
@@ -541,9 +541,9 @@ export default function Settings() {
         const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([
           api.listSkills(),
           api.getGlobalHooks(),
-          api.listPlugins("user"),
-          api.listPluginSources("user"),
-          api.listPluginCatalog(marketplaceQuery(), "user"),
+          api.listPlugins("user", activeAgentId()),
+          api.listPluginSources("user", activeAgentId()),
+          api.listPluginCatalog(marketplaceQuery(), "user", activeAgentId()),
         ]);
         setSkills(skillResult.skills ?? []);
         setHooks(hookResult.hooks ?? []);
@@ -555,12 +555,12 @@ export default function Settings() {
       } else {
         const [skillResult, hookResult, globalHookResult, pluginResult, globalPluginResult, sourceResult, catalogResult] = await Promise.all([
           api.listSkills(),
-          api.getHooks(),
+          api.getHooks(activeAgentId()),
           api.getGlobalHooks(),
-          api.listPlugins("workspace"),
-          api.listPlugins("user"),
-          api.listPluginSources("workspace"),
-          api.listPluginCatalog(marketplaceQuery(), "workspace"),
+          api.listPlugins("workspace", activeAgentId()),
+          api.listPlugins("user", activeAgentId()),
+          api.listPluginSources("workspace", activeAgentId()),
+          api.listPluginCatalog(marketplaceQuery(), "workspace", activeAgentId()),
         ]);
         setSkills(skillResult.skills ?? []);
         setHooks(hookResult.hooks ?? []);
@@ -580,8 +580,8 @@ export default function Settings() {
     if (pluginBusy()) return;
     setPluginBusy(true);
     try {
-      if (action === "remove") await api.removePlugin(name, capabilityScope());
-      else await api.pluginAction(name, action, capabilityScope());
+      if (action === "remove") await api.removePlugin(name, capabilityScope(), activeAgentId());
+      else await api.pluginAction(name, action, capabilityScope(), activeAgentId());
       await refreshCapabilities();
       setNotice({ kind: "info", text: `${name} ${action === "remove" ? "removed" : `${action}d`}.` });
     } catch (e) {
@@ -595,8 +595,8 @@ export default function Settings() {
     setPluginBusy(true);
     try {
       const pluginScope = scope() === "user" ? "user" : "workspace";
-      if (update) await api.updatePlugin(path, pluginScope);
-      else await api.installPlugin(path, pluginScope);
+      if (update) await api.updatePlugin(path, pluginScope, activeAgentId());
+      else await api.installPlugin(path, pluginScope, activeAgentId());
       setPluginPath("");
       await refreshCapabilities();
       setNotice({ kind: "info", text: update ? "Plugin generation staged disabled." : "Plugin installed disabled." });
@@ -641,7 +641,7 @@ export default function Settings() {
     setPluginBusy(true);
     try {
       const signed = sourceKeyId() && sourcePublicKey() && sourceSignature() ? { key_id: sourceKeyId(), public_key: sourcePublicKey(), signature: sourceSignature() } : undefined;
-      await api.registerPluginSource(path, "Desktop catalog", signed);
+      await api.registerPluginSource(path, "Desktop catalog", signed, activeAgentId());
       setSourcePath("");
       setSourceKeyId(""); setSourcePublicKey(""); setSourceSignature("");
       await refreshCapabilities();
@@ -655,7 +655,7 @@ export default function Settings() {
     setHooksSaving(true);
     try {
       if (scope() === "user") await api.putGlobalHooks(hooks());
-      else await api.putHooks(hooks());
+      else await api.putHooks(hooks(), activeAgentId());
       await refreshCapabilities();
       setHooksDirty(false);
       setNotice({ kind: "info", text: scope() === "user" ? `Saved ${hooks().length} shared hook${hooks().length === 1 ? "" : "s"} — inherited by workspaces` : `Saved ${hooks().length} workspace hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
@@ -686,7 +686,7 @@ export default function Settings() {
     setMcpSaving(true);
     try {
       if (scope() === "user") await api.putGlobalMcpServers(servers);
-      else await api.putMcpServers(servers);
+      else await api.putMcpServers(servers, activeAgentId());
       await refreshCapabilities();
       setMcpDirty(false);
       setNotice({ kind: "info", text: scope() === "user" ? `Saved ${Object.keys(servers).length} shared MCP server(s) — inherited by new projects and applied here now` : `Saved ${Object.keys(servers).length} project MCP server(s) — applied to new turns` });
@@ -1675,7 +1675,7 @@ export default function Settings() {
                   <div class="mcp-fields"><label>Package directory<input class="mono" placeholder="/path/to/plugin" value={pluginPath()} onInput={(e) => setPluginPath(e.currentTarget.value)} /></label><div class="settings-actions"><button type="button" class="btn" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(false)}>Install disabled</button><button type="button" class="btn primary" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(true)}>Stage update</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { const picked = await host.pickWorkspace(); if (typeof picked === "string") setPluginPath(picked); }}>Choose…</button></div></div>
                   <div class="mcp-fields"><label>Catalog directory<input class="mono" placeholder="/path/to/catalog" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="settings-button" disabled={!sourcePath().trim() || pluginBusy()} onClick={() => void registerPluginSource()}>Register catalog source</button></div></div>
                   <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
-                  <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Source action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button type="button" class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Key action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+                  <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Source action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button type="button" class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Key action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
                   <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div><Show when={marketplaceEntries().length > 0}><div class="capability-list"><For each={marketplaceEntries()}>{(entry) => <div class="capability-item"><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small><p>{entry.description || "No description"}</p><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 16)}</code><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div></Show>
                   <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
                     <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="mcp-controls"><Show when={!plugin.network_denied} fallback={<span class="capability-state muted">Blocked by plugins.network_deny</span>}><label class="mcp-network"><Switch checked={plugin.network_allowed} label={`Allow network for ${plugin.name}`} onChange={(v) => void togglePluginNetwork(plugin.name, v)} /><span title="Deny entries (plugins.network_deny) always win; the allowlist grants egress otherwise. Privileged: set at the trusted (user) level for an untrusted workspace.">{plugin.network_allowed ? "Network allowed from sandbox" : "Local only"}</span></label></Show></div><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>

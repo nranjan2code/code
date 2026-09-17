@@ -68,6 +68,19 @@ export class AuthRequired extends Error {
   }
 }
 
+/** Append `&agent=`/`?agent=` to a URL that may already carry query
+ * params, mirroring how `selectedAgentIdOrUndefined()` is threaded through
+ * the memory/proposal endpoints (commit 13a3e6b3) — every config-layer
+ * endpoint audited alongside those (hooks, MCP, permissions, prompts,
+ * plugins, skills/commands, general config, commitments, checkpoints,
+ * finops) resolves against the selected Agent's own isolated workspace the
+ * same way, so the same helper threads it through here too. */
+function withAgent(url: string, agent?: string): string {
+  if (!agent) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}agent=${encodeURIComponent(agent)}`;
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (res.status === 401 || res.status === 403) throw new AuthRequired();
   // A void-returning mutation (mode change, approval, cancel, steering, a
@@ -412,28 +425,29 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => handle(r)),
 
-  permissionRules: (scope: ConfigScope = "project"): Promise<PermissionRulesView> => {
+  permissionRules: (scope: ConfigScope = "project", agent?: string): Promise<PermissionRulesView> => {
     const s = scope === "project" ? "workspace" : scope;
-    return fetch(`/config/permissions?scope=${s}`).then((r) => handle(r));
+    return fetch(withAgent(`/config/permissions?scope=${s}`, agent)).then((r) => handle(r));
   },
 
   setPermissionRules: (
     scope: ConfigScope,
     lists: { allow?: string[]; ask?: string[]; deny?: string[] },
+    agent?: string,
   ): Promise<{ scope: ConfigScope; effective: PermissionRules }> => {
     const s = scope === "project" ? "workspace" : scope;
     return fetch("/config/permissions", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...lists, scope: s }),
+      body: JSON.stringify({ ...lists, scope: s, agent }),
     }).then((r) => handle(r));
   },
 
-  setMode: (mode: string): Promise<void> =>
+  setMode: (mode: string, agent?: string): Promise<void> =>
     fetch("/config/mode", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, agent }),
     }).then((r) => void handle(r)),
 
   cancelRun: (sessionId: string): Promise<void> =>
@@ -525,6 +539,8 @@ export const api = {
     }).then((r) => handle(r)),
 
   checkpoints: (sessionId: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
+    // Session id alone resolves the owning Agent's own Core server-side
+    // (see `resolve_scoped_core`), so no `agent` param is needed here.
     fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`).then((r) => handle(r)),
 
   restoreCheckpoint: (sessionId: string, seq: number): Promise<void> =>
@@ -555,15 +571,18 @@ export const api = {
       body: JSON.stringify({ provider, scope }),
     }).then((r) => void handle(r)),
 
-  finops: (): Promise<FinOpsStatus> =>
-    fetch("/finops").then((r) => handle(r)),
+  finops: (agent?: string): Promise<FinOpsStatus> =>
+    fetch(withAgent("/finops", agent)).then((r) => handle(r)),
 
   /** Absent = leave alone, `null` = clear the cap, a number = set it. */
-  patchFinops: (patch: { max_run_usd?: number | null; max_day_usd?: number | null }): Promise<void> =>
+  patchFinops: (
+    patch: { max_run_usd?: number | null; max_day_usd?: number | null },
+    agent?: string,
+  ): Promise<void> =>
     fetch("/finops", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
+      body: JSON.stringify({ ...patch, agent }),
     }).then((r) => void handle(r)),
 
   opsStatus: (): Promise<OpsStatus> =>
@@ -572,95 +591,100 @@ export const api = {
   opsDiagnostics: (): Promise<OpsDiagnostics> =>
     fetch("/ops/diagnostics").then((r) => handle(r)),
 
-  promptLayer: (scope: ConfigScope): Promise<PromptLayerResponse> =>
-    fetch(`/config/prompts?scope=${scope}`).then((r) => handle(r)),
+  promptLayer: (scope: ConfigScope, agent?: string): Promise<PromptLayerResponse> =>
+    fetch(withAgent(`/config/prompts?scope=${scope}`, agent)).then((r) => handle(r)),
 
-  putPromptBlock: (scope: ConfigScope, block: PromptBlock, text: string | null): Promise<void> =>
+  putPromptBlock: (
+    scope: ConfigScope,
+    block: PromptBlock,
+    text: string | null,
+    agent?: string,
+  ): Promise<void> =>
     fetch("/config/prompts", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ scope, block, text }),
+      body: JSON.stringify({ scope, block, text, agent }),
     }).then((r) => void handle(r)),
 
   promptEffective: (): Promise<PromptEffective> =>
     fetch("/config/prompts/effective").then((r) => handle(r)),
 
-  promptPreview: (surface: string, role?: string): Promise<PromptEffective> =>
+  promptPreview: (surface: string, role?: string, agent?: string): Promise<PromptEffective> =>
     fetch("/config/prompts/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ surface, ...(role ? { role } : {}) }),
+      body: JSON.stringify({ surface, ...(role ? { role } : {}), agent }),
     }).then((r) => handle(r)),
 
-  promptRoles: (): Promise<{ roles: string[] }> =>
-    fetch("/config/prompts/roles").then((r) => handle(r)),
+  promptRoles: (agent?: string): Promise<{ roles: string[] }> =>
+    fetch(withAgent("/config/prompts/roles", agent)).then((r) => handle(r)),
 
-  configLayer: (scope: ConfigScope): Promise<ConfigLayer> =>
-    fetch(scope === "user" ? "/config/global" : "/config/project").then((r) => handle(r)),
+  configLayer: (scope: ConfigScope, agent?: string): Promise<ConfigLayer> =>
+    fetch(withAgent(scope === "user" ? "/config/global" : "/config/project", agent)).then((r) => handle(r)),
 
-  patchConfigScope: (scope: ConfigScope, patch: Record<string, unknown>): Promise<void> =>
+  patchConfigScope: (scope: ConfigScope, patch: Record<string, unknown>, agent?: string): Promise<void> =>
     fetch(scope === "user" ? "/config/global" : "/config", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
+      body: JSON.stringify({ ...patch, agent }),
     }).then((r) => void handle(r)),
 
-  mcpServers: (scope: ConfigScope = "project"): Promise<McpListResponse> =>
-    fetch(scope === "user" ? "/config/mcp/global" : "/config/mcp").then((r) => handle(r)),
+  mcpServers: (scope: ConfigScope = "project", agent?: string): Promise<McpListResponse> =>
+    fetch(withAgent(scope === "user" ? "/config/mcp/global" : "/config/mcp", agent)).then((r) => handle(r)),
 
-  integrationCatalog: (scope: ConfigScope): Promise<{ scope: ConfigScope; integrations: IntegrationStatus[] }> =>
-    fetch(`/config/integrations?scope=${scope}`).then((r) => handle(r)),
+  integrationCatalog: (scope: ConfigScope, agent?: string): Promise<{ scope: ConfigScope; integrations: IntegrationStatus[] }> =>
+    fetch(withAgent(`/config/integrations?scope=${scope}`, agent)).then((r) => handle(r)),
 
-  enableIntegration: (id: string, scope: ConfigScope, key?: string): Promise<IntegrationStatus> =>
+  enableIntegration: (id: string, scope: ConfigScope, key?: string, agent?: string): Promise<IntegrationStatus> =>
     fetch(`/config/integrations/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ scope, ...(key?.trim() ? { key: key.trim() } : {}) }),
+      body: JSON.stringify({ scope, ...(key?.trim() ? { key: key.trim() } : {}), agent }),
     }).then((r) => handle(r)),
 
-  removeIntegration: (id: string, scope: ConfigScope): Promise<IntegrationStatus> =>
-    fetch(`/config/integrations/${encodeURIComponent(id)}?scope=${scope}`, { method: "DELETE" }).then((r) => handle(r)),
+  removeIntegration: (id: string, scope: ConfigScope, agent?: string): Promise<IntegrationStatus> =>
+    fetch(withAgent(`/config/integrations/${encodeURIComponent(id)}?scope=${scope}`, agent), { method: "DELETE" }).then((r) => handle(r)),
 
-  putMcpServers: (servers: Record<string, McpServerConfig>, scope: ConfigScope = "project"): Promise<void> =>
+  putMcpServers: (servers: Record<string, McpServerConfig>, scope: ConfigScope = "project", agent?: string): Promise<void> =>
     fetch(scope === "user" ? "/config/mcp/global" : "/config/mcp", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ servers }),
+      body: JSON.stringify({ servers, agent }),
     }).then((r) => void handle(r)),
 
-  hooks: (scope: ConfigScope = "project"): Promise<{ hooks: HookConfig[] }> =>
-    fetch(scope === "user" ? "/config/hooks/global" : "/config/hooks").then((r) => handle(r)),
+  hooks: (scope: ConfigScope = "project", agent?: string): Promise<{ hooks: HookConfig[] }> =>
+    fetch(withAgent(scope === "user" ? "/config/hooks/global" : "/config/hooks", agent)).then((r) => handle(r)),
 
-  putHooks: (hooks: HookConfig[], scope: ConfigScope = "project"): Promise<void> =>
+  putHooks: (hooks: HookConfig[], scope: ConfigScope = "project", agent?: string): Promise<void> =>
     fetch(scope === "user" ? "/config/hooks/global" : "/config/hooks", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hooks }),
+      body: JSON.stringify({ hooks, agent }),
     }).then((r) => void handle(r)),
 
-  skills: (): Promise<{ skills: SkillItem[] }> =>
-    fetch("/skills").then((r) => handle(r)),
+  skills: (agent?: string): Promise<{ skills: SkillItem[] }> =>
+    fetch(withAgent("/skills", agent)).then((r) => handle(r)),
 
-  plugins: (scope?: "workspace" | "user"): Promise<{ plugins: PluginItem[] }> =>
-    fetch(`/plugins${scope ? `?scope=${scope}` : ""}`).then((r) => handle(r)),
-  pluginAudit: (): Promise<{ audit: unknown[] }> =>
-    fetch("/plugins/audit").then((r) => handle(r)),
-  pluginSources: (scope: "workspace" | "user"): Promise<{ sources: MarketplaceSource[] }> =>
-    fetch(`/plugins/sources?scope=${scope}`).then((r) => handle(r)),
-  pluginCatalog: (query = "", scope: "workspace" | "user" = "workspace"): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
-    fetch(`/plugins/catalog?scope=${scope}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`).then((r) => handle(r)),
-  pluginRegisterSource: (path: string, label: string, scope: "workspace" | "user", signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> =>
-    fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, scope, trust: "manual-review", ...(signature ?? {}) }) }).then((r) => handle(r)),
-  pluginKeyAction: (keyId: string, action: "revoke" | "restore", scope: "workspace" | "user"): Promise<unknown> =>
-    fetch(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, { method: "POST" }).then((r) => handle(r)),
-  pluginSourceAction: (id: string, action: "enable" | "disable", scope: "workspace" | "user"): Promise<MarketplaceSource> =>
-    fetch(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, { method: "POST" }).then((r) => handle(r)),
-  pluginInstall: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
-    fetch("/plugins/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
-  pluginUpdate: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
-    fetch("/plugins/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
-  pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove", scope: "workspace" | "user"): Promise<PluginItem> =>
-    fetch(`${action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`}?scope=${scope}`, { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
+  plugins: (scope?: "workspace" | "user", agent?: string): Promise<{ plugins: PluginItem[] }> =>
+    fetch(withAgent(`/plugins${scope ? `?scope=${scope}` : ""}`, agent)).then((r) => handle(r)),
+  pluginAudit: (agent?: string): Promise<{ audit: unknown[] }> =>
+    fetch(withAgent("/plugins/audit", agent)).then((r) => handle(r)),
+  pluginSources: (scope: "workspace" | "user", agent?: string): Promise<{ sources: MarketplaceSource[] }> =>
+    fetch(withAgent(`/plugins/sources?scope=${scope}`, agent)).then((r) => handle(r)),
+  pluginCatalog: (query = "", scope: "workspace" | "user" = "workspace", agent?: string): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
+    fetch(withAgent(`/plugins/catalog?scope=${scope}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`, agent)).then((r) => handle(r)),
+  pluginRegisterSource: (path: string, label: string, scope: "workspace" | "user", signature?: { key_id: string; public_key: string; signature: string }, agent?: string): Promise<MarketplaceSource> =>
+    fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, scope, trust: "manual-review", agent, ...(signature ?? {}) }) }).then((r) => handle(r)),
+  pluginKeyAction: (keyId: string, action: "revoke" | "restore", scope: "workspace" | "user", agent?: string): Promise<unknown> =>
+    fetch(withAgent(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, agent), { method: "POST" }).then((r) => handle(r)),
+  pluginSourceAction: (id: string, action: "enable" | "disable", scope: "workspace" | "user", agent?: string): Promise<MarketplaceSource> =>
+    fetch(withAgent(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, agent), { method: "POST" }).then((r) => handle(r)),
+  pluginInstall: (path: string, scope: "workspace" | "user" = "workspace", agent?: string): Promise<PluginItem> =>
+    fetch("/plugins/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope, agent }) }).then((r) => handle(r)),
+  pluginUpdate: (path: string, scope: "workspace" | "user" = "workspace", agent?: string): Promise<PluginItem> =>
+    fetch("/plugins/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope, agent }) }).then((r) => handle(r)),
+  pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove", scope: "workspace" | "user", agent?: string): Promise<PluginItem> =>
+    fetch(withAgent(`${action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`}?scope=${scope}`, agent), { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
 
   skillProposals: (agent?: string): Promise<{ proposals: SkillProposal[] }> =>
     fetch(agent ? `/skills/proposals?agent=${encodeURIComponent(agent)}` : "/skills/proposals").then((r) => handle(r)),
@@ -1005,20 +1029,20 @@ export const api = {
   intentPolicy: (): Promise<IntentPolicy> =>
     fetch("/intent/policy").then((r) => handle<IntentPolicy>(r)),
 
-  commitments: (all = false): Promise<CommitmentList> =>
-    fetch(`/commitments?all=${all}`).then((r) => handle<CommitmentList>(r)),
+  commitments: (all = false, agent?: string): Promise<CommitmentList> =>
+    fetch(withAgent(`/commitments?all=${all}`, agent)).then((r) => handle<CommitmentList>(r)),
 
-  commitment: (id: string): Promise<{ commitment: Commitment; events: unknown[] }> =>
-    fetch(`/commitments/${encodeURIComponent(id)}`).then((r) =>
+  commitment: (id: string, agent?: string): Promise<{ commitment: Commitment; events: unknown[] }> =>
+    fetch(withAgent(`/commitments/${encodeURIComponent(id)}`, agent)).then((r) =>
       handle<{ commitment: Commitment; events: unknown[] }>(r),
     ),
 
   /** A refused closure answers 409 with the missing evidence named; `handle`
    * surfaces that message verbatim rather than a bare status. */
-  closeCommitment: (id: string, verdict: Verdict, note: string): Promise<void> =>
+  closeCommitment: (id: string, verdict: Verdict, note: string, agent?: string): Promise<void> =>
     fetch(`/commitments/${encodeURIComponent(id)}/close`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ verdict, note }),
+      body: JSON.stringify({ verdict, note, agent }),
     }).then((r) => handle<void>(r)),
 };

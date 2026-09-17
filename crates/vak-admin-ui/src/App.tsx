@@ -502,7 +502,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [integrationBusy, setIntegrationBusy] = createSignal("");
   const [catalog, catalogActions] = createResource(
     () => props.ctx.scope(),
-    (scope) => api.integrationCatalog(scope),
+    (scope) => api.integrationCatalog(scope, selectedAgentIdOrUndefined()),
   );
 
   const servers = createMemo(() => Object.entries(props.ctx.mcp()) as [string, McpServerConfig][]);
@@ -522,7 +522,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           network: newNetwork(),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
-      }, props.ctx.scope());
+      }, props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchMcp();
       pushToast("info", `Connected ‘${name}’`);
       setNewName("");
@@ -543,7 +543,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     const next = { ...props.ctx.mcp() };
     delete next[name];
     try {
-      await api.putMcpServers(next, props.ctx.scope());
+      await api.putMcpServers(next, props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchMcp();
       pushToast("info", `Disconnected ‘${name}’`);
     } catch (err) {
@@ -573,7 +573,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           network: editNetwork(),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
-      }, props.ctx.scope());
+      }, props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchMcp();
       pushToast("info", `Updated ‘${name}’`);
       setEditing("");
@@ -591,7 +591,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     if (entry.key_required && !key && !entry.key_effective) return;
     setIntegrationBusy(entry.id);
     try {
-      await api.enableIntegration(entry.id, props.ctx.scope(), key);
+      await api.enableIntegration(entry.id, props.ctx.scope(), key, selectedAgentIdOrUndefined());
       setIntegrationKeys((current) => ({ ...current, [entry.id]: "" }));
       await Promise.all([catalogActions.refetch(), props.ctx.refetchMcp()]);
       pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Global" : "Workspace"}`);
@@ -607,7 +607,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     if (integrationBusy()) return;
     setIntegrationBusy(entry.id);
     try {
-      await api.removeIntegration(entry.id, props.ctx.scope());
+      await api.removeIntegration(entry.id, props.ctx.scope(), selectedAgentIdOrUndefined());
       await Promise.all([catalogActions.refetch(), props.ctx.refetchMcp()]);
       pushToast("info", props.ctx.scope() === "project" && entry.inherited
         ? `${entry.label} workspace override cleared`
@@ -913,11 +913,11 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const pluginScope = () => props.ctx.scope() === "user" ? "user" as const : "workspace" as const;
   const [sources, { refetch: refetchSources }] = createResource(
     pluginScope,
-    (scope) => api.pluginSources(scope),
+    (scope) => api.pluginSources(scope, selectedAgentIdOrUndefined()),
   );
   const [catalog, { refetch: refetchCatalog }] = createResource(
     () => [catalogQuery(), pluginScope()] as const,
-    ([query, scope]) => api.pluginCatalog(query, scope),
+    ([query, scope]) => api.pluginCatalog(query, scope, selectedAgentIdOrUndefined()),
   );
   const refresh = props.ctx.refetchPlugins;
   const install = async (update: boolean) => {
@@ -925,8 +925,8 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     if (!value || busy()) return;
     setBusy(true);
     try {
-      if (update) await api.pluginUpdate(value, pluginScope());
-      else await api.pluginInstall(value, pluginScope());
+      if (update) await api.pluginUpdate(value, pluginScope(), selectedAgentIdOrUndefined());
+      else await api.pluginInstall(value, pluginScope(), selectedAgentIdOrUndefined());
       await Promise.all([refetchSources(), refetchCatalog()]);
       pushToast("info", update ? "Plugin generation staged" : "Plugin installed disabled");
       setPath("");
@@ -941,7 +941,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     if (busy()) return;
     setBusy(true);
     try {
-      await api.pluginAction(name, operation, pluginScope());
+      await api.pluginAction(name, operation, pluginScope(), selectedAgentIdOrUndefined());
       pushToast("info", `${name} ${operation}d`);
       refresh();
     } catch (error) {
@@ -968,8 +968,8 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       <div class="form-row"><label>Catalog directory<input class="mono" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} placeholder="/path/to/catalog" /></label></div>
       <div class="form-row"><label>Label<input value={sourceLabel()} onInput={(e) => setSourceLabel(e.currentTarget.value)} placeholder="Team catalog" /></label></div>
       <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="form-row"><label>Key ID<input class="mono" value={keyId()} onInput={(e) => setKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={publicKey()} onInput={(e) => setPublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={signature()} onInput={(e) => setSignature(e.currentTarget.value)} /></label></div></details>
-      <button type="button" disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed); await refetchSources(); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
-      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+      <button type="button" disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed, selectedAgentIdOrUndefined()); await refetchSources(); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
+      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
       <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
       <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
         <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div>
@@ -1175,7 +1175,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           enabled: true,
           failure_mode: failureMode(),
         },
-      ], props.ctx.scope());
+      ], props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchHooks();
       pushToast("info", `Added — runs ${(HOOK_EVENT_LABELS[event()] ?? event()).toLowerCase()}`);
       setCommand("");
@@ -1193,7 +1193,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     const next = [...props.ctx.hooks()];
     next.splice(index, 1);
     try {
-      await api.putHooks(next, props.ctx.scope());
+      await api.putHooks(next, props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchHooks();
       pushToast("info", "Automation removed");
     } catch (err) {
@@ -1215,7 +1215,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     }
     next[index] = { ...current, ...patch };
     try {
-      await api.putHooks(next, props.ctx.scope());
+      await api.putHooks(next, props.ctx.scope(), selectedAgentIdOrUndefined());
       await props.ctx.refetchHooks();
       pushToast("info", ok);
     } catch (err) {
@@ -1694,10 +1694,10 @@ A scheduled task is something you ask vak to do on a repeating schedule — a ni
 
 function ExtensionsSection() {
   const [config] = createResource(() => api.config());
-  const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope));
-  const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope));
-  const [skills, skillsActions] = createResource(() => api.skills());
-  const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace"));
+  const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
+  const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope, selectedAgentIdOrUndefined()));
+  const [skills, skillsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skills(agent));
+  const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
   const [proposals, proposalsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skillProposals(agent));
   const [tasks, tasksActions] = createResource(() => api.tasks());
 
@@ -1881,7 +1881,7 @@ const MEMORY_PRESETS = [
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(selectedAgentIdOrUndefined, (agent) => api.memory(agent));
   const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
-  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope));
+  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
   const [noteText, setNoteText] = createSignal("");
@@ -1931,7 +1931,7 @@ function MemoryView() {
   ) => {
     setTogglingFlag(key);
     try {
-      await api.patchConfigScope(configScope(), { [key]: next });
+      await api.patchConfigScope(configScope(), { [key]: next }, selectedAgentIdOrUndefined());
       await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", `${next ? "Enabled" : "Disabled"} in ${configScope() === "user" ? "Global" : "Workspace"}`);
     } catch (err) {
@@ -2483,7 +2483,7 @@ function FinOpsRollupTable(props: { title: string; rows: FinOpsRollupEntry[] }) 
 function FinOpsView() {
   const [data, { refetch }] = createResource(
     () => statsVersion(),
-    () => api.finops()
+    () => api.finops(selectedAgentIdOrUndefined())
   );
   const [runCapInput, setRunCapInput] = createSignal("");
   const [dayCapInput, setDayCapInput] = createSignal("");
@@ -2535,7 +2535,7 @@ function FinOpsView() {
     }
     setSavingCaps(true);
     try {
-      await api.patchFinops({ max_run_usd: run, max_day_usd: day });
+      await api.patchFinops({ max_run_usd: run, max_day_usd: day }, selectedAgentIdOrUndefined());
       pushToast("info", "Budget caps saved");
       await refetch();
     } catch (err) {
@@ -3357,9 +3357,9 @@ function ChannelCapabilityPolicy(props: {
   value: ChannelPolicy;
   onChange: (value: ChannelPolicy) => void;
 }) {
-  const [mcp] = createResource(() => api.mcpServers());
-  const [skills] = createResource(() => api.skills());
-  const [hooks] = createResource(() => api.hooks());
+  const [mcp] = createResource(() => api.mcpServers(undefined, selectedAgentIdOrUndefined()));
+  const [skills] = createResource(() => api.skills(selectedAgentIdOrUndefined()));
+  const [hooks] = createResource(() => api.hooks(undefined, selectedAgentIdOrUndefined()));
   const update = (patch: Partial<ChannelPolicy>) => props.onChange({ ...props.value, ...patch });
 
   // A server is matched as `name/*` (see `Core::filter_mcp`), a skill by its
@@ -4930,7 +4930,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
               <select
                 onChange={(e) =>
                   void run("Model saved", () =>
-                    api.patchConfigScope("project", { provider: chosenProvider(), model: e.currentTarget.value }),
+                    api.patchConfigScope("project", { provider: chosenProvider(), model: e.currentTarget.value }, selectedAgentIdOrUndefined()),
                   )
                 }
               >
@@ -4953,7 +4953,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
                   // Unrestricted is a deliberate human decision and is
                   // never selected on someone's behalf (invariant 13).
                   if (p.danger && !window.confirm("Unrestricted means vak can reach anything on this machine, unsandboxed. Continue?")) return;
-                  void run(`Set to ${p.title}`, () => api.setMode(p.mode));
+                  void run(`Set to ${p.title}`, () => api.setMode(p.mode, selectedAgentIdOrUndefined()));
                 }}
               >
                 <strong>{p.title}</strong>
@@ -5719,7 +5719,7 @@ function ApprovalForwarding() {
 function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<void> }) {
   const [view, { refetch }] = createResource(
     () => props.scope,
-    (scope: ConfigScope) => api.permissionRules(scope),
+    (scope: ConfigScope) => api.permissionRules(scope, selectedAgentIdOrUndefined()),
   );
   const [open, setOpen] = createSignal(false);
   const [decision, setDecision] = createSignal<RuleDecision>("deny");
@@ -5735,7 +5735,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<v
   const write = async (d: RuleDecision, next: string[], message: string) => {
     setBusy(true);
     try {
-      await api.setPermissionRules(props.scope, { [d]: next });
+      await api.setPermissionRules(props.scope, { [d]: next }, selectedAgentIdOrUndefined());
       await Promise.all([refetch(), props.onSaved()]);
       pushToast("info", message);
     } catch (err) {
@@ -5842,7 +5842,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<v
 /// that already exists elsewhere.
 function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
-  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope));
+  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers());
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
@@ -6237,7 +6237,7 @@ function Settings() {
                     disabled={!selectedModel().trim()}
                     onClick={() =>
                       void guard(
-                        () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }),
+                        () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }, selectedAgentIdOrUndefined()),
                         `Now using ${providerLabel(selectedProvider())} — ${selectedModel()}`,
                       )
                     }
@@ -6390,25 +6390,25 @@ function Settings() {
                     <input
                       type="checkbox"
                       checked={voice().enabled}
-                      onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")}
+                      onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }, selectedAgentIdOrUndefined()), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")}
                     /> Enable voice conversations
                   </label>
                   <div class="voice-grid-2x2">
                     <div class="form-row">
                       <label for="voice-provider">Provider</label>
-                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }), "Voice provider saved")} />
+                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice provider saved")} />
                     </div>
                     <div class="form-row">
                       <label for="voice-transcription-model">Transcription Model</label>
-                      <input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }), "Transcription model saved")} />
+                      <input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Transcription model saved")} />
                     </div>
                     <div class="form-row">
                       <label for="voice-synthesis-model">Synthesis Model</label>
-                      <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }), "Synthesis model saved")} />
+                      <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />
                     </div>
                     <div class="form-row">
                       <label for="voice-realtime-model">Realtime Streaming Model</label>
-                      <input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }), "Realtime model saved")} />
+                      <input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Realtime model saved")} />
                     </div>
                   </div>
                 </>}
@@ -6443,7 +6443,7 @@ function Settings() {
                     <button
                       class="mode-btn"
                       classList={{ active: selectedPermissionMode() === m.value }}
-                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { permission_mode: m.value === "ReadOnly" ? "read-only" : m.value === "WorkspaceWrite" ? "workspace-write" : "full-access" }), `Now set to \u201C${m.label}\u201D`)}
+                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { permission_mode: m.value === "ReadOnly" ? "read-only" : m.value === "WorkspaceWrite" ? "workspace-write" : "full-access" }, selectedAgentIdOrUndefined()), `Now set to \u201C${m.label}\u201D`)}
                       disabled={selectedPermissionMode() === m.value}
                     >
                       <span class="mode-name">
@@ -6472,7 +6472,7 @@ function Settings() {
                     <button
                       class="mode-btn"
                       classList={{ active: selectedApprovalMode() === m.value }}
-                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
+                      onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }, selectedAgentIdOrUndefined()), `Approval mode set to “${m.label}”`)}
                       disabled={selectedApprovalMode() === m.value}
                     >
                       <span class="mode-name">
@@ -6676,7 +6676,7 @@ function Settings() {
                             type="checkbox"
                             checked={inherited()}
                             onChange={(event) => void guard(
-                              () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }),
+                              () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }, selectedAgentIdOrUndefined()),
                               event.currentTarget.checked ? `${label} now inherit Global` : `${label} inheritance disabled`,
                             )}
                           />
@@ -6758,7 +6758,7 @@ function Settings() {
                     onClick={() => {
                       setSavingMaxTurns(true);
                       void guard(
-                        () => api.patchConfigScope(configScope(), { max_turns: Number(maxTurnsInput()) }),
+                        () => api.patchConfigScope(configScope(), { max_turns: Number(maxTurnsInput()) }, selectedAgentIdOrUndefined()),
                         `Max turns set to ${maxTurnsInput()}`,
                       ).finally(() => setSavingMaxTurns(false));
                     }}
@@ -6775,7 +6775,7 @@ function Settings() {
                       const next = e.currentTarget.checked;
                       setTogglingWorkers(true);
                       void guard(
-                        () => api.patchConfigScope(configScope(), { workers: next }),
+                        () => api.patchConfigScope(configScope(), { workers: next }, selectedAgentIdOrUndefined()),
                         next ? "Workers enabled" : "Workers disabled",
                       ).finally(() => setTogglingWorkers(false));
                     }}

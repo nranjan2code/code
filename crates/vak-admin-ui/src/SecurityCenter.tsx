@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { api } from "./api";
 import { MODES, PageHeader, SEC_KINDS, confirmDestructive, secKindLabel } from "./display";
 import { timeAgo } from "./time";
-import { navigate, pushToast, route } from "./store";
+import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
 import type {
   ConfigInfo,
   ConfigScope,
@@ -255,7 +255,7 @@ export function ApprovalForwarding() {
 export function RuleEditor(props: { scope: ConfigScope; onSaved?: () => void | Promise<void> }) {
   const [view, { refetch }] = createResource(
     () => props.scope,
-    (scope: ConfigScope) => api.permissionRules(scope),
+    (scope: ConfigScope) => api.permissionRules(scope, selectedAgentIdOrUndefined()),
   );
   const [open, setOpen] = createSignal(false);
   const [decision, setDecision] = createSignal<RuleDecision>("deny");
@@ -271,7 +271,7 @@ export function RuleEditor(props: { scope: ConfigScope; onSaved?: () => void | P
   const write = async (d: RuleDecision, next: string[], message: string) => {
     setBusy(true);
     try {
-      await api.setPermissionRules(props.scope, { [d]: next });
+      await api.setPermissionRules(props.scope, { [d]: next }, selectedAgentIdOrUndefined());
       await Promise.all([refetch(), props.onSaved?.()]);
       pushToast("info", message);
     } catch (err) {
@@ -918,7 +918,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
   };
 
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
-  const [layer, { refetch: refetchLayer }] = createResource(props.scope, (scope) => api.configLayer(scope));
+  const [layer, { refetch: refetchLayer }] = createResource(props.scope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [gatewayPolicy, { refetch: refetchPolicy }] = createResource(() => api.gatewayApprovals());
   const [health, { refetch: refetchHealth }] = createResource(() => api.health());
 
@@ -964,7 +964,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
       if (!confirmed) return;
     }
     try {
-      await api.patchConfigScope(props.scope(), { permission_mode: apiModeValue });
+      await api.patchConfigScope(props.scope(), { permission_mode: apiModeValue }, selectedAgentIdOrUndefined());
       await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", `Execution authority set to “${targetMode}” (${props.scope() === "user" ? "Global" : "Workspace"})`);
     } catch (err) {
@@ -974,7 +974,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
 
   const setApprovalMode = async (targetApproval: "ask" | "approve-safe" | "auto-approve") => {
     try {
-      await api.patchConfigScope(props.scope(), { approval_mode: targetApproval });
+      await api.patchConfigScope(props.scope(), { approval_mode: targetApproval }, selectedAgentIdOrUndefined());
       await Promise.all([refetchConfig(), refetchLayer()]);
       pushToast("info", `Approval policy set to “${targetApproval}”`);
     } catch (err) {

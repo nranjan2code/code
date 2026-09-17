@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import * as api from "../api";
 import type { Commitment, CriterionState, Satisfaction, Verdict } from "../api";
-import { backend } from "../store";
+import { activeAgentId, backend } from "../store";
 import { relTime } from "../time";
 import Icon, { type IconName } from "./Icon";
 
@@ -105,7 +105,7 @@ function CommitmentRow(props: { commitment: Commitment; onClosed: () => void }) 
     setClosing(true);
     setError(null);
     try {
-      await api.closeCommitment(c().commitment_id, verdict, note());
+      await api.closeCommitment(c().commitment_id, verdict, note(), activeAgentId());
       props.onClosed();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -174,7 +174,7 @@ export default function CommitmentsPanel() {
 
   const refresh = async () => {
     try {
-      const res = await api.listCommitments(all());
+      const res = await api.listCommitments(all(), activeAgentId());
       setCommitments(res.commitments);
       setError(null);
     } catch (e) {

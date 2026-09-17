@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { setPendingSettingsPage, setSettingsOpen } from "../store";
+import { activeAgentId, setPendingSettingsPage, setSettingsOpen } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
 
@@ -21,7 +21,7 @@ export default function BudgetBanner() {
 
   const refresh = async () => {
     try {
-      const f = await api.finopsStatus();
+      const f = await api.finopsStatus(activeAgentId());
       if (f.day_cap_usd == null || f.day_cap_usd <= 0) {
         setRatio(null);
         return;

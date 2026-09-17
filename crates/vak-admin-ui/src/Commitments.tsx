@@ -14,7 +14,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 
 import { api } from "./api";
 import { PageHeader } from "./display";
-import { navigate, pushToast, route } from "./store";
+import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
 import { timeAgo } from "./time";
 import type {
   Commitment,
@@ -206,7 +206,7 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
   const close = async () => {
     setBusy(true);
     try {
-      await api.closeCommitment(props.commitment.commitment_id, verdict(), note());
+      await api.closeCommitment(props.commitment.commitment_id, verdict(), note(), selectedAgentIdOrUndefined());
       pushToast("info", `Closed as ${verdict()}`);
       setOpen(false);
       props.onDone();
@@ -1242,7 +1242,7 @@ export function Commitments() {
   const [evidenceFilter, setEvidenceFilter] = createSignal<string>("all");
   const [searchQuery, setSearchQuery] = createSignal<string>("");
 
-  const [data, { refetch }] = createResource(() => api.commitments(true));
+  const [data, { refetch }] = createResource(() => api.commitments(true, selectedAgentIdOrUndefined()));
 
   const priorityFor = (id: string) =>
     data()?.priorities.find((p) => p.commitment_id === id);
