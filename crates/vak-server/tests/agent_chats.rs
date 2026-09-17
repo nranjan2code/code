@@ -403,6 +403,159 @@ async fn memory_and_proposals_are_scoped_per_agent() {
     );
 }
 
+/// Set up two custom Agents (mirroring `memory_and_proposals_are_scoped_per_agent`)
+/// and return `(app, core)`.
+async fn two_agent_app() -> (Router, vak_core::Core, tempfile::TempDir) {
+    vak_config::paths::isolate_home_for_tests();
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
+    core.set_sessions_home(temp.path().join("sessions-home"));
+    let app = vak_server::router(core.clone());
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/config/agents",
+            json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"}),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    // The caller must hold onto the returned `TempDir` for the rest of the
+    // test — dropping it here (as a purely local variable would be, once
+    // this function returns) deletes the on-disk workspace out from under
+    // every subsequent request, which is exactly what produced the
+    // spurious "This agent is no longer available" 404s while this helper
+    // was being written.
+    (app, core, temp)
+}
+
+/// `PUT /config/hooks` writes the project's own `[[hooks]]` array
+/// (docs/design/45-prompt-layers.md-adjacent config-layer semantics) — a
+/// hook saved for one Agent must not appear in, or be overwritten by, a
+/// different Agent's `?agent=` view, since each Agent has its own isolated
+/// workspace file (see commit 15c9c256's memory/proposals precedent).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hooks_are_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/config/hooks",
+        json!({
+            "hooks": [{"event": "session_start", "command": "echo newsy-hook", "enabled": true}],
+            "agent": "newsy",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (_, newsy_hooks) = call(&app, "GET", "/config/hooks?agent=newsy", json!({})).await;
+    assert!(newsy_hooks.to_string().contains("newsy-hook"));
+
+    let (_, other_hooks) = call(&app, "GET", "/config/hooks?agent=other", json!({})).await;
+    assert!(
+        !other_hooks.to_string().contains("newsy-hook"),
+        "other agent must not see newsy's hook"
+    );
+
+    let (_, default_hooks) = call(&app, "GET", "/config/hooks", json!({})).await;
+    assert!(
+        !default_hooks.to_string().contains("newsy-hook"),
+        "the default agent must not see newsy's hook either"
+    );
+}
+
+/// `PUT /config/mcp` writes the project's own MCP server map — same
+/// isolation contract as hooks above, checked here for the MCP config
+/// layer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_servers_are_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/config/mcp",
+        json!({
+            "servers": {"newsy-server": {"command": "true", "args": [], "env": {}}},
+            "agent": "newsy",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, newsy_servers) = call(&app, "GET", "/config/mcp?agent=newsy", json!({})).await;
+    assert!(newsy_servers.to_string().contains("newsy-server"));
+
+    let (_, other_servers) = call(&app, "GET", "/config/mcp?agent=other", json!({})).await;
+    assert!(
+        !other_servers.to_string().contains("newsy-server"),
+        "other agent must not see newsy's MCP server"
+    );
+
+    let (_, default_servers) = call(&app, "GET", "/config/mcp", json!({})).await;
+    assert!(
+        !default_servers.to_string().contains("newsy-server"),
+        "the default agent must not see newsy's MCP server either"
+    );
+}
+
+/// The plugin store (retired-plugin sweep, catalog sources, key
+/// revocation, install/enable/disable/rollback/remove) is rooted at
+/// `<Agent's own cwd>/.vak` (`plugin_store`) — revoking a signing key for
+/// one Agent's workspace-scoped plugin store must not touch a different
+/// Agent's, or the default Agent's, own store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plugin_key_revocation_is_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/plugins/keys/test-signing-key/revoke?agent=newsy&scope=workspace",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Read each Agent's own plugin registry file directly — there is no
+    // dedicated "list revoked keys" endpoint, and the registry file is
+    // exactly what every plugin_store-backed endpoint (install, enable,
+    // disable, rollback, remove, sources) reads and writes.
+    let newsy_root = vak_config::paths::agent_workspace(_core.cwd(), "newsy").join(".vak");
+    let other_root = vak_config::paths::agent_workspace(_core.cwd(), "other").join(".vak");
+    let default_root = _core.cwd().join(".vak");
+
+    let newsy_registry = vak_plugin::PluginStore::new(newsy_root)
+        .load_sources()
+        .unwrap();
+    assert!(
+        newsy_registry.revoked_keys.contains("test-signing-key"),
+        "newsy's own store must record the revocation"
+    );
+
+    let other_registry = vak_plugin::PluginStore::new(other_root)
+        .load_sources()
+        .unwrap();
+    assert!(
+        !other_registry.revoked_keys.contains("test-signing-key"),
+        "other agent's plugin store must not see newsy's key revocation"
+    );
+
+    let default_registry = vak_plugin::PluginStore::new(default_root)
+        .load_sources()
+        .unwrap();
+    assert!(
+        !default_registry.revoked_keys.contains("test-signing-key"),
+        "the default agent's plugin store must not see newsy's key revocation either"
+    );
+}
+
 /// Isolated, credential-free browser fixture. Never reads the operator's home.
 /// Run with: cargo test -p vak-server --test agent_chats browser_fixture -- --ignored --nocapture
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
