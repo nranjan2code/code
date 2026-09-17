@@ -23,6 +23,15 @@ export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
   localStorage.getItem("vak_admin_selected_agent") || "global",
 );
 
+/** The selected Agent as an `?agent=` query value — "global" (Platform
+ * Defaults) isn't a real Agent, so it maps to `undefined` (the server's own
+ * default, the built-in "vak" Agent), matching the mapping `SessionForensics`
+ * already uses for its own scoping. */
+export const selectedAgentIdOrUndefined = () => {
+  const id = selectedAgentId();
+  return id === "global" ? undefined : id;
+};
+
 export async function refreshAdminAgents() {
   try {
     const res = await api.agents();

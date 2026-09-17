@@ -25,7 +25,7 @@ import {
 } from "./display";
 import {
   activity, approvalsVersion, conn, feed, navigate, observingSince, pushToast, sessionsVersion,
-  setAuthed, statsVersion, selectedAgentId, adminAgents,
+  setAuthed, statsVersion, selectedAgentId, adminAgents, selectedAgentIdOrUndefined,
 } from "./store";
 import { clock, shortId, timeAgo } from "./time";
 import type {
@@ -791,7 +791,10 @@ export function Home() {
   const [onboarding, onboardingActions] = createResource(statsVersion, () => api.onboarding());
   const [gateway, gatewayActions] = createResource(statsVersion, () => api.gatewayStatus());
   const [allowlist, allowlistActions] = createResource(statsVersion, () => api.gatewayAllowlist());
-  const [proposals, proposalsActions] = createResource(statsVersion, () => api.skillProposals());
+  const [proposals, proposalsActions] = createResource(
+    () => ({ ver: statsVersion(), agent: selectedAgentIdOrUndefined() }),
+    ({ agent }) => api.skillProposals(agent),
+  );
   const [inbox, inboxActions] = createResource(statsVersion, () => api.inbox(true, 20));
 
   const opsTimer = window.setInterval(() => opsActions.refetch(), 10_000);

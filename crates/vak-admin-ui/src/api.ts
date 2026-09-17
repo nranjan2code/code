@@ -662,18 +662,22 @@ export const api = {
   pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove", scope: "workspace" | "user"): Promise<PluginItem> =>
     fetch(`${action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`}?scope=${scope}`, { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
 
-  skillProposals: (): Promise<{ proposals: SkillProposal[] }> =>
-    fetch("/skills/proposals").then((r) => handle(r)),
+  skillProposals: (agent?: string): Promise<{ proposals: SkillProposal[] }> =>
+    fetch(agent ? `/skills/proposals?agent=${encodeURIComponent(agent)}` : "/skills/proposals").then((r) => handle(r)),
 
-  promoteProposal: (id: string): Promise<void> =>
-    fetch(`/skills/proposals/${encodeURIComponent(id)}/promote`, { method: "POST" }).then((r) =>
+  promoteProposal: (id: string, agent?: string): Promise<void> => {
+    const suffix = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+    return fetch(`/skills/proposals/${encodeURIComponent(id)}/promote${suffix}`, { method: "POST" }).then((r) =>
       void handle(r),
-    ),
+    );
+  },
 
-  rejectProposal: (id: string): Promise<void> =>
-    fetch(`/skills/proposals/${encodeURIComponent(id)}/reject`, { method: "POST" }).then((r) =>
+  rejectProposal: (id: string, agent?: string): Promise<void> => {
+    const suffix = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+    return fetch(`/skills/proposals/${encodeURIComponent(id)}/reject${suffix}`, { method: "POST" }).then((r) =>
       void handle(r),
-    ),
+    );
+  },
 
   tasks: (): Promise<{ tasks: TaskItem[] }> =>
     fetch("/tasks").then((r) => handle(r)),
@@ -698,10 +702,10 @@ export const api = {
   deleteTask: (id: string): Promise<void> =>
     fetch(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => void handle(r)),
 
-  memory: (): Promise<{ notes: MemoryItem[] }> =>
-    fetch("/memory").then((r) => handle(r)),
+  memory: (agent?: string): Promise<{ notes: MemoryItem[] }> =>
+    fetch(agent ? `/memory?agent=${encodeURIComponent(agent)}` : "/memory").then((r) => handle(r)),
 
-  addMemory: (scope: "profile" | "project", text: string, tag?: string): Promise<void> =>
+  addMemory: (scope: "profile" | "project", text: string, tag?: string, agent?: string): Promise<void> =>
     fetch("/memory", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -709,21 +713,25 @@ export const api = {
         text,
         scope: scope === "profile" ? "profile" : "workspace",
         tag: tag || undefined,
+        agent,
       }),
     }).then((r) => void handle(r)),
 
-  forgetMemory: (noteId: string, scope: "workspace" | "profile"): Promise<void> =>
-    fetch(`/memory/${encodeURIComponent(noteId)}?scope=${scope}`, { method: "DELETE" }).then((r) => void handle(r)),
+  forgetMemory: (noteId: string, scope: "workspace" | "profile", agent?: string): Promise<void> => {
+    const params = new URLSearchParams({ scope });
+    if (agent) params.set("agent", agent);
+    return fetch(`/memory/${encodeURIComponent(noteId)}?${params}`, { method: "DELETE" }).then((r) => void handle(r));
+  },
 
-  amendMemory: (noteId: string, scope: "workspace" | "profile", text: string): Promise<void> =>
+  amendMemory: (noteId: string, scope: "workspace" | "profile", text: string, agent?: string): Promise<void> =>
     fetch(`/memory/${encodeURIComponent(noteId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, scope }),
+      body: JSON.stringify({ text, scope, agent }),
     }).then((r) => void handle(r)),
 
-  cleanupMemory: (): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
-    fetch("/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
+  cleanupMemory: (agent?: string): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
+    fetch(agent ? `/memory/cleanup?agent=${encodeURIComponent(agent)}` : "/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
 
   doctor: (sessionId?: string): Promise<{ report: string; ok: boolean; failures?: number; checks?: Array<{ label: string; ok: boolean; detail: string }>; facts?: string[] }> => {
     const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";

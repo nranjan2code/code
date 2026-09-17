@@ -23,6 +23,7 @@ import {
   authed, conn, connectEvents, disconnectEvents, navigate, pushToast, route, sessionsVersion,
   setAuthed, statsVersion, toasts,
   adminAgents, setAdminAgents, selectedAgentId, setSelectedAgentId, refreshAdminAgents,
+  selectedAgentIdOrUndefined,
 } from "./store";
 import type { AgentScopeItem } from "./store";
 import type {
@@ -1004,8 +1005,8 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
     if (!promote && !confirmDestructive("Reject this skill proposal?")) return;
     setBusyId(id);
     try {
-      if (promote) await api.promoteProposal(id);
-      else await api.rejectProposal(id);
+      if (promote) await api.promoteProposal(id, selectedAgentIdOrUndefined());
+      else await api.rejectProposal(id, selectedAgentIdOrUndefined());
       await props.ctx.refetchSkills();
       pushToast("info", promote ? "Promoted to an active skill" : "Proposal rejected");
     } catch (err) {
@@ -1697,7 +1698,7 @@ function ExtensionsSection() {
   const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope));
   const [skills, skillsActions] = createResource(() => api.skills());
   const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace"));
-  const [proposals, proposalsActions] = createResource(() => api.skillProposals());
+  const [proposals, proposalsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skillProposals(agent));
   const [tasks, tasksActions] = createResource(() => api.tasks());
 
   const ctx: ExtensionsCtx = {
@@ -1878,7 +1879,7 @@ const MEMORY_PRESETS = [
 ] as const;
 
 function MemoryView() {
-  const [memoryData, { refetch }] = createResource(() => api.memory());
+  const [memoryData, { refetch }] = createResource(selectedAgentIdOrUndefined, (agent) => api.memory(agent));
   const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope));
   const [scope, setScope] = createSignal<"profile" | "project">("project");
@@ -1944,7 +1945,7 @@ function MemoryView() {
     if (!confirmDestructive("Remove only abandoned memory lock/temp files and empty workspace folders? Notes will not be deleted.")) return;
     setCleaning(true);
     try {
-      const report = await api.cleanupMemory();
+      const report = await api.cleanupMemory(selectedAgentIdOrUndefined());
       pushToast("info", `Cleaned ${report.removed_locks} locks, ${report.removed_temps} temp files, ${report.removed_empty_dirs} empty folders`);
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -1957,7 +1958,7 @@ function MemoryView() {
     if (!noteText().trim() || busy()) return;
     setBusy(true);
     try {
-      await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined);
+      await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined, selectedAgentIdOrUndefined());
       await refetch();
       pushToast("info", "Vak will remember that");
       setNoteText("");
@@ -1973,7 +1974,7 @@ function MemoryView() {
     if (!confirmDestructive("Forget this note? Vak stops taking it into account.")) return;
     try {
       const note = memoryData()?.notes?.find((m) => m.id === id);
-      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace");
+      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace", selectedAgentIdOrUndefined());
       await refetch();
       pushToast("info", "Forgotten");
     } catch (err) {
@@ -2081,7 +2082,7 @@ function MemoryView() {
                         <button class="small" onClick={async () => {
                           if (!editText().trim()) return;
                           try {
-                            await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim());
+                            await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim(), selectedAgentIdOrUndefined());
                             await refetch();
                             setEditing(null);
                             pushToast("info", "Memory amended");

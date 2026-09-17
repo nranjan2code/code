@@ -14,7 +14,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 
 import { api } from "./api";
 import { PageHeader } from "./display";
-import { navigate, pushToast, route } from "./store";
+import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
 import { timeAgo } from "./time";
 import type { InboxEntry, PendingApproval, SkillProposal } from "./types";
 
@@ -72,7 +72,10 @@ export function Inbox() {
   // Live resources
   const [inboxData, { refetch: refetchInbox }] = createResource(unreadOnly, (u) => api.inbox(u));
   const [approvalsData, { refetch: refetchApprovals }] = createResource(() => api.approvals().catch(() => ({ approvals: [], total: 0 })));
-  const [proposalsData, { refetch: refetchProposals }] = createResource(() => api.skillProposals().catch(() => ({ proposals: [] })));
+  const [proposalsData, { refetch: refetchProposals }] = createResource(
+    selectedAgentIdOrUndefined,
+    (agent) => api.skillProposals(agent).catch(() => ({ proposals: [] })),
+  );
 
   const refreshAll = async () => {
     await Promise.all([refetchInbox(), refetchApprovals(), refetchProposals()]);
@@ -168,7 +171,7 @@ export function Inbox() {
   // Quick Skill Proposal Promotion
   const handlePromoteSkill = async (proposalId: string, entryId: string) => {
     try {
-      await api.promoteProposal(proposalId);
+      await api.promoteProposal(proposalId, selectedAgentIdOrUndefined());
       pushToast("info", "Promoted skill proposal");
       await api.inboxAck(entryId).catch(() => {});
       await refreshAll();
