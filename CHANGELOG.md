@@ -1,5 +1,15 @@
 # Changelog
  
+## 3.2.0 — 2026-09-17
+
+- Agent-owned platform release (`docs/design/64-agent-owned-platform.md`): Agents are authoritative owners of conversations, private session ledgers, memory boundaries, channel targets, and delivery provenance.
+- Dedicated agent workspaces: `~/vak-home/agents/<agent_id>/` isolates sessions, memories, and local configuration per specialist, while cross-agent infrastructure remains shared at `~/vak-home/` via `Core::shared_data_home()`.
+- Quarantined execution scratch: tool executions strictly quarantined to `.vak/scratch/<agent_id>/<execution_id>/` preventing cross-agent artifact collision.
+- Scoped secret lookup precedence: strict resolution chain from Agent private `.env` → project `.env` → Shared platform `.env` → process environment.
+- Frontend Agent-First UI (`vak-client-ui`): Added `AgentPickerModal` with fleet roster, specialist creation templates, and working directory inspector; partitioned workbench telemetry by session in `sessionWorkbenchMap`.
+- Health and doctor diagnostics: Added `agent_roster_check` auditing all agent workspaces and ledgers.
+- Full stack local macOS release: Synchronized binaries, verified manifests, and updated launchd services.
+
 ## 3.1.2 — 2026-09-16
 
 - Bulk presentation activation runtime: added atomic `POST /presentations/activate-all` and `POST /presentations/deactivate-all` endpoints to `vak-server` with single-write store persistence.
