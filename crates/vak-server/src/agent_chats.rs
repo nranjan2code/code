@@ -41,13 +41,22 @@ pub(crate) async fn list(State(state): State<AppState>) -> Response {
     }
 }
 
-/// Opening an agent is idempotent across reloads and clients. The immutable
-/// header is the ownership record; browser storage has no routing authority.
-pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+/// Resolve an Agent id to its identity and its own isolated `Core` — the
+/// single place this resolution happens, so every endpoint that needs "this
+/// Agent's own data" (workspace, sessions_home, runtime safety pins) goes
+/// through the same logic `open` uses, rather than each one re-deriving or
+/// (worse) silently falling back to the process's default workspace. Any
+/// new endpoint scoped to a specific Agent should call this rather than
+/// reading `state.core`/`state.active_core()` directly.
+#[allow(clippy::result_large_err)]
+pub(crate) fn resolve_agent_core(
+    state: &AppState,
+    id: &str,
+) -> Result<(AgentIdentity, vak_core::Core), Response> {
     let active = state.active_core();
     let identity = if id == "vak" {
         AgentIdentity {
-            id,
+            id: id.to_string(),
             revision: 1,
             name: "Vak".into(),
             personality: String::new(),
@@ -56,30 +65,21 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             instructions: String::new(),
         }
     } else {
-        let profiles = match agents::effective(&active) {
-            Ok(profiles) => profiles,
-            Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
-        };
+        let profiles =
+            agents::effective(&active).map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
         let Some(profile) = profiles.into_iter().find(|p| p.id == id) else {
-            return error(StatusCode::NOT_FOUND, "This agent is no longer available.");
+            return Err(error(
+                StatusCode::NOT_FOUND,
+                "This agent is no longer available.",
+            ));
         };
         if !profile.is_admissible() {
-            return error(StatusCode::CONFLICT, "This Agent is paused or archived.");
+            return Err(error(
+                StatusCode::CONFLICT,
+                "This Agent is paused or archived.",
+            ));
         }
         profile.identity()
-    };
-    // The desktop surface has one durable conversation per selected Agent.
-    // This is deliberately derived from the Agent identity, not from browser
-    // storage or a transient session id, so reopening the same Agent resumes
-    // the same conversation while another Agent gets an independent ledger.
-    let conversation = ConversationContext {
-        conversation_id: format!("agent:{}:local", identity.id),
-        audience_id: "local".into(),
-        origin: Some(ConversationOrigin {
-            surface: "desktop".into(),
-            address: "local".into(),
-            bot_id: None,
-        }),
     };
     // Each user-created Agent gets its own isolated project workspace (files,
     // tool access, permissions) rather than sharing the process's default
@@ -117,8 +117,10 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
     // time; opening an agent is idempotent and hit repeatedly (reload, tab
     // switch, reconnect), so skip the mkdir once it's confirmed to exist
     // rather than paying the syscalls on every open.
-    if !workspace.is_dir() && let Err(e) = std::fs::create_dir_all(&workspace) {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    if !workspace.is_dir()
+        && let Err(e) = std::fs::create_dir_all(&workspace)
+    {
+        return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
     let core = if workspace == *active.cwd() {
         active
@@ -141,7 +143,7 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
                 vak_core::trust::is_trusted(&workspace),
             ) {
                 Ok(core) => core,
-                Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
+                Err(e) => return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e)),
             },
         };
         // A freshly-resolved Core has its own default sessions/data home
@@ -174,9 +176,31 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         }
         resolved
     };
-    let core = core
-        .with_agent_identity(Some(identity.clone()))
-        .with_conversation_context(Some(conversation.clone()));
+    let core = core.with_agent_identity(Some(identity.clone()));
+    Ok((identity, core))
+}
+
+/// Opening an agent is idempotent across reloads and clients. The immutable
+/// header is the ownership record; browser storage has no routing authority.
+pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let (identity, core) = match resolve_agent_core(&state, &id) {
+        Ok(pair) => pair,
+        Err(response) => return response,
+    };
+    // The desktop surface has one durable conversation per selected Agent.
+    // This is deliberately derived from the Agent identity, not from browser
+    // storage or a transient session id, so reopening the same Agent resumes
+    // the same conversation while another Agent gets an independent ledger.
+    let conversation = ConversationContext {
+        conversation_id: format!("agent:{}:local", identity.id),
+        audience_id: "local".into(),
+        origin: Some(ConversationOrigin {
+            surface: "desktop".into(),
+            address: "local".into(),
+            bot_id: None,
+        }),
+    };
+    let core = core.with_conversation_context(Some(conversation.clone()));
     let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e);

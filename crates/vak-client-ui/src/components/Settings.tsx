@@ -17,6 +17,7 @@ import {
   updateUiPreference,
   sessions,
   backend,
+  activeAgentId,
   type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
@@ -423,8 +424,9 @@ export default function Settings() {
 
   async function refreshLearning() {
     try {
-      setNotes((await api.listMemory()).notes);
-      setProposals((await api.listProposals()).proposals);
+      const agent = activeAgentId();
+      setNotes((await api.listMemory(agent)).notes);
+      setProposals((await api.listProposals(agent)).proposals);
     } catch {
       /* gateway down — lists simply stay stale */
     }
@@ -433,7 +435,7 @@ export default function Settings() {
   async function forgetNote(id: string) {
     if (!window.confirm("Forget this memory note? The block is removed from the markdown store; this cannot be undone.")) return;
     try {
-      await api.forgetMemory(id, tier());
+      await api.forgetMemory(id, tier(), activeAgentId());
       await refreshLearning();
     } catch (e) {
       setNotice({ kind: "error", text: `Could not forget note: ${e instanceof Error ? e.message : String(e)}` });
@@ -444,7 +446,7 @@ export default function Settings() {
     const text = editText().trim();
     if (!text) return;
     try {
-      await api.amendMemory(id, tier(), text);
+      await api.amendMemory(id, tier(), text, activeAgentId());
       setEditingId(null);
       await refreshLearning();
     } catch (e) {
@@ -456,7 +458,7 @@ export default function Settings() {
     const text = noteText().trim();
     if (!text) return;
     try {
-      await api.appendMemory(tier(), text, noteKind().trim() || "fact", noteTag().trim());
+      await api.appendMemory(tier(), text, noteKind().trim() || "fact", noteTag().trim(), activeAgentId());
       setNoteText("");
       setNoteTag("");
       setAddingNote(false);
@@ -729,7 +731,7 @@ export default function Settings() {
 
   async function promote(id: string) {
     try {
-      await api.promoteProposal(id);
+      await api.promoteProposal(id, activeAgentId());
       await refreshLearning();
     } catch (e) {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
@@ -738,7 +740,7 @@ export default function Settings() {
 
   async function reject(id: string) {
     try {
-      await api.rejectProposal(id);
+      await api.rejectProposal(id, activeAgentId());
       await refreshLearning();
     } catch (e) {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });

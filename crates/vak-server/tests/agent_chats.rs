@@ -324,6 +324,85 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     assert!(transcript["messages"].as_array().is_some());
 }
 
+/// Memory notes, learning proposals, and skill proposals are Agent-scoped
+/// (docs/design/23-memory.md: "Per-agent data home: sessions, memory, and
+/// agent-specific config") — a note or proposal written for one Agent must
+/// never appear for, or be mutated by, a different Agent's `?agent=` view.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn memory_and_proposals_are_scoped_per_agent() {
+    vak_config::paths::isolate_home_for_tests();
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
+    core.set_sessions_home(temp.path().join("sessions-home"));
+    let app = vak_server::router(core);
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/config/agents",
+            json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"}),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+
+    // Each agent writes a note only it should ever see.
+    for (agent, marker) in [("newsy", "newsy-private-note"), ("other", "other-private-note")] {
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/memory",
+            json!({"text": marker, "agent": agent}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "append for {agent}");
+    }
+
+    let (_, newsy_notes) = call(&app, "GET", "/memory?agent=newsy", json!({})).await;
+    let newsy_text = newsy_notes.to_string();
+    assert!(newsy_text.contains("newsy-private-note"));
+    assert!(!newsy_text.contains("other-private-note"));
+
+    let (_, other_notes) = call(&app, "GET", "/memory?agent=other", json!({})).await;
+    let other_text = other_notes.to_string();
+    assert!(other_text.contains("other-private-note"));
+    assert!(!other_text.contains("newsy-private-note"));
+
+    // The default (built-in) agent, and an unscoped call, see neither.
+    let (_, default_notes) = call(&app, "GET", "/memory", json!({})).await;
+    let default_text = default_notes.to_string();
+    assert!(!default_text.contains("newsy-private-note"));
+    assert!(!default_text.contains("other-private-note"));
+
+    // Forgetting newsy's note must not touch other's.
+    let newsy_note_id = newsy_notes["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["text"] == "newsy-private-note")
+        .and_then(|n| n["id"].as_str())
+        .unwrap()
+        .to_string();
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/memory/{newsy_note_id}?agent=newsy"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, other_notes_after) = call(&app, "GET", "/memory?agent=other", json!({})).await;
+    assert!(
+        other_notes_after
+            .to_string()
+            .contains("other-private-note"),
+        "deleting newsy's note must not affect other's"
+    );
+}
+
 /// Isolated, credential-free browser fixture. Never reads the operator's home.
 /// Run with: cargo test -p vak-server --test agent_chats browser_fixture -- --ignored --nocapture
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

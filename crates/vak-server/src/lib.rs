@@ -2441,16 +2441,70 @@ fn note_payload(n: &vak_core::memory::NoteBlock, scope: &str) -> serde_json::Val
     })
 }
 
-async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut homes = vec![state.core.sessions_home()];
+/// Which Agent an endpoint scoped to "the currently open Agent's own data"
+/// (memory, learning proposals) should resolve against. Absent means the
+/// built-in "vak" Agent — the same default `agent_chats::open` uses.
+#[derive(serde::Deserialize, Default)]
+struct AgentScopeQuery {
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+/// Resolve the `Core` an Agent-scoped endpoint should read/write through.
+///
+/// A registered session already carries the exact `Core` it was opened
+/// under (agent identity, isolated workspace, and now-agent-scoped
+/// `sessions_home` all resolved once at `agent_chats::open` time) — reusing
+/// it is cheaper and more precise than re-deriving identity from an id, so
+/// `session_id` (when the caller already has one, e.g. `AppendMemoryBody`)
+/// takes precedence over an explicit `agent` id.
+///
+/// This is the single place "which Agent's data does this endpoint mean"
+/// gets decided, so a future endpoint scoped the same way calls this
+/// instead of reading `state.core` directly and drifting out of sync with
+/// `agent_chats::open` the way `list_sessions` once did (see commit
+/// 7e6713c0 and its follow-up).
+#[allow(clippy::result_large_err)]
+fn resolve_scoped_core(
+    state: &AppState,
+    session_id: Option<&str>,
+    agent: Option<&str>,
+) -> Result<vak_core::Core, axum::response::Response> {
+    if let Some(sid) = session_id
+        && let Some(handle) = state.get(sid)
+    {
+        return Ok(handle.core.clone());
+    }
+    let id = agent.unwrap_or("vak");
+    agent_chats::resolve_agent_core(state, id).map(|(_, core)| core)
+}
+
+async fn list_memory(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    // The resolved Agent's own (now agent-scoped) sessions_home is primary;
+    // `state.core`'s plain, un-scoped home is kept as a fallback merge so
+    // notes written before Agents carried their own sessions_home (or by an
+    // older build) are not silently hidden.
+    let mut homes = vec![core.sessions_home(), state.core.sessions_home()];
     let shared = state.core.shared_data_home();
-    if shared != state.core.sessions_home() {
+    if !homes.contains(&shared) {
         homes.push(shared);
     }
     let mut blocks: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut seen_home = std::collections::HashSet::new();
     for home in homes {
-        for n in vak_core::memory::list_notes(&home, state.core.cwd()) {
+        if !seen_home.insert(home.clone()) {
+            continue;
+        }
+        for n in vak_core::memory::list_notes(&home, core.cwd()) {
             if seen.insert((n.kind.clone(), n.tag.clone(), n.text.clone())) {
                 blocks.push(note_payload(&n, "workspace"));
             }
@@ -2461,25 +2515,37 @@ async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
             }
         }
     }
-    Json(serde_json::json!({ "notes": blocks }))
+    Json(serde_json::json!({ "notes": blocks })).into_response()
 }
 
-async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut report = vak_core::memory::cleanup_artifacts(
-        &state.core.sessions_home(),
-        std::time::Duration::from_secs(86_400),
-    );
-    if state.core.shared_data_home() != state.core.sessions_home() {
-        let shared_report = vak_core::memory::cleanup_artifacts(
-            &state.core.shared_data_home(),
-            std::time::Duration::from_secs(86_400),
-        );
-        report.removed_locks += shared_report.removed_locks;
-        report.removed_temps += shared_report.removed_temps;
-        report.removed_empty_dirs += shared_report.removed_empty_dirs;
+async fn cleanup_memory(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let mut homes = vec![core.sessions_home(), state.core.sessions_home()];
+    let shared = state.core.shared_data_home();
+    if !homes.contains(&shared) {
+        homes.push(shared);
+    }
+    let mut report = vak_core::memory::CleanupReport::default();
+    let mut seen_home = std::collections::HashSet::new();
+    for home in homes {
+        if !seen_home.insert(home.clone()) {
+            continue;
+        }
+        let home_report =
+            vak_core::memory::cleanup_artifacts(&home, std::time::Duration::from_secs(86_400));
+        report.removed_locks += home_report.removed_locks;
+        report.removed_temps += home_report.removed_temps;
+        report.removed_empty_dirs += home_report.removed_empty_dirs;
     }
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
         "memory_cleanup",
         &format!(
@@ -2493,11 +2559,19 @@ async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value
         "removed_temps": report.removed_temps,
         "removed_empty_dirs": report.removed_empty_dirs,
     }))
+    .into_response()
 }
 
-async fn consolidate_memory_route(State(state): State<AppState>) -> axum::response::Response {
+async fn consolidate_memory_route(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match state.core.consolidate_memory() {
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    match core.consolidate_memory() {
         Ok(report) => (
             StatusCode::OK,
             Json(serde_json::to_value(&report).unwrap_or_default()),
@@ -2683,6 +2757,11 @@ struct AppendMemoryBody {
     scope: Option<MemoryScope>,
     #[serde(default)]
     session_id: Option<String>,
+    /// Which Agent this note belongs to; see `AgentScopeQuery`. Absent
+    /// means "vak", unless `session_id` names a currently-registered
+    /// session, whose own Agent takes precedence (see `resolve_scoped_core`).
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Append a note to either tier. Keeps gateway/desktop/CLI symmetric —
@@ -2692,7 +2771,12 @@ async fn append_memory(
     Json(body): Json<AppendMemoryBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let core = match resolve_scoped_core(&state, body.session_id.as_deref(), body.agent.as_deref())
+    {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let home = core.sessions_home();
     let scope = body.scope.unwrap_or(MemoryScope::Workspace);
     let kind = body.kind.unwrap_or_else(|| "fact".to_string());
     let tag = body.tag.unwrap_or_default();
@@ -2700,7 +2784,7 @@ async fn append_memory(
     let result = match scope {
         MemoryScope::Workspace => vak_core::memory::append_note(
             &home,
-            state.core.cwd(),
+            core.cwd(),
             &kind,
             &tag,
             &session,
@@ -2733,12 +2817,12 @@ async fn append_memory(
     }
 }
 
-fn memory_store_path(state: &AppState, scope: MemoryScope) -> PathBuf {
-    let home = state.core.sessions_home();
+fn memory_store_path(core: &vak_core::Core, scope: MemoryScope) -> PathBuf {
+    let home = core.sessions_home();
     match scope {
         MemoryScope::Workspace => home
             .join("memory")
-            .join(vak_core::memory::hash_cwd(state.core.cwd()))
+            .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("MEMORY.md"),
         MemoryScope::Profile => vak_core::memory::profile_path(&home),
     }
@@ -2758,11 +2842,25 @@ async fn forget_memory_note(
     axum::extract::Query(q): axum::extract::Query<MemoryScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = memory_store_path(&state, q.scope.unwrap_or_default());
-    match vak_core::memory::forget_note(&path, &note_id) {
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let path = memory_store_path(&core, q.scope.unwrap_or_default());
+    let result = vak_core::memory::forget_note(&path, &note_id);
+    // A note written before this Agent's data moved to its own sessions_home
+    // subfolder still lives at the legacy, un-scoped path — fall back to it
+    // the same way `promote_proposal`/`reject_proposal` already do, so an
+    // old note surfaced by `list_memory`'s merged view can still be forgotten.
+    let legacy_path = memory_store_path(&state.core, q.scope.unwrap_or_default());
+    let result = match result {
+        Err(_) if legacy_path != path => vak_core::memory::forget_note(&legacy_path, &note_id),
+        other => other,
+    };
+    match result {
         Ok(bytes) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &core.sessions_home(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_forget",
                 &format!("scope={:?} note_id={note_id}", q.scope.unwrap_or_default()),
@@ -2787,12 +2885,18 @@ struct MemoryAmendBody {
     text: String,
     #[serde(default)]
     scope: Option<MemoryScope>,
+    /// See `AgentScopeQuery`.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
 struct MemoryScopeQuery {
     #[serde(default)]
     scope: Option<MemoryScope>,
+    /// See `AgentScopeQuery`.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 async fn amend_memory_note(
@@ -2808,11 +2912,24 @@ async fn amend_memory_note(
         )
             .into_response();
     }
-    let path = memory_store_path(&state, body.scope.unwrap_or_default());
-    match vak_core::memory::amend_note(&path, &note_id, &body.text) {
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let path = memory_store_path(&core, body.scope.unwrap_or_default());
+    let result = vak_core::memory::amend_note(&path, &note_id, &body.text);
+    // See the identical fallback in `forget_memory_note`.
+    let legacy_path = memory_store_path(&state.core, body.scope.unwrap_or_default());
+    let result = match result {
+        Err(_) if legacy_path != path => {
+            vak_core::memory::amend_note(&legacy_path, &note_id, &body.text)
+        }
+        other => other,
+    };
+    match result {
         Ok(()) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &core.sessions_home(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_amend",
                 &format!(
@@ -2852,19 +2969,32 @@ fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
         .collect()
 }
 
-async fn list_proposals_route(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "proposals": proposals_payload(&state.core) }))
+async fn list_proposals_route(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    Json(serde_json::json!({ "proposals": proposals_payload(&core) })).into_response()
 }
 
 async fn promote_proposal(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let res = vak_core::learning::promote(&state.core.sessions_home(), state.core.cwd(), &id);
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let res = vak_core::learning::promote(&core.sessions_home(), core.cwd(), &id);
     let res = match res {
-        Err(_) if state.core.shared_data_home() != state.core.sessions_home() => {
-            vak_core::learning::promote(&state.core.shared_data_home(), state.core.cwd(), &id)
+        Err(_) if state.core.shared_data_home() != core.sessions_home() => {
+            vak_core::learning::promote(&state.core.shared_data_home(), core.cwd(), &id)
         }
         other => other,
     };
@@ -2885,12 +3015,17 @@ async fn promote_proposal(
 async fn reject_proposal(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let res = vak_core::learning::reject(&state.core.sessions_home(), state.core.cwd(), &id);
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let res = vak_core::learning::reject(&core.sessions_home(), core.cwd(), &id);
     let res = match res {
-        Err(_) if state.core.shared_data_home() != state.core.sessions_home() => {
-            vak_core::learning::reject(&state.core.shared_data_home(), state.core.cwd(), &id)
+        Err(_) if state.core.shared_data_home() != core.sessions_home() => {
+            vak_core::learning::reject(&state.core.shared_data_home(), core.cwd(), &id)
         }
         other => other,
     };
@@ -7284,6 +7419,17 @@ async fn intent_explain(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<IntentExplainQuery>,
 ) -> axum::response::Response {
+    // A registered session already carries the exact Core it was opened
+    // under (agent identity, isolated workspace) — resolving through it
+    // keeps this preview consistent with what that session's own turns
+    // would actually resolve, instead of always describing the default
+    // "vak" workspace regardless of which Agent's composer called this.
+    let core = q
+        .session_id
+        .as_deref()
+        .and_then(|sid| state.get(sid))
+        .map(|handle| handle.core.clone())
+        .unwrap_or_else(|| state.core.clone());
     let mut declared = vak_intent::Declared::default();
     let mut bad = Vec::new();
     if let Some(raw) = &q.act {
@@ -7319,7 +7465,7 @@ async fn intent_explain(
     }
 
     let surface = match q.surface.as_deref() {
-        None => state.core.surface().clone(),
+        None => core.surface().clone(),
         Some(raw) => match vak_intent::Surface::parse(raw) {
             Some(vak_intent::Surface::Cli) => vak_core::Surface::Cli,
             Some(vak_intent::Surface::Desktop) => vak_core::Surface::Desktop,
@@ -7342,7 +7488,7 @@ async fn intent_explain(
     };
 
     let history = if let Some(sid) = q.session_id.as_deref() {
-        match state.core.open_session(sid).await {
+        match core.open_session(sid).await {
             Ok(session) => {
                 let chain = session.chain_to_root();
                 let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
@@ -7372,11 +7518,11 @@ async fn intent_explain(
         &q.prompt,
         &surface,
         &[],
-        vak_core::intent::workspace_facts(state.core.cwd()),
+        vak_core::intent::workspace_facts(core.cwd()),
         history.clone(),
         &declared,
-        &state.core.turn_authority_for(&surface),
-        &vak_core::intent::resolver_config(state.core.config()),
+        &core.turn_authority_for(&surface),
+        &vak_core::intent::resolver_config(core.config()),
     );
     let escalation = match &resolution {
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),

@@ -214,14 +214,25 @@ export interface NoteBlock {
 
 export type MemoryScope = NonNullable<NoteBlock["scope"]>;
 
-export function forgetMemory(id: string, scope: MemoryScope): Promise<{ forgotten: string; bytes: number }> {
-  return req(`/memory/${encodeURIComponent(id)}?scope=${scope}`, { method: "DELETE" });
+export function forgetMemory(
+  id: string,
+  scope: MemoryScope,
+  agent?: string,
+): Promise<{ forgotten: string; bytes: number }> {
+  const params = new URLSearchParams({ scope });
+  if (agent) params.set("agent", agent);
+  return req(`/memory/${encodeURIComponent(id)}?${params}`, { method: "DELETE" });
 }
 
-export function amendMemory(id: string, scope: MemoryScope, text: string): Promise<{ amended: string }> {
+export function amendMemory(
+  id: string,
+  scope: MemoryScope,
+  text: string,
+  agent?: string,
+): Promise<{ amended: string }> {
   return req(`/memory/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ text, scope }),
+    body: JSON.stringify({ text, scope, agent }),
   });
 }
 
@@ -414,27 +425,41 @@ export function putHooks(hooks: HookConfig[]): Promise<{ saved: boolean; count: 
   return req("/config/hooks", { method: "PUT", body: JSON.stringify({ hooks }) });
 }
 
-export function listMemory(): Promise<{ notes: NoteBlock[] }> {
-  return req("/memory");
+export function listMemory(agent?: string): Promise<{ notes: NoteBlock[] }> {
+  return req(agent ? `/memory?agent=${encodeURIComponent(agent)}` : "/memory");
 }
 
-export function appendMemory(scope: MemoryScope, text: string, kind = "fact", tag = ""): Promise<NoteBlock> {
+export function appendMemory(
+  scope: MemoryScope,
+  text: string,
+  kind = "fact",
+  tag = "",
+  agent?: string,
+): Promise<NoteBlock> {
   return req("/memory", {
     method: "POST",
-    body: JSON.stringify({ scope, text, kind, tag }),
+    body: JSON.stringify({ scope, text, kind, tag, agent }),
   });
 }
 
-export function listProposals(): Promise<{ proposals: SkillProposal[] }> {
-  return req("/skills/proposals");
+export function listProposals(agent?: string): Promise<{ proposals: SkillProposal[] }> {
+  return req(agent ? `/skills/proposals?agent=${encodeURIComponent(agent)}` : "/skills/proposals");
 }
 
-export function promoteProposal(id: string): Promise<{ promoted: string }> {
-  return req(`/skills/proposals/${encodeURIComponent(id)}/promote`, { method: "POST", body: "{}" });
+export function promoteProposal(id: string, agent?: string): Promise<{ promoted: string }> {
+  const suffix = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+  return req(`/skills/proposals/${encodeURIComponent(id)}/promote${suffix}`, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
-export function rejectProposal(id: string): Promise<{ rejected: string }> {
-  return req(`/skills/proposals/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" });
+export function rejectProposal(id: string, agent?: string): Promise<{ rejected: string }> {
+  const suffix = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+  return req(`/skills/proposals/${encodeURIComponent(id)}/reject${suffix}`, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 // ---- sessions ---------------------------------------------------------------
