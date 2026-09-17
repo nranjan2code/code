@@ -552,6 +552,21 @@ impl Approver for HttpApprover {
     }
 }
 
+/// Resolve the Agent-scoped `Core` for the rest of an async handler body, or
+/// return early with `resolve_scoped_core`'s own error `Response` (forwarding
+/// its status/message unchanged, e.g. 409 CONFLICT for a paused/archived
+/// Agent). Every endpoint scoped this way needs the identical
+/// match-and-early-return, so it lives here once instead of copy-pasted at
+/// each of the 50+ call sites (see `resolve_scoped_core` below).
+macro_rules! scoped_core {
+    ($state:expr, $session_id:expr, $agent:expr) => {
+        match resolve_scoped_core($state, $session_id, $agent) {
+            Ok(core) => core,
+            Err(response) => return response,
+        }
+    };
+}
+
 pub fn router(core: Core) -> Router {
     router_with_state(AppState::new(core))
 }
@@ -2054,10 +2069,7 @@ async fn finops_status(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut homes = vec![core.shared_data_home()];
     if core.sessions_home() != core.shared_data_home() {
         homes.push(core.sessions_home());
@@ -2198,10 +2210,7 @@ async fn patch_finops(
     if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
         return StatusCode::OK.into_response();
     }
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     if vak_config::persist_project_finops_caps(core.cwd(), body.max_run_usd, body.max_day_usd)
         .is_err()
     {
@@ -2491,10 +2500,7 @@ async fn list_memory(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     // The resolved Agent's own (now agent-scoped) sessions_home is primary;
     // `state.core`'s plain, un-scoped home is kept as a fallback merge so
     // notes written before Agents carried their own sessions_home (or by an
@@ -2530,10 +2536,7 @@ async fn cleanup_memory(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut homes = vec![core.sessions_home(), state.core.sessions_home()];
     let shared = state.core.shared_data_home();
     if !homes.contains(&shared) {
@@ -2574,10 +2577,7 @@ async fn consolidate_memory_route(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     match core.consolidate_memory() {
         Ok(report) => (
             StatusCode::OK,
@@ -2778,11 +2778,7 @@ async fn append_memory(
     Json(body): Json<AppendMemoryBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, body.session_id.as_deref(), body.agent.as_deref())
-    {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, body.session_id.as_deref(), body.agent.as_deref());
     let home = core.sessions_home();
     let scope = body.scope.unwrap_or(MemoryScope::Workspace);
     let kind = body.kind.unwrap_or_else(|| "fact".to_string());
@@ -2844,10 +2840,7 @@ async fn forget_memory_note(
     axum::extract::Query(q): axum::extract::Query<MemoryScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let path = memory_store_path(&core, q.scope.unwrap_or_default());
     let result = vak_core::memory::forget_note(&path, &note_id);
     // A note written before this Agent's data moved to its own sessions_home
@@ -2914,10 +2907,7 @@ async fn amend_memory_note(
         )
             .into_response();
     }
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     let path = memory_store_path(&core, body.scope.unwrap_or_default());
     let result = vak_core::memory::amend_note(&path, &note_id, &body.text);
     // See the identical fallback in `forget_memory_note`.
@@ -2976,10 +2966,7 @@ async fn list_proposals_route(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     Json(serde_json::json!({ "proposals": proposals_payload(&core) })).into_response()
 }
 
@@ -2989,10 +2976,7 @@ async fn promote_proposal(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let res = vak_core::learning::promote(&core.sessions_home(), core.cwd(), &id);
     let res = match res {
         Err(_) if state.core.shared_data_home() != core.sessions_home() => {
@@ -3020,10 +3004,7 @@ async fn reject_proposal(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let res = vak_core::learning::reject(&core.sessions_home(), core.cwd(), &id);
     let res = match res {
         Err(_) if state.core.shared_data_home() != core.sessions_home() => {
@@ -7590,10 +7571,7 @@ async fn list_commitments(
     axum::extract::Query(q): axum::extract::Query<CommitmentQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     let commitments = if q.all { ledger.all() } else { ledger.open() };
     let ranked = vak_commit::rank(&commitments, &vak_commit::SchedulerContext::default());
@@ -7612,10 +7590,7 @@ async fn get_commitment(
     axum::extract::Path(id): axum::extract::Path<String>,
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     match ledger.get(&id) {
         Ok(Some(commitment)) => Json(serde_json::json!({
@@ -7650,10 +7625,7 @@ async fn close_commitment(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<CloseCommitmentBody>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     let Ok(Some(commitment)) = ledger.get(&id) else {
         return (
@@ -7850,15 +7822,13 @@ async fn session_diff(
 async fn list_checkpoints(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
-    // The session id itself is enough to resolve the Agent that owns this
-    // session's sessions_home (a registered session's own Core is reused
-    // when it's still open; a checkpoint search for a closed session falls
-    // back to the default "vak" Agent below, matching prior behaviour).
-    let core = match resolve_scoped_core(&state, Some(&id), None) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    // A registered session's own Core is reused when it's still open. Once
+    // it's closed, `session_id` alone can no longer identify its owning
+    // Agent, so an explicit `?agent=` is the only way to keep finding its
+    // checkpoints instead of silently falling back to the default Agent.
+    let core = scoped_core!(&state, Some(&id), q.agent.as_deref());
     // A session with no snapshots yet has no directory; that's an empty
     // list, not an error.
     let list = match vak_core::checkpoints::list(&core.sessions_home(), &id) {
@@ -7892,9 +7862,12 @@ async fn list_checkpoints(
 async fn restore_checkpoint(
     State(state): State<AppState>,
     Path((id, seq)): Path<(String, u32)>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
-    // A live run must never have its workspace mutated underneath it.
-    if let Some(handle) = state.get(&id)
+    // A live run must never have its workspace mutated underneath it. Reuse
+    // this lookup for the cwd fallback below instead of re-fetching it.
+    let handle = state.get(&id);
+    if let Some(handle) = &handle
         && handle
             .session
             .lock()
@@ -7907,14 +7880,12 @@ async fn restore_checkpoint(
         )
             .into_response();
     }
-    let core = match resolve_scoped_core(&state, Some(&id), None) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    // See `list_checkpoints`: a closed session needs an explicit `?agent=`
+    // to keep resolving its real owning Agent rather than the default one.
+    let core = scoped_core!(&state, Some(&id), q.agent.as_deref());
     // Best-of-N children captured inside their worktrees; attached handles
     // know that cwd. Everything else restores into the workspace root.
-    let cwd = state
-        .get(&id)
+    let cwd = handle
         .map(|h| h.cwd.clone())
         .unwrap_or_else(|| core.cwd().clone());
     let cp = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
@@ -8116,10 +8087,7 @@ async fn list_skills(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     // `path` and `scope` tell the reader WHERE a skill came from. Discovery
     // reads two roots (`<cwd>/.vak/skills` then the Shared
     // `~/vak-home/.vak/skills` root), and a workspace skill is a very different
@@ -8156,10 +8124,7 @@ async fn list_commands(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     Json(
         serde_json::json!({ "commands": core.custom_commands().into_iter().map(|command| serde_json::json!({
         "name": command.name, "description": command.description, "source": command.source,
@@ -8219,10 +8184,7 @@ async fn list_retired_plugins(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut retired = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
         if let Ok(flagged) = plugin_store(&core, scope).retired_plugins() {
@@ -8242,10 +8204,7 @@ async fn remove_retired_plugins(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut removed = Vec::new();
     let mut errors = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
@@ -8774,10 +8733,7 @@ async fn list_plugins(
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let mut plugins = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
         if let Ok(items) = plugin_store(&core, scope).list() {
@@ -8814,10 +8770,7 @@ async fn plugin_audit(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut events = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
         if let Ok(registry) = plugin_store(&core, scope).load() {
@@ -8833,10 +8786,7 @@ async fn plugin_invocations(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let mut events = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
         if let Ok(items) = plugin_store(&core, scope).invocations() {
@@ -8852,10 +8802,7 @@ async fn plugin_sources(
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let mut sources = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
         if let Ok(items) = plugin_store(&core, scope).list_sources() {
@@ -8870,10 +8817,7 @@ async fn plugin_catalog(
     Query(query): Query<PluginCatalogQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let needle = query.q.as_deref().unwrap_or_default().trim().to_lowercase();
     let mut entries = Vec::new();
     let mut errors = Vec::new();
@@ -8959,10 +8903,7 @@ async fn plugin_register_source(
         }
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
-    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, request.agent.as_deref());
     plugin_result(
         plugin_store(&core, scope).register_catalog_source_with_signature(
             &request.path,
@@ -8978,10 +8919,7 @@ async fn plugin_source_enable(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     plugin_result(
         plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_source_enabled(&id, true),
@@ -8993,10 +8931,7 @@ async fn plugin_source_disable(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     plugin_result(
         plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_source_enabled(&id, false),
@@ -9008,10 +8943,7 @@ async fn plugin_key_revoke(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     plugin_result(
         plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, true)
@@ -9024,10 +8956,7 @@ async fn plugin_key_restore(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     plugin_result(
         plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, false)
@@ -9056,10 +8985,7 @@ async fn plugin_install(
         return (StatusCode::BAD_REQUEST, "path is required").into_response();
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
-    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, request.agent.as_deref());
     plugin_result(plugin_store(&core, scope).install_local(
         &path,
         InstallOptions {
@@ -9077,10 +9003,7 @@ async fn plugin_update(
         return (StatusCode::BAD_REQUEST, "path is required").into_response();
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
-    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, request.agent.as_deref());
     plugin_result(plugin_store(&core, scope).update_local(
         &path,
         InstallOptions {
@@ -9095,10 +9018,7 @@ async fn plugin_enable(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     plugin_result(plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).enable(&name))
 }
 
@@ -9107,10 +9027,7 @@ async fn plugin_disable(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let result = plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name);
     match result {
         Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
@@ -9129,10 +9046,7 @@ async fn plugin_rollback(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let result =
         plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name);
     match result {
@@ -9152,10 +9066,7 @@ async fn plugin_remove(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let result = plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name);
     match result {
         Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
@@ -9739,11 +9650,12 @@ pub(crate) fn parse_approval_mode(raw: &str) -> Option<vak_config::ApprovalMode>
 async fn set_permission_mode(
     State(state): State<AppState>,
     Json(body): Json<ModeBody>,
-) -> StatusCode {
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(_) => return StatusCode::NOT_FOUND,
-    };
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // `scoped_core!` forwards `resolve_scoped_core`'s own status (e.g. 409
+    // CONFLICT for a paused/archived Agent) instead of collapsing every
+    // resolution error into 404, the way this handler used to.
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     match parse_mode(&body.mode) {
         Some(mode) => {
             let old = core.effective_permission_mode();
@@ -9758,7 +9670,7 @@ async fn set_permission_mode(
             )
             .is_err()
             {
-                return StatusCode::INTERNAL_SERVER_ERROR;
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
             apply_permission_mode(&core, &state, mode, true);
             if old != mode {
@@ -9773,9 +9685,9 @@ async fn set_permission_mode(
                     .hub
                     .emit_config_changed("permission_mode", &format!("{mode:?}"));
             }
-            StatusCode::OK
+            StatusCode::OK.into_response()
         }
-        None => StatusCode::BAD_REQUEST,
+        None => StatusCode::BAD_REQUEST.into_response(),
     }
 }
 
@@ -9949,10 +9861,7 @@ async fn get_permission_rules(
     axum::extract::Query(q): axum::extract::Query<OptionalScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let scope = q.scope.unwrap_or(ConfigScope::Workspace);
     // Recomputed from this resolved Core's own effective rules on every
     // request rather than relying on any process-pinned cache — a Core
@@ -10013,10 +9922,7 @@ async fn put_permission_rules(
     Json(body): Json<PermissionRulesBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     for (list_name, list) in [
         ("allow", &body.allow),
         ("ask", &body.ask),
@@ -10124,10 +10030,13 @@ async fn put_permission_rules(
 /// `core` is the Agent-scoped Core the mode is actually read from and
 /// written to (so a PATCH scoped to a non-default Agent lands on that
 /// Agent's own Core, not the process's default workspace); `state` is used
-/// only for the process-wide safety fallout below — invalidating pooled
-/// channel Cores and cancelling every live session — which is deliberately
-/// global: a narrower permission ceiling must not leave an already-running
-/// session anywhere holding a wider one.
+/// for the safety fallout below. Pooled channel Core invalidation stays
+/// process-wide (those pooled Cores aren't cheaply attributable to one
+/// Agent, and discarding an unaffected one just costs a fresh resolve on
+/// its next message); but the live-session cancellation/approval-denial is
+/// scoped to sessions running under *this* Core — a narrower ceiling must
+/// not leave an already-running session under the same Agent holding a
+/// wider one, but it has no bearing on a different Agent's own sessions.
 fn apply_permission_mode(
     core: &vak_core::Core,
     state: &AppState,
@@ -10162,6 +10071,7 @@ fn apply_permission_mode(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
+        .filter(|handle| handle.core.cwd() == core.cwd())
         .cloned()
         .collect();
     for handle in handles {
@@ -10857,10 +10767,7 @@ async fn get_config(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     refresh_control_plane(&state);
     let cfg = core.config();
     let work = core.effective_work();
@@ -11015,10 +10922,7 @@ async fn get_global_config_layer(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     match config_layer_response(&core, ConfigScope::User) {
         Ok(layer) => Json(layer).into_response(),
         Err(error) => (
@@ -11034,10 +10938,7 @@ async fn get_workspace_config_layer(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     match config_layer_response(&core, ConfigScope::Workspace) {
         Ok(layer) => Json(layer).into_response(),
         Err(error) => (
@@ -11362,10 +11263,7 @@ async fn patch_config_scope(
     body: ConfigPatch,
     global: bool,
 ) -> axum::response::Response {
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     if global
         && (body.inherit_mcp.is_some()
             || body.inherit_hooks.is_some()
@@ -11821,10 +11719,7 @@ async fn get_mcp_servers(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let path = vak_config::project_path(core.cwd());
     match read_mcp_config(&path) {
         Ok(mcp) => Json(serde_json::json!({ "servers": mcp.servers })).into_response(),
@@ -11883,10 +11778,7 @@ async fn get_prompt_layer(
     Query(query): Query<ScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     let dir = vak_core::prompts::layer_dir(&query.scope.prompt_root(&core));
     let content = vak_core::prompts::read_layer(&dir);
     Json(serde_json::json!({
@@ -11913,10 +11805,7 @@ async fn put_prompt_block(
     Json(body): Json<PromptBlockBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     let Some(block) = vak_core::prompts::PromptBlock::parse(&body.block) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -11968,10 +11857,7 @@ async fn get_prompt_effective(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     Json(prompt_effective_payload(&core)).into_response()
 }
 
@@ -12234,10 +12120,7 @@ async fn preview_prompt(
     Json(body): Json<PromptPreviewBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     let raw_surface = body.surface.as_deref().map(str::trim).unwrap_or("");
     let surface = match raw_surface.to_ascii_lowercase().as_str() {
         "" | "unknown" => vak_core::Surface::Unknown,
@@ -12272,10 +12155,7 @@ async fn list_prompt_roles(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     Json(serde_json::json!({ "roles": core.prompt_role_names() })).into_response()
 }
 
@@ -12284,10 +12164,7 @@ async fn get_hooks(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, q.agent.as_deref());
     let path = core.cwd().join(".vak/config.toml");
     let hooks = if path.is_file() {
         match std::fs::read_to_string(&path)
@@ -12469,10 +12346,7 @@ async fn put_hooks(
     Json(body): Json<HooksPutBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     for hook in &body.hooks {
         if !matches!(
             hook.event.as_str(),
@@ -12897,10 +12771,7 @@ async fn get_integration_catalog(
     Query(query): Query<ScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     match INTEGRATION_CATALOG
         .iter()
         .copied()
@@ -12929,10 +12800,7 @@ async fn get_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     match integration_status(&core, query.scope, entry) {
         Ok(status) => Json(status).into_response(),
         Err(error) => (
@@ -12983,10 +12851,7 @@ async fn put_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     if let Some(key) = body.key.as_deref()
         && let Err(error) = core.set_mcp_secret_scoped(
             entry.env_var.unwrap_or_default(),
@@ -13044,10 +12909,7 @@ async fn delete_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
     if let Some(env_var) = entry.env_var
         && let Err(error) = core.remove_mcp_secret_scoped(env_var, query.scope.is_workspace())
     {
@@ -13162,10 +13024,7 @@ async fn put_mcp_servers(
         )
             .into_response();
     }
-    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
-        Ok(core) => core,
-        Err(response) => return response,
-    };
+    let core = scoped_core!(&state, None, body.agent.as_deref());
     match persist_mcp_to_project_config(core.cwd(), &body.servers) {
         Ok(_) => {}
         Err(e) => {

@@ -538,13 +538,14 @@ export const api = {
       body: JSON.stringify(command),
     }).then((r) => handle(r)),
 
-  checkpoints: (sessionId: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
-    // Session id alone resolves the owning Agent's own Core server-side
-    // (see `resolve_scoped_core`), so no `agent` param is needed here.
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`).then((r) => handle(r)),
+  checkpoints: (sessionId: string, agent?: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
+    // The session id resolves the owning Agent's own Core server-side while
+    // the session is still open; `agent` is the fallback once it's closed
+    // (see `resolve_scoped_core`).
+    fetch(withAgent(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`, agent)).then((r) => handle(r)),
 
-  restoreCheckpoint: (sessionId: string, seq: number): Promise<void> =>
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints/${seq}/restore`, {
+  restoreCheckpoint: (sessionId: string, seq: number, agent?: string): Promise<void> =>
+    fetch(withAgent(`/sessions/${encodeURIComponent(sessionId)}/checkpoints/${seq}/restore`, agent), {
       method: "POST",
     }).then((r) => void handle(r)),
 

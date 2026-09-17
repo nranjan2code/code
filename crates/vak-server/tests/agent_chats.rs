@@ -477,6 +477,125 @@ async fn prompt_effective_is_scoped_per_agent() {
     );
 }
 
+/// `PUT /config/permissions` writes one Agent's own workspace rule layer —
+/// same isolation contract as hooks/MCP, checked here for permission rules.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn permission_rules_are_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/config/permissions",
+        json!({
+            "scope": "workspace",
+            "deny": ["bash(rm -rf /)"],
+            "agent": "newsy",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, newsy_rules) = call(&app, "GET", "/config/permissions?agent=newsy", json!({})).await;
+    assert!(
+        newsy_rules["layer"]["deny"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "bash(rm -rf /)"),
+        "newsy's own rule layer must include its deny rule: {newsy_rules}"
+    );
+
+    let (_, default_rules) = call(&app, "GET", "/config/permissions", json!({})).await;
+    assert!(
+        !default_rules["layer"]["deny"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "bash(rm -rf /)"),
+        "the default agent must not see newsy's deny rule: {default_rules}"
+    );
+}
+
+/// `PATCH /finops` sets budget caps in one Agent's own `.vak/config.toml` —
+/// same isolation contract as hooks/MCP, checked here for FinOps caps.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn finops_caps_are_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "PATCH",
+        "/finops",
+        json!({
+            "max_run_usd": 1.5,
+            "agent": "newsy",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, newsy_status) = call(&app, "GET", "/finops?agent=newsy", json!({})).await;
+    assert_eq!(newsy_status["run_cap_usd"].as_f64(), Some(1.5));
+
+    let (_, default_status) = call(&app, "GET", "/finops", json!({})).await;
+    assert_ne!(
+        default_status["run_cap_usd"].as_f64(),
+        Some(1.5),
+        "the default agent must not see newsy's run cap: {default_status}"
+    );
+}
+
+/// `GET /sessions/{id}/checkpoints` must resolve a *closed* session's real
+/// owning Agent via `?agent=` rather than silently falling back to the
+/// default Agent once no in-memory session handle exists for it — the exact
+/// gap `resolve_scoped_core`'s session-id-first, agent-id-fallback path
+/// exists to close.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
+    let (app, core, _temp) = two_agent_app().await;
+
+    // Seed a checkpoint directly under Newsy's isolated workspace/home,
+    // exactly as a real run would have via `vak_core::checkpoints::capture`
+    // — no session handle is ever registered for `sid`, simulating a
+    // session that closed (or a server restart) before this request.
+    let newsy_cwd = vak_config::paths::agent_workspace(core.cwd(), "newsy");
+    std::fs::create_dir_all(&newsy_cwd).unwrap();
+    let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
+    let sid = "closed-newsy-session";
+    let cp = vak_core::checkpoints::capture(&newsy_cwd, sid, 1, "seed").unwrap();
+    vak_core::checkpoints::store(&newsy_home, &cp).unwrap();
+
+    let (status, newsy_checkpoints) = call(
+        &app,
+        "GET",
+        &format!("/sessions/{sid}/checkpoints?agent=newsy"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{newsy_checkpoints}");
+    assert_eq!(
+        newsy_checkpoints["checkpoints"].as_array().unwrap().len(),
+        1,
+        "newsy's own checkpoint must be found via ?agent=newsy: {newsy_checkpoints}"
+    );
+
+    let (_, default_checkpoints) = call(
+        &app,
+        "GET",
+        &format!("/sessions/{sid}/checkpoints"),
+        json!({}),
+    )
+    .await;
+    assert!(
+        default_checkpoints["checkpoints"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the default agent must not see newsy's checkpoint: {default_checkpoints}"
+    );
+}
+
 /// `PUT /config/hooks` writes the project's own `[[hooks]]` array
 /// (docs/design/45-prompt-layers.md-adjacent config-layer semantics) — a
 /// hook saved for one Agent must not appear in, or be overwritten by, a

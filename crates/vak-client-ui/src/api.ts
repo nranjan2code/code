@@ -840,17 +840,18 @@ export function readDiff(id: string): Promise<DiffResponse> {
   return req(`/sessions/${id}/diff`);
 }
 
-export function listCheckpoints(id: string): Promise<{
+export function listCheckpoints(id: string, agent?: string): Promise<{
   checkpoints: { seq: number; label: string; created_at: string; files: number }[];
 }> {
-  return req(`/sessions/${id}/checkpoints`);
+  return req(withAgent(`/sessions/${id}/checkpoints`, agent));
 }
 
 export function restoreCheckpoint(
   id: string,
   seq: number,
+  agent?: string,
 ): Promise<{ restored: number; deleted: number; seq: number }> {
-  return req(`/sessions/${id}/checkpoints/${seq}/restore`, { method: "POST" });
+  return req(withAgent(`/sessions/${id}/checkpoints/${seq}/restore`, agent), { method: "POST" });
 }
 
 export function setArchived(id: string, archived: boolean): Promise<{ archived: boolean }> {

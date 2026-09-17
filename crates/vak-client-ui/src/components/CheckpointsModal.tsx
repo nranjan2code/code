@@ -1,6 +1,6 @@
 import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { activeId, historyOpen, isRunning, setHistoryOpen, setNotice } from "../store";
+import { activeAgentId, activeId, historyOpen, isRunning, setHistoryOpen, setNotice } from "../store";
 import * as api from "../api";
 import type { CheckpointInfo } from "../types";
 
@@ -29,7 +29,7 @@ export default function CheckpointsModal() {
 
   const refresh = async () => {
     try {
-      setCheckpoints((await api.listCheckpoints(id()!)).checkpoints);
+      setCheckpoints((await api.listCheckpoints(id()!, activeAgentId())).checkpoints);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -39,7 +39,7 @@ export default function CheckpointsModal() {
   const restore = async (seq: number) => {
     setBusySeq(seq);
     try {
-      const res = await api.restoreCheckpoint(id()!, seq);
+      const res = await api.restoreCheckpoint(id()!, seq, activeAgentId());
       setNotice({ kind: "info", text: `Rewound to checkpoint ${seq} — restored ${res.restored}, removed ${res.deleted}.` });
       setConfirming(null);
       await refresh();
