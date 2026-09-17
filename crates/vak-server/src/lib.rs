@@ -1053,9 +1053,16 @@ fn operation_runs(state: &AppState) -> Vec<serde_json::Value> {
             if !active && pending.is_empty() {
                 return None;
             }
+            let (agent_id, agent_name) = handle
+                .core
+                .agent_identity()
+                .map(|id| (id.id.clone(), id.name.clone()))
+                .unwrap_or_else(|| ("vak".to_string(), "Vak".to_string()));
             Some(serde_json::json!({
                 "session_id": handle.id,
                 "workspace": handle.cwd,
+                "agent_id": agent_id,
+                "agent_name": agent_name,
                 "state": if !pending.is_empty() { "waiting_approval" } else { "running" },
                 "pending_approvals": pending,
             }))
@@ -1164,15 +1171,22 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             })
         })
         .collect::<Vec<_>>();
+    let allowlist_snapshot = state.gateway.allowlist_snapshot();
+    let allowlist_map: HashMap<String, String> = allowlist_snapshot
+        .iter()
+        .map(|e| (e.key.clone(), e.agent_id.clone().unwrap_or_else(|| "vak".to_string())))
+        .collect();
     let mut bound_targets = std::collections::HashSet::new();
     let mut bindings = gateway
         .into_iter()
         .map(|(target, binding)| {
             bound_targets.insert(target.clone());
+            let agent_id = allowlist_map.get(&target).cloned().unwrap_or_else(|| "vak".to_string());
             serde_json::json!({
                 "target": target,
                 "session_id": binding.session_id,
                 "workspace": binding.workspace,
+                "agent_id": agent_id,
                 "provider": binding
                     .provider
                     .unwrap_or_else(|| default_route.provider.clone()),
@@ -1183,7 +1197,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             })
         })
         .collect::<Vec<_>>();
-    for entry in state.gateway.allowlist_snapshot() {
+    for entry in allowlist_snapshot {
         if entry.status != gateway::AllowlistStatus::Allowed || bound_targets.contains(&entry.key) {
             continue;
         }
@@ -1191,6 +1205,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             "target": entry.key,
             "session_id": null,
             "workspace": state.gateway.workspace_for_entry(&state.core, &entry.key),
+            "agent_id": entry.agent_id.as_deref().unwrap_or("vak"),
             "provider": entry.route.as_ref().map(|route| route.provider.clone()).unwrap_or_else(|| state.core.effective_provider()),
             "model": entry.route.as_ref().map(|route| route.model.clone()).unwrap_or_else(|| state.core.effective_model()),
             "route_revision": entry.route.as_ref().map(|route| format!("channel:{}:{}", route.provider, route.model)).unwrap_or_else(|| state.core.effective_route().revision),
@@ -1300,6 +1315,22 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         .into_iter()
         .map(|incident| serde_json::to_value(incident).unwrap_or_else(|_| serde_json::json!({})))
         .collect::<Vec<_>>();
+    let mut all_agents = vec![serde_json::json!({
+        "id": "vak",
+        "name": "Vak",
+        "personality": "Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, opencode-grade simplicity.",
+        "lifecycle": "active",
+    })];
+    if let Ok(custom) = agents::effective(&state.core) {
+        for a in custom {
+            all_agents.push(serde_json::json!({
+                "id": a.id,
+                "name": a.name,
+                "personality": a.personality,
+                "lifecycle": a.lifecycle,
+            }));
+        }
+    }
     Json(serde_json::json!({
         "generated_at": Utc::now(),
         "server": {
@@ -1311,6 +1342,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         },
         "health": health,
         "services": services,
+        "agents": all_agents,
         "gateway": {
             "enabled": state.gateway.enabled,
             "approvals": { "pending": approvals, "mode": state.gateway.approvals_mode(), "approver": state.gateway.approver_target() },
@@ -6645,6 +6677,14 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
         }
     }
     let shared = core.shared_data_home();
+    if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(format!("{id}.jsonl"));
+            if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
+                return Some(s);
+            }
+        }
+    }
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
@@ -6694,12 +6734,33 @@ pub(crate) fn read_historical_header(
             return Some(header);
         }
     }
-    let root = state.core.sessions_home().join("sessions");
-    let entries = std::fs::read_dir(root).ok()?;
-    for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
-        let path = project.path().join(format!("{id}.jsonl"));
-        if let Some(header) = read(&path) {
-            return Some(header);
+    if let Ok(entries) = std::fs::read_dir(state.core.sessions_home().join("sessions")) {
+        for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
+            let path = project.path().join(format!("{id}.jsonl"));
+            if let Some(header) = read(&path) {
+                return Some(header);
+            }
+        }
+    }
+    let shared = state.core.shared_data_home();
+    if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
+        for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
+            let path = project.path().join(format!("{id}.jsonl"));
+            if let Some(header) = read(&path) {
+                return Some(header);
+            }
+        }
+    }
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten().filter(|entry| entry.path().is_dir()) {
+            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
+                for project in projects.flatten().filter(|entry| entry.path().is_dir()) {
+                    let path = project.path().join(format!("{id}.jsonl"));
+                    if let Some(header) = read(&path) {
+                        return Some(header);
+                    }
+                }
+            }
         }
     }
     None

@@ -458,10 +458,15 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
                   <button onClick={() => navigate(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`)}>
                     <span class={`run-pip run-pip-${run.state === "running" ? "live" : "held"}`} />
                     <span class="mono">{shortId(run.session_id)}</span>
+                    <Show when={run.agent_name || run.agent_id}>
+                      <span class="chip chip-tone-info" style={{ "font-size": "10.5px", padding: "1px 6px" }}>
+                        ✦ {run.agent_name || run.agent_id}
+                      </span>
+                    </Show>
                     <span class={`home-run-state tone-${run.state === "running" ? "ok" : "warn"}`}>
                       {run.state === "waiting_approval" ? "held at a gate" : run.state}
                     </span>
-                    <span class="dim"><PathCell path={run.workspace} budget={26} /></span>
+                    <span class="dim"><PathCell path={run.workspace} budget={22} /></span>
                   </button>
                 </li>
               )}
@@ -1245,8 +1250,12 @@ export function Home() {
         <Show when={snapshot()}>
           <div class="home-deck-tags">
             <div class="deck-tag">
-              <span class="deck-tag-k">Workspace</span>
-              <PathCell path={snapshot()!.server.cwd} budget={32} />
+              <span class="deck-tag-k">Active Agent</span>
+              <span class="font-semibold">✦ {snapshot()!.agents?.find(a => a.id === "vak")?.name || "Vak"}{snapshot()!.agents && snapshot()!.agents!.length > 1 ? ` (+${snapshot()!.agents!.length - 1} specialist)` : ""}</span>
+            </div>
+            <div class="deck-tag">
+              <span class="deck-tag-k">Target Dir</span>
+              <PathCell path={snapshot()!.server.cwd} budget={28} />
             </div>
             <div class="deck-tag">
               <span class="deck-tag-k">Route</span>

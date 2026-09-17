@@ -87,13 +87,14 @@ async fn spawn_server(config_toml: &str) -> Server {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let home = core.sessions_home();
     let app = vak_server::router(core);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     Server {
         base: format!("http://{addr}"),
-        home: dir.path().join("home"),
+        home,
         cwd,
         _dir: dir,
         client: reqwest::Client::new(),
@@ -463,7 +464,8 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             "gateway channels",
             "install layout",
             "self version parity",
-            "retired plugins"
+            "retired plugins",
+            "agent roster",
         ]
     );
     assert!(

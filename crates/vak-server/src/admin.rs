@@ -23,6 +23,7 @@ pub(crate) const SESSION_COOKIE: &str = "vak_session";
 pub(crate) struct SessionListQuery {
     pub limit: Option<usize>,
     pub project: Option<String>,
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,6 +36,32 @@ pub(crate) struct SessionListItem {
     /// From the shared `archive.json` (keyed by session id, not scoped to a
     /// workspace — the same map `/sessions/{id}/archive` reads and writes).
     pub archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+}
+
+fn map_session_agents(shared: &std::path::Path) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            let agent_id = agent.file_name().to_string_lossy().into_owned();
+            let agent_sessions = agent.path().join("sessions");
+            if agent_sessions.exists() {
+                for entry in walkdir::WalkDir::new(&agent_sessions).max_depth(3) {
+                    if let Ok(e) = entry {
+                        if e.file_type().is_file()
+                            && e.path().extension().is_some_and(|ext| ext == "jsonl")
+                        {
+                            if let Some(stem) = e.path().file_stem().and_then(|s| s.to_str()) {
+                                map.insert(stem.to_string(), agent_id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 pub(crate) async fn list_sessions_admin(
@@ -56,10 +83,18 @@ pub(crate) async fn list_sessions_admin(
     // `workspace_project_hash` on `/admin/api/config`).
     let archive_map = crate::read_archive(&state.core);
     let deleted_map = crate::read_deleted(&state.core);
+    let shared = state.core.shared_data_home();
+    let agent_map = map_session_agents(&shared);
+
     match store.list_sessions() {
         Ok(all) => {
             let visible = all.into_iter().filter(|s| {
+                let s_agent = agent_map
+                    .get(&s.session_id)
+                    .map(String::as_str)
+                    .unwrap_or("vak");
                 q.project.as_ref().is_none_or(|p| &s.project_hash == p)
+                    && q.agent.as_ref().is_none_or(|a| a == "all" || s_agent == a)
                     && !deleted_map.get(&s.session_id).copied().unwrap_or(false)
             });
             let visible: Vec<_> = visible.collect();
@@ -67,13 +102,20 @@ pub(crate) async fn list_sessions_admin(
             let items: Vec<SessionListItem> = visible
                 .into_iter()
                 .take(limit)
-                .map(|s| SessionListItem {
-                    archived: archive_map.get(&s.session_id).copied().unwrap_or(false),
-                    session_id: s.session_id,
-                    project_hash: s.project_hash,
-                    entry_count: s.entry_count,
-                    first_ts: s.first_ts,
-                    last_ts: s.last_ts,
+                .map(|s| {
+                    let agent_id = agent_map
+                        .get(&s.session_id)
+                        .cloned()
+                        .or_else(|| Some("vak".to_string()));
+                    SessionListItem {
+                        archived: archive_map.get(&s.session_id).copied().unwrap_or(false),
+                        session_id: s.session_id,
+                        project_hash: s.project_hash,
+                        entry_count: s.entry_count,
+                        first_ts: s.first_ts,
+                        last_ts: s.last_ts,
+                        agent_id,
+                    }
                 })
                 .collect();
             Json(serde_json::json!({ "sessions": items, "total": total })).into_response()

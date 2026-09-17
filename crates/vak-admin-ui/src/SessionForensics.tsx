@@ -1059,7 +1059,9 @@ export function buildWorkflowGraph(
 // ---- Sessions List Component -----------------------------------------------
 
 export function SessionsList() {
-  const [sessions, { refetch }] = createResource(() => api.sessions(200));
+  const [agentFilter, setAgentFilter] = createSignal<string>("all");
+  const [agentsRes] = createResource(async () => (await api.agents())?.agents ?? []);
+  const [sessions, { refetch }] = createResource(agentFilter, (agent) => api.sessions(200, agent === "all" ? undefined : agent));
   const [bestofn, bestofnActions] = createResource(api.bestofn);
   const [q, setQ] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
@@ -1079,6 +1081,8 @@ export function SessionsList() {
     return withArchived.filter(
       (s) =>
         s.session_id.toLowerCase().includes(query) ||
+        (s.agent_name ?? "").toLowerCase().includes(query) ||
+        (s.agent_id ?? "").toLowerCase().includes(query) ||
         (s.agent?.name ?? "").toLowerCase().includes(query) ||
         (s.title ?? "").toLowerCase().includes(query),
     );
@@ -1253,10 +1257,25 @@ export function SessionsList() {
         <div class="sessions-search-box">
           <input
             type="search"
-            placeholder="Filter sessions by ID, agent personality, or title…"
+            placeholder="Filter sessions by ID, agent, or title…"
             value={q()}
             onInput={(e) => setQ(e.currentTarget.value)}
           />
+        </div>
+        <div class="sessions-agent-filter">
+          <select
+            value={agentFilter()}
+            onChange={(e) => setAgentFilter(e.currentTarget.value)}
+            aria-label="Filter by agent"
+            class="select-agent-filter"
+            style={{ "min-height": "32px", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", "border-radius": "var(--radius-sm)", color: "var(--text)", font: "inherit" }}
+          >
+            <option value="all">All Agents</option>
+            <option value="vak">✦ Vak (Assistant)</option>
+            <For each={agentsRes() ?? []}>
+              {(ag) => ag.id !== "vak" ? <option value={ag.id}>✦ {ag.name}</option> : null}
+            </For>
+          </select>
         </div>
         <div class="sessions-toolbar-actions">
           <label class="toggle-label">
@@ -1318,11 +1337,11 @@ export function SessionsList() {
                       </td>
                       <td>
                         <Show
-                          when={s.agent}
-                          fallback={<span class="dim mono">default</span>}
+                          when={s.agent || s.agent_name || s.agent_id}
+                          fallback={<span class="chip chip-tone-info">✦ Vak</span>}
                         >
                           <span class="chip chip-tone-info" title={s.agent?.personality || ""}>
-                            {s.agent?.name}
+                            ✦ {s.agent_name || s.agent?.name || s.agent_id}
                           </span>
                         </Show>
                       </td>

@@ -101,19 +101,29 @@ function workspaceLabel(path: string, data?: OperationsSnapshot): string {
   return parts.at(-1) || path;
 }
 
-function scopeOperations(data: OperationsSnapshot, workspace: string, windowName: TimeWindow): OperationsSnapshot {
+function scopeOperations(data: OperationsSnapshot, scopeFilter: string, windowName: TimeWindow): OperationsSnapshot {
   const cutoff = cutoffFor(windowName);
-  const inWorkspace = (value: string | null | undefined) => !workspace || workspace === "all" || value === workspace;
+  const isAgent = scopeFilter.startsWith("agent:");
+  const targetAgent = isAgent ? scopeFilter.slice("agent:".length) : null;
+  const inWorkspace = (value: string | null | undefined) => {
+    if (!scopeFilter || scopeFilter === "all") return true;
+    if (isAgent) return true;
+    return value === scopeFilter;
+  };
+  const matchesAgent = (agentId: string | null | undefined) => {
+    if (!isAgent || !targetAgent) return true;
+    return (agentId || "vak") === targetAgent;
+  };
   const inWindow = (value: string | number | null | undefined) => {
     if (cutoff == null || value == null) return true;
     const timestamp = typeof value === "number" ? value : Date.parse(value);
     return Number.isNaN(timestamp) || timestamp >= cutoff;
   };
-  const bindings = data.gateway.bindings.filter((binding) => inWorkspace(binding.workspace));
+  const bindings = data.gateway.bindings.filter((binding) => inWorkspace(binding.workspace) && matchesAgent(binding.agent_id));
   const pool = data.pool.entries.filter((entry) => inWorkspace(entry.workspace));
-  const runs = data.runs.filter((run) => inWorkspace(run.workspace));
+  const runs = data.runs.filter((run) => inWorkspace(run.workspace) && matchesAgent(run.agent_id));
   const pendingApprovals = runs.reduce((total, run) => total + run.pending_approvals.length, 0);
-  const tasks = data.tasks.filter((task) => inWorkspace(task.cwd));
+  const tasks = data.tasks.filter((task) => inWorkspace(task.cwd) && matchesAgent(task.agent_id));
   const records = data.outbox.records.filter((record) => inWindow(record.updated_at_ms));
   const security = data.security.filter((event) => inWindow(event.ts));
   const incidents = data.incidents.filter((incident) =>
@@ -150,8 +160,15 @@ function OperationsContextBar(props: {
   return <section class="ops-context-bar" aria-label="Operational context">
     <div class="ops-context-group">
       <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => operationNavigate(operationPath(), { workspace: event.currentTarget.value })}>
-        <option value="all">Global</option>
-        <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspaceLabel(workspace, props.data)} · {workspace}</option>}</For>
+        <option value="all">🌐 Global Platform</option>
+        <optgroup label="Specialist Agents">
+          <For each={props.data.agents ?? [{ id: "vak", name: "Vak" }]}>
+            {(agent) => <option value={`agent:${agent.id}`}>✦ {agent.name} ({agent.id})</option>}
+          </For>
+        </optgroup>
+        <optgroup label="Working Directories">
+          <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspaceLabel(workspace, props.data)} · {workspace}</option>}</For>
+        </optgroup>
       </select></label>
       <label class="ops-context-field"><span>Time</span><select value={props.timeWindow} onChange={(event) => operationNavigate(operationPath(), { time: event.currentTarget.value })}>
         <For each={Object.entries(timeWindowLabels)}>{([value, label]) => <option value={value}>{label}</option>}</For>
@@ -223,8 +240,9 @@ function WorkView(props: { data: OperationsSnapshot }) {
     <section class="panel">
       <div class="panel-title-row"><div><span class="eyebrow">Live work</span><h2>Runs and gates</h2><p class="dim">A run remains visible until its session ledger is returned to the handle.</p></div><Metric label="Active" value={props.data.runs.length} /></div>
       <Show when={props.data.runs.length > 0} fallback={<div class="empty">No active runs or pending approvals.</div>}>
-        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Session</th><th>State</th><th>Workspace</th><th>Approvals</th><th /></tr></thead><tbody><For each={props.data.runs}>{(run) => <tr>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Session</th><th>Agent</th><th>State</th><th>Workspace</th><th>Approvals</th><th /></tr></thead><tbody><For each={props.data.runs}>{(run) => <tr>
           <td><button class="link-button mono" onClick={() => navigate(operationHref(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`))}>{run.session_id.slice(0, 12)}</button></td>
+          <td><span class="chip chip-tone-info">✦ {run.agent_name || run.agent_id || "Vak"}</span></td>
           <td><StatusMark value={run.state} /></td><td class="mono">{run.workspace}</td><td>{run.pending_approvals.length || "—"}</td>
           <td><button type="button" class="ghost small" onClick={() => navigate(operationHref(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`))}>Open trail</button></td>
         </tr>}</For></tbody></table></div>
@@ -309,7 +327,7 @@ function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway"
 
 function ChannelsView(props: { data: OperationsSnapshot; refresh: () => void | Promise<unknown> }) {
   return <div class="operations-stack"><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Channels</span><h2>Gateway bindings</h2><p class="dim">Identity, workspace, and frozen route provenance for each bound target.</p></div><StatusMark value={props.data.gateway.enabled ? "enabled" : "disabled"} /></div>
-    <Show when={props.data.gateway.bindings.length > 0} fallback={<div class="empty">No channel has an active binding yet.</div>}><div class="ops-binding-grid"><For each={props.data.gateway.bindings}>{(binding) => <article class="ops-binding-card"><div class="panel-title-row"><strong class="mono">{binding.target}</strong><Show when={binding.session_id}><span class="chip chip-tone-info">bound</span></Show></div><dl><div><dt>Workspace</dt><dd class="mono">{binding.workspace || "inherited"}</dd></div><div><dt>Route</dt><dd>{binding.provider || "—"} / <span class="mono">{binding.model || "—"}</span></dd></div><div><dt>Revision</dt><dd class="mono">{binding.route_revision || "—"}</dd></div></dl><button class="ghost small" onClick={() => navigate(operationHref(`#/operations/channels/${encodeURIComponent(binding.target)}`))}>Open binding trail</button></article>}</For></div></Show>
+    <Show when={props.data.gateway.bindings.length > 0} fallback={<div class="empty">No channel has an active binding yet.</div>}><div class="ops-binding-grid"><For each={props.data.gateway.bindings}>{(binding) => <article class="ops-binding-card"><div class="panel-title-row"><strong class="mono">{binding.target}</strong><Show when={binding.agent_id}><span class="chip chip-tone-info">✦ {binding.agent_id}</span></Show><Show when={binding.session_id}><span class="chip chip-tone-info">bound</span></Show></div><dl><div><dt>Workspace</dt><dd class="mono">{binding.workspace || "inherited"}</dd></div><div><dt>Route</dt><dd>{binding.provider || "—"} / <span class="mono">{binding.model || "—"}</span></dd></div><div><dt>Revision</dt><dd class="mono">{binding.route_revision || "—"}</dd></div></dl><button class="ghost small" onClick={() => navigate(operationHref(`#/operations/channels/${encodeURIComponent(binding.target)}`))}>Open binding trail</button></article>}</For></div></Show>
   </section><section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Delivery</span><h2>Outbound queue</h2><p class="dim">Durable jobs are recorded before transport and can be replayed from evidence.</p></div><div class="ops-summary-pair"><Metric label="Pending" value={props.data.outbox.pending} /><Metric label="Dead-letter" value={props.data.outbox.dead_letter} tone={props.data.outbox.dead_letter ? "bad" : undefined} /></div></div><Show when={props.data.outbox.error}><div class="error-state" role="alert"><strong>Outbox read failed</strong><p>{props.data.outbox.error}</p></div></Show><OutboxList records={props.data.outbox.records} onReplayed={props.refresh} /></section></div>;
 }
 

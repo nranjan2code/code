@@ -7,6 +7,8 @@ export interface SessionListItem {
   /** From the shared `archive.json`, not scoped to a workspace. */
   archived: boolean;
   agent?: AgentIdentity | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
   title?: string;
   running?: boolean;
 }
@@ -560,6 +562,7 @@ export interface OperationsSnapshot {
     voice?: { enabled: boolean; provider: string; model: string; max_concurrent: number; active_sessions: number; capacity_remaining: number; historical?: { available: boolean; reason?: string; latency_ms?: number; error_count?: number; cost_usd?: number } };
   };
   services: OpsStatus;
+  agents?: Array<{ id: string; name: string; personality?: string; lifecycle?: string }>;
   gateway: {
     enabled: boolean;
     approvals: { pending: number; mode: string; approver: string | null };
@@ -568,6 +571,7 @@ export interface OperationsSnapshot {
       target: string;
       session_id: string | null;
       workspace: string | null;
+      agent_id?: string | null;
       provider: string | null;
       model: string | null;
       route_revision: string | null;
@@ -581,10 +585,12 @@ export interface OperationsSnapshot {
   runs: Array<{
     session_id: string;
     workspace: string;
+    agent_id?: string;
+    agent_name?: string;
     state: "running" | "waiting_approval" | string;
     pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
   }>;
-  tasks: Array<TaskItem & { cwd?: string; next_fire?: string | null; running?: boolean }>;
+  tasks: Array<TaskItem & { cwd?: string; agent_id?: string; next_fire?: string | null; running?: boolean }>;
   outbox: {
     pending: number;
     dead_letter: number;

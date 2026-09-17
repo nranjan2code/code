@@ -49,6 +49,35 @@ const [configScope, setConfigScope] = createSignal<ConfigScope>(
   localStorage.getItem("vak_admin_config_scope") === "project" ? "project" : "user",
 );
 
+export interface AgentScopeItem {
+  id: string;
+  name: string;
+  personality?: string;
+  lifecycle?: string;
+}
+
+export const [adminAgents, setAdminAgents] = createSignal<AgentScopeItem[]>([
+  { id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }
+]);
+
+export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
+  localStorage.getItem("vak_admin_selected_agent") || "global"
+);
+
+export async function refreshAdminAgents() {
+  try {
+    const res = await api.agents();
+    const list = res?.agents;
+    if (Array.isArray(list) && list.length > 0) {
+      const hasVak = list.some((a) => a.id === "vak");
+      const full = hasVak ? list : [{ id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }, ...list];
+      setAdminAgents(full);
+    }
+  } catch (err) {
+    console.warn("Failed to load agent catalogue", err);
+  }
+}
+
 function setConfigScopePersisted(scope: ConfigScope) {
   setConfigScope(scope);
   localStorage.setItem("vak_admin_config_scope", scope);
@@ -71,18 +100,48 @@ function PromptsPage() {
 }
 
 function ScopeControl() {
+  const currentAgent = () => adminAgents().find((a) => a.id === selectedAgentId());
+
+  const handleScopeChange = (val: string) => {
+    setSelectedAgentId(val);
+    localStorage.setItem("vak_admin_selected_agent", val);
+    if (val === "global") {
+      setConfigScopePersisted("user");
+    } else {
+      setConfigScopePersisted("project");
+    }
+  };
+
+  const scopeDetail = () => {
+    if (selectedAgentId() === "global") {
+      return "Global platform defaults & fleet telemetry";
+    }
+    const ag = currentAgent();
+    if (ag) {
+      return `${ag.name} · dedicated workspace & ledger`;
+    }
+    return "Agent workspace & sessions";
+  };
+
   return (
     <label class="scope-control" aria-label="Admin scope">
-      <span class="scope-control-label">Scope</span>
-      <select value={configScope()} onChange={(e) => setConfigScopePersisted(e.currentTarget.value as ConfigScope)}>
-        <option value="user">Global</option>
-        <option value="project">Workspace</option>
+      <span class="scope-control-label">Agent & Scope</span>
+      <select
+        value={selectedAgentId()}
+        onChange={(e) => handleScopeChange(e.currentTarget.value)}
+      >
+        <option value="global">🌐 Global Platform Defaults</option>
+        <optgroup label="Specialist Agents">
+          <For each={adminAgents()}>
+            {(agent) => (
+              <option value={agent.id}>
+                ✦ {agent.name} ({agent.id})
+              </option>
+            )}
+          </For>
+        </optgroup>
       </select>
-      <span>
-        {configScope() === "user"
-          ? "applies across workspaces"
-          : "applies to the selected workspace"}
-      </span>
+      <span>{scopeDetail()}</span>
     </label>
   );
 }
@@ -91,21 +150,44 @@ function AdminContextBar() {
   const current = () => route().split("?", 1)[0] || "#/overview";
   const scope = () => routeScope(current());
   const layered = () => scope() === "layered";
+  const agent = () => adminAgents().find((a) => a.id === selectedAgentId());
+
   return (
     <div class="admin-context-bar" aria-label="Admin viewing context">
       <span class="admin-context-kicker">VIEWING</span>
-      <Show when={layered()} fallback={<>
-        <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
-        <strong>{scope() === "global" ? "Global" : scope() === "switchable" ? "Workspace filter" : "Workspace"}</strong>
+      <Show
+        when={layered()}
+        fallback={
+          <>
+            <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
+            <strong>
+              {selectedAgentId() === "global"
+                ? "Global Platform"
+                : `Agent: ${agent()?.name || selectedAgentId()}`}
+            </strong>
+            <span class="admin-context-detail">
+              {selectedAgentId() === "global"
+                ? "system-wide evidence, fleet telemetry, and shared defaults"
+                : "dedicated workspace, private ledger, and personality instructions"}
+            </span>
+            <Show when={scope() === "switchable"}>
+              <button class="ghost small context-action" onClick={() => navigate("#/operations")}>
+                Open filter
+              </button>
+            </Show>
+          </>
+        }
+      >
+        <strong>
+          {selectedAgentId() === "global"
+            ? "Global Platform Defaults"
+            : `Agent: ${agent()?.name || selectedAgentId()}`}
+        </strong>
         <span class="admin-context-detail">
-          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the selected workspace"}
+          {selectedAgentId() === "global"
+            ? "applies across all agents and channels"
+            : `applies to ${agent()?.name || selectedAgentId()}'s dedicated workspace`}
         </span>
-        <Show when={scope() === "switchable"}>
-          <button class="ghost small context-action" onClick={() => navigate("#/operations")}>Open workspace filter</button>
-        </Show>
-      </>}>
-        <strong>{configScope() === "user" ? "Global" : "Workspace"}</strong>
-        <span class="admin-context-detail">{configScope() === "user" ? "applies across workspaces" : "applies to the selected workspace"}</span>
       </Show>
     </div>
   );
@@ -7388,6 +7470,7 @@ export default function App() {
 
   createEffect(() => {
     if (authed() !== true) return;
+    refreshAdminAgents();
     let alive = true;
     const tick = async () => {
       try {

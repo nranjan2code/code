@@ -153,8 +153,14 @@ export const api = {
 
   /** `total` counts every session matching the filter, not just the page
    * `limit` returned — the list itself is capped, the count isn't. */
-  sessions: (limit = 100): Promise<{ sessions: SessionListItem[]; total: number; workspace_project_hash?: string }> =>
-    fetch(`/admin/api/sessions?limit=${limit}`).then((r) => handle(r)),
+  sessions: (limit = 100, agent?: string): Promise<{ sessions: SessionListItem[]; total: number; workspace_project_hash?: string }> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (agent && agent !== "all") q.set("agent", agent);
+    return fetch(`/admin/api/sessions?${q}`).then((r) => handle(r));
+  },
+
+  agents: (): Promise<{ agents: Array<{ id: string; name: string; personality?: string; behaviour?: string }> }> =>
+    fetch("/agents").then((r) => handle(r)),
 
   /** Open a persisted session's ledger in this server process so it can
    * accept runs/steering/cancel and report a live diff. Every session the
