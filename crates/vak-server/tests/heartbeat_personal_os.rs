@@ -126,8 +126,18 @@ async fn spawn_full(config_toml: &str, reply_text: &str) -> Fixture {
     spawn_full_seeded(config_toml, reply_text, None).await
 }
 
+fn agent_home(home: &Path) -> PathBuf {
+    let agent = home.join("agents").join("vak");
+    if agent.exists() {
+        agent
+    } else {
+        home.to_path_buf()
+    }
+}
+
 fn heartbeat_entries(home: &Path) -> Vec<vak_core::inbox::Entry> {
-    vak_core::inbox::list_scanned(home, 100)
+    let resolved = agent_home(home);
+    vak_core::inbox::list_scanned(&resolved, 100)
         .entries
         .into_iter()
         .filter(|e| e.kind == vak_core::inbox::Kind::Heartbeat)
@@ -151,7 +161,8 @@ fn delivery_lines(home: &Path) -> Vec<(String, String)> {
 }
 
 fn heartbeat_ledger(fx: &Fixture) -> PathBuf {
-    vak_session::SessionPath::new_session_file(&fx.home, &fx.ws, "heartbeat")
+    let resolved = agent_home(&fx.home);
+    vak_session::SessionPath::new_session_file(&resolved, &fx.ws, "heartbeat")
 }
 
 async fn wait_for_dispatch(fx: &Fixture, secs: u64) -> bool {
