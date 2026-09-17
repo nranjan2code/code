@@ -48,6 +48,11 @@ const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "p
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => agentForSession(activeId()).name);
+  // Each Agent now has its own workspace (server-resolved per agent id), so
+  // the pill must reflect the active session's cwd, not the process-global
+  // one — otherwise every agent shows the same directory regardless of which
+  // is selected.
+  const workspaceCwd = createMemo(() => session()?.cwd || backend().cwd);
   const taskStatus = createMemo(() => {
     const id = activeId();
     if (!id) return "New task";
@@ -138,11 +143,11 @@ export default function WorkspaceHeader() {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);
               }}
-              title={`Project Working Directory: ${backend().cwd || "default"}`}
-              aria-label={`Project Working Directory: ${backend().cwd || "default"}`}
+              title={`Project Working Directory: ${workspaceCwd() || "default"}`}
+              aria-label={`Project Working Directory: ${workspaceCwd() || "default"}`}
             >
               <Icon name="folder" size={12} />
-              <span>{backend().cwd ? (backend().cwd as string).split("/").pop() || "root" : "workspace"}</span>
+              <span>{workspaceCwd() ? (workspaceCwd() as string).split("/").pop() || "root" : "workspace"}</span>
             </button>
 
             <Show when={activeId()}>

@@ -326,6 +326,8 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
     for profile in &next {
         let agent_dir = vak_config::paths::agent_home(&profile.id);
         let _ = std::fs::create_dir_all(&agent_dir);
+        let workspace_dir = vak_config::paths::agent_workspace(cwd, &profile.id);
+        let _ = std::fs::create_dir_all(&workspace_dir);
     }
     Ok(next)
 }

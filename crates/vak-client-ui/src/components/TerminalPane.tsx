@@ -1,5 +1,5 @@
 import { createEffect, onCleanup, Show } from "solid-js";
-import { backend } from "../store";
+import { backend, sessions } from "../store";
 import { host, type TerminalTransport } from "../host";
 import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -50,7 +50,11 @@ export default function TerminalPane(props: { sessionId: string | null }) {
         import("@xterm/addon-fit"),
       ]);
 
-      transport = await host.terminal(backend().cwd ?? ".");
+      // A session's workbench terminal must open in that session's own
+      // (agent-scoped) directory, not the process-global default — two
+      // different agents' terminals must never land in the same folder.
+      const sessionCwd = sessions().find((s) => s.session_id === sid)?.cwd;
+      transport = await host.terminal(sessionCwd ?? backend().cwd ?? ".");
       if (!transport) {
         el.innerHTML = `<div class="terminal-disabled" role="status"><strong>Terminal is disabled by this server</strong><span>Ask an operator to enable the loopback terminal in server settings, then reload this task.</span></div>`;
         return;

@@ -4032,7 +4032,16 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
         let (created_at, title, entry_count, cwd) = summarize_jsonl(&path);
-        if cwd.as_deref() != Some(active_cwd.as_str()) {
+        let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
+        // A user-created Agent lives in its own isolated workspace (see
+        // agent_chats::open / agent_workspace), independent of whichever
+        // default workspace the browser client currently has open — that
+        // switch only ever applied to the built-in "vak" identity, which
+        // still shares the process's default workspace. So only the "vak"
+        // (or header-less/legacy) sessions are filtered by `active_cwd`;
+        // every other Agent's sessions are always its own to show.
+        let is_default_agent = agent.as_ref().is_none_or(|a| a.id == "vak");
+        if is_default_agent && cwd.as_deref() != Some(active_cwd.as_str()) {
             continue;
         }
         // Header-only sessions are abandoned drafts (for example, creating a
@@ -4040,7 +4049,6 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         // but do not let empty drafts accumulate in the task switcher. This
         // applies equally to built-in and user-created Agents, but actively
         // registered sessions must remain discoverable.
-        let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
         let is_active = state.get(&session_id).is_some();
         if entry_count <= 1 && !is_active {
             continue;

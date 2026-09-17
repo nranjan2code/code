@@ -44,7 +44,7 @@ pub(crate) async fn list(State(state): State<AppState>) -> Response {
 /// Opening an agent is idempotent across reloads and clients. The immutable
 /// header is the ownership record; browser storage has no routing authority.
 pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let core = state.active_core();
+    let active = state.active_core();
     let identity = if id == "vak" {
         AgentIdentity {
             id,
@@ -56,7 +56,7 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             instructions: String::new(),
         }
     } else {
-        let profiles = match agents::effective(&core) {
+        let profiles = match agents::effective(&active) {
             Ok(profiles) => profiles,
             Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
         };
@@ -80,6 +80,43 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             address: "local".into(),
             bot_id: None,
         }),
+    };
+    // Each user-created Agent gets its own isolated project workspace (files,
+    // tool access, permissions) rather than sharing the process's default
+    // workspace — resolved through the same `CorePool` a channel/gateway
+    // workspace switch uses, so trust/permission/sandbox resolution is
+    // identical to a local run rooted there. The built-in "vak" agent keeps
+    // the process's own workspace for backward compatibility.
+    let workspace = vak_config::paths::agent_workspace(active.cwd(), &identity.id);
+    if let Err(e) = std::fs::create_dir_all(&workspace) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    let core = if workspace == *active.cwd() {
+        active
+    } else {
+        let resolved = match state
+            .gateway
+            .core_pool
+            .resolve_at(&workspace, None, std::time::Instant::now())
+        {
+            Ok(core) => core,
+            Err(_) => match vak_core::Core::new_with_trust(workspace.clone(), true) {
+                Ok(core) => core,
+                Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
+            },
+        };
+        // A freshly-resolved Core has its own default sessions/data home
+        // (real on-disk `data_home()`), which would silently diverge from
+        // wherever this app/process's data actually lives if the active
+        // Core was pointed at a non-default root (test isolation, or a
+        // future custom data-home setting). Every agent's data must live
+        // under the *same* root, just in its own agent-scoped subdirectory
+        // (`Core::sessions_home` already layers that on top).
+        resolved.set_sessions_home(active.shared_data_home());
+        if let Some(provider) = active.provider_instance_override() {
+            resolved.set_provider_instance(provider);
+        }
+        resolved
     };
     let core = core
         .with_agent_identity(Some(identity.clone()))

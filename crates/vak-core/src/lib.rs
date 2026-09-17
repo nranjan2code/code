@@ -2852,6 +2852,18 @@ impl Core {
             .unwrap_or_else(|| self.shared_data_home().join(".env"))
     }
 
+    /// The directly-injected provider, if any (tests, embedded runtimes),
+    /// so a freshly-constructed `Core` for another workspace/agent can be
+    /// handed the same injected provider rather than falling through to
+    /// real network resolution.
+    pub fn provider_instance_override(&self) -> Option<Arc<dyn Provider>> {
+        self.inner
+            .provider_instance
+            .lock()
+            .ok()
+            .and_then(|p| p.clone())
+    }
+
     /// SDK seam: inject a provider directly (tests, embedded runtimes).
     pub fn set_provider_instance(&self, provider: Arc<dyn Provider>) {
         if let Ok(mut p) = self.inner.provider_instance.lock() {

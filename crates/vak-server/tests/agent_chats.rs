@@ -126,8 +126,23 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     );
     let (_, a) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     let sid = a["session_id"].as_str().unwrap().to_owned();
+    // Newsy, a user-created agent, is resolved through a freshly-constructed
+    // Core rooted at its own workspace (see agent_chats::open), but that
+    // Core is repointed at the same sessions/data-home root the test's Vak
+    // Core already uses (`set_sessions_home` above), just under its own
+    // agent-scoped subdirectory — every agent's data lives under one root.
     let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
-    let ledger = SessionPath::new_session_file(&newsy_home, &cwd, &sid);
+    let newsy_cwd = vak_config::paths::agent_workspace(&cwd, "newsy");
+    assert_ne!(
+        newsy_cwd, cwd,
+        "a user-created agent must not share Vak's project workspace"
+    );
+    assert_eq!(
+        std::fs::canonicalize(a["cwd"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(&newsy_cwd).unwrap()
+    );
+    let resolved_newsy_cwd = std::path::PathBuf::from(a["cwd"].as_str().unwrap());
+    let ledger = SessionPath::new_session_file(&newsy_home, &resolved_newsy_cwd, &sid);
     assert!(
         !SessionPath::new_session_file(&core.sessions_home(), &cwd, &sid).exists(),
         "Newsy session must not be in Vak workspace"

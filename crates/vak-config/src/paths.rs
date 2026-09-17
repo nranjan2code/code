@@ -84,6 +84,24 @@ pub fn agent_home_at(data: &std::path::Path, agent_id: &str) -> PathBuf {
     data.join("agents").join(agent_id)
 }
 
+/// Per-agent project workspace (the directory file/shell tools operate in),
+/// distinct from `agent_home` (which holds sessions/memory). The built-in
+/// "vak" agent keeps using the base workspace so existing single-agent
+/// installs see no path change; every other agent gets an isolated
+/// subdirectory nested *under that same base workspace*, so agents never see
+/// each other's files, while the same agent id opened against two different
+/// base workspaces (e.g. two server instances, or a gateway channel pointed
+/// at a different project) still resolves to two independently isolated
+/// workspaces rather than one shared global directory keyed on agent id
+/// alone.
+pub fn agent_workspace(base: &std::path::Path, agent_id: &str) -> PathBuf {
+    if agent_id == "vak" {
+        base.to_path_buf()
+    } else {
+        base.join(".vak/agents").join(agent_id).join("workspace")
+    }
+}
+
 /// Resolve the gateway workspace from an explicit data home. This variant
 /// keeps server tests isolated when a `Core` uses a temporary sessions home.
 pub fn gateway_workspace_at(data: &std::path::Path, default: &std::path::Path) -> PathBuf {
@@ -407,6 +425,33 @@ mod tests {
         assert_eq!(
             agent_home_at(&data, "agent-123"),
             data.join("agents/agent-123")
+        );
+    }
+
+    #[test]
+    fn agent_workspace_isolates_user_created_agents_from_each_other() {
+        let base = PathBuf::from("/Users/example/vak-home");
+        // The built-in agent keeps the process's own base workspace, so
+        // existing single-agent installs see no path change.
+        assert_eq!(agent_workspace(&base, "vak"), base);
+        // Every other agent gets its own isolated directory nested under
+        // that same base, distinct from the base itself and each other.
+        let a = agent_workspace(&base, "agent-a");
+        let b = agent_workspace(&base, "agent-b");
+        assert_ne!(a, base);
+        assert_ne!(b, base);
+        assert_ne!(a, b);
+        assert_eq!(a, base.join(".vak/agents/agent-a/workspace"));
+    }
+
+    #[test]
+    fn agent_workspace_isolates_the_same_agent_id_across_different_base_workspaces() {
+        let base_a = PathBuf::from("/Users/example/project-a");
+        let base_b = PathBuf::from("/Users/example/project-b");
+        assert_ne!(
+            agent_workspace(&base_a, "newsy"),
+            agent_workspace(&base_b, "newsy"),
+            "the same agent id under two different base workspaces must not collide"
         );
     }
 }
