@@ -2049,9 +2049,17 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
 /// directly, so a PATCH from `patch_finops` (below) is reflected
 /// immediately rather than only after a restart.
 async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut homes = vec![state.core.shared_data_home()];
+    if state.core.sessions_home() != state.core.shared_data_home() {
+        homes.push(state.core.sessions_home());
+    }
+    let mut rows: Vec<vak_core::finops::CostRow> = Vec::new();
+    let mut activity: Vec<vak_core::finops::ActivityRow> = Vec::new();
+    for home in &homes {
+        rows.extend(vak_core::finops::FinOpsLedger::new(home).all_rows());
+        activity.extend(vak_core::finops::ActivityLedger::new(home).all_rows());
+    }
     let ledger = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home());
-    let activity = vak_core::finops::ActivityLedger::new(&state.core.shared_data_home()).all_rows();
-    let rows = ledger.all_rows();
     let now = chrono::Utc::now();
     let day_start = now
         .date_naive()
@@ -2103,6 +2111,10 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         .into_iter()
         .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
         .collect();
+    let mut alerts = recent_budget_alerts(&state.core.shared_data_home(), 10);
+    if alerts.is_empty() && state.core.sessions_home() != state.core.shared_data_home() {
+        alerts = recent_budget_alerts(&state.core.sessions_home(), 10);
+    }
     Json(serde_json::json!({
         "day_usd": day_usd,
         "run_cap_usd": state.core.effective_finops_max_run_usd(),
@@ -2116,7 +2128,7 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
         "daily": daily,
-        "recent_alerts": recent_budget_alerts(&state.core.sessions_home(), 10),
+        "recent_alerts": alerts,
     }))
 }
 
@@ -14630,8 +14642,12 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
     };
     // Read through the EFFECTIVE sessions home (an embedded server may
     // have relocated it); Core::spend_day_usd pins the constructed path.
-    let day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
+    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
         .day_total_usd(Utc::now());
+    if state.core.sessions_home() != state.core.shared_data_home() {
+        day_total += vak_core::finops::FinOpsLedger::new(&state.core.sessions_home())
+            .day_total_usd(Utc::now());
+    }
     let Some(level) = vak_core::finops::alert_level(day_total, cap) else {
         return;
     };

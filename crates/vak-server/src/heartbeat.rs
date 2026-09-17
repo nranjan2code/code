@@ -136,10 +136,14 @@ async fn heartbeat_cycle(state: &AppState) -> Result<(), String> {
     }
     // Same day-spend read the budget alerts use; denial skips this cycle
     // silently — an unattended prober must never be what bursts a cap.
+    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
+        .day_total_usd(Utc::now());
+    if state.core.sessions_home() != state.core.shared_data_home() {
+        day_total += vak_core::finops::FinOpsLedger::new(&state.core.sessions_home())
+            .day_total_usd(Utc::now());
+    }
     if let Some(cap) = state.core.config().finops.max_day_usd
-        && vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
-            .day_total_usd(Utc::now())
-            >= cap
+        && day_total >= cap
     {
         return Ok(());
     }
