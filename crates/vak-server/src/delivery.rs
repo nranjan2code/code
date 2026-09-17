@@ -258,9 +258,9 @@ impl DeliveryRuntime {
             })
             .map(|path| WorkerClient::new(path, WORKER_TIMEOUT));
         Self {
-            outbox: Outbox::new(core.sessions_home().join("delivery").join("jobs")),
+            outbox: Outbox::new(core.shared_data_home().join("delivery").join("jobs")),
             worker,
-            adapters: AdapterRegistry::built_in(&core.sessions_home()),
+            adapters: AdapterRegistry::built_in(&core.shared_data_home()),
             serial: tokio::sync::Mutex::new(()),
         }
     }
