@@ -13561,12 +13561,12 @@ fn load_tasks(state: &AppState) {
         Ok(store) => store.all(),
         Err(_) => Vec::new(),
     };
-    if state.core.sessions_home() != state.core.shared_data_home() {
-        if let Ok(store) = vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
-            for t in store.all() {
-                if !tasks_vec.iter().any(|existing| existing.id == t.id) {
-                    tasks_vec.push(t);
-                }
+    if state.core.sessions_home() != state.core.shared_data_home()
+        && let Ok(store) = vak_core::tasks::TaskStore::load(&state.core.sessions_home())
+    {
+        for t in store.all() {
+            if !tasks_vec.iter().any(|existing| existing.id == t.id) {
+                tasks_vec.push(t);
             }
         }
     }
