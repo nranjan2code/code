@@ -17,7 +17,7 @@ pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
-pub use task::{ActiveWorker, WorkerHandle, WorkerRegistry, TaskDeps, TaskTool};
+pub use task::{ActiveWorker, TaskDeps, TaskTool, WorkerHandle, WorkerRegistry};
 pub use workspace::WorkspaceDelta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

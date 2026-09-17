@@ -378,8 +378,12 @@ pub enum WorkOwner {
     /// integrity check on the next entry too).
     #[serde(alias = "subagent")]
     Worker,
-    Flow { name: String },
-    Tool { name: String },
+    Flow {
+        name: String,
+    },
+    Tool {
+        name: String,
+    },
     Human,
 }
 

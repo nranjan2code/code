@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, WorkerRegistry, TaskDeps, TaskTool, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, TaskDeps, TaskTool, TurnOutcome, WorkerRegistry};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};

@@ -2413,10 +2413,7 @@ fn surface_attendance_mapping() {
         Surface::Heartbeat.implied_attendance(),
         Attendance::Unattended
     );
-    assert_eq!(
-        Surface::Worker.implied_attendance(),
-        Attendance::Unattended
-    );
+    assert_eq!(Surface::Worker.implied_attendance(), Attendance::Unattended);
 }
 
 #[test]

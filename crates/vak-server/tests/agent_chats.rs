@@ -350,7 +350,10 @@ async fn memory_and_proposals_are_scoped_per_agent() {
     );
 
     // Each agent writes a note only it should ever see.
-    for (agent, marker) in [("newsy", "newsy-private-note"), ("other", "other-private-note")] {
+    for (agent, marker) in [
+        ("newsy", "newsy-private-note"),
+        ("other", "other-private-note"),
+    ] {
         let (status, _) = call(
             &app,
             "POST",
@@ -396,9 +399,7 @@ async fn memory_and_proposals_are_scoped_per_agent() {
     assert_eq!(status, StatusCode::OK);
     let (_, other_notes_after) = call(&app, "GET", "/memory?agent=other", json!({})).await;
     assert!(
-        other_notes_after
-            .to_string()
-            .contains("other-private-note"),
+        other_notes_after.to_string().contains("other-private-note"),
         "deleting newsy's note must not affect other's"
     );
 }
@@ -458,7 +459,13 @@ async fn prompt_effective_is_scoped_per_agent() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, newsy_effective) = call(&app, "GET", "/config/prompts/effective?agent=newsy", json!({})).await;
+    let (_, newsy_effective) = call(
+        &app,
+        "GET",
+        "/config/prompts/effective?agent=newsy",
+        json!({}),
+    )
+    .await;
     assert!(
         newsy_effective["text"]
             .as_str()

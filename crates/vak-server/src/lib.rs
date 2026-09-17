@@ -11939,7 +11939,11 @@ async fn instantiate_agent_template(
             .into_response();
     }
     existing.push(new_agent.clone());
-    match agents::save(&root, &existing, state.active_core().project_config_trusted()) {
+    match agents::save(
+        &root,
+        &existing,
+        state.active_core().project_config_trusted(),
+    ) {
         Ok(_) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "created": true, "agent": new_agent })),

@@ -179,7 +179,12 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
                 last_run_at: None,
                 last_status: None,
             };
-            match agents::update_schedule(root, &id, Some(schedule), vak_core::trust::is_trusted(root)) {
+            match agents::update_schedule(
+                root,
+                &id,
+                Some(schedule),
+                vak_core::trust::is_trusted(root),
+            ) {
                 Ok(agent) => {
                     println!(
                         "Scheduled agent '{}' ({}) with frequency: '{}'",

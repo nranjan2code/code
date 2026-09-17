@@ -533,7 +533,8 @@ mod tests {
         let mut untouched = profile.clone();
         untouched.id = "atlas".into();
         untouched.name = "Atlas".into();
-        let saved = save(dir.path(), &[profile.clone(), untouched.clone()], true).expect("first save");
+        let saved =
+            save(dir.path(), &[profile.clone(), untouched.clone()], true).expect("first save");
         assert_eq!(saved[0].revision, 1);
         let mut edited = profile;
         edited.personality = "Warm and direct".into();

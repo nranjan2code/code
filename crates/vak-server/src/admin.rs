@@ -1030,10 +1030,7 @@ fn is_scratch_workspace(path: &str) -> bool {
         .components()
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
-    if components
-        .windows(2)
-        .any(|pair| pair == [".vak", "agents"])
-    {
+    if components.windows(2).any(|pair| pair == [".vak", "agents"]) {
         return true;
     }
     // Windows temp dirs: %TEMP%, %TMP%, C:\Windows\Temp, C:\Temp.

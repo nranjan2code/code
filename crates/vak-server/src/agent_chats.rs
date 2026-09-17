@@ -138,27 +138,28 @@ pub(crate) fn resolve_agent_core(
     let core = if workspace == *active.cwd() {
         active
     } else {
-        let resolved = match state
-            .gateway
-            .core_pool
-            .resolve_at(&workspace, None, std::time::Instant::now())
-        {
-            Ok(core) => core,
-            // `resolve_at` failing (a transient permission-ceiling recheck
-            // error on a cache hit, or `Core::new_with_trust`'s own IO/config
-            // error) is not itself a trust decision — falling back to an
-            // unconditional `true` here would let an operator-declined
-            // workspace's hooks/MCP servers/`.env` apply anyway, exactly the
-            // bypass `vak_core::trust` exists to close. Recompute trust the
-            // same way `resolve_at` does rather than assuming it.
-            Err(_) => match vak_core::Core::new_with_trust(
-                workspace.clone(),
-                vak_core::trust::is_trusted(&workspace),
-            ) {
+        let resolved =
+            match state
+                .gateway
+                .core_pool
+                .resolve_at(&workspace, None, std::time::Instant::now())
+            {
                 Ok(core) => core,
-                Err(e) => return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e)),
-            },
-        };
+                // `resolve_at` failing (a transient permission-ceiling recheck
+                // error on a cache hit, or `Core::new_with_trust`'s own IO/config
+                // error) is not itself a trust decision — falling back to an
+                // unconditional `true` here would let an operator-declined
+                // workspace's hooks/MCP servers/`.env` apply anyway, exactly the
+                // bypass `vak_core::trust` exists to close. Recompute trust the
+                // same way `resolve_at` does rather than assuming it.
+                Err(_) => match vak_core::Core::new_with_trust(
+                    workspace.clone(),
+                    vak_core::trust::is_trusted(&workspace),
+                ) {
+                    Ok(core) => core,
+                    Err(e) => return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e)),
+                },
+            };
         // A freshly-resolved Core has its own default sessions/data home
         // (real on-disk `data_home()`), which would silently diverge from
         // wherever this app/process's data actually lives if the active
