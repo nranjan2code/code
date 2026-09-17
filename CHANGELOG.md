@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.5 — 2026-09-18
+
+- Per-Agent config-layer isolation: Generalized `resolve_scoped_core`/`AgentScopeQuery` from memory/learning-proposal endpoints to hooks, MCP servers/integrations, permission rules, prompt layers (including the assembled effective-prompt endpoint), skills/custom commands, the plugin store, general config endpoints, `set_permission_mode`, commitments, and checkpoints — closing the same-shape gap `list_sessions` once had, everywhere it still existed.
+- Client and admin console wiring: `vak-client-ui` and `vak-admin-ui` now thread the active/selected Agent id through every config-layer API call (prompts, permissions, hooks, MCP, plugins, checkpoints, FinOps), and the Prompts admin view's layer/effective/roles resources now react to switching the selected Agent instead of only reading it once.
+- Fixed a structural trust gap underneath all of the above: a user-created Agent's isolated workspace was never separately trust-prompted, so its own `permission_mode`, `hooks`, `mcp.servers`, and other privileged config were silently discarded regardless of how trusted the parent workspace was. `agents::save`/`update_schedule` now carry the creating context's own trust decision onto each Agent's isolated workspace, with a retroactive backstop in `resolve_agent_core` for Agents created before this fix.
+- `set_permission_mode` now forwards `resolve_scoped_core`'s real error status (e.g. 409 for a paused/archived Agent) instead of collapsing every failure to 404; `apply_permission_mode`'s live-session cancellation is now scoped to the mutated Agent's own sessions rather than every agent's.
+- Renamed the internal ephemeral subagent/task-runner concept to "worker" throughout the codebase, distinct from user-facing Agents.
+- Factored the resulting ~56 duplicated `resolve_scoped_core` call sites into one `scoped_core!` macro; added regression tests for hooks/MCP/plugin-key/permission-rule/FinOps-cap/checkpoint/prompt-effective isolation and for the trust-propagation fix.
+
 ## 3.2.4 — 2026-09-17
 
 - Active agent session preservation in discovery: Ensured `list_sessions` never skips actively registered in-memory agent sessions with `state.get(&session_id).is_some()`, allowing newly opened agent conversations to be listed immediately before the first message is sent.
