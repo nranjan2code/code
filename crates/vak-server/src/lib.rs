@@ -2423,24 +2423,42 @@ fn note_payload(n: &vak_core::memory::NoteBlock, scope: &str) -> serde_json::Val
 }
 
 async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let home = state.core.sessions_home();
-    let mut blocks: Vec<serde_json::Value> = vak_core::memory::list_notes(&home, state.core.cwd())
-        .iter()
-        .map(|n| note_payload(n, "workspace"))
-        .collect();
-    blocks.extend(
-        vak_core::memory::list_profile_notes(&home)
-            .iter()
-            .map(|n| note_payload(n, "profile")),
-    );
+    let mut homes = vec![state.core.sessions_home()];
+    let shared = state.core.shared_data_home();
+    if shared != state.core.sessions_home() {
+        homes.push(shared);
+    }
+    let mut blocks: Vec<serde_json::Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for home in homes {
+        for n in vak_core::memory::list_notes(&home, state.core.cwd()) {
+            if seen.insert((n.kind.clone(), n.tag.clone(), n.text.clone())) {
+                blocks.push(note_payload(&n, "workspace"));
+            }
+        }
+        for n in vak_core::memory::list_profile_notes(&home) {
+            if seen.insert((n.kind.clone(), n.tag.clone(), n.text.clone())) {
+                blocks.push(note_payload(&n, "profile"));
+            }
+        }
+    }
     Json(serde_json::json!({ "notes": blocks }))
 }
 
 async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let report = vak_core::memory::cleanup_artifacts(
+    let mut report = vak_core::memory::cleanup_artifacts(
         &state.core.sessions_home(),
         std::time::Duration::from_secs(86_400),
     );
+    if state.core.shared_data_home() != state.core.sessions_home() {
+        let shared_report = vak_core::memory::cleanup_artifacts(
+            &state.core.shared_data_home(),
+            std::time::Duration::from_secs(86_400),
+        );
+        report.removed_locks += shared_report.removed_locks;
+        report.removed_temps += shared_report.removed_temps;
+        report.removed_empty_dirs += shared_report.removed_empty_dirs;
+    }
     vak_core::security_events::record(
         &state.core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
@@ -2799,7 +2817,11 @@ async fn amend_memory_note(
 }
 
 fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
-    vak_core::learning::list_proposals(&core.sessions_home(), core.cwd())
+    let mut proposals = vak_core::learning::list_proposals(&core.sessions_home(), core.cwd());
+    if proposals.is_empty() && core.shared_data_home() != core.sessions_home() {
+        proposals = vak_core::learning::list_proposals(&core.shared_data_home(), core.cwd());
+    }
+    proposals
         .iter()
         .map(|p| {
             serde_json::json!({
@@ -2820,7 +2842,14 @@ async fn promote_proposal(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match vak_core::learning::promote(&state.core.sessions_home(), state.core.cwd(), &id) {
+    let res = vak_core::learning::promote(&state.core.sessions_home(), state.core.cwd(), &id);
+    let res = match res {
+        Err(_) if state.core.shared_data_home() != state.core.sessions_home() => {
+            vak_core::learning::promote(&state.core.shared_data_home(), state.core.cwd(), &id)
+        }
+        other => other,
+    };
+    match res {
         Ok(name) => (
             StatusCode::OK,
             Json(serde_json::json!({ "promoted": name })),
@@ -2839,7 +2868,14 @@ async fn reject_proposal(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match vak_core::learning::reject(&state.core.sessions_home(), state.core.cwd(), &id) {
+    let res = vak_core::learning::reject(&state.core.sessions_home(), state.core.cwd(), &id);
+    let res = match res {
+        Err(_) if state.core.shared_data_home() != state.core.sessions_home() => {
+            vak_core::learning::reject(&state.core.shared_data_home(), state.core.cwd(), &id)
+        }
+        other => other,
+    };
+    match res {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "rejected": id }))).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
