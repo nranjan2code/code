@@ -122,6 +122,19 @@ pub(crate) fn resolve_agent_core(
     {
         return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e));
     }
+    // Backstop for an Agent whose workspace predates `agents::save` carrying
+    // trust forward (or was created by some other path this fix missed):
+    // without a trust marker here, `CorePool::resolve_at` below treats it as
+    // untrusted and silently strips its own `permission_mode`, `hooks`,
+    // `mcp.servers`, and other privileged config forever — the same gap
+    // `agents::save` closes at creation time, applied retroactively the
+    // first time this Agent is opened from a trusted context.
+    if identity.id != "vak"
+        && active.project_config_trusted()
+        && !vak_core::trust::is_trusted(&workspace)
+    {
+        let _ = vak_core::trust::mark_trusted(&workspace);
+    }
     let core = if workspace == *active.cwd() {
         active
     } else {

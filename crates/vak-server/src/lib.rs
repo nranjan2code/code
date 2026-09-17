@@ -11939,7 +11939,7 @@ async fn instantiate_agent_template(
             .into_response();
     }
     existing.push(new_agent.clone());
-    match agents::save(&root, &existing) {
+    match agents::save(&root, &existing, state.active_core().project_config_trusted()) {
         Ok(_) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "created": true, "agent": new_agent })),
@@ -11984,7 +11984,12 @@ async fn update_agent_schedule_route(
         last_run_at: None,
         last_status: None,
     };
-    match agents::update_schedule(&root, &agent_id, Some(sched)) {
+    match agents::update_schedule(
+        &root,
+        &agent_id,
+        Some(sched),
+        state.active_core().project_config_trusted(),
+    ) {
         Ok(agent) => Json(serde_json::json!({ "updated": true, "agent": agent })).into_response(),
         Err(err) => (
             StatusCode::BAD_REQUEST,
@@ -12070,7 +12075,7 @@ async fn put_agents(
                 .into_response();
         }
     };
-    match agents::save(&root, &agents) {
+    match agents::save(&root, &agents, state.active_core().project_config_trusted()) {
         Ok(saved_agents) => {
             Json(serde_json::json!({ "saved": true, "agents": saved_agents })).into_response()
         }

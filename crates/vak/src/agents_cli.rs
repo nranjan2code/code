@@ -107,7 +107,7 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
             let new_agent = tmpl.to_agent_definition(&id, name.as_deref());
             existing.push(new_agent.clone());
 
-            match agents::save(root, &existing) {
+            match agents::save(root, &existing, vak_core::trust::is_trusted(root)) {
                 Ok(_) => {
                     println!(
                         "Created agent '{}' ({}) in {} scope.",
@@ -179,7 +179,7 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
                 last_run_at: None,
                 last_status: None,
             };
-            match agents::update_schedule(root, &id, Some(schedule)) {
+            match agents::update_schedule(root, &id, Some(schedule), vak_core::trust::is_trusted(root)) {
                 Ok(agent) => {
                     println!(
                         "Scheduled agent '{}' ({}) with frequency: '{}'",

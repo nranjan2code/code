@@ -223,7 +223,18 @@ pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
     serde_json::from_str(&raw).map_err(|e| format!("invalid agents: {e}"))
 }
 
-pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinition>, String> {
+/// `trusted` is the *creating* context's own trust decision (the workspace
+/// this admin/client session is already running against), carried forward
+/// onto each profile's isolated workspace so its own privileged config
+/// (`permission_mode`, `hooks`, `mcp.servers`, ...) actually applies —
+/// otherwise every user-created Agent's own settings are silently stripped
+/// forever, since nothing else ever visits or prompts about that nested
+/// directory (see `vak_core::trust::mark_trusted`).
+pub fn save(
+    cwd: &Path,
+    profiles: &[AgentDefinition],
+    trusted: bool,
+) -> Result<Vec<AgentDefinition>, String> {
     if profiles.len() > 100 {
         return Err("at most 100 agents are allowed".into());
     }
@@ -328,6 +339,9 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
         let _ = std::fs::create_dir_all(&agent_dir);
         let workspace_dir = vak_config::paths::agent_workspace(cwd, &profile.id);
         let _ = std::fs::create_dir_all(&workspace_dir);
+        if trusted {
+            let _ = vak_core::trust::mark_trusted(&workspace_dir);
+        }
     }
     Ok(next)
 }
@@ -384,13 +398,14 @@ pub fn update_schedule(
     cwd: &Path,
     agent_id: &str,
     schedule: Option<AgentSchedule>,
+    trusted: bool,
 ) -> Result<AgentDefinition, String> {
     let mut profiles = load(cwd)?;
     let Some(profile) = profiles.iter_mut().find(|a| a.id == agent_id) else {
         return Err(format!("agent '{agent_id}' not found"));
     };
     profile.schedule = schedule;
-    let saved = save(cwd, &profiles)?;
+    let saved = save(cwd, &profiles, trusted)?;
     saved
         .into_iter()
         .find(|a| a.id == agent_id)
@@ -419,7 +434,7 @@ mod tests {
             voice: "default".into(),
             schedule: None,
         }];
-        save(dir.path(), &profiles).expect("save profiles");
+        save(dir.path(), &profiles, true).expect("save profiles");
         assert_eq!(load(dir.path()).expect("load profiles")[0].name, "Pip");
     }
 
@@ -452,7 +467,7 @@ mod tests {
             voice: "default".into(),
             schedule: None,
         };
-        assert!(save(dir.path(), &[profile]).is_err());
+        assert!(save(dir.path(), &[profile], true).is_err());
     }
 
     #[test]
@@ -472,7 +487,7 @@ mod tests {
             voice: "unknown".into(),
             schedule: None,
         };
-        assert!(save(dir.path(), &[profile]).is_err());
+        assert!(save(dir.path(), &[profile], true).is_err());
     }
 
     #[test]
@@ -492,7 +507,7 @@ mod tests {
             voice: "default".into(),
             schedule: None,
         };
-        save(dir.path(), &[agent.clone()]).expect("save paused agent");
+        save(dir.path(), &[agent.clone()], true).expect("save paused agent");
         agent = load(dir.path()).expect("load paused agent").remove(0);
         assert_eq!(agent.lifecycle, AgentLifecycle::Paused);
         assert!(!agent.is_admissible());
@@ -518,11 +533,11 @@ mod tests {
         let mut untouched = profile.clone();
         untouched.id = "atlas".into();
         untouched.name = "Atlas".into();
-        let saved = save(dir.path(), &[profile.clone(), untouched.clone()]).expect("first save");
+        let saved = save(dir.path(), &[profile.clone(), untouched.clone()], true).expect("first save");
         assert_eq!(saved[0].revision, 1);
         let mut edited = profile;
         edited.personality = "Warm and direct".into();
-        let saved = save(dir.path(), &[edited, untouched]).expect("edited save");
+        let saved = save(dir.path(), &[edited, untouched], true).expect("edited save");
         assert_eq!(saved[0].revision, 2);
         assert_eq!(saved[1].revision, 1);
     }
@@ -546,7 +561,7 @@ mod tests {
         };
         let mut duplicate = profile.clone();
         duplicate.name = "Two".into();
-        assert!(save(dir.path(), &[profile, duplicate]).is_err());
+        assert!(save(dir.path(), &[profile, duplicate], true).is_err());
     }
 
     #[test]
@@ -558,7 +573,7 @@ mod tests {
             .iter()
             .map(|t| t.to_agent_definition(&t.template_id, None))
             .collect();
-        let saved = save(dir.path(), &agents).expect("save all builtin templates");
+        let saved = save(dir.path(), &agents, true).expect("save all builtin templates");
         assert_eq!(saved.len(), 4);
         let loaded = load(dir.path()).expect("load all builtin templates");
         assert_eq!(loaded.len(), 4);
@@ -573,7 +588,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("agent workspace");
         let template = builtin_templates().remove(0);
         let agent = template.to_agent_definition("researcher", None);
-        save(dir.path(), &[agent]).expect("save agent");
+        save(dir.path(), &[agent], true).expect("save agent");
 
         let updated = update_schedule(
             dir.path(),
@@ -585,6 +600,7 @@ mod tests {
                 last_run_at: None,
                 last_status: None,
             }),
+            true,
         )
         .expect("update schedule");
         assert_eq!(

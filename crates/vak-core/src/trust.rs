@@ -54,6 +54,27 @@ pub fn is_trusted(cwd: &Path) -> bool {
     marker_path(cwd).is_file() || marker_for(cwd).is_file()
 }
 
+/// Record a trust decision for `cwd`, the same way the CLI's own interactive
+/// "trust this workspace?" prompt does — a file at [`marker_path`], so every
+/// later [`is_trusted`] call (including `CorePool`'s) sees it immediately.
+///
+/// A user-created Agent's isolated workspace (`.vak/agents/<id>/workspace`)
+/// is never visited or prompted about directly, so without this it can never
+/// pass `is_trusted` and its own `permission_mode`, `hooks`, `mcp.servers`,
+/// and other privileged config are silently stripped forever (see
+/// `vak_config`'s `PRIVILEGED_KEYS_NOTICE`) — an Agent whose settings a user
+/// configures through a trusted admin session but that silently never apply.
+/// Callers must only invoke this when the *creating* context is itself
+/// already trusted; it is not a substitute for that decision, only a way to
+/// carry it forward onto a directory the decision already covers in spirit.
+pub fn mark_trusted(cwd: &Path) -> std::io::Result<()> {
+    let marker = marker_path(cwd);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&marker, cwd.to_string_lossy().as_bytes())
+}
+
 /// True when the workspace asks for nothing privileged, so opening it
 /// needs no decision at all. Keeping this distinct from `is_trusted`
 /// is what lets onboarding stay silent for an ordinary directory and

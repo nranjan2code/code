@@ -596,6 +596,38 @@ async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
     );
 }
 
+/// A user-created Agent's isolated workspace is never separately visited or
+/// trust-prompted, so without `agents::save` carrying the creating context's
+/// own trust decision forward onto it (`vak_core::trust::mark_trusted`), its
+/// own privileged config — `permission_mode`, `hooks`, `mcp.servers`, ... —
+/// gets silently stripped by `CorePool::resolve_at` forever, no matter how
+/// correctly it's scoped per-Agent. This is the live-tested gap that
+/// surfaced *after* every other per-Agent scoping fix in this file: a write
+/// through `/config/mode?agent=newsy` persisted correctly to newsy's own
+/// `config.toml`, but read back as the untouched default because the
+/// directory it lived in had no trust marker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_new_agents_workspace_is_trusted_when_its_creator_is() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/config/mode",
+        json!({"mode": "ReadOnly", "agent": "newsy"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, newsy_config) = call(&app, "GET", "/config?agent=newsy", json!({})).await;
+    assert_eq!(
+        newsy_config["permission_mode"], "ReadOnly",
+        "newsy's own permission mode must actually take effect once its \
+         workspace is trusted, not silently stay at the untrusted default: \
+         {newsy_config}"
+    );
+}
+
 /// `PUT /config/hooks` writes the project's own `[[hooks]]` array
 /// (docs/design/45-prompt-layers.md-adjacent config-layer semantics) — a
 /// hook saved for one Agent must not appear in, or be overwritten by, a
