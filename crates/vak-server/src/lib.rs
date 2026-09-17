@@ -690,17 +690,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/control-state", get(control_state))
         .route("/sessions/{id}/plan-change", post(plan_change))
         .route("/sessions/{id}/workers", get(list_workers))
-        .route(
-            "/sessions/{id}/workers/{child}/steer",
-            post(steer_worker),
-        )
+        .route("/sessions/{id}/workers/{child}/steer", post(steer_worker))
         .route("/sessions/{id}/workers/{child}/stop", post(stop_worker))
         // Backward-compatible aliases for the old `subagents` route names.
         .route("/sessions/{id}/subagents", get(list_workers))
-        .route(
-            "/sessions/{id}/subagents/{child}/steer",
-            post(steer_worker),
-        )
+        .route("/sessions/{id}/subagents/{child}/steer", post(steer_worker))
         .route("/sessions/{id}/subagents/{child}/stop", post(stop_worker))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/outcome-review", post(record_outcome_review))
@@ -2055,10 +2049,18 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
 /// Caps are read through the live-effective accessors, not `Core::config()`
 /// directly, so a PATCH from `patch_finops` (below) is reflected
 /// immediately rather than only after a restart.
-async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut homes = vec![state.core.shared_data_home()];
-    if state.core.sessions_home() != state.core.shared_data_home() {
-        homes.push(state.core.sessions_home());
+async fn finops_status(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let mut homes = vec![core.shared_data_home()];
+    if core.sessions_home() != core.shared_data_home() {
+        homes.push(core.sessions_home());
     }
     let mut rows: Vec<vak_core::finops::CostRow> = Vec::new();
     let mut activity: Vec<vak_core::finops::ActivityRow> = Vec::new();
@@ -2066,7 +2068,7 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         rows.extend(vak_core::finops::FinOpsLedger::new(home).all_rows());
         activity.extend(vak_core::finops::ActivityLedger::new(home).all_rows());
     }
-    let ledger = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home());
+    let ledger = vak_core::finops::FinOpsLedger::new(&core.shared_data_home());
     let now = chrono::Utc::now();
     let day_start = now
         .date_naive()
@@ -2118,14 +2120,14 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         .into_iter()
         .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
         .collect();
-    let mut alerts = recent_budget_alerts(&state.core.shared_data_home(), 10);
-    if alerts.is_empty() && state.core.sessions_home() != state.core.shared_data_home() {
-        alerts = recent_budget_alerts(&state.core.sessions_home(), 10);
+    let mut alerts = recent_budget_alerts(&core.shared_data_home(), 10);
+    if alerts.is_empty() && core.sessions_home() != core.shared_data_home() {
+        alerts = recent_budget_alerts(&core.sessions_home(), 10);
     }
     Json(serde_json::json!({
         "day_usd": day_usd,
-        "run_cap_usd": state.core.effective_finops_max_run_usd(),
-        "day_cap_usd": state.core.effective_finops_max_day_usd(),
+        "run_cap_usd": core.effective_finops_max_run_usd(),
+        "day_cap_usd": core.effective_finops_max_day_usd(),
         "unknown_rows": unknown_rows,
         "total_rows": rows.len(),
         "day_input_tokens": day_rows.iter().map(|r| r.input_tokens).sum::<u64>(),
@@ -2137,6 +2139,7 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         "daily": daily,
         "recent_alerts": alerts,
     }))
+    .into_response()
 }
 
 /// Most recent budget-alert rows, newest first, tolerant of corrupt or
@@ -2166,6 +2169,8 @@ struct FinopsPatch {
     max_run_usd: Option<Option<f64>>,
     #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     max_day_usd: Option<Option<f64>>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// `PATCH /finops` — set or clear the run/day budget caps, applied live
@@ -2193,22 +2198,24 @@ async fn patch_finops(
     if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
         return StatusCode::OK.into_response();
     }
-    if vak_config::persist_project_finops_caps(state.core.cwd(), body.max_run_usd, body.max_day_usd)
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    if vak_config::persist_project_finops_caps(core.cwd(), body.max_run_usd, body.max_day_usd)
         .is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    state
-        .core
-        .apply_persisted_finops_caps(body.max_run_usd, body.max_day_usd);
+    core.apply_persisted_finops_caps(body.max_run_usd, body.max_day_usd);
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
         "finops_caps_patched",
         &format!(
             "run={:?} day={:?}",
-            state.core.effective_finops_max_run_usd(),
-            state.core.effective_finops_max_day_usd()
+            core.effective_finops_max_run_usd(),
+            core.effective_finops_max_day_usd()
         ),
         None,
     );
@@ -2782,14 +2789,9 @@ async fn append_memory(
     let tag = body.tag.unwrap_or_default();
     let session = body.session_id.unwrap_or_else(|| "http".to_string());
     let result = match scope {
-        MemoryScope::Workspace => vak_core::memory::append_note(
-            &home,
-            core.cwd(),
-            &kind,
-            &tag,
-            &session,
-            &body.text,
-        ),
+        MemoryScope::Workspace => {
+            vak_core::memory::append_note(&home, core.cwd(), &kind, &tag, &session, &body.text)
+        }
         MemoryScope::Profile => {
             vak_core::memory::append_profile_note(&home, &kind, &tag, &body.text, &session)
         }
@@ -7578,14 +7580,21 @@ struct CommitmentQuery {
     /// Include closed commitments.
     #[serde(default)]
     all: bool,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// The portfolio, in the order the scheduler would work it.
 async fn list_commitments(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<CommitmentQuery>,
-) -> Json<serde_json::Value> {
-    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     let commitments = if q.all { ledger.all() } else { ledger.open() };
     let ranked = vak_commit::rank(&commitments, &vak_commit::SchedulerContext::default());
     Json(serde_json::json!({
@@ -7595,13 +7604,19 @@ async fn list_commitments(
         // show why as well as what.
         "priorities": ranked,
     }))
+    .into_response()
 }
 
 async fn get_commitment(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
-    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     match ledger.get(&id) {
         Ok(Some(commitment)) => Json(serde_json::json!({
             "commitment": commitment,
@@ -7626,6 +7641,8 @@ struct CloseCommitmentBody {
     verdict: String,
     #[serde(default)]
     note: String,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 async fn close_commitment(
@@ -7633,7 +7650,11 @@ async fn close_commitment(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<CloseCommitmentBody>,
 ) -> axum::response::Response {
-    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
     let Ok(Some(commitment)) = ledger.get(&id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -7830,11 +7851,19 @@ async fn list_checkpoints(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
+    // The session id itself is enough to resolve the Agent that owns this
+    // session's sessions_home (a registered session's own Core is reused
+    // when it's still open; a checkpoint search for a closed session falls
+    // back to the default "vak" Agent below, matching prior behaviour).
+    let core = match resolve_scoped_core(&state, Some(&id), None) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     // A session with no snapshots yet has no directory; that's an empty
     // list, not an error.
-    let list = match vak_core::checkpoints::list(&state.core.sessions_home(), &id) {
+    let list = match vak_core::checkpoints::list(&core.sessions_home(), &id) {
         Ok(list) if !list.is_empty() => list,
-        _ => match vak_core::checkpoints::list(&state.core.shared_data_home(), &id) {
+        _ => match vak_core::checkpoints::list(&core.shared_data_home(), &id) {
             Ok(list) => list,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => {
@@ -7878,14 +7907,18 @@ async fn restore_checkpoint(
         )
             .into_response();
     }
+    let core = match resolve_scoped_core(&state, Some(&id), None) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     // Best-of-N children captured inside their worktrees; attached handles
     // know that cwd. Everything else restores into the workspace root.
     let cwd = state
         .get(&id)
         .map(|h| h.cwd.clone())
-        .unwrap_or_else(|| state.core.cwd().clone());
-    let cp = match vak_core::checkpoints::load(&state.core.sessions_home(), &id, seq)
-        .or_else(|_| vak_core::checkpoints::load(&state.core.shared_data_home(), &id, seq))
+        .unwrap_or_else(|| core.cwd().clone());
+    let cp = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
+        .or_else(|_| vak_core::checkpoints::load(&core.shared_data_home(), &id, seq))
     {
         Ok(cp) => cp,
         Err(_) => {
@@ -8078,16 +8111,23 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
     Json(serde_json::json!({ "deleted": count })).into_response()
 }
 
-async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn list_skills(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     // `path` and `scope` tell the reader WHERE a skill came from. Discovery
     // reads two roots (`<cwd>/.vak/skills` then the Shared
     // `~/vak-home/.vak/skills` root), and a workspace skill is a very different
     // trust proposition from a Shared skill
     // one -- the admin console groups by this.
-    let workspace_root = state.core.cwd().join(".vak/skills");
+    let workspace_root = core.cwd().join(".vak/skills");
     let shared_root = vak_config::paths::default_workspace().join(".vak/skills");
-    let skills: Vec<serde_json::Value> = state
-        .core
+    let skills: Vec<serde_json::Value> = core
         .skills_with_shadowed()
         .iter()
         .map(|s| {
@@ -8108,15 +8148,24 @@ async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
             })
         })
         .collect();
-    Json(serde_json::json!({ "skills": skills }))
+    Json(serde_json::json!({ "skills": skills })).into_response()
 }
 
-async fn list_commands(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn list_commands(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     Json(
-        serde_json::json!({ "commands": state.core.custom_commands().into_iter().map(|command| serde_json::json!({
+        serde_json::json!({ "commands": core.custom_commands().into_iter().map(|command| serde_json::json!({
         "name": command.name, "description": command.description, "source": command.source,
     })).collect::<Vec<_>>() }),
     )
+    .into_response()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -8126,6 +8175,8 @@ struct PluginMutation {
     scope: Option<InstallScope>,
     #[serde(default)]
     allow_unlicensed: bool,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -8140,16 +8191,18 @@ struct PluginSourceMutation {
     key_id: Option<String>,
     public_key: Option<String>,
     signature: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 fn default_marketplace_trust() -> MarketplaceTrust {
     MarketplaceTrust::ManualReview
 }
 
-fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
+fn plugin_store(core: &vak_core::Core, scope: InstallScope) -> PluginStore {
     let root = match scope {
         InstallScope::User => vak_config::paths::default_workspace().join(".vak"),
-        InstallScope::Workspace => state.core.cwd().join(".vak"),
+        InstallScope::Workspace => core.cwd().join(".vak"),
     };
     PluginStore::new(root)
 }
@@ -8157,12 +8210,22 @@ fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
 #[derive(Debug, serde::Deserialize)]
 struct PluginScopeQuery {
     scope: Option<InstallScope>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
-async fn list_retired_plugins(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn list_retired_plugins(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut retired = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
-        if let Ok(flagged) = plugin_store(&state, scope).retired_plugins() {
+        if let Ok(flagged) = plugin_store(&core, scope).retired_plugins() {
             for (name, tools) in flagged {
                 retired.push(serde_json::json!({
                     "name": name,
@@ -8172,21 +8235,28 @@ async fn list_retired_plugins(State(state): State<AppState>) -> Json<serde_json:
             }
         }
     }
-    Json(serde_json::json!({ "retired": retired }))
+    Json(serde_json::json!({ "retired": retired })).into_response()
 }
 
-async fn remove_retired_plugins(State(state): State<AppState>) -> axum::response::Response {
+async fn remove_retired_plugins(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut removed = Vec::new();
     let mut errors = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
-        let store = plugin_store(&state, scope);
+        let store = plugin_store(&core, scope);
         if let Ok(flagged) = store.retired_plugins() {
             for (name, _) in &flagged {
                 match store.remove(name) {
                     Ok(_) => {
                         removed.push(name.clone());
                         let _ = vak_config::prune_plugins_network_allow(
-                            &state.core.cwd().join(".vak/config.toml"),
+                            &core.cwd().join(".vak/config.toml"),
                             name,
                         );
                     }
@@ -8214,6 +8284,8 @@ async fn remove_retired_plugins(State(state): State<AppState>) -> axum::response
 struct PluginCatalogQuery {
     scope: Option<InstallScope>,
     q: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
@@ -8223,6 +8295,9 @@ fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
     )
 }
 
+// Presentations are process-default-workspace scoped today, unlike the
+// plugin store itself; out of scope for this per-Agent isolation pass
+// (not one of the audited endpoints) and left untouched deliberately.
 fn presentation_store(state: &AppState) -> vak_store::presentation::PresentationStore {
     vak_store::presentation::PresentationStore::new(
         state.core.sessions_home().join("presentations.json"),
@@ -8697,11 +8772,16 @@ async fn revoke_presentations_plugin(
 async fn list_plugins(
     State(state): State<AppState>,
     Query(query): Query<PluginScopeQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut plugins = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
-        if let Ok(items) = plugin_store(&state, scope).list() {
-            let policy = state.core.effective_plugins();
+        if let Ok(items) = plugin_store(&core, scope).list() {
+            let policy = core.effective_plugins();
             plugins.extend(
                 items
                     .into_iter()
@@ -8726,53 +8806,79 @@ async fn list_plugins(
             );
         }
     }
-    Json(serde_json::json!({ "plugins": plugins }))
+    Json(serde_json::json!({ "plugins": plugins })).into_response()
 }
 
-async fn plugin_audit(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn plugin_audit(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut events = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
-        if let Ok(registry) = plugin_store(&state, scope).load() {
+        if let Ok(registry) = plugin_store(&core, scope).load() {
             events.extend(registry.audit);
         }
     }
     events.sort_by_key(|event| event.at_unix);
-    Json(serde_json::json!({ "audit": events }))
+    Json(serde_json::json!({ "audit": events })).into_response()
 }
 
-async fn plugin_invocations(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn plugin_invocations(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut events = Vec::new();
     for scope in [InstallScope::User, InstallScope::Workspace] {
-        if let Ok(items) = plugin_store(&state, scope).invocations() {
+        if let Ok(items) = plugin_store(&core, scope).invocations() {
             events.extend(items);
         }
     }
     events.sort_by_key(|event| event.at_unix);
-    Json(serde_json::json!({ "invocations": events }))
+    Json(serde_json::json!({ "invocations": events })).into_response()
 }
 
 async fn plugin_sources(
     State(state): State<AppState>,
     Query(query): Query<PluginScopeQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let mut sources = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
-        if let Ok(items) = plugin_store(&state, scope).list_sources() {
+        if let Ok(items) = plugin_store(&core, scope).list_sources() {
             sources.extend(items);
         }
     }
-    Json(serde_json::json!({ "sources": sources }))
+    Json(serde_json::json!({ "sources": sources })).into_response()
 }
 
 async fn plugin_catalog(
     State(state): State<AppState>,
     Query(query): Query<PluginCatalogQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let needle = query.q.as_deref().unwrap_or_default().trim().to_lowercase();
     let mut entries = Vec::new();
     let mut errors = Vec::new();
     for scope in requested_plugin_scopes(query.scope) {
-        let store = plugin_store(&state, scope);
+        let store = plugin_store(&core, scope);
         let sources = match store.list_sources() {
             Ok(sources) => sources,
             Err(error) => {
@@ -8827,7 +8933,7 @@ async fn plugin_catalog(
             .cmp(&b["name"].as_str())
             .then_with(|| a["source_id"].as_str().cmp(&b["source_id"].as_str()))
     });
-    Json(serde_json::json!({ "entries": entries, "errors": errors }))
+    Json(serde_json::json!({ "entries": entries, "errors": errors })).into_response()
 }
 
 async fn plugin_register_source(
@@ -8853,8 +8959,12 @@ async fn plugin_register_source(
         }
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
+    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     plugin_result(
-        plugin_store(&state, scope).register_catalog_source_with_signature(
+        plugin_store(&core, scope).register_catalog_source_with_signature(
             &request.path,
             &request.label,
             request.trust,
@@ -8868,8 +8978,12 @@ async fn plugin_source_enable(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+        plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_source_enabled(&id, true),
     )
 }
@@ -8879,8 +8993,12 @@ async fn plugin_source_disable(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+        plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_source_enabled(&id, false),
     )
 }
@@ -8890,8 +9008,12 @@ async fn plugin_key_revoke(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+        plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, true)
             .map(|_| serde_json::json!({"revoked": id})),
     )
@@ -8902,8 +9024,12 @@ async fn plugin_key_restore(
     Path(id): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+        plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, false)
             .map(|_| serde_json::json!({"revoked": false, "key_id": id})),
     )
@@ -8930,7 +9056,11 @@ async fn plugin_install(
         return (StatusCode::BAD_REQUEST, "path is required").into_response();
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
-    plugin_result(plugin_store(&state, scope).install_local(
+    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    plugin_result(plugin_store(&core, scope).install_local(
         &path,
         InstallOptions {
             allow_unlicensed: request.allow_unlicensed,
@@ -8947,7 +9077,11 @@ async fn plugin_update(
         return (StatusCode::BAD_REQUEST, "path is required").into_response();
     };
     let scope = request.scope.unwrap_or(InstallScope::Workspace);
-    plugin_result(plugin_store(&state, scope).update_local(
+    let core = match resolve_scoped_core(&state, None, request.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    plugin_result(plugin_store(&core, scope).update_local(
         &path,
         InstallOptions {
             allow_unlicensed: request.allow_unlicensed,
@@ -8961,9 +9095,11 @@ async fn plugin_enable(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).enable(&name),
-    )
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    plugin_result(plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).enable(&name))
 }
 
 async fn plugin_disable(
@@ -8971,8 +9107,11 @@ async fn plugin_disable(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let result =
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name);
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let result = plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name);
     match result {
         Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
             Ok(_) => (StatusCode::OK, Json(value)).into_response(),
@@ -8990,8 +9129,12 @@ async fn plugin_rollback(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let result =
-        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name);
+        plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name);
     match result {
         Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
             Ok(_) => (StatusCode::OK, Json(value)).into_response(),
@@ -9009,7 +9152,11 @@ async fn plugin_remove(
     Path(name): Path<String>,
     Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let result = plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name);
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let result = plugin_store(&core, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name);
     match result {
         Ok(value) => match presentation_store(&state).revoke_plugin(&name) {
             Ok(_) => (StatusCode::OK, Json(value)).into_response(),
@@ -9565,6 +9712,8 @@ async fn promote_sandbox_candidate(
 #[derive(serde::Deserialize)]
 struct ModeBody {
     mode: String,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Accepts every spelling clients use: config kebab-case (`workspace-write`)
@@ -9591,11 +9740,15 @@ async fn set_permission_mode(
     State(state): State<AppState>,
     Json(body): Json<ModeBody>,
 ) -> StatusCode {
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(_) => return StatusCode::NOT_FOUND,
+    };
     match parse_mode(&body.mode) {
         Some(mode) => {
-            let old = state.core.effective_permission_mode();
+            let old = core.effective_permission_mode();
             if vak_config::persist_project_preferences(
-                state.core.cwd(),
+                core.cwd(),
                 None,
                 None,
                 None,
@@ -9607,10 +9760,10 @@ async fn set_permission_mode(
             {
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
-            apply_permission_mode(&state, mode, true);
+            apply_permission_mode(&core, &state, mode, true);
             if old != mode {
                 vak_core::security_events::record(
-                    &state.core.sessions_home(),
+                    &core.sessions_home(),
                     vak_core::security_events::EventKind::ConfigChange,
                     "permission_mode_changed",
                     &format!("{old:?} -> {mode:?}"),
@@ -9796,10 +9949,18 @@ async fn get_permission_rules(
     axum::extract::Query(q): axum::extract::Query<OptionalScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let scope = q.scope.unwrap_or(ConfigScope::Workspace);
-    let (allow, ask, deny) = state.core.effective_permission_rules();
+    // Recomputed from this resolved Core's own effective rules on every
+    // request rather than relying on any process-pinned cache — a Core
+    // resolved for a non-default Agent must not read the default Agent's
+    // runtime-pinned overrides, and vice versa.
+    let (allow, ask, deny) = core.effective_permission_rules();
     let layer = match scope
-        .config_path(&state.core)
+        .config_path(&core)
         .and_then(|path| read_config_layer(path.as_path()))
     {
         Ok(layer) => layer,
@@ -9837,6 +9998,8 @@ struct PermissionRulesBody {
     deny: Option<Vec<String>>,
     #[serde(default)]
     scope: Option<ConfigScope>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// `PUT /config/permissions` — replace rule lists in one layer.
@@ -9850,6 +10013,10 @@ async fn put_permission_rules(
     Json(body): Json<PermissionRulesBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     for (list_name, list) in [
         ("allow", &body.allow),
         ("ask", &body.ask),
@@ -9870,7 +10037,7 @@ async fn put_permission_rules(
         }
     }
     let scope = body.scope.unwrap_or(ConfigScope::Workspace);
-    let path = match scope.config_path(&state.core) {
+    let path = match scope.config_path(&core) {
         Ok(path) => path,
         Err(error) => {
             return (
@@ -9892,21 +10059,24 @@ async fn put_permission_rules(
         )
             .into_response();
     }
-    // Re-merge both layers and pin the result as this process's effective
-    // rules. Without this the file would change and the running engine
-    // would keep evaluating the rules it loaded at startup — which is the
-    // "I set it and nothing happened" failure this endpoint exists to end.
-    let merged =
-        match vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted()) {
-            Ok(merged) => merged,
-            Err(error) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        };
+    // Re-merge both layers against this resolved Agent's own Core. Written
+    // rules are re-read from disk on every subsequent request through
+    // `resolve_scoped_core` (option (b): no pinned-cache optimization for a
+    // non-default Agent, since a freshly re-resolved Core would lose the
+    // pin anyway) — pinning onto the runtime override is kept only for the
+    // "vak" default/registered-session Core, where callers still read
+    // `effective_permission_rules()` off the very same long-lived instance
+    // within this same process.
+    let merged = match vak_config::load_with_trust(core.cwd(), core.project_config_trusted()) {
+        Ok(merged) => merged,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
     // Reject a set that the engine cannot compile, and do it BEFORE
     // pinning: individually valid rules are all that was checked above,
     // and the merge brings in the other layer's rules too.
@@ -9915,10 +10085,8 @@ async fn put_permission_rules(
         merged.ask.clone(),
         merged.deny.clone(),
     );
-    state
-        .core
-        .apply_persisted_permission_rules(allow.clone(), ask.clone(), deny.clone());
-    if let Err(error) = state.core.build_permission_engine(&[]) {
+    core.apply_persisted_permission_rules(allow.clone(), ask.clone(), deny.clone());
+    if let Err(error) = core.build_permission_engine(&[]) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -9928,7 +10096,7 @@ async fn put_permission_rules(
             .into_response();
     }
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
         "permission_rules_changed",
         &format!(
@@ -9953,14 +10121,26 @@ async fn put_permission_rules(
         .into_response()
 }
 
-fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode, persisted: bool) {
-    if state.core.effective_permission_mode() == mode {
+/// `core` is the Agent-scoped Core the mode is actually read from and
+/// written to (so a PATCH scoped to a non-default Agent lands on that
+/// Agent's own Core, not the process's default workspace); `state` is used
+/// only for the process-wide safety fallout below — invalidating pooled
+/// channel Cores and cancelling every live session — which is deliberately
+/// global: a narrower permission ceiling must not leave an already-running
+/// session anywhere holding a wider one.
+fn apply_permission_mode(
+    core: &vak_core::Core,
+    state: &AppState,
+    mode: vak_config::PermissionMode,
+    persisted: bool,
+) {
+    if core.effective_permission_mode() == mode {
         return;
     }
     if persisted {
-        state.core.apply_persisted_permission_mode(mode);
+        core.apply_persisted_permission_mode(mode);
     } else {
-        state.core.set_permission_mode(mode);
+        core.set_permission_mode(mode);
     }
     // Warm per-channel instances captured their ceiling when they were
     // built. Discard them so the next inbound message resolves a fresh one;
@@ -10006,7 +10186,7 @@ fn refresh_control_plane(state: &AppState) {
         && !state.core.permission_mode_runtime_pinned()
         && mode != old_mode
     {
-        apply_permission_mode(state, mode, true);
+        apply_permission_mode(&state.core, state, mode, true);
         state
             .hub
             .emit_config_changed("permission_mode_refreshed", &format!("{mode:?}"));
@@ -10672,13 +10852,21 @@ async fn delete_bot_id_token(
     }
 }
 
-async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn get_config(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     refresh_control_plane(&state);
-    let cfg = state.core.config();
-    let work = state.core.effective_work();
-    let route = state.core.effective_route();
-    let permission_rules = state.core.effective_permission_rules();
-    let project_path = vak_config::project_path(state.core.cwd());
+    let cfg = core.config();
+    let work = core.effective_work();
+    let route = core.effective_route();
+    let permission_rules = core.effective_permission_rules();
+    let project_path = vak_config::project_path(core.cwd());
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -10686,21 +10874,21 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "model_source": route.model_source,
         "route_revision": route.revision,
         "max_tokens": cfg.max_tokens,
-        "max_turns": state.core.effective_max_turns(),
+        "max_turns": core.effective_max_turns(),
         "intent_evidence_max_age_secs": cfg.intent.evidence_max_age_secs,
-        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "permission_mode": format!("{:?}", core.effective_permission_mode()),
         // How an `Ask` gets resolved, and what the rules say — both were
         // absent here, which is why the desktop app could set the permission
         // mode but had no way to show or change the approval behaviour, and
         // no way to show a rule at all.
-        "approval_mode": state.core.effective_approval_mode().as_str(),
-        "sandbox": state.core.effective_sandbox_name(),
+        "approval_mode": core.effective_approval_mode().as_str(),
+        "sandbox": core.effective_sandbox_name(),
         "permissions": {
             "allow": permission_rules.0,
             "ask": permission_rules.1,
             "deny": permission_rules.2,
         },
-        "workers": state.core.effective_workers(),
+        "workers": core.effective_workers(),
         "max_retries": cfg.max_retries,
         "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
         "request_timeout_secs": cfg.request_timeout_secs,
@@ -10709,12 +10897,12 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "circuit_breaker_threshold": cfg.circuit_breaker_threshold,
         "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
         "context_window": cfg.context_window,
-        "theme": state.core.effective_theme(),
+        "theme": core.effective_theme(),
         "memory": {
-            "search_enabled": state.core.effective_memory_search_enabled(),
-            "write_enabled": state.core.effective_memory_write_enabled(),
-            "reflection": state.core.effective_memory_reflection(),
-            "skill_proposals": state.core.effective_memory_skill_proposals(),
+            "search_enabled": core.effective_memory_search_enabled(),
+            "write_enabled": core.effective_memory_write_enabled(),
+            "reflection": core.effective_memory_reflection(),
+            "skill_proposals": core.effective_memory_skill_proposals(),
         },
         "bell": cfg.ui.bell,
         "stop_policy": {
@@ -10740,14 +10928,14 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "integrations": {
             "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
             "hooks": cfg.hooks.len(),
-            "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
+            "skills": core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
         },
         "capability_inheritance": {
-            "mcp": state.core.effective_capability_inheritance().inherit_mcp,
-            "hooks": state.core.effective_capability_inheritance().inherit_hooks,
-            "skills": state.core.effective_capability_inheritance().inherit_skills,
-            "commands": state.core.effective_capability_inheritance().inherit_commands,
-            "plugins": state.core.effective_capability_inheritance().inherit_plugins,
+            "mcp": core.effective_capability_inheritance().inherit_mcp,
+            "hooks": core.effective_capability_inheritance().inherit_hooks,
+            "skills": core.effective_capability_inheritance().inherit_skills,
+            "commands": core.effective_capability_inheritance().inherit_commands,
+            "plugins": core.effective_capability_inheritance().inherit_plugins,
         },
         // A surface is a transport, not a credential slot (invariant 23):
         // credentials belong to bots, and `GET /gateway/bots` reports them.
@@ -10755,11 +10943,12 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "paths": {
             "project_config": project_path,
             "global_config": vak_config::global_path(),
-            "sessions_home": state.core.sessions_home(),
-            "cwd": state.core.cwd(),
+            "sessions_home": core.sessions_home(),
+            "cwd": core.cwd(),
         },
         "warnings": cfg.warnings,
     }))
+    .into_response()
 }
 
 fn read_config_layer(path: &std::path::Path) -> Result<vak_config::FileConfig, String> {
@@ -10771,10 +10960,10 @@ fn read_config_layer(path: &std::path::Path) -> Result<vak_config::FileConfig, S
 }
 
 fn config_layer_response(
-    state: &AppState,
+    core: &vak_core::Core,
     scope: ConfigScope,
 ) -> Result<serde_json::Value, String> {
-    let path = scope.config_path(&state.core)?;
+    let path = scope.config_path(core)?;
     let layer = read_config_layer(&path)?;
     Ok(serde_json::json!({
         "scope": scope.label(),
@@ -10821,9 +11010,16 @@ fn config_layer_response(
     }))
 }
 
-async fn get_global_config_layer(State(state): State<AppState>) -> axum::response::Response {
+async fn get_global_config_layer(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match config_layer_response(&state, ConfigScope::User) {
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    match config_layer_response(&core, ConfigScope::User) {
         Ok(layer) => Json(layer).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -10833,9 +11029,16 @@ async fn get_global_config_layer(State(state): State<AppState>) -> axum::respons
     }
 }
 
-async fn get_workspace_config_layer(State(state): State<AppState>) -> axum::response::Response {
+async fn get_workspace_config_layer(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match config_layer_response(&state, ConfigScope::Workspace) {
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    match config_layer_response(&core, ConfigScope::Workspace) {
         Ok(layer) => Json(layer).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -11063,6 +11266,8 @@ struct ConfigPatch {
     /// Grants are privileged and refused for an untrusted project layer.
     #[serde(default)]
     plugins_network_allow: Option<Vec<String>>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 async fn patch_config(
@@ -11125,8 +11330,8 @@ async fn patch_evidence_policy(
 /// reasserted and the operator's change appeared to have been forgotten.
 /// Persisting and then saying which keys are shadowed is honest; applying
 /// them was not.
-fn shadowed_by_project(state: &AppState, body: &ConfigPatch) -> Vec<&'static str> {
-    let path = vak_config::project_path(state.core.cwd());
+fn shadowed_by_project(core: &vak_core::Core, body: &ConfigPatch) -> Vec<&'static str> {
+    let path = vak_config::project_path(core.cwd());
     // A workspace that IS the default workspace has one file serving as both
     // layers, and `load_with_trust` skips the project pass for exactly that
     // case. Comparing the file against itself made every global write on the
@@ -11157,6 +11362,10 @@ async fn patch_config_scope(
     body: ConfigPatch,
     global: bool,
 ) -> axum::response::Response {
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     if global
         && (body.inherit_mcp.is_some()
             || body.inherit_hooks.is_some()
@@ -11277,7 +11486,7 @@ async fn patch_config_scope(
             )
         } else {
             vak_config::persist_voice_settings_at_with_models(
-                vak_config::project_path(state.core.cwd()),
+                vak_config::project_path(core.cwd()),
                 body.voice_enabled,
                 body.voice_max_session_secs,
                 body.voice_max_concurrent,
@@ -11295,12 +11504,12 @@ async fn patch_config_scope(
         // Re-read the persisted layered value and publish it immediately;
         // new voice sessions observe the change without a restart.
         if let Ok(effective) =
-            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+            vak_config::load_with_trust(core.cwd(), core.project_config_trusted())
         {
-            state.core.apply_persisted_voice(effective.voice);
+            core.apply_persisted_voice(effective.voice);
         }
     }
-    let current_route = state.core.effective_route();
+    let current_route = core.effective_route();
     let route_change = body.provider.is_some() || body.model.is_some();
     let provider = route_change.then(|| {
         body.provider
@@ -11333,7 +11542,7 @@ async fn patch_config_scope(
             )
         } else {
             vak_config::persist_project_preferences(
-                state.core.cwd(),
+                core.cwd(),
                 provider.as_deref(),
                 model.as_deref(),
                 body.max_turns,
@@ -11349,27 +11558,24 @@ async fn patch_config_scope(
     // Only a global write can be shadowed: the project layer is the last
     // one merged, so a project write is already the winner.
     let shadowed: Vec<&'static str> = if global {
-        shadowed_by_project(&state, &body)
+        shadowed_by_project(&core, &body)
     } else {
         Vec::new()
     };
     let mut changes = Vec::new();
     if let (Some(provider), Some(model)) = (provider, model) {
-        let effective =
-            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
+        let effective = vak_config::load_with_trust(core.cwd(), core.project_config_trusted());
         let Ok(effective) = effective else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        state
-            .core
-            .apply_persisted_route(effective.provider, effective.model);
+        core.apply_persisted_route(effective.provider, effective.model);
         changes.push(format!("route={provider}/{model}"));
     }
     if let Some(max_turns) = body.max_turns {
         if !(1..=1000).contains(&max_turns) {
             return StatusCode::BAD_REQUEST.into_response();
         }
-        state.core.apply_persisted_max_turns(max_turns);
+        core.apply_persisted_max_turns(max_turns);
         changes.push(format!("max_turns={max_turns}"));
     }
     if let Some(mode) = &body.permission_mode {
@@ -11381,7 +11587,7 @@ async fn patch_config_scope(
         if shadowed.contains(&"permission_mode") {
             changes.push(format!("permission_mode={mode:?} (persisted, shadowed)"));
         } else {
-            apply_permission_mode(&state, mode, true);
+            apply_permission_mode(&core, &state, mode, true);
             changes.push(format!("permission_mode={mode:?}"));
         }
     }
@@ -11395,7 +11601,7 @@ async fn patch_config_scope(
                 mode.as_str()
             ));
         } else {
-            state.core.apply_persisted_approval_mode(mode);
+            core.apply_persisted_approval_mode(mode);
             changes.push(format!("approval_mode={}", mode.as_str()));
         }
     }
@@ -11404,18 +11610,18 @@ async fn patch_config_scope(
             return StatusCode::BAD_REQUEST.into_response();
         }
         changes.push(format!("theme={theme}"));
-        state.core.apply_persisted_theme(theme);
+        core.apply_persisted_theme(theme);
     }
     if let Some(workers) = body.workers {
         let persisted = if global {
             vak_config::persist_global_workers(workers)
         } else {
-            vak_config::persist_project_workers(state.core.cwd(), workers)
+            vak_config::persist_project_workers(core.cwd(), workers)
         };
         if persisted.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        state.core.apply_persisted_workers(workers);
+        core.apply_persisted_workers(workers);
         changes.push(format!("workers={workers}"));
     }
     if body.memory_search_enabled.is_some()
@@ -11432,7 +11638,7 @@ async fn patch_config_scope(
             )
         } else {
             vak_config::persist_project_memory_prefs(
-                state.core.cwd(),
+                core.cwd(),
                 body.memory_search_enabled,
                 body.memory_write_enabled,
                 body.memory_reflection,
@@ -11445,22 +11651,22 @@ async fn patch_config_scope(
         // `apply_persisted_memory` sets all four flags at once, so fields
         // this PATCH didn't mention keep their current effective value
         // rather than reverting to whatever was on disk before.
-        state.core.apply_persisted_memory(
+        core.apply_persisted_memory(
             body.memory_search_enabled
-                .unwrap_or_else(|| state.core.effective_memory_search_enabled()),
+                .unwrap_or_else(|| core.effective_memory_search_enabled()),
             body.memory_write_enabled
-                .unwrap_or_else(|| state.core.effective_memory_write_enabled()),
+                .unwrap_or_else(|| core.effective_memory_write_enabled()),
             body.memory_reflection
-                .unwrap_or_else(|| state.core.effective_memory_reflection()),
+                .unwrap_or_else(|| core.effective_memory_reflection()),
             body.memory_skill_proposals
-                .unwrap_or_else(|| state.core.effective_memory_skill_proposals()),
+                .unwrap_or_else(|| core.effective_memory_skill_proposals()),
         );
         changes.push(format!(
             "memory(search={}, write={}, reflection={}, skill_proposals={})",
-            state.core.effective_memory_search_enabled(),
-            state.core.effective_memory_write_enabled(),
-            state.core.effective_memory_reflection(),
-            state.core.effective_memory_skill_proposals(),
+            core.effective_memory_search_enabled(),
+            core.effective_memory_write_enabled(),
+            core.effective_memory_reflection(),
+            core.effective_memory_skill_proposals(),
         ));
     }
     if body.work_enabled.is_some()
@@ -11473,7 +11679,7 @@ async fn patch_config_scope(
         let path = if global {
             vak_config::global_path().ok_or(StatusCode::INTERNAL_SERVER_ERROR)
         } else {
-            Ok(vak_config::project_path(state.core.cwd()))
+            Ok(vak_config::project_path(core.cwd()))
         };
         let Ok(path) = path else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -11491,20 +11697,19 @@ async fn patch_config_scope(
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        let resolved =
-            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
+        let resolved = vak_config::load_with_trust(core.cwd(), core.project_config_trusted());
         let Ok(resolved) = resolved else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        state.core.apply_persisted_work(resolved.work);
+        core.apply_persisted_work(resolved.work);
         changes.push(format!(
             "work(mode={}, enabled={})",
-            state.core.effective_work().default_mode,
-            state.core.effective_work().enabled
+            core.effective_work().default_mode,
+            core.effective_work().enabled
         ));
     }
     if let Some(grant) = &body.plugins_network_allow {
-        if !grant.is_empty() && !global && !state.core.project_config_trusted() {
+        if !grant.is_empty() && !global && !core.project_config_trusted() {
             return (
                 StatusCode::FORBIDDEN,
                 Json(serde_json::json!({
@@ -11518,7 +11723,7 @@ async fn patch_config_scope(
         let path = if global {
             vak_config::global_path().ok_or(StatusCode::INTERNAL_SERVER_ERROR)
         } else {
-            Ok(vak_config::project_path(state.core.cwd()))
+            Ok(vak_config::project_path(core.cwd()))
         };
         let Ok(path) = path else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -11526,7 +11731,7 @@ async fn patch_config_scope(
         if vak_config::persist_plugins_network_allow(&path, Some(grant.clone())).is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        if state.core.refresh_persisted_preferences().is_err() {
+        if core.refresh_persisted_preferences().is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         if shadowed.contains(&"plugins_network_allow") {
@@ -11543,7 +11748,7 @@ async fn patch_config_scope(
         || body.inherit_commands.is_some()
         || body.inherit_plugins.is_some()
     {
-        let path = vak_config::project_path(state.core.cwd());
+        let path = vak_config::project_path(core.cwd());
         if vak_config::persist_capability_inheritance(
             &path,
             body.inherit_mcp,
@@ -11556,21 +11761,18 @@ async fn patch_config_scope(
         {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        let Ok(resolved) =
-            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+        let Ok(resolved) = vak_config::load_with_trust(core.cwd(), core.project_config_trusted())
         else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        state
-            .core
-            .apply_persisted_capability_inheritance(resolved.capabilities);
-        state.core.apply_persisted_mcp_servers(resolved.mcp);
-        state.core.apply_persisted_hooks(resolved.hooks);
+        core.apply_persisted_capability_inheritance(resolved.capabilities);
+        core.apply_persisted_mcp_servers(resolved.mcp);
+        core.apply_persisted_hooks(resolved.hooks);
         changes.push("capability_inheritance".into());
     }
     if !changes.is_empty() {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &core.sessions_home(),
             vak_core::security_events::EventKind::ConfigChange,
             "config_patched",
             &changes.join(", "),
@@ -11602,7 +11804,7 @@ async fn patch_config_scope(
 // this endpoint is only reachable through the bearer-token router of a
 // locally trusted surface.
 
-/// Project-only, deliberately not `state.core.effective_mcp()` (the merged
+/// Project-only, deliberately not `core.effective_mcp()` (the merged
 /// effective set, global layer included). `PUT /config/mcp` writes whatever
 /// this reports straight into the *project* config — reporting the merged
 /// set would silently fork every currently-inherited global MCP server
@@ -11614,9 +11816,16 @@ async fn patch_config_scope(
 /// still quietly diverge project config from what the operator thought
 /// they were changing. Mirrors `get_global_mcp_servers`, which has always
 /// read its own file directly for the same reason.
-async fn get_mcp_servers(State(state): State<AppState>) -> axum::response::Response {
+async fn get_mcp_servers(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = vak_config::project_path(state.core.cwd());
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let path = vak_config::project_path(core.cwd());
     match read_mcp_config(&path) {
         Ok(mcp) => Json(serde_json::json!({ "servers": mcp.servers })).into_response(),
         Err(error) => (
@@ -11648,6 +11857,8 @@ fn default_hook_enabled() -> bool {
 #[derive(serde::Deserialize)]
 struct HooksPutBody {
     hooks: Vec<HookInput>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Project-only, deliberately not `state.core.config().hooks` (the merged
@@ -11672,7 +11883,11 @@ async fn get_prompt_layer(
     Query(query): Query<ScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let dir = vak_core::prompts::layer_dir(&query.scope.prompt_root(&state.core));
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let dir = vak_core::prompts::layer_dir(&query.scope.prompt_root(&core));
     let content = vak_core::prompts::read_layer(&dir);
     Json(serde_json::json!({
         "scope": query.scope.label(),
@@ -11689,6 +11904,8 @@ struct PromptBlockBody {
     /// Absent or null resets the block and resumes inheritance.
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 async fn put_prompt_block(
@@ -11696,6 +11913,10 @@ async fn put_prompt_block(
     Json(body): Json<PromptBlockBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let Some(block) = vak_core::prompts::PromptBlock::parse(&body.block) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -11721,7 +11942,7 @@ async fn put_prompt_block(
         )
             .into_response();
     }
-    let dir = vak_core::prompts::layer_dir(&body.scope.prompt_root(&state.core));
+    let dir = vak_core::prompts::layer_dir(&body.scope.prompt_root(&core));
     match vak_core::prompts::write_block(&dir, block, body.text.as_deref()) {
         Ok(()) => Json(serde_json::json!({
             "ok": true,
@@ -11994,6 +12215,8 @@ struct PromptPreviewBody {
     surface: Option<String>,
     #[serde(default)]
     role: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Render exactly what a chosen surface and role would receive. Composition
@@ -12004,6 +12227,10 @@ async fn preview_prompt(
     Json(body): Json<PromptPreviewBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let raw_surface = body.surface.as_deref().map(str::trim).unwrap_or("");
     let surface = match raw_surface.to_ascii_lowercase().as_str() {
         "" | "unknown" => vak_core::Surface::Unknown,
@@ -12021,7 +12248,7 @@ async fn preview_prompt(
         },
     };
     if let Some(role) = body.role.as_deref()
-        && !state.core.prompt_role_names().iter().any(|n| n == role)
+        && !core.prompt_role_names().iter().any(|n| n == role)
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -12029,22 +12256,32 @@ async fn preview_prompt(
         )
             .into_response();
     }
-    let core = state
-        .core
-        .clone()
-        .with_surface(surface)
-        .with_prompt_role(body.role);
+    let core = core.with_surface(surface).with_prompt_role(body.role);
     Json(prompt_effective_payload(&core)).into_response()
 }
 
-async fn list_prompt_roles(State(state): State<AppState>) -> axum::response::Response {
+async fn list_prompt_roles(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    Json(serde_json::json!({ "roles": state.core.prompt_role_names() })).into_response()
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    Json(serde_json::json!({ "roles": core.prompt_role_names() })).into_response()
 }
 
-async fn get_hooks(State(state): State<AppState>) -> axum::response::Response {
+async fn get_hooks(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = state.core.cwd().join(".vak/config.toml");
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let path = core.cwd().join(".vak/config.toml");
     let hooks = if path.is_file() {
         match std::fs::read_to_string(&path)
             .ok()
@@ -12225,6 +12462,10 @@ async fn put_hooks(
     Json(body): Json<HooksPutBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     for hook in &body.hooks {
         if !matches!(
             hook.event.as_str(),
@@ -12271,7 +12512,7 @@ async fn put_hooks(
                 .into_response();
         }
     }
-    let path = state.core.cwd().join(".vak/config.toml");
+    let path = core.cwd().join(".vak/config.toml");
     let mut root: toml::Value = if path.exists() {
         match std::fs::read_to_string(&path)
             .ok()
@@ -12348,7 +12589,7 @@ async fn put_hooks(
     // Disabled hooks are still handed to Core — `build_hooks_from` is what
     // skips them when it builds the live `HookDef` list — so the effective
     // set stays correct without this endpoint duplicating that filter.
-    state.core.apply_persisted_hooks(
+    core.apply_persisted_hooks(
         body.hooks
             .iter()
             .map(|h| vak_config::HookConfig {
@@ -12363,7 +12604,7 @@ async fn put_hooks(
     );
     let enabled_count = body.hooks.iter().filter(|h| h.enabled).count();
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
         "hooks_updated",
         &format!("enabled={enabled_count} total={}", body.hooks.len()),
@@ -12394,6 +12635,8 @@ struct McpServerInput {
 #[derive(serde::Deserialize)]
 struct McpPutBody {
     servers: std::collections::BTreeMap<String, McpServerInput>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 fn valid_server_name(name: &str) -> bool {
@@ -12494,6 +12737,12 @@ impl ConfigScope {
 #[derive(serde::Deserialize)]
 struct ScopeQuery {
     scope: ConfigScope,
+    /// Which user-facing Agent's isolated workspace this config layer is
+    /// rooted under. Absent means the built-in "vak" Agent, resolved
+    /// through `resolve_scoped_core` exactly like the memory/proposal
+    /// endpoints (see commit 15c9c256).
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// A scope query where omitting the parameter is legal and means "workspace".
@@ -12503,6 +12752,8 @@ struct ScopeQuery {
 struct OptionalScopeQuery {
     #[serde(default)]
     scope: Option<ConfigScope>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -12639,10 +12890,14 @@ async fn get_integration_catalog(
     Query(query): Query<ScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     match INTEGRATION_CATALOG
         .iter()
         .copied()
-        .map(|entry| integration_status(&state.core, query.scope, entry))
+        .map(|entry| integration_status(&core, query.scope, entry))
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(integrations) => Json(serde_json::json!({
@@ -12667,7 +12922,11 @@ async fn get_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    match integration_status(&state.core, query.scope, entry) {
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    match integration_status(&core, query.scope, entry) {
         Ok(status) => Json(status).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12681,15 +12940,17 @@ async fn get_scoped_integration(
 struct IntegrationPutBody {
     scope: ConfigScope,
     key: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 fn apply_scoped_mcp_change(
-    state: &AppState,
+    core: &vak_core::Core,
     scope: ConfigScope,
     id: &str,
     server: Option<vak_config::McpServerConfig>,
 ) -> Result<(), String> {
-    let path = scope.config_path(&state.core)?;
+    let path = scope.config_path(core)?;
     let mut config = read_mcp_config(&path)?;
     match server {
         Some(server) => {
@@ -12700,10 +12961,9 @@ fn apply_scoped_mcp_change(
         }
     }
     vak_config::persist_mcp_servers(&path, &config.servers).map_err(|error| error.to_string())?;
-    let effective =
-        vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
-            .map_err(|error| error.to_string())?;
-    state.core.apply_persisted_mcp_servers(effective.mcp);
+    let effective = vak_config::load_with_trust(core.cwd(), core.project_config_trusted())
+        .map_err(|error| error.to_string())?;
+    core.apply_persisted_mcp_servers(effective.mcp);
     Ok(())
 }
 
@@ -12716,8 +12976,12 @@ async fn put_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     if let Some(key) = body.key.as_deref()
-        && let Err(error) = state.core.set_mcp_secret_scoped(
+        && let Err(error) = core.set_mcp_secret_scoped(
             entry.env_var.unwrap_or_default(),
             key,
             body.scope.is_workspace(),
@@ -12731,7 +12995,7 @@ async fn put_scoped_integration(
     }
     let key_available = entry
         .env_var
-        .is_none_or(|name| state.core.mcp_secret(name).is_some());
+        .is_none_or(|name| core.mcp_secret(name).is_some());
     if entry.key_required && !key_available {
         return (
             StatusCode::BAD_REQUEST,
@@ -12742,7 +13006,7 @@ async fn put_scoped_integration(
             .into_response();
     }
     if let Err(error) =
-        apply_scoped_mcp_change(&state, body.scope, entry.id, Some(catalog_server(entry)))
+        apply_scoped_mcp_change(&core, body.scope, entry.id, Some(catalog_server(entry)))
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12754,7 +13018,7 @@ async fn put_scoped_integration(
         "integration_enabled",
         &format!("scope={} integration={}", body.scope.label(), entry.id),
     );
-    match integration_status(&state.core, body.scope, entry) {
+    match integration_status(&core, body.scope, entry) {
         Ok(status) => Json(status).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12773,10 +13037,12 @@ async fn delete_scoped_integration(
     let Some(entry) = catalog_entry(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let core = match resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     if let Some(env_var) = entry.env_var
-        && let Err(error) = state
-            .core
-            .remove_mcp_secret_scoped(env_var, query.scope.is_workspace())
+        && let Err(error) = core.remove_mcp_secret_scoped(env_var, query.scope.is_workspace())
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12784,7 +13050,7 @@ async fn delete_scoped_integration(
         )
             .into_response();
     }
-    if let Err(error) = apply_scoped_mcp_change(&state, query.scope, entry.id, None) {
+    if let Err(error) = apply_scoped_mcp_change(&core, query.scope, entry.id, None) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error })),
@@ -12795,7 +13061,7 @@ async fn delete_scoped_integration(
         "integration_removed",
         &format!("scope={} integration={}", query.scope.label(), entry.id),
     );
-    match integration_status(&state.core, query.scope, entry) {
+    match integration_status(&core, query.scope, entry) {
         Ok(status) => Json(status).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12889,7 +13155,11 @@ async fn put_mcp_servers(
         )
             .into_response();
     }
-    match persist_mcp_to_project_config(state.core.cwd(), &body.servers) {
+    let core = match resolve_scoped_core(&state, None, body.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    match persist_mcp_to_project_config(core.cwd(), &body.servers) {
         Ok(_) => {}
         Err(e) => {
             return (
@@ -12899,14 +13169,14 @@ async fn put_mcp_servers(
                 .into_response();
         }
     }
-    let cfg = vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+    let cfg = vak_config::load_with_trust(core.cwd(), core.project_config_trusted())
         .map(|config| config.mcp);
     let Ok(cfg) = cfg else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    state.core.apply_persisted_mcp_servers(cfg);
+    core.apply_persisted_mcp_servers(cfg);
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
         "mcp_servers_updated",
         &format!("count={}", body.servers.len()),
@@ -15767,6 +16037,7 @@ mod configuration_control_tests {
                 ask: None,
                 deny: Some(vec!["Bash(rm *)".into()]),
                 scope: None,
+                agent: None,
             }),
         )
         .await;
@@ -15797,6 +16068,7 @@ mod configuration_control_tests {
                 ask: None,
                 deny: Some(vec!["Bash(git *)".into(), "Bash((((".into()]),
                 scope: None,
+                agent: None,
             }),
         )
         .await;
@@ -16080,10 +16352,7 @@ mod configuration_control_tests {
 
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_sessions_home(dir.path().join("home"));
-        assert!(
-            !fresh.effective_workers(),
-            "must be persisted to disk too"
-        );
+        assert!(!fresh.effective_workers(), "must be persisted to disk too");
     }
 
     /// `PATCH /finops` sets a cap live and persists it; an explicit `null`
@@ -16103,6 +16372,7 @@ mod configuration_control_tests {
             Json(FinopsPatch {
                 max_run_usd: Some(Some(5.0)),
                 max_day_usd: None,
+                agent: None,
             }),
         )
         .await;
@@ -16123,6 +16393,7 @@ mod configuration_control_tests {
             Json(FinopsPatch {
                 max_run_usd: Some(None),
                 max_day_usd: None,
+                agent: None,
             }),
         )
         .await;
@@ -16145,6 +16416,7 @@ mod configuration_control_tests {
             Json(FinopsPatch {
                 max_run_usd: Some(Some(-1.0)),
                 max_day_usd: None,
+                agent: None,
             }),
         )
         .await;
