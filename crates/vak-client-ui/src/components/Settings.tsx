@@ -1081,9 +1081,9 @@ export default function Settings() {
         <div class="settings-nav-label">Settings scope</div>
         <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
           <button type="button" aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Platform Defaults</button>
-          <button type="button" aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>Active Agent</button>
+          <button type="button" aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>This Workspace</button>
         </div>
-        <p class="settings-scope-copy">Platform defaults apply everywhere. Active Agent overrides apply to this specialist agent.</p>
+        <p class="settings-scope-copy">{scope() === "user" ? "Platform defaults apply across all workspaces." : `Workspace overrides apply to ${backend().cwd ? (backend().cwd as string).split("/").pop() || "this folder" : "this folder"}.`}</p>
         <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
           {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
         </For>

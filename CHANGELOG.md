@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.4 — 2026-09-17
+
+- Active agent session preservation in discovery: Ensured `list_sessions` never skips actively registered in-memory agent sessions with `state.get(&session_id).is_some()`, allowing newly opened agent conversations to be listed immediately before the first message is sent.
+- Client active agent synchronization: Added explicit `[activeAgent, setActiveAgent]` signal and resilient fallback logic in `store.ts` so switching between agent specialists immediately updates sidebar selection, header title, and composer without reverting to `Vak`.
+- Client session cache protection: Updated `refreshSessions` to preserve the currently active session during background polling so fresh empty agent sessions are not evicted from the local store.
+- Execution target and scope transparency: Clarified the project working directory tooltip/aria-label in `WorkspaceHeader.tsx` (`Project Working Directory: <path>`) and aligned settings scope toggle terminology to "This Workspace" (`Platform Defaults` vs `This Workspace`).
+- Full stack local macOS release: Synchronized release binaries, verified manifests, and updated launchd services.
+
 ## 3.2.3 — 2026-09-17
 
 - Dynamic turn-boundary capability admission across turns without session contract lockout: Eliminated the flawed `epoch <= 1` lock in `TurnCapabilities::build` Stage 3, and made live turns evaluate capabilities dynamically from the live capability registry rather than restricting ongoing turns to the creation snapshot contract.

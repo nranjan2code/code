@@ -13,6 +13,7 @@ import {
   resolveApproval,
   setActiveId,
   activeAgentId,
+  setActiveAgent,
   setAgentOpening,
   setReplyTarget,
   setBackend,
@@ -139,7 +140,13 @@ export async function refreshSessions() {
   try {
     const res = await api.listSessions();
     if (source === api.backendUrl()) {
-      setSessions(res.sessions);
+      setSessions((prev) => {
+        const active = prev.find((s) => s.session_id === activeId());
+        if (active && !res.sessions.some((s) => s.session_id === active.session_id)) {
+          return [active, ...res.sessions];
+        }
+        return res.sessions;
+      });
       // Startup opens the canonical Vak conversation through agent admission.
       // Session refresh itself never chooses an arbitrary recent task.
       // The other pane's session was deleted elsewhere — collapse the split
@@ -447,6 +454,10 @@ export async function activate(id: string) {
     return;
   }
   setActiveId(id);
+  const matchedAgent = sessions().find((session) => session.session_id === id)?.agent;
+  if (matchedAgent) {
+    setActiveAgent(matchedAgent);
+  }
   setReplyTarget(null);
   // Do not let execution/artifact state from the previously selected task
   // bleed into this task while its durable sidecar is loading.
@@ -480,6 +491,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
   try {
     const res = await api.openAgent(agentId);
     if (source !== api.backendUrl() || cwd !== backend().cwd) return null;
+    setActiveAgent(res.agent);
     setSessions((current) => [...current.filter((s) => s.session_id !== res.session_id), {session_id: res.session_id, cwd: res.cwd, agent: res.agent}]);
     closeSplit();
     setReplyTarget(null);

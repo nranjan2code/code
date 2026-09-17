@@ -296,22 +296,35 @@ fn an_unknown_domain_survives_and_matches() {
 
 #[tokio::test]
 async fn force_probe_bypasses_backoff_and_admits_recovered_server() {
-    let provider = Fake::new(vec![declaration("search_srv", CapabilityKind::McpServer, true)]);
+    let provider = Fake::new(vec![declaration(
+        "search_srv",
+        CapabilityKind::McpServer,
+        true,
+    )]);
     *provider.healthy.lock().unwrap() = false;
     let (registry, _hints) = CapabilityRegistry::new(provider.clone());
 
     // First pass: fails and enters backoff
     registry.reconcile().await;
     assert_eq!(registry.current().await.usable().count(), 0);
-    assert!(!registry.has_due_probes().await, "server should be in backoff");
+    assert!(
+        !registry.has_due_probes().await,
+        "server should be in backoff"
+    );
 
     // Operator fixes secret or attaches key
     *provider.healthy.lock().unwrap() = true;
     let id = CapabilityId::new(CapabilityKind::McpServer, "search_srv");
     registry.force_probe(&id).await;
 
-    assert!(registry.has_due_probes().await, "force_probe should mark due immediately");
-    assert!(registry.has_pending_changes().await, "pending changes should be detected");
+    assert!(
+        registry.has_due_probes().await,
+        "force_probe should mark due immediately"
+    );
+    assert!(
+        registry.has_pending_changes().await,
+        "pending changes should be detected"
+    );
 
     // Turn admission reconciliation
     let delta = registry.reconcile().await;
@@ -372,7 +385,7 @@ async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
         capabilities: &current,
         capability_epoch: current.epoch,
         revoked_ids: BTreeSet::new(),
-        session_contract: None,
+        session_contract: Some(&contract),
         channel_policy: &empty_policy,
         reach_standings: &[],
         required_domains: &required,
@@ -390,5 +403,3 @@ async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
         "search_srv must be admitted"
     );
 }
-
-

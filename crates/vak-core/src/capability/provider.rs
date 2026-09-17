@@ -218,7 +218,9 @@ impl CapabilityProvider for Core {
             }
             for (k, v) in &server.env {
                 hasher.update(k.as_bytes());
-                if let Some(resolved) = crate::interpolate_env_var_with(v, |key| self.mcp_secret(key)) {
+                if let Some(resolved) =
+                    crate::interpolate_env_var_with(v, |key| self.mcp_secret(key))
+                {
                     hasher.update(b"resolved:");
                     hasher.update(resolved.as_bytes());
                 } else {

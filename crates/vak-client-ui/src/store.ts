@@ -60,10 +60,15 @@ export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
+export type AgentSummary = { id: string; name: string; revision?: number };
+export const [activeAgent, setActiveAgent] = createSignal<AgentSummary | null>(null);
 export function agentForSession(id: string | null) {
-  return sessions().find((session) => session.session_id === id)?.agent ?? {id: "vak", name: "Vak", revision: 1};
+  const found = sessions().find((session) => session.session_id === id)?.agent;
+  if (found) return found;
+  if (id && id === activeId() && activeAgent()) return activeAgent()!;
+  return {id: "vak", name: "Vak", revision: 1};
 }
-export const activeAgentId = () => agentForSession(activeId()).id;
+export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);
 export interface ReplyTarget {
   sessionId: string;

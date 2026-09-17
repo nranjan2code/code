@@ -4038,9 +4038,11 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         // Header-only sessions are abandoned drafts (for example, creating a
         // task and immediately switching away). Keep the ledger append-only,
         // but do not let empty drafts accumulate in the task switcher. This
-        // applies equally to built-in and user-created Agents.
+        // applies equally to built-in and user-created Agents, but actively
+        // registered sessions must remain discoverable.
         let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
-        if entry_count <= 1 {
+        let is_active = state.get(&session_id).is_some();
+        if entry_count <= 1 && !is_active {
             continue;
         }
         let running = state.get(&session_id).is_some_and(|handle| {

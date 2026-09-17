@@ -138,7 +138,8 @@ export default function WorkspaceHeader() {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);
               }}
-              title={`Execution Target: ${backend().cwd || "default"}`}
+              title={`Project Working Directory: ${backend().cwd || "default"}`}
+              aria-label={`Project Working Directory: ${backend().cwd || "default"}`}
             >
               <Icon name="folder" size={12} />
               <span>{backend().cwd ? (backend().cwd as string).split("/").pop() || "root" : "workspace"}</span>

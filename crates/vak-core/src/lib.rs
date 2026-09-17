@@ -1500,10 +1500,8 @@ impl Core {
             .store(false, std::sync::atomic::Ordering::Release);
         let registry = self.capability_registry();
         for name in config.servers.keys() {
-            let id = capability::CapabilityId::new(
-                vak_session::types::CapabilityKind::McpServer,
-                name,
-            );
+            let id =
+                capability::CapabilityId::new(vak_session::types::CapabilityKind::McpServer, name);
             let reg = registry.clone();
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 handle.spawn(async move {

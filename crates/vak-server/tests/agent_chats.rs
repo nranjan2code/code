@@ -158,6 +158,16 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         again["session_id"], sid,
         "even header-only conversations must reopen"
     );
+    let (_, sessions_list) = call(&app, "GET", "/sessions", json!({})).await;
+    let found = sessions_list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["session_id"] == sid);
+    assert!(
+        found,
+        "newly opened active agent session must be present in list_sessions even if header-only"
+    );
     let (_, b) = call(&app, "POST", "/agents/other/open", json!({})).await;
     assert_ne!(b["session_id"], sid);
     run(&app, &sid, "Remember private-newsy-marker").await;
