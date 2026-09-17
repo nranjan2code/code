@@ -825,11 +825,12 @@ export const api = {
     id: string,
     surface: string,
     label: string,
+    agent_id?: string,
   ): Promise<{ bot: import("./types").Bot }> =>
     fetch("/gateway/bots", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, surface, label }),
+      body: JSON.stringify({ id, surface, label, agent_id: agent_id || undefined }),
     }).then((r) => handle(r)),
 
   updateBot: (
@@ -837,7 +838,7 @@ export const api = {
     patch: Partial<
       Pick<
         import("./types").Bot,
-        "label" | "policy" | "permission_mode" | "route" | "workspace" | "voice"
+        "label" | "agent_id" | "policy" | "permission_mode" | "route" | "workspace" | "voice"
       >
     >,
   ): Promise<{ bot: import("./types").Bot }> =>

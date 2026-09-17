@@ -3541,7 +3541,9 @@ function ChannelAccessEditor(props: {
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.entry.workspace ?? "");
-  const [agentId, setAgentId] = createSignal(props.entry.agent_id || "vak");
+  const selectedBot = () => props.bots.find((b) => b.id === botId());
+  const botDefaultAgent = () => selectedBot()?.agent_id || "vak";
+  const [agentId, setAgentId] = createSignal(props.entry.agent_id ?? "");
   const [pinRoute, setPinRoute] = createSignal(!!props.entry.route);
   const [provider, setProvider] = createSignal(
     props.entry.route?.provider ?? props.providers[0]?.name ?? "",
@@ -3585,7 +3587,7 @@ function ChannelAccessEditor(props: {
     try {
       await api.patchGatewayAllowlist(props.entry.key, {
         workspace: workspace().trim() || undefined,
-        agent_id: agentId() || "vak",
+        agent_id: agentId() || null,
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : {},
         // "" clears the pin back to inheriting the workspace default.
         permission_mode: pinPerm() ? perm() : "",
@@ -3619,6 +3621,9 @@ function ChannelAccessEditor(props: {
       <label class="inherit-toggle">
         Target Agent
         <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
+          <option value="">
+            ✦ Follow Bot {selectedBot() ? `(${botDefaultAgent()})` : "(vak)"}
+          </option>
           <option value="vak">✦ Vak (Default Assistant)</option>
           <For each={adminAgents().filter((a) => a.id !== "vak")}>
             {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
@@ -3870,6 +3875,7 @@ function BotAccessEditor(props: {
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.bot.workspace ?? "");
+  const [agentId, setAgentId] = createSignal(props.bot.agent_id ?? "vak");
   const [pinRoute, setPinRoute] = createSignal(!!props.bot.route);
   const [provider, setProvider] = createSignal(
     props.bot.route?.provider ?? props.providers[0]?.name ?? "",
@@ -3903,6 +3909,7 @@ function BotAccessEditor(props: {
     setBusy(true);
     try {
       await api.updateBot(props.bot.id, {
+        agent_id: agentId() === "vak" ? null : agentId(),
         workspace: workspace().trim() || null,
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : null,
         permission_mode: pinPerm() ? perm() : null,
@@ -3930,6 +3937,15 @@ function BotAccessEditor(props: {
         known={props.knownWorkspaces}
         corePool={props.corePool}
       />
+      <label class="inherit-toggle">
+        Target Agent
+        <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
+          <option value="vak">✦ Vak (Default Assistant)</option>
+          <For each={adminAgents().filter((a) => a.id !== "vak")}>
+            {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
+          </For>
+        </select>
+      </label>
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
         Give this bot its own model (otherwise it follows the workspace)
@@ -4044,6 +4060,9 @@ function BotRow(props: {
         <div class="cred-id">
           <SurfaceBadge channelKey={`${props.bot.surface}:`} />
           <span class="binding-meta">{props.bot.label}</span>
+          <span class="chip chip-tone-muted" style="margin-left:6px; font-size:11px;">
+            ✦ {props.bot.agent_id || "vak"}
+          </span>
           <code class="binding-meta">{props.bot.token_env}</code>
         </div>
         <span class="spacer" />
@@ -4109,13 +4128,19 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
     if (!surface() && chatSurfaces().length > 0) setSurface(chatSurfaces()[0].id);
   });
   const [label, setLabel] = createSignal("");
+  const [agentId, setAgentId] = createSignal("vak");
   const [busy, setBusy] = createSignal(false);
 
   const create = async () => {
     if (!id().trim()) return;
     setBusy(true);
     try {
-      await api.createBot(id().trim(), surface(), label().trim() || id().trim());
+      await api.createBot(
+        id().trim(),
+        surface(),
+        label().trim() || id().trim(),
+        agentId() === "vak" ? undefined : agentId(),
+      );
       await props.ctx.refresh();
       pushToast("info", `Bot "${id().trim()}" added — set its token below`);
       setAdding(false);
@@ -4163,6 +4188,12 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
             value={label()}
             onInput={(e) => setLabel(e.currentTarget.value)}
           />
+          <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)} aria-label="Target Agent">
+            <option value="vak">✦ Vak (Default)</option>
+            <For each={adminAgents().filter((a) => a.id !== "vak")}>
+              {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
+            </For>
+          </select>
           <button disabled={busy() || !id().trim()} onClick={() => void create()}>
             {busy() ? "Adding…" : "Add"}
           </button>
@@ -4357,6 +4388,16 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                   {(binding) => {
                     const entry = () => byKey().get(binding.target);
                     const open = () => expanded() === binding.target;
+                    const effectiveAgent = () => {
+                      const e = entry();
+                      if (!e) return "vak";
+                      if (e.agent_id && e.agent_id !== "vak") return e.agent_id;
+                      if (e.inherit_bot_policy && e.bot_id) {
+                        const b = botsById().get(e.bot_id);
+                        if (b?.agent_id) return b.agent_id;
+                      }
+                      return e.agent_id || "vak";
+                    };
                     return (
                       <>
                         <tr
@@ -4368,9 +4409,20 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                           <td class="mono">{displayChatId(binding.target)}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
                           <td>
-                            <span class="chip chip-tone-info">
-                              ✦ {entry()?.agent_id || "vak"}
-                            </span>
+                            <button
+                              class="chip chip-tone-info"
+                              style="cursor:pointer; border:none; background:none; text-align:left; padding:0;"
+                              title="Switch viewing scope to this agent"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const ag = effectiveAgent();
+                                setSelectedAgentId(ag);
+                                localStorage.setItem("vak_admin_selected_agent", ag);
+                                pushToast("info", `Switched viewing scope to Agent: ${ag}`);
+                              }}
+                            >
+                              ✦ {effectiveAgent()}
+                            </button>
                           </td>
                           <td>
                             <Show when={botLabel(entry()?.bot_id)} fallback={<span class="dim">—</span>}>

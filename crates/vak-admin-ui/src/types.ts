@@ -168,6 +168,7 @@ export interface Bot {
   /// Whether a token is actually set for this bot. The token itself is
   /// never returned once stored.
   token_configured: boolean;
+  agent_id?: string | null;
   policy: ChannelPolicy;
   permission_mode: PermissionMode | null;
   route: AllowlistRoute | null;

@@ -10180,6 +10180,8 @@ struct CreateBotBody {
     id: String,
     surface: String,
     label: String,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 async fn create_bot(
@@ -10219,6 +10221,14 @@ async fn create_bot(
             body.label.trim().to_string()
         },
         token_env: bot_env_var(id),
+        agent_id: body.agent_id.and_then(|id| {
+            let trimmed = id.trim();
+            if trimmed.is_empty() || trimmed == "vak" {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }),
         ..Default::default()
     };
     state.gateway.bot_upsert(&state.core, bot.clone());
@@ -10234,6 +10244,8 @@ async fn create_bot(
 struct UpdateBotBody {
     #[serde(default)]
     label: Option<String>,
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    agent_id: Option<Option<String>>,
     #[serde(default)]
     policy: Option<vak_config::ChannelPolicy>,
     /// Absent (field simply not sent) leaves the current mode alone;
@@ -10275,6 +10287,13 @@ async fn update_bot(
     };
     if let Some(label) = body.label {
         bot.label = label;
+    }
+    if let Some(agent_id) = body.agent_id {
+        bot.agent_id = match agent_id {
+            None => None,
+            Some(raw) if raw.trim().is_empty() || raw.trim() == "vak" => None,
+            Some(raw) => Some(raw.trim().to_string()),
+        };
     }
     if let Some(policy) = body.policy {
         bot.policy = policy;

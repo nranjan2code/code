@@ -323,6 +323,10 @@ pub struct Bot {
     /// Name of the env var holding this bot's token. The token value
     /// itself is never stored here or returned by the admin API.
     pub token_env: String,
+    /// Default agent identity this bot binds to (e.g. "support", "researcher").
+    /// If unset, resolves to "vak" (built-in default agent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "is_default_channel_policy")]
     pub policy: vak_config::ChannelPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -642,7 +646,18 @@ impl GatewayState {
             std::time::Instant::now(),
         )?;
         let selected_agent = allowed_entry
-            .and_then(|entry| entry.agent_id.as_deref())
+            .and_then(|entry| {
+                let entry_agent = entry.agent_id.as_deref();
+                if entry.inherit_bot_policy {
+                    if let Some(bot_agent) = bot.as_ref().and_then(|b| b.agent_id.as_deref()) {
+                        if entry_agent.is_none() || entry_agent == Some("vak") {
+                            return Some(bot_agent);
+                        }
+                    }
+                }
+                entry_agent
+            })
+            .or_else(|| bot.as_ref().and_then(|b| b.agent_id.as_deref()))
             .unwrap_or("vak");
         let identity = if selected_agent == "vak" {
             vak_core::vak_agent_identity()
@@ -1092,13 +1107,16 @@ impl GatewayState {
                         .chars()
                         .take(FIRST_SEEN_TEXT_MAX_CHARS)
                         .collect();
+                    let bot_agent = bot_id
+                        .and_then(|id| self.bot_get(id))
+                        .and_then(|b| b.agent_id);
                     map.insert(
                         key.to_string(),
                         AllowlistEntry {
                             key: key.to_string(),
                             status: AllowlistStatus::Pending,
                             workspace: None,
-                            agent_id: Some("vak".into()),
+                            agent_id: bot_agent.or_else(|| Some("vak".into())),
                             route: None,
                             voice: None,
                             permission_mode: None,
@@ -1144,11 +1162,15 @@ impl GatewayState {
                 .allowlist
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let bot_agent = bot_id
+                .as_deref()
+                .and_then(|id| self.bot_get(id))
+                .and_then(|b| b.agent_id);
             let entry = AllowlistEntry {
                 key: key.to_string(),
                 status: AllowlistStatus::Allowed,
                 workspace: Some(workspace),
-                agent_id: agent_id.or_else(|| Some("vak".into())),
+                agent_id: agent_id.or(bot_agent).or_else(|| Some("vak".into())),
                 route,
                 voice: None,
                 permission_mode,
@@ -1234,7 +1256,14 @@ impl GatewayState {
             }
             entry.workspace = workspace;
             if let Some(agent_id) = agent_id {
-                entry.agent_id = Some(agent_id.unwrap_or_else(|| "vak".into()));
+                entry.agent_id = agent_id.and_then(|s| {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                });
             }
             entry.route = route;
             entry.permission_mode = permission_mode;
@@ -3535,6 +3564,7 @@ mod tests {
                 surface: "telegram".into(),
                 label: "Support".into(),
                 token_env: "BOT_TOKEN__SUPPORT".into(),
+                agent_id: None,
                 policy: Default::default(),
                 permission_mode: None,
                 route: None,
@@ -3784,6 +3814,145 @@ mod tests {
         assert_eq!(
             resolved.agent_identity().map(|agent| agent.id.as_str()),
             Some("support")
+        );
+    }
+
+    #[test]
+    fn bot_agent_identity_resolves_when_chat_inherits_bot() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        std::fs::write(
+            core.cwd().join(".vak/agents.json"),
+            serde_json::json!([{
+                "id": "researcher",
+                "revision": 2,
+                "name": "Researcher",
+                "character": "orb",
+                "personality": "curious",
+                "behaviour": "thorough",
+                "responsibilities": "research",
+                "animation": "off",
+                "voice": "default"
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let gw = GatewayState::load(&core, true);
+        gw.bot_upsert(
+            &core,
+            Bot {
+                id: "res-bot".into(),
+                surface: "telegram".into(),
+                label: "Researcher Bot".into(),
+                token_env: "BOT_TOKEN__RES".into(),
+                agent_id: Some("researcher".into()),
+                ..Default::default()
+            },
+        );
+        gw.allowlist_approve(
+            &core,
+            "telegram:res-chat",
+            core.cwd().clone(),
+            None,
+            None,
+            None,
+            Default::default(),
+            Some("res-bot".into()),
+            true,
+            "test",
+        );
+        let resolved = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
+        assert_eq!(
+            resolved.agent_identity().map(|agent| agent.id.as_str()),
+            Some("researcher")
+        );
+
+        // Even if legacy entry was stamped with "vak", inherit_bot_policy allows the bot's agent to shine through
+        gw.allowlist_patch(
+            &core,
+            "telegram:res-chat",
+            Some(core.cwd().clone()),
+            Some(Some("vak".into())),
+            None,
+            None,
+            Default::default(),
+            Some(Some("res-bot".into())),
+            Some(true),
+            None,
+            None,
+        );
+        let resolved_legacy = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
+        assert_eq!(
+            resolved_legacy.agent_identity().map(|agent| agent.id.as_str()),
+            Some("researcher")
+        );
+
+        // Explicit chat agent override takes precedence
+        std::fs::write(
+            core.cwd().join(".vak/agents.json"),
+            serde_json::json!([
+                {
+                    "id": "researcher",
+                    "revision": 2,
+                    "name": "Researcher",
+                    "character": "orb",
+                    "personality": "curious",
+                    "behaviour": "thorough",
+                    "responsibilities": "research",
+                    "animation": "off",
+                    "voice": "default"
+                },
+                {
+                    "id": "support",
+                    "revision": 2,
+                    "name": "Support",
+                    "character": "orb",
+                    "personality": "helpful",
+                    "behaviour": "friendly",
+                    "responsibilities": "support",
+                    "animation": "off",
+                    "voice": "default"
+                }
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        gw.allowlist_patch(
+            &core,
+            "telegram:res-chat",
+            Some(core.cwd().clone()),
+            Some(Some("support".into())),
+            None,
+            None,
+            Default::default(),
+            Some(Some("res-bot".into())),
+            Some(true),
+            None,
+            None,
+        );
+        let resolved_override = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
+        assert_eq!(
+            resolved_override.agent_identity().map(|agent| agent.id.as_str()),
+            Some("support")
+        );
+
+        // Clearing back to None inherits bot's agent again
+        gw.allowlist_patch(
+            &core,
+            "telegram:res-chat",
+            Some(core.cwd().clone()),
+            Some(None),
+            None,
+            None,
+            Default::default(),
+            Some(Some("res-bot".into())),
+            Some(true),
+            None,
+            None,
+        );
+        let resolved_cleared = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
+        assert_eq!(
+            resolved_cleared.agent_identity().map(|agent| agent.id.as_str()),
+            Some("researcher")
         );
     }
 
