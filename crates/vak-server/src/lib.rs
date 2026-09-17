@@ -13524,7 +13524,13 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
 }
 
 fn tasks_file(core: &Core) -> PathBuf {
-    vak_core::tasks::tasks_file(&core.sessions_home())
+    let shared = vak_core::tasks::tasks_file(&core.shared_data_home());
+    if shared.exists() || core.sessions_home() == core.shared_data_home() {
+        shared
+    } else {
+        let session = vak_core::tasks::tasks_file(&core.sessions_home());
+        if session.exists() { session } else { shared }
+    }
 }
 
 /// Loads `tasks.json` and makes `state.tasks` match it exactly (inserts,
@@ -13551,16 +13557,22 @@ fn load_tasks(state: &AppState) {
         .tasks
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
-        Ok(store) => {
-            *map = store.all().into_iter().map(|t| (t.id.clone(), t)).collect();
-            if recover_interrupted_tasks(&mut map) {
-                write_tasks_file(state, &map);
+    let mut tasks_vec = match vak_core::tasks::TaskStore::load(&state.core.shared_data_home()) {
+        Ok(store) => store.all(),
+        Err(_) => Vec::new(),
+    };
+    if state.core.sessions_home() != state.core.shared_data_home() {
+        if let Ok(store) = vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
+            for t in store.all() {
+                if !tasks_vec.iter().any(|existing| existing.id == t.id) {
+                    tasks_vec.push(t);
+                }
             }
         }
-        // A corrupt tasks file is surfaced loudly, never silently dropped:
-        // those definitions represent real automation the user expects.
-        Err(e) => eprintln!("[scheduler] tasks file unreadable, ignoring: {e}"),
+    }
+    *map = tasks_vec.into_iter().map(|t| (t.id.clone(), t)).collect();
+    if recover_interrupted_tasks(&mut map) {
+        write_tasks_file(state, &map);
     }
 }
 
