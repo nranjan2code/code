@@ -22,7 +22,9 @@ import type { AccessOption } from "./controls";
 import {
   authed, conn, connectEvents, disconnectEvents, navigate, pushToast, route, sessionsVersion,
   setAuthed, statsVersion, toasts,
+  adminAgents, setAdminAgents, selectedAgentId, setSelectedAgentId, refreshAdminAgents,
 } from "./store";
+import type { AgentScopeItem } from "./store";
 import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, ConfigLayer, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
@@ -48,35 +50,6 @@ const [unread, setUnread] = createSignal(0);
 const [configScope, setConfigScope] = createSignal<ConfigScope>(
   localStorage.getItem("vak_admin_config_scope") === "project" ? "project" : "user",
 );
-
-export interface AgentScopeItem {
-  id: string;
-  name: string;
-  personality?: string;
-  lifecycle?: string;
-}
-
-export const [adminAgents, setAdminAgents] = createSignal<AgentScopeItem[]>([
-  { id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }
-]);
-
-export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
-  localStorage.getItem("vak_admin_selected_agent") || "global"
-);
-
-export async function refreshAdminAgents() {
-  try {
-    const res = await api.agents();
-    const list = res?.agents;
-    if (Array.isArray(list) && list.length > 0) {
-      const hasVak = list.some((a) => a.id === "vak");
-      const full = hasVak ? list : [{ id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }, ...list];
-      setAdminAgents(full);
-    }
-  } catch (err) {
-    console.warn("Failed to load agent catalogue", err);
-  }
-}
 
 function setConfigScopePersisted(scope: ConfigScope) {
   setConfigScope(scope);
@@ -4272,10 +4245,29 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     return parts.length > 2 ? parts.slice(0, 2).join(":") : target;
   };
 
+  const resolveAgentForBinding = (b: GatewayBinding) => {
+    const e = byKey().get(b.target);
+    if (!e) return "vak";
+    if (e.effective_agent_id) return e.effective_agent_id;
+    if (e.agent_id && e.agent_id !== "vak") return e.agent_id;
+    if (e.inherit_bot_policy && e.bot_id) {
+      const b_bot = botsById().get(e.bot_id);
+      if (b_bot?.agent_id) return b_bot.agent_id;
+    }
+    return e.agent_id || "vak";
+  };
+
+  const [scopedAgentFilter, setScopedAgentFilter] = createSignal(true);
+
   const rows = createMemo(() => {
     const needle = filter().trim().toLowerCase();
-    if (!needle) return props.ctx.status()?.bindings ?? [];
-    return (props.ctx.status()?.bindings ?? []).filter((b) => {
+    let list = props.ctx.status()?.bindings ?? [];
+    const currentAgent = selectedAgentId();
+    if (currentAgent !== "global" && scopedAgentFilter()) {
+      list = list.filter((b) => resolveAgentForBinding(b) === currentAgent);
+    }
+    if (!needle) return list;
+    return list.filter((b) => {
       const label = botLabel(byKey().get(b.target)?.bot_id)?.toLowerCase() ?? "";
       return (
         b.target.toLowerCase().includes(needle) ||
@@ -4321,6 +4313,29 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
         <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
         <button onClick={() => navigate("#/gateway/connect")}>Connect a chat</button>
       </div>
+
+      <Show when={selectedAgentId() !== "global"}>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; padding:8px 12px; background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px;">
+          <span>
+            Viewing channels for Agent: <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong>
+            <Show when={scopedAgentFilter()}>
+              {" "}({rows().length} of {props.ctx.status()?.bindings.length ?? 0} chats)
+            </Show>
+          </span>
+          <Show
+            when={scopedAgentFilter()}
+            fallback={
+              <button class="ghost small" onClick={() => setScopedAgentFilter(true)}>
+                Filter to {selectedAgentId()} only
+              </button>
+            }
+          >
+            <button class="ghost small" onClick={() => setScopedAgentFilter(false)}>
+              Show all channels ({props.ctx.status()?.bindings.length ?? 0})
+            </button>
+          </Show>
+        </div>
+      </Show>
 
       <Show when={props.ctx.pending().length > 0}>
         <section class="panel panel-alert callout">

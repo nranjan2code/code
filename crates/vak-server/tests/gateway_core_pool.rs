@@ -148,9 +148,8 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
     // workspace's sessions_home (the normal, unmodified `Core::new_with_trust`
     // resolution under VAK_HOME), with a ledger header whose cwd is that
     // workspace — not the gateway's own default cwd.
-    let sessions_home = vak_home.path().join("sessions");
     let mut found_header_cwd: Option<String> = None;
-    for entry in walkdir::WalkDir::new(&sessions_home).into_iter().flatten() {
+    for entry in walkdir::WalkDir::new(vak_home.path()).into_iter().flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;

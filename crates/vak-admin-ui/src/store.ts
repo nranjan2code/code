@@ -8,6 +8,37 @@ export const [route, setRoute] = createSignal<string>(location.hash || "#/overvi
 export type ConnState = "connecting" | "live" | "down";
 export const [conn, setConn] = createSignal<ConnState>("connecting");
 
+export interface AgentScopeItem {
+  id: string;
+  name: string;
+  personality?: string;
+  lifecycle?: string;
+}
+
+export const [adminAgents, setAdminAgents] = createSignal<AgentScopeItem[]>([
+  { id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" },
+]);
+
+export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
+  localStorage.getItem("vak_admin_selected_agent") || "global",
+);
+
+export async function refreshAdminAgents() {
+  try {
+    const res = await api.agents();
+    const list = res?.agents;
+    if (Array.isArray(list) && list.length > 0) {
+      const hasVak = list.some((a) => a.id === "vak");
+      const full = hasVak
+        ? list
+        : [{ id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }, ...list];
+      setAdminAgents(full);
+    }
+  } catch (err) {
+    console.warn("Failed to load agent catalogue", err);
+  }
+}
+
 export interface FeedItem {
   id: number;
   ts: string;

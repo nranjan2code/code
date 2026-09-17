@@ -741,6 +741,7 @@ fn router_with_state(state: AppState) -> Router {
             get(get_global_config_layer).patch(patch_global_config),
         )
         .route("/config/workspace", get(get_workspace_config_layer))
+        .route("/config/project", get(get_workspace_config_layer))
         .route("/config/mode", post(set_permission_mode))
         .route(
             "/agent-network/capabilities",

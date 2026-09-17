@@ -31,7 +31,7 @@ import {
 
 import { api, AuthRequired } from "./api";
 import { PageHeader, confirmDestructive } from "./display";
-import { navigate, pushToast, setAuthed } from "./store";
+import { navigate, pushToast, selectedAgentId, setAuthed, setSelectedAgentId } from "./store";
 import { clock, timeAgo } from "./time";
 
 function shortId(id?: string | null, len: number = 8): string {
@@ -1059,9 +1059,12 @@ export function buildWorkflowGraph(
 // ---- Sessions List Component -----------------------------------------------
 
 export function SessionsList() {
-  const [agentFilter, setAgentFilter] = createSignal<string>("all");
   const [agentsRes] = createResource(async () => (await api.agents())?.agents ?? []);
-  const [sessions, { refetch }] = createResource(agentFilter, (agent) => api.sessions(200, agent === "all" ? undefined : agent));
+  const effectiveAgent = () => (selectedAgentId() === "global" ? "all" : selectedAgentId());
+  const [sessions, { refetch }] = createResource(
+    effectiveAgent,
+    (agent) => api.sessions(200, agent === "all" ? undefined : agent),
+  );
   const [bestofn, bestofnActions] = createResource(api.bestofn);
   const [q, setQ] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
@@ -1264,13 +1267,18 @@ export function SessionsList() {
         </div>
         <div class="sessions-agent-filter">
           <select
-            value={agentFilter()}
-            onChange={(e) => setAgentFilter(e.currentTarget.value)}
+            value={effectiveAgent()}
+            onChange={(e) => {
+              const val = e.currentTarget.value;
+              const next = val === "all" ? "global" : val;
+              setSelectedAgentId(next);
+              localStorage.setItem("vak_admin_selected_agent", next);
+            }}
             aria-label="Filter by agent"
             class="select-agent-filter"
             style={{ "min-height": "32px", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", "border-radius": "var(--radius-sm)", color: "var(--text)", font: "inherit" }}
           >
-            <option value="all">All Agents</option>
+            <option value="all">🌐 All Agents</option>
             <option value="vak">✦ Vak (Assistant)</option>
             <For each={agentsRes() ?? []}>
               {(ag) => ag.id !== "vak" ? <option value={ag.id}>✦ {ag.name}</option> : null}

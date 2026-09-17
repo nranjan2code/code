@@ -25,7 +25,7 @@ import {
 } from "./display";
 import {
   activity, approvalsVersion, conn, feed, navigate, observingSince, pushToast, sessionsVersion,
-  setAuthed, statsVersion,
+  setAuthed, statsVersion, selectedAgentId, adminAgents,
 } from "./store";
 import { clock, shortId, timeAgo } from "./time";
 import type {
@@ -782,7 +782,10 @@ export function Home() {
   const [ops, opsActions] = createResource(() => api.operations());
   const [finops, finopsActions] = createResource(() => api.finops());
   const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
-  const [sessions, sessionsActions] = createResource(sessionsVersion, () => api.sessions());
+  const [sessions, sessionsActions] = createResource(
+    () => ({ ver: sessionsVersion(), agent: selectedAgentId() }),
+    ({ agent }) => api.sessions(100, agent === "global" ? undefined : agent),
+  );
   const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn());
   const [config, configActions] = createResource(statsVersion, () => api.config());
   const [onboarding, onboardingActions] = createResource(statsVersion, () => api.onboarding());
@@ -1376,7 +1379,11 @@ export function Home() {
             <div>
               <span class="eyebrow">History</span>
               <h2>Recent sessions</h2>
-              <p class="dim">The latest conversations, across every workspace this store indexes.</p>
+              <p class="dim">
+                {selectedAgentId() === "global"
+                  ? "The latest conversations, across every workspace this store indexes."
+                  : `The latest conversations for agent ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}.`}
+              </p>
             </div>
             <button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button>
           </div>
