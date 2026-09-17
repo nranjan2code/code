@@ -325,7 +325,12 @@ async fn stop_gate_blocks_premature_report_until_verified() {
 
     // Agent bash runs in its per-call quarantine directory; the report must
     // survive there rather than contaminating the workspace root.
-    let report = std::fs::read_to_string(dir.path().join(".vak/scratch/t1/report.md"))
+    let report_path = if dir.path().join(".vak/scratch/vak/t1/report.md").exists() {
+        dir.path().join(".vak/scratch/vak/t1/report.md")
+    } else {
+        dir.path().join(".vak/scratch/t1/report.md")
+    };
+    let report = std::fs::read_to_string(report_path)
         .expect("verified report survives in the quarantined scratch directory");
     assert!(report.contains("4200"));
 }
