@@ -226,7 +226,8 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     let sid = body["session_id"].as_str().unwrap().to_string();
     assert!(!sid.is_empty());
 
-    let ledger = SessionPath::new_session_file(&home.join("home"), &home, &sid);
+    let agent_home = vak_config::paths::agent_home_at(&home.join("home"), "vak");
+    let ledger = SessionPath::new_session_file(&agent_home, &home, &sid);
     let raw_ledger = std::fs::read_to_string(ledger).unwrap();
     assert!(raw_ledger.lines().any(|line| {
         serde_json::from_str::<Entry>(line)

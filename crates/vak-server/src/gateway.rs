@@ -467,7 +467,7 @@ impl GatewayState {
     /// (`serve --gateway`).
     pub fn load(core: &Core, force: bool) -> Self {
         let mut bindings = HashMap::new();
-        if let Ok(raw) = std::fs::read_to_string(bindings_path(&core.sessions_home()))
+        if let Ok(raw) = std::fs::read_to_string(bindings_path(&core.shared_data_home()))
             && let Ok(stored) = serde_json::from_str::<StoredBindings>(&raw)
         {
             bindings = match stored {
@@ -492,7 +492,7 @@ impl GatewayState {
         // one-time import from config.toml's `chat_allowlist` seeds it the
         // first time a process ever loads (same relationship bindings.json
         // already has to route overrides — config.toml itself is untouched).
-        let path = allowlist_path(&core.sessions_home());
+        let path = allowlist_path(&core.shared_data_home());
         let allowlist: HashMap<String, AllowlistEntry> = match std::fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str::<AllowlistFile>(&raw)
                 .map(|file| {
@@ -541,7 +541,7 @@ impl GatewayState {
         // synthesizing a bot from one would be exactly the pre-baseline
         // fold-forward the baseline forbids. A bot is created explicitly,
         // through setup or the admin console, and owns its own token env.
-        let bots_file_path = bots_path(&core.sessions_home());
+        let bots_file_path = bots_path(&core.shared_data_home());
         let bots: HashMap<String, Bot> = match std::fs::read_to_string(&bots_file_path) {
             Ok(raw) => serde_json::from_str::<BotsFile>(&raw)
                 .map(|file| file.bots.into_iter().map(|b| (b.id.clone(), b)).collect())
@@ -1214,6 +1214,7 @@ impl GatewayState {
         core: &Core,
         key: &str,
         workspace: Option<PathBuf>,
+        agent_id: Option<Option<String>>,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
         policy: vak_config::ChannelPolicy,
@@ -1232,6 +1233,9 @@ impl GatewayState {
                 return None;
             }
             entry.workspace = workspace;
+            if let Some(agent_id) = agent_id {
+                entry.agent_id = Some(agent_id.unwrap_or_else(|| "vak".into()));
+            }
             entry.route = route;
             entry.permission_mode = permission_mode;
             entry.policy = policy;
@@ -1277,6 +1281,7 @@ impl GatewayState {
             core,
             key,
             entry.workspace,
+            Some(entry.agent_id),
             route,
             entry.permission_mode,
             entry.policy,
@@ -1612,7 +1617,7 @@ fn persist_bindings(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let path = bindings_path(&core.sessions_home());
+    let path = bindings_path(&core.shared_data_home());
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1634,7 +1639,7 @@ fn persist_allowlist(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let path = allowlist_path(&core.sessions_home());
+    let path = allowlist_path(&core.shared_data_home());
     write_allowlist_file(&path, &entries);
 }
 
@@ -1644,7 +1649,7 @@ fn persist_bots(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    persist_bots_map(&bots_path(&core.sessions_home()), &bots);
+    persist_bots_map(&bots_path(&core.shared_data_home()), &bots);
 }
 
 /// Atomic temp-file+rename write, same pattern as `write_allowlist_file`.
@@ -3456,7 +3461,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
-        let path = bindings_path(&core.sessions_home());
+        let path = bindings_path(&core.shared_data_home());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"telegram:42":"old-session"}"#).unwrap();
         let gateway = GatewayState::load(&core, true);
@@ -3580,6 +3585,7 @@ mod tests {
             &core,
             "telegram:42",
             entry.workspace,
+            Some(entry.agent_id),
             entry.route,
             entry.permission_mode,
             entry.policy,
@@ -3727,7 +3733,7 @@ mod tests {
         assert_eq!(entries[0].key, "telegram:1");
         assert_eq!(entries[0].status, AllowlistStatus::Allowed);
         assert_eq!(entries[0].added_by, "config_import");
-        assert!(allowlist_path(&core.sessions_home()).is_file());
+        assert!(allowlist_path(&core.shared_data_home()).is_file());
 
         // Once the file exists, it is authoritative: a config change is not
         // re-imported on the next load.
@@ -3862,7 +3868,7 @@ mod tests {
         assert_eq!(approved.route.as_ref().unwrap().provider, "anthropic");
 
         // Persisted to disk atomically.
-        let raw = std::fs::read_to_string(allowlist_path(&core.sessions_home())).unwrap();
+        let raw = std::fs::read_to_string(allowlist_path(&core.shared_data_home())).unwrap();
         assert!(raw.contains("telegram:7"));
 
         // Revoke removes an allowed entry.

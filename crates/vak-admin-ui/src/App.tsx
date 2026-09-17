@@ -3541,6 +3541,7 @@ function ChannelAccessEditor(props: {
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.entry.workspace ?? "");
+  const [agentId, setAgentId] = createSignal(props.entry.agent_id || "vak");
   const [pinRoute, setPinRoute] = createSignal(!!props.entry.route);
   const [provider, setProvider] = createSignal(
     props.entry.route?.provider ?? props.providers[0]?.name ?? "",
@@ -3584,6 +3585,7 @@ function ChannelAccessEditor(props: {
     try {
       await api.patchGatewayAllowlist(props.entry.key, {
         workspace: workspace().trim() || undefined,
+        agent_id: agentId() || "vak",
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : {},
         // "" clears the pin back to inheriting the workspace default.
         permission_mode: pinPerm() ? perm() : "",
@@ -3614,6 +3616,15 @@ function ChannelAccessEditor(props: {
         known={props.knownWorkspaces}
         corePool={props.corePool}
       />
+      <label class="inherit-toggle">
+        Target Agent
+        <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
+          <option value="vak">✦ Vak (Default Assistant)</option>
+          <For each={adminAgents().filter((a) => a.id !== "vak")}>
+            {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
+          </For>
+        </select>
+      </label>
       <Show when={surfaceBots().length > 0}>
         <label class="inherit-toggle">
           Bot
@@ -3697,6 +3708,7 @@ function PendingChannelCard(props: {
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.defaultWorkspace);
+  const [agentId, setAgentId] = createSignal("vak");
   const [pinRoute, setPinRoute] = createSignal(false);
   const [provider, setProvider] = createSignal(props.providers[0]?.name ?? "");
   const [model, setModel] = createSignal("");
@@ -3722,6 +3734,7 @@ function PendingChannelCard(props: {
     try {
       const entry = await api.approveGatewayAllowlist(props.entry.key, {
         workspace: workspace().trim() || undefined,
+        agent_id: agentId() || "vak",
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : undefined,
         permission_mode: pinPerm() ? perm() : undefined,
         policy: policy(),
@@ -3780,6 +3793,16 @@ function PendingChannelCard(props: {
         known={props.knownWorkspaces}
         corePool={props.corePool}
       />
+
+      <label class="inherit-toggle">
+        Target Agent
+        <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
+          <option value="vak">✦ Vak (Default Assistant)</option>
+          <For each={adminAgents().filter((a) => a.id !== "vak")}>
+            {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
+          </For>
+        </select>
+      </label>
 
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
@@ -4299,9 +4322,9 @@ One row per approved chat: which workspace it works in, which model answers, and
           <Match when={props.ctx.statusLoading()}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>agent</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
-              <tbody><SkeletonRows cols={8} /></tbody>
+              <tbody><SkeletonRows cols={9} /></tbody>
             </table>
           </Match>
 
@@ -4327,7 +4350,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
           <Match when={rows().length > 0}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>agent</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody>
                 <For each={rows()}>
@@ -4344,6 +4367,11 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                         >
                           <td class="mono">{displayChatId(binding.target)}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
+                          <td>
+                            <span class="chip chip-tone-info">
+                              ✦ {entry()?.agent_id || "vak"}
+                            </span>
+                          </td>
                           <td>
                             <Show when={botLabel(entry()?.bot_id)} fallback={<span class="dim">—</span>}>
                               <span class="chip chip-mode">{botLabel(entry()?.bot_id)}</span>
@@ -4378,7 +4406,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                         </tr>
                         <Show when={open()}>
                           <tr class="row-detail">
-                            <td colspan={8}>
+                            <td colspan={9}>
                               <GatewayBindingEditor
                                 binding={binding}
                                 providers={props.ctx.providers()}

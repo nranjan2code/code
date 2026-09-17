@@ -1413,6 +1413,9 @@ pub(crate) async fn deny_gateway_allowlist(
 pub(crate) struct AllowlistPatchBody {
     #[serde(default)]
     workspace: Option<String>,
+    /// Optional agent binding. Send null/empty to reset to built-in vak.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    pub(crate) agent_id: Option<Option<String>>,
     #[serde(default)]
     route: Option<GatewayRoutePatch>,
     /// Absent / null / `""` clears the pin (inherit the workspace default),
@@ -1515,6 +1518,13 @@ pub(crate) async fn patch_gateway_allowlist(
         Err(()) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let existing = state.gateway.allowlist_get(&key);
+    let agent_id = body.agent_id.map(|inner| {
+        inner
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    });
     let bot_id = body.bot_id.map(|inner| {
         inner
             .as_deref()
@@ -1526,6 +1536,7 @@ pub(crate) async fn patch_gateway_allowlist(
         &state.core,
         &key,
         workspace,
+        agent_id,
         route,
         permission_mode,
         body.policy

@@ -777,7 +777,7 @@ impl ChannelAdapter for LogAdapter {
 
     async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
         let path = core
-            .sessions_home()
+            .shared_data_home()
             .join("gateway")
             .join("deliveries.jsonl");
         if let Some(parent) = path.parent() {

@@ -331,6 +331,7 @@ export const api = {
     key: string,
     body: {
       workspace?: string;
+      agent_id?: string;
       route?: AllowlistRoute;
       permission_mode?: PermissionMode;
       policy?: ChannelPolicy;
@@ -350,6 +351,7 @@ export const api = {
     key: string,
     body: {
       workspace?: string;
+      agent_id?: string | null;
       route?: AllowlistRoute | Record<string, never>;
       // Omitted / empty clears the pin back to "inherit the workspace".
       permission_mode?: PermissionMode | "";
