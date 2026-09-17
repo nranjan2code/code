@@ -319,14 +319,14 @@ export default function Settings() {
   }
   const discoveredVoices = () => voiceProviders()?.providers.flatMap((provider) => provider.voices) ?? [];
   async function updateVoice(patch: Record<string, unknown>) {
-    try { await api.patchConfig(patch); await Promise.all([load(), loadHealth()]); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
+    try { await api.patchConfig(patch, activeAgentId()); await Promise.all([load(), loadHealth()]); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
   }
 
   // Prompt layers (docs/design/45). The layer resource is keyed on scope so
   // switching Shared/This project reloads the editable layer, while the
   // effective composition is scope-independent — it is what the model gets.
   const [promptLayer, { refetch: refetchPromptLayer }] = createResource(scope, (s) => api.getPromptLayer(s));
-  const [promptEffective, { refetch: refetchPromptEffective }] = createResource(() => api.getPromptEffective());
+  const [promptEffective, { refetch: refetchPromptEffective }] = createResource(() => api.getPromptEffective(activeAgentId()));
   const [promptEditing, setPromptEditing] = createSignal<api.PromptBlock | null>(null);
   const [promptDraft, setPromptDraft] = createSignal("");
   const promptLayerPath = () => promptLayer()?.path ?? "";
@@ -627,7 +627,7 @@ export default function Settings() {
       // Grants are privileged: the route below is the same patch the server
       // validates, and it refuses a grant into an untrusted project layer.
       if (scope === "user") await api.patchGlobalConfig({ plugins_network_allow: grant });
-      else await api.patchConfig({ plugins_network_allow: grant });
+      else await api.patchConfig({ plugins_network_allow: grant }, activeAgentId());
       await refreshCapabilities();
       setNotice({ kind: "info", text: on ? `${name} may now reach the network from its sandbox (applies from the next turn).` : `${name} sandbox egress blocked.` });
     } catch (e) {
@@ -834,7 +834,7 @@ export default function Settings() {
   const load = async () => {
     setLoading(true);
     try {
-      const next = await api.getConfig();
+      const next = await api.getConfig(activeAgentId());
       setConfig(next);
       setProvider(next.provider);
       setModel(next.model);
@@ -975,7 +975,7 @@ export default function Settings() {
     setSaving(true);
     try {
       if (scope() === "user") await api.patchGlobalConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
-      else await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
+      else await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() }, activeAgentId());
       const saved = await api.patchEvidencePolicy(evidenceAgeHours() * 3600, capabilityScope());
       setConfig((current) => current ? { ...current, intent_evidence_max_age_secs: saved.seconds } : current);
       await Promise.all([load(), loadHealth()]);
@@ -1037,7 +1037,7 @@ export default function Settings() {
     const wire = mode === "ReadOnly" ? "read-only" : mode === "WorkspaceWrite" ? "workspace-write" : "full-access";
     try {
       if (scope() === "user") await api.patchGlobalConfig({ permission_mode: wire });
-      else await api.patchConfig({ permission_mode: wire });
+      else await api.patchConfig({ permission_mode: wire }, activeAgentId());
       setConfig((current) => current ? { ...current, permission_mode: mode } : current);
       await loadHealth();
     } catch (error) {
@@ -1053,7 +1053,7 @@ export default function Settings() {
   const changeApproval = async (mode: ConfigSnapshot["approval_mode"]) => {
     try {
       if (scope() === "user") await api.patchGlobalConfig({ approval_mode: mode });
-      else await api.patchConfig({ approval_mode: mode });
+      else await api.patchConfig({ approval_mode: mode }, activeAgentId());
       setConfig((current) => (current ? { ...current, approval_mode: mode } : current));
     } catch (error) {
       setNotice({

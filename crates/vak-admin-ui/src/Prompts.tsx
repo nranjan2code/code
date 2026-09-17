@@ -188,13 +188,14 @@ export function PromptsSection(props: {
   onScopeChange?: (scope: ConfigScope) => void;
 }) {
   const [layer, { refetch: refetchLayer }] = createResource(
-    () => props.scope(),
-    (scope) => api.promptLayer(scope, selectedAgentIdOrUndefined()),
+    () => ({ scope: props.scope(), agent: selectedAgentIdOrUndefined() }),
+    ({ scope, agent }) => api.promptLayer(scope, agent),
   );
-  const [effective, { refetch: refetchEffective }] = createResource<PromptEffective>(
-    () => api.promptEffective(),
+  const [effective, { refetch: refetchEffective }] = createResource<PromptEffective, string | undefined>(
+    selectedAgentIdOrUndefined,
+    (agent) => api.promptEffective(agent),
   );
-  const [roles, { refetch: refetchRoles }] = createResource(() => api.promptRoles(selectedAgentIdOrUndefined()));
+  const [roles, { refetch: refetchRoles }] = createResource(selectedAgentIdOrUndefined, (agent) => api.promptRoles(agent));
 
   const [editing, setEditing] = createSignal<PromptBlock | null>(null);
   const [draft, setDraft] = createSignal("");

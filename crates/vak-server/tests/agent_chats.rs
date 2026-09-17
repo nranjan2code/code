@@ -433,6 +433,50 @@ async fn two_agent_app() -> (Router, vak_core::Core, tempfile::TempDir) {
     (app, core, temp)
 }
 
+/// `GET /config/prompts/effective` assembles the merged prompt off whichever
+/// `Core` the request resolves to — it must resolve per-`?agent=` exactly
+/// like its sibling `GET /config/prompts` layer endpoint, not fall back to
+/// the default "vak" Agent regardless of the query (the gap this test
+/// closes: `get_prompt_effective` was left reading `state.core` directly
+/// when the rest of the prompt endpoints were generalized to
+/// `resolve_scoped_core`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prompt_effective_is_scoped_per_agent() {
+    let (app, _core, _temp) = two_agent_app().await;
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/config/prompts",
+        json!({
+            "scope": "workspace",
+            "block": "guardrails",
+            "text": "newsy-only-guardrail-line",
+            "agent": "newsy",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, newsy_effective) = call(&app, "GET", "/config/prompts/effective?agent=newsy", json!({})).await;
+    assert!(
+        newsy_effective["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("newsy-only-guardrail-line"),
+        "newsy's own effective prompt must include its guardrails override: {newsy_effective}"
+    );
+
+    let (_, default_effective) = call(&app, "GET", "/config/prompts/effective", json!({})).await;
+    assert!(
+        !default_effective["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("newsy-only-guardrail-line"),
+        "the default agent must not see newsy's effective prompt: {default_effective}"
+    );
+}
+
 /// `PUT /config/hooks` writes the project's own `[[hooks]]` array
 /// (docs/design/45-prompt-layers.md-adjacent config-layer semantics) — a
 /// hook saved for one Agent must not appear in, or be overwritten by, a

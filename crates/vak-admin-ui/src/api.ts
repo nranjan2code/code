@@ -606,8 +606,8 @@ export const api = {
       body: JSON.stringify({ scope, block, text, agent }),
     }).then((r) => void handle(r)),
 
-  promptEffective: (): Promise<PromptEffective> =>
-    fetch("/config/prompts/effective").then((r) => handle(r)),
+  promptEffective: (agent?: string): Promise<PromptEffective> =>
+    fetch(withAgent("/config/prompts/effective", agent)).then((r) => handle(r)),
 
   promptPreview: (surface: string, role?: string, agent?: string): Promise<PromptEffective> =>
     fetch("/config/prompts/preview", {

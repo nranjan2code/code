@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show, untrack } from "solid-js";
 import {
+  activeAgentId,
   activeId,
   armedGoal,
   health,
@@ -175,7 +176,7 @@ export default function Composer(props: { cwd: string }) {
 
   const changeMode = async (mode: string) => {
     try {
-      await api.setPermissionMode(mode);
+      await api.setPermissionMode(mode, activeAgentId());
       await loadHealth();
     } catch (e) {
       setNotice({ kind: "error", text: `Could not change permission mode: ${e instanceof Error ? e.message : String(e)}` });

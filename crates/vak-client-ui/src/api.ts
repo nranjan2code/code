@@ -367,8 +367,8 @@ export function putPromptBlock(scope: "user" | "workspace", block: PromptBlock, 
   return req("/config/prompts", { method: "PUT", body: JSON.stringify({ scope, block, text }) });
 }
 
-export function getPromptEffective(): Promise<{ text: string; fingerprint: string; estimated_tokens: number; surface: string; layers: PromptLayerDescriptor[] }> {
-  return req("/config/prompts/effective");
+export function getPromptEffective(agent?: string): Promise<{ text: string; fingerprint: string; estimated_tokens: number; surface: string; layers: PromptLayerDescriptor[] }> {
+  return req(withAgent("/config/prompts/effective", agent));
 }
 
 export interface Agent {
@@ -720,12 +720,12 @@ export function health(): Promise<Health> {
   return req("/health");
 }
 
-export function setPermissionMode(mode: string): Promise<void> {
-  return req("/config/mode", { method: "POST", body: JSON.stringify({ mode }) });
+export function setPermissionMode(mode: string, agent?: string): Promise<void> {
+  return req("/config/mode", { method: "POST", body: JSON.stringify({ mode, agent }) });
 }
 
-export function getConfig(): Promise<ConfigSnapshot> {
-  return req("/config");
+export function getConfig(agent?: string): Promise<ConfigSnapshot> {
+  return req(withAgent("/config", agent));
 }
 
 export function listProviders(): Promise<import("./types").ProvidersResponse> {
@@ -773,8 +773,8 @@ export interface ConfigPatch {
   plugins_network_allow?: string[];
 }
 
-export function patchConfig(patch: ConfigPatch): Promise<void> {
-  return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
+export function patchConfig(patch: ConfigPatch, agent?: string): Promise<void> {
+  return req("/config", { method: "PATCH", body: JSON.stringify({ ...patch, agent }) });
 }
 
 export function recordOutcomeReview(

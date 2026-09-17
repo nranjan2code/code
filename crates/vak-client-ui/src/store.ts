@@ -106,7 +106,7 @@ export function recordPrompt(prompt: string) {
 export async function switchModel(newModel: string) {
   if (!newModel) return;
   try {
-    await api.patchConfig({ model: newModel });
+    await api.patchConfig({ model: newModel }, activeAgentId());
     const cur = health();
     if (cur) setHealth({ ...cur, model: newModel });
   } catch (err) {

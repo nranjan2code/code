@@ -11963,9 +11963,16 @@ async fn put_prompt_block(
 }
 
 /// The assembled prompt plus per-layer provenance — the right-hand pane.
-async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::Response {
+async fn get_prompt_effective(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    Json(prompt_effective_payload(&state.core)).into_response()
+    let core = match resolve_scoped_core(&state, None, q.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    Json(prompt_effective_payload(&core)).into_response()
 }
 
 async fn get_agents(
