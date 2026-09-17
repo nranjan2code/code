@@ -40,7 +40,7 @@ function shortId(id?: string | null, len: number = 8): string {
 }
 
 import type {
-  ActiveSubagent,
+  ActiveWorker,
   AgentIdentity,
   BestOfNRun,
   CapabilityDescriptor,
@@ -109,7 +109,7 @@ export function renderNodeIcon(icon?: string) {
           <line x1="12" y1="19" x2="20" y2="19"/>
         </svg>
       );
-    case "subagent":
+    case "worker":
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="node-icon">
           <rect width="16" height="12" x="4" y="8" rx="2"/>
@@ -173,10 +173,10 @@ export function renderNodeIcon(icon?: string) {
 }
 
 export function parseTaskPrompt(argsJson?: string): string {
-  if (!argsJson) return "delegated subagent";
+  if (!argsJson) return "delegated worker";
   try {
     const obj = JSON.parse(argsJson);
-    return obj.prompt || obj.description || "delegated subagent";
+    return obj.prompt || obj.description || "delegated worker";
   } catch {
     return argsJson.slice(0, 42);
   }
@@ -204,7 +204,7 @@ export interface WorkflowNode {
     | "sandbox"
     | "model"
     | "tool"
-    | "subagent"
+    | "worker"
     | "stop"
     | "presentation"
     | "checkpoint";
@@ -784,7 +784,7 @@ export function buildWorkflowGraph(
     const toolNodeIds: string[] = [];
     for (let i = 0; i < stepCount; i++) {
       const tc = turn.tool_calls[i];
-      const isSubagent = tc.tool_name === "task";
+      const isWorker = tc.tool_name === "task";
       const isBash = tc.tool_name === "bash";
       const isFileTool = ["read", "write", "edit", "glob", "grep"].includes(tc.tool_name);
       const isWeb =
@@ -792,16 +792,16 @@ export function buildWorkflowGraph(
         tc.tool_name === "browse" ||
         tc.tool_name.includes("search") ||
         tc.tool_name.includes("crawl");
-      const execId = isSubagent ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+      const execId = isWorker ? `worker_step_${i + 1}` : `tool_step_${i + 1}`;
       toolNodeIds.push(execId);
 
       const execNode: WorkflowNode = {
         id: execId,
-        stage_key: isSubagent ? "subagent" : "tool",
+        stage_key: isWorker ? "worker" : "tool",
         phase: "execution",
-        icon: isSubagent ? "subagent" : isBash ? "terminal" : isFileTool ? "tool" : isWeb ? "tool" : "tool",
-        title: isSubagent
-          ? `Subagent Delegation`
+        icon: isWorker ? "worker" : isBash ? "terminal" : isFileTool ? "tool" : isWeb ? "tool" : "tool",
+        title: isWorker
+          ? `Worker Delegation`
           : isBash
           ? `Shell: ${tc.tool_name}`
           : isFileTool
@@ -809,15 +809,15 @@ export function buildWorkflowGraph(
           : isWeb
           ? `Web: ${tc.tool_name}`
           : `Tool: ${tc.tool_name}`,
-        subtitle: isSubagent
+        subtitle: isWorker
           ? parseTaskPrompt(tc.args_json)
           : isBash
           ? parseCommandSnippet(tc.args_json)
           : tc.result_text
           ? tc.result_text.slice(0, 42) + "…"
           : "Output captured",
-        badge: isSubagent
-          ? "subagent"
+        badge: isWorker
+          ? "worker"
           : isBash
           ? "jail"
           : isFileTool
@@ -830,14 +830,14 @@ export function buildWorkflowGraph(
         status: tc.is_error ? "bad" : "ok",
         details: {
           tool_name: tc.tool_name,
-          is_subagent: isSubagent,
+          is_worker: isWorker,
           args: tc.args_json,
           is_error: tc.is_error,
           timestamp: tc.ts,
           result_bytes: tc.result_text?.length ?? 0,
           sandbox_isolation: isBash
             ? "Process group isolate with operational env allowlist & Seatbelt profile"
-            : isSubagent
+            : isWorker
             ? "Dedicated child session with inherited parent authority"
             : isFileTool
             ? "Workspace-rooted safe I/O (path_in_workspace verification)"
@@ -940,7 +940,7 @@ export function buildWorkflowGraph(
 
     if (turn.tool_calls.length > 0 && !turn.model_response) {
       for (let i = 0; i < turn.tool_calls.length; i++) {
-        const tId = turn.tool_calls[i].tool_name === "task" ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+        const tId = turn.tool_calls[i].tool_name === "task" ? `worker_step_${i + 1}` : `tool_step_${i + 1}`;
         edges.push({ id: `e-${tId}-stop`, source: tId, target: "stop_gate", status: "warn" });
       }
     } else {
@@ -977,7 +977,7 @@ export function buildWorkflowGraph(
 
   if (!turn.stop_guard && turn.tool_calls.length > 0 && !turn.model_response) {
     for (let i = 0; i < turn.tool_calls.length; i++) {
-      const tId = turn.tool_calls[i].tool_name === "task" ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
+      const tId = turn.tool_calls[i].tool_name === "task" ? `worker_step_${i + 1}` : `tool_step_${i + 1}`;
       edges.push({ id: `e-${tId}-presentation`, source: tId, target: "presentation", status: "ok" });
     }
   } else {
@@ -1464,9 +1464,9 @@ export function SessionForensics(props: { sessionId: string }) {
   const [live, setLive] = createSignal(true);
 
   // Load Session Resources
-  const [subagentsData, { refetch: refetchSubagents }] = createResource(
+  const [workersData, { refetch: refetchWorkers }] = createResource(
     () => props.sessionId,
-    (id) => api.subagents(id),
+    (id) => api.workers(id),
   );
 
   const [transcriptData, { refetch: refetchTranscript }] = createResource(
@@ -1489,10 +1489,10 @@ export function SessionForensics(props: { sessionId: string }) {
     (id): Promise<SessionDiff> => api.attach(id).then(() => api.diff(id)).catch(() => ({ diff: "" })),
   );
 
-  // Subagents polling
+  // Workers polling
   createEffect(() => {
     void props.sessionId;
-    const timer = window.setInterval(() => refetchSubagents(), 3000);
+    const timer = window.setInterval(() => refetchWorkers(), 3000);
     onCleanup(() => window.clearInterval(timer));
   });
 

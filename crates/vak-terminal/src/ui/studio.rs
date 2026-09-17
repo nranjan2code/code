@@ -271,7 +271,7 @@ impl<'a> Widget for StudioView<'a> {
             .block(gauge_block)
             .render(gauge_chunks[0], buf);
 
-        // Swarm Radar (real subagent count from SSE)
+        // Swarm Radar (real worker count from SSE)
         let radar_lines = vec![
             Line::from(vec![
                 Span::styled(
@@ -279,7 +279,7 @@ impl<'a> Widget for StudioView<'a> {
                     self.theme.style_accent(),
                 ),
                 Span::styled(
-                    format!("{} agents", self.telemetry.active_subagents),
+                    format!("{} agents", self.telemetry.active_workers),
                     self.theme.style_card().add_modifier(Modifier::BOLD),
                 ),
             ]),

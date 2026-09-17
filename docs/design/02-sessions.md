@@ -50,7 +50,7 @@ one walk (`chain_to_root`). No special-case machinery per feature.
 
 ## Later
 
-- subagent sessions linked via `parent_session_id` + spawning tool-call id
+- worker sessions linked via `parent_session_id` + spawning tool-call id
 
 ## Diff note — ledger robustness (this change)
 

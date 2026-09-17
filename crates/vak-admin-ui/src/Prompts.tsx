@@ -73,7 +73,7 @@ const SURFACES = [
   { id: "desktop", label: "Desktop" },
   { id: "server", label: "Server" },
   { id: "background", label: "Background" },
-  { id: "subagent", label: "Subagent" },
+  { id: "worker", label: "Worker" },
   { id: "telegram", label: "Telegram" },
 ] as const;
 

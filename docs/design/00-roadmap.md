@@ -17,7 +17,7 @@ that owns its contract.
 | Multi-provider dispatch with discovered model catalogues | `docs/design/01-llm.md` |
 | Permission engine × modes, OS sandbox backends, brokered tool boundary | `docs/design/08-permissions.md`, `docs/design/24-agent-security.md` |
 | Docker command-scoped containment | `docs/design/25-docker-sandbox.md` |
-| Skills, subagents, hooks, MCP, plugins, custom commands | `docs/design/09-extensibility.md`, `docs/design/39-plugin-ecosystem.md` |
+| Skills, workers, hooks, MCP, plugins, custom commands | `docs/design/09-extensibility.md`, `docs/design/39-plugin-ecosystem.md` |
 | Static flows, dynamic planner, run-graph projection | `docs/design/10-flows.md`, `docs/design/11-planner.md` |
 | Eval harness, checkpoints/rewind, worktree isolation | `docs/design/12-evals.md`, `docs/design/14-checkpoints.md` |
 | HTTP+SSE server, and one workspace client over it in three hosts — Tauri shell, browser on loopback, browser against a headless box | `docs/design/13-server.md`, `docs/design/20-tauri-desktop.md`, `docs/design/48-web-client.md` |
@@ -85,7 +85,7 @@ applies to every item.
 - Multi-provider from day one via raw provider APIs, no meta-SDK.
 - Static flows plus a dynamic planner: planner → repair → validate,
   fail-closed `planning_failed`, bounded replan of one attempt.
-- Parallel subagent fan-out gated by resource claims.
+- Parallel worker fan-out gated by resource claims.
 - Model-visible-means-logged; durable-vs-live event split; capability seams
   as traits; a minimal profile as the eval baseline; boot-tree
   introspection via `config dump`.

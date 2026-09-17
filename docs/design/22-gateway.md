@@ -344,7 +344,7 @@ Lessons from OpenClaw's incident history, inverted:
   reopens the bound ledger through the normal attach path. Proven by
   `bindings_survive_process_restart`.
 - Workspace defaults are refreshed from layered config at session admission.
-  Explicit CLI/task/heartbeat/subagent pins remain scoped and are never
+  Explicit CLI/task/heartbeat/worker pins remain scoped and are never
   overwritten by an admin default refresh.
 - The wait long-poll returns the turn chain's final text; if the session was
   busy the reply is `202 steering_queued` and callers follow the SSE stream

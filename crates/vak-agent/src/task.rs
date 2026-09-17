@@ -1,8 +1,8 @@
-//! Blocking subagent delegation. A task spawns a child agent with its own
+//! Blocking worker delegation. A task spawns a child agent with its own
 //! JSONL session (linked via parent_session_id), a narrowed tool set that
 //! excludes the task tool itself (depth-1 by construction), and returns the
 //! child's final text as this tool's output. Live children register in a
-//! shared [`SubagentRegistry`] so UIs can list, steer, and stop them.
+//! shared [`WorkerRegistry`] so UIs can list, steer, and stop them.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -63,7 +63,7 @@ pub struct TaskDeps {
     pub max_turns: usize,
     /// Parent intent budget for child delegation. `Some(0)` is an enforced
     /// denial; `None` leaves delegation available to the parent policy.
-    pub subagent_budget: Option<usize>,
+    pub worker_budget: Option<usize>,
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
@@ -83,11 +83,11 @@ pub struct TaskDeps {
     pub contract_id: Option<String>,
     pub work_item_id: Option<String>,
     pub work_item_ids: Vec<String>,
-    /// Parent-loop event channel so subagent lifecycles surface in the UI.
+    /// Parent-loop event channel so worker lifecycles surface in the UI.
     pub events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
     /// Shared registry of live children. None disables attach/steer (the
     /// child still runs normally).
-    pub registry: Option<Arc<SubagentRegistry>>,
+    pub registry: Option<Arc<WorkerRegistry>>,
 }
 
 pub struct TaskTool {
@@ -185,7 +185,7 @@ fn read_agents(cwd: &std::path::Path) -> Result<Vec<AgentDefinition>, String> {
 }
 
 struct RegistryGuard {
-    registry: Arc<SubagentRegistry>,
+    registry: Arc<WorkerRegistry>,
     id: String,
 }
 
@@ -199,7 +199,7 @@ impl Drop for RegistryGuard {
 /// attached UI can push steering or stop it while the parent's task tool
 /// call is still blocking.
 #[derive(Debug)]
-pub struct SubagentHandle {
+pub struct WorkerHandle {
     pub label: String,
     pub agent_id: Option<String>,
     pub agent_revision: Option<u64>,
@@ -212,7 +212,7 @@ pub struct SubagentHandle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ActiveSubagent {
+pub struct ActiveWorker {
     pub id: String,
     pub label: String,
     pub agent_id: Option<String>,
@@ -221,19 +221,19 @@ pub struct ActiveSubagent {
     pub parent_session_id: String,
 }
 
-/// Registry of currently-running subagents, keyed by unique child session
+/// Registry of currently-running workers, keyed by unique child session
 /// id. Interior-mutable: the UI holds a shared reference across runs.
 #[derive(Debug, Default)]
-pub struct SubagentRegistry {
-    inner: Mutex<BTreeMap<String, SubagentHandle>>,
+pub struct WorkerRegistry {
+    inner: Mutex<BTreeMap<String, WorkerHandle>>,
 }
 
-impl SubagentRegistry {
+impl WorkerRegistry {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn register(&self, id: String, handle: SubagentHandle) {
+    fn register(&self, id: String, handle: WorkerHandle) {
         if let Ok(mut map) = self.inner.lock() {
             map.insert(id, handle);
         }
@@ -245,12 +245,12 @@ impl SubagentRegistry {
         }
     }
 
-    pub fn active(&self) -> Vec<ActiveSubagent> {
+    pub fn active(&self) -> Vec<ActiveWorker> {
         let Ok(map) = self.inner.lock() else {
             return Vec::new();
         };
         map.iter()
-            .map(|(id, h)| ActiveSubagent {
+            .map(|(id, h)| ActiveWorker {
                 id: id.clone(),
                 label: h.label.clone(),
                 agent_id: h.agent_id.clone(),
@@ -262,13 +262,13 @@ impl SubagentRegistry {
     }
 
     /// Live children spawned by `parent`, oldest first.
-    pub fn active_for(&self, parent: &str) -> Vec<ActiveSubagent> {
+    pub fn active_for(&self, parent: &str) -> Vec<ActiveWorker> {
         let Ok(map) = self.inner.lock() else {
             return Vec::new();
         };
         map.iter()
             .filter(|(_, h)| h.parent_session_id == parent)
-            .map(|(id, h)| ActiveSubagent {
+            .map(|(id, h)| ActiveWorker {
                 id: id.clone(),
                 label: h.label.clone(),
                 agent_id: h.agent_id.clone(),
@@ -345,7 +345,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a self-contained subtask to a subagent with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. Optionally select a saved Agent so its identity and working style are applied; this never changes permissions. The subagent cannot spawn further subagents."
+        "Delegate a self-contained subtask to a worker with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. Optionally select a saved Agent so its identity and working style are applied; this never changes permissions. The worker cannot spawn further workers."
     }
 
     fn schema(&self) -> Value {
@@ -356,7 +356,7 @@ impl Tool for TaskTool {
         let roles: Vec<&str> = self.deps.role_prompts.keys().map(String::as_str).collect();
         let mut role_property = serde_json::json!({
             "type": "string",
-            "description": "Named role whose instructions this child runs under. Omit to use the default subagent instructions."
+            "description": "Named role whose instructions this child runs under. Omit to use the default worker instructions."
         });
         if !roles.is_empty() {
             role_property["enum"] = serde_json::json!(roles);
@@ -364,11 +364,11 @@ impl Tool for TaskTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "Complete, self-contained instructions for the subagent"},
+                "prompt": {"type": "string", "description": "Complete, self-contained instructions for the worker"},
                 "role": role_property,
                 "agent": {"type": "string", "description": "Optional saved Agent name or id. Applies its identity and working style without changing permissions."},
                 "label": {"type": "string", "description": "Short label shown in the UI"},
-                "readonly": {"type": "boolean", "description": "If true, the subagent gets only read/glob/grep and may run concurrently with other tasks", "default": false},
+                "readonly": {"type": "boolean", "description": "If true, the worker gets only read/glob/grep and may run concurrently with other tasks", "default": false},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
                 "contract_id": {"type": "string", "description": "Managed contract this child is executing"},
                 "work_item_id": {"type": "string", "description": "Managed work item assigned to this child"}
@@ -412,8 +412,8 @@ impl Tool for TaskTool {
 
 impl TaskTool {
     async fn execute_inner(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
-        if self.deps.subagent_budget == Some(0) {
-            return ToolOutput::error("subagent delegation is not allowed for this turn");
+        if self.deps.worker_budget == Some(0) {
+            return ToolOutput::error("worker delegation is not allowed for this turn");
         }
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: prompt");
@@ -442,11 +442,11 @@ impl TaskTool {
                 "child work item does not exist in the parent's managed contract",
             );
         }
-        if let Some(limit) = self.deps.subagent_budget {
+        if let Some(limit) = self.deps.worker_budget {
             let used = self.budget_used.fetch_add(1, Ordering::AcqRel);
             if used >= limit {
                 self.budget_used.fetch_sub(1, Ordering::AcqRel);
-                return ToolOutput::error("subagent delegation budget exhausted for this turn");
+                return ToolOutput::error("worker delegation budget exhausted for this turn");
             }
         }
 
@@ -630,7 +630,7 @@ impl TaskTool {
                 .or_else(|| self.deps.work_item_id.clone()),
             conversation: Some(vak_session::ConversationContext::local(
                 &session_id,
-                "subagent",
+                "worker",
             )),
             contract: FrozenContract {
                 app_version: env!("CARGO_PKG_VERSION").into(),
@@ -695,7 +695,7 @@ impl TaskTool {
         let _registry_guard = if let Some(registry) = &self.deps.registry {
             registry.register(
                 session_id.clone(),
-                SubagentHandle {
+                WorkerHandle {
                     label: label.clone(),
                     agent_id: profile.as_ref().map(|profile| profile.id.clone()),
                     agent_revision: profile.as_ref().map(|profile| profile.revision),
@@ -715,7 +715,7 @@ impl TaskTool {
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
         // Always drain the child stream (a full channel would deadlock the
         // child loop); tool calls are additionally forwarded to the parent
-        // event stream so parallel subagents are visible in the UI.
+        // event stream so parallel workers are visible in the UI.
         let parent = self.deps.events.clone();
         let fwd_label = label.clone();
         let pump = tokio::spawn(async move {
@@ -724,7 +724,7 @@ impl TaskTool {
                     crate::AgentEvent::ToolCallEnd { name, is_error, .. } => {
                         if let Some(parent) = &parent {
                             let _ = parent
-                                .send(crate::AgentEvent::SubagentToolCall {
+                                .send(crate::AgentEvent::WorkerToolCall {
                                     label: fwd_label.clone(),
                                     name,
                                     is_error,
@@ -735,7 +735,7 @@ impl TaskTool {
                     crate::AgentEvent::TurnEnd { usage } => {
                         if let Some(parent) = &parent {
                             let _ = parent
-                                .send(crate::AgentEvent::SubagentUsage {
+                                .send(crate::AgentEvent::WorkerUsage {
                                     label: fwd_label.clone(),
                                     input_tokens: usage.input_tokens,
                                     output_tokens: usage.output_tokens,
@@ -745,7 +745,7 @@ impl TaskTool {
                     }
                     crate::AgentEvent::Sandbox(event) => {
                         // Sandbox output belongs to the parent surface too:
-                        // subagent tool calls execute through the same
+                        // worker tool calls execute through the same
                         // broker and must remain visible and rehydratable in
                         // Workbench with their own execution identity.
                         if let Some(parent) = &parent {
@@ -758,7 +758,7 @@ impl TaskTool {
         });
         if let Some(events) = &self.deps.events {
             let _ = events
-                .send(crate::AgentEvent::SubagentStarted {
+                .send(crate::AgentEvent::WorkerStarted {
                     label: label.clone(),
                 })
                 .await;
@@ -780,7 +780,7 @@ impl TaskTool {
             .append_child_run_result(child_status, self.deps.outcome.clone());
         if let Some(events) = &self.deps.events {
             let _ = events
-                .send(crate::AgentEvent::SubagentFinished {
+                .send(crate::AgentEvent::WorkerFinished {
                     label: label.clone(),
                     is_error: !matches!(outcome, crate::TurnOutcome::Completed { .. }),
                     elapsed_ms: started.elapsed().as_millis() as u64,
@@ -792,10 +792,10 @@ impl TaskTool {
             crate::TurnOutcome::Completed { response } => {
                 let text = response.text_content();
                 if text.is_empty() {
-                    ToolOutput::ok(format!("subagent '{session_id}' completed without output"))
+                    ToolOutput::ok(format!("worker '{session_id}' completed without output"))
                 } else {
                     if requested_contract.is_some() {
-                        ToolOutput::ok(format!("subagent '{session_id}' completed:\n{text}"))
+                        ToolOutput::ok(format!("worker '{session_id}' completed:\n{text}"))
                     } else {
                         ToolOutput::ok(text)
                     }
@@ -804,14 +804,14 @@ impl TaskTool {
             crate::TurnOutcome::Aborted { partial } => {
                 let text = partial.map(|p| p.text_content()).unwrap_or_default();
                 ToolOutput::error(format!(
-                    "subagent '{session_id}' was cancelled. Partial output:\n{text}"
+                    "worker '{session_id}' was cancelled. Partial output:\n{text}"
                 ))
             }
             crate::TurnOutcome::Failed { error } => {
-                ToolOutput::error(format!("subagent '{session_id}' failed: {error}"))
+                ToolOutput::error(format!("worker '{session_id}' failed: {error}"))
             }
             crate::TurnOutcome::MaxTurnsReached => ToolOutput::error(format!(
-                "subagent '{session_id}' hit its turn limit before finishing"
+                "worker '{session_id}' hit its turn limit before finishing"
             )),
         }
     }
@@ -837,7 +837,7 @@ mod registry_tests {
 
     #[test]
     fn register_steer_stop_lifecycle() {
-        let reg = SubagentRegistry::new();
+        let reg = WorkerRegistry::new();
         assert!(reg.active().is_empty());
         assert!(!reg.steer("child-1", "go"));
         assert!(!reg.stop("child-1"));
@@ -845,7 +845,7 @@ mod registry_tests {
         let cancel = CancellationToken::new();
         reg.register(
             "child-1".into(),
-            SubagentHandle {
+            WorkerHandle {
                 label: "explore".into(),
                 agent_id: None,
                 agent_revision: None,
@@ -874,11 +874,11 @@ mod registry_tests {
 
     #[test]
     fn scope_checks_route_children_to_their_own_parent() {
-        let reg = SubagentRegistry::new();
+        let reg = WorkerRegistry::new();
         for (id, parent) in [("c1", "pA"), ("c2", "pB")] {
             reg.register(
                 id.into(),
-                SubagentHandle {
+                WorkerHandle {
                     label: id.into(),
                     agent_id: None,
                     agent_revision: None,

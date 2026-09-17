@@ -28,13 +28,13 @@ fn planner_prompt_includes_task_and_catalog() {
         },
         ToolCatalogEntry {
             name: "task".into(),
-            description: "Delegate to a subagent".into(),
+            description: "Delegate to a worker".into(),
         },
     ];
     let prompt = build_planner_prompt("migrate the config module", &catalog);
     assert!(prompt.contains("migrate the config module"));
     assert!(prompt.contains("- bash: Execute a shell command"));
-    assert!(prompt.contains("- task: Delegate to a subagent"));
+    assert!(prompt.contains("- task: Delegate to a worker"));
 }
 
 #[test]

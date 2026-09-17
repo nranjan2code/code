@@ -29,7 +29,7 @@ advantages transfer directly:
    Ours cannot happen structurally: `vak-tui`, `exec`, `serve`, and the
    desktop app all read/write the same JSONL trees under the data home.
 2. **Delta+snapshot streaming everywhere** (invariant 4). Every pane — chat,
-   diff, subagent view — consumes the same event stream at whichever level it
+   diff, worker view — consumes the same event stream at whichever level it
    wants. No re-derivation hacks.
 3. **The backend is already Rust.** ChatML needed a Go sidecar + node-pty +
    bundled Node runner (155 MB installed). We link/spawn Rust we already
@@ -58,7 +58,7 @@ owned by `docs/design/52-outcome-directed-runtime.md` and
 | steering queues mid-run | vak-agent | "type while running" prompt box |
 | checkpoints + rewind | vak-core | time-travel UI |
 | worktree isolation | vak-core | per-session isolation toggle |
-| subagents (task tool) + live streams | vak-agent | tasks/subagent pane |
+| workers (task tool) + live streams | vak-agent | tasks/worker pane |
 | skills, hooks, lazy MCP meta-tool | vak-core/hooks/mcp | slash palette, connectors manager |
 | static flows + dynamic planner | vak-flow | best-of-N / fan-out orchestration |
 
@@ -271,8 +271,8 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   `GET|PUT /fs/file` (symlink-resolved confinement to cwd),
   `GET /fs/tree` (bounded listing, vendored dirs skipped),
   `POST /config/mode`, `/health` gains `context_window`+`cwd`.
-  Later additions: subagent control plane (`GET /sessions/{id}/subagents`,
-  `POST /sessions/{id}/subagents/{child}/steer|stop`, parent-scoped so one
+  Later additions: worker control plane (`GET /sessions/{id}/workers`,
+  `POST /sessions/{id}/workers/{child}/steer|stop`, parent-scoped so one
   session can never touch another's child), MCP server management
   (`GET|PUT /config/mcp` — PUT validates, persists the project config's
   `[mcp.servers]` table without destroying other keys, and hot-applies into
@@ -286,7 +286,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   per-session PTY lifecycle fix (terminals keyed by session id), diff pane
   auto-refresh on run finish.
 
-- **Subagents dock tab** ("Subagents"): live list of the session's running
+- **Workers dock tab** ("Workers"): live list of the session's running
   children polled from the control-plane endpoints, with per-child steering
   input and stop. Children already stream lifecycle/tool events into the
   session SSE; this closes the attach/steer gap that previously existed only
@@ -486,7 +486,7 @@ the model. That needs a headless-browser dependency decision
 work; until then the agent verifies via bash (`curl`), and the human verifies
 visually in the preview pane.
 
-Aug 2026 additions closing the last interactive gaps: the **subagent dock
+Aug 2026 additions closing the last interactive gaps: the **worker dock
 tab** (attach/steer parity with the TUI, over parent-scoped server endpoints),
 a **graphical MCP manager** in Settings → Integrations (add/edit/remove
 servers, network toggle, persisted to project config + hot-applied),

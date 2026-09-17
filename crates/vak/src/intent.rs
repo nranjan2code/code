@@ -133,7 +133,7 @@ fn explain(
                 channel: "chat".into(),
             },
             Some(IntentSurface::Cron | IntentSurface::Heartbeat) => vak_core::Surface::Background,
-            Some(IntentSurface::Subagent) => vak_core::Surface::Subagent,
+            Some(IntentSurface::Worker) => vak_core::Surface::Worker,
             None => {
                 eprintln!("error: unknown surface '{raw}'");
                 return 2;

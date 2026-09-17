@@ -33,7 +33,7 @@ authority and exact source Markdown stays available for export, audit, legacy
 clients, and emergency degradation. Schema v2 separates three axes that were
 previously conflated in prose and CSS:
 
-- `OutputRole`: system, user, assistant, tool, or subagent.
+- `OutputRole`: system, user, assistant, tool, or worker.
 - `OutputKind`: message, information, approval, progress, retry, error,
   outcome, or artifact.
 - `OutputStatus`: pending, running, succeeded, failed, denied, cancelled, or

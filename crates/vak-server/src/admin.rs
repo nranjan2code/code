@@ -534,11 +534,11 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         // console's `ConfigInfo` declared all of them, so nothing caught it:
         // the approval-mode picker could not show which mode was in force,
         // "Effective sandbox" rendered its loading placeholder forever, and
-        // the sub-agents toggle rendered unchecked whatever the real value
+        // the workers toggle rendered unchecked whatever the real value
         // was — so the first click wrote the opposite of what was displayed.
         "approval_mode": state.core.effective_approval_mode().as_str(),
         "sandbox": state.core.effective_sandbox_name(),
-        "subagents": state.core.effective_subagents(),
+        "workers": state.core.effective_workers(),
         "theme": state.core.effective_theme(),
         "voice": {
             "enabled": state.core.effective_voice().enabled,
@@ -1965,15 +1965,15 @@ mod tests {
     /// These three were read by the console and never sent. The console's
     /// own `ConfigInfo` declared all of them, so nothing caught it: the
     /// approval picker could not show what was in force, "Effective sandbox"
-    /// rendered its loading placeholder forever, and the sub-agents toggle
+    /// rendered its loading placeholder forever, and the workers toggle
     /// rendered unchecked whatever the real value was.
     #[tokio::test]
-    async fn config_endpoint_reports_approval_mode_sandbox_and_subagents() {
+    async fn config_endpoint_reports_approval_mode_sandbox_and_workers() {
         let state = test_state();
         let axum::Json(json) = crate::admin::get_config_admin(axum::extract::State(state)).await;
         assert!(json["approval_mode"].is_string(), "{json}");
         assert!(json["sandbox"].is_string(), "{json}");
-        assert!(json["subagents"].is_boolean(), "{json}");
+        assert!(json["workers"].is_boolean(), "{json}");
     }
 
     #[tokio::test]

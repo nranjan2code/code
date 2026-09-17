@@ -13,7 +13,7 @@ Vak resolves configuration from broadest to narrowest:
 built-in defaults
   → Shared layer          ~/vak-home/.vak/config.toml   + ~/vak-home/.env
   → project layer         <cwd>/.vak/config.toml        + <cwd>/.env
-  → scoped pins           workspace · session · task · bot · chat · subagent
+  → scoped pins           workspace · session · task · bot · chat · worker
 ```
 
 `~/vak-home` is the durable Shared baseline — a normal directory a person
@@ -106,7 +106,7 @@ and the route revision.
 New-session admission in other local processes refreshes persisted
 provider/model, max turns, theme, MCP, hooks, and permission mode; a
 permission change revokes live capabilities before apply. CLI, task,
-heartbeat, and subagent pins stay intentionally transient. Sessions freeze
+heartbeat, and worker pins stay intentionally transient. Sessions freeze
 their provider/model contract at creation; a gateway binding rotates to a
 new frozen session on mismatch while preserving the old append-only ledger.
 

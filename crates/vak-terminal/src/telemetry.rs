@@ -3,7 +3,7 @@
 //!
 //! All values are populated from real server data — `/health` for the
 //! system/provider snapshot and `AgentEvent` stream events for live
-//! token usage, subagent counts, and pending task counts. The previous
+//! token usage, worker counts, and pending task counts. The previous
 //! implementation hardcoded all values; this one derives them from actual
 //! API responses.
 
@@ -15,7 +15,7 @@ pub struct TelemetryState {
     pub rss_mb: f64,
     pub token_rate_history: Vec<u32>,
     pub max_rate: u32,
-    pub active_subagents: usize,
+    pub active_workers: usize,
     pub pending_tasks: usize,
     pub radar_angle_deg: f32,
     pub spend_today_usd: f64,
@@ -38,7 +38,7 @@ impl Default for TelemetryState {
             rss_mb: 0.0,
             token_rate_history: Vec::new(),
             max_rate: 0,
-            active_subagents: 0,
+            active_workers: 0,
             pending_tasks: 0,
             radar_angle_deg: 0.0,
             spend_today_usd: 0.0,
@@ -84,9 +84,9 @@ impl TelemetryState {
         }
     }
 
-    /// Update subagent presence from `SubagentStarted` / `SubagentFinished`.
-    pub fn set_active_subagents(&mut self, count: usize) {
-        self.active_subagents = count;
+    /// Update worker presence from `WorkerStarted` / `WorkerFinished`.
+    pub fn set_active_workers(&mut self, count: usize) {
+        self.active_workers = count;
     }
 
     /// Record a connection error so the UI can surface it.

@@ -221,7 +221,7 @@ export interface ConfigInfo {
   approval_mode: "ask" | "approve-safe" | "auto-approve";
   sandbox: string;
   theme: string;
-  subagents: boolean;
+  workers: boolean;
   /** Resolved permission rule lists, exactly as the engine evaluates them. */
   permissions?: PermissionRules;
   /** `project_hash` of the workspace this server process is bound to.
@@ -815,7 +815,7 @@ export interface ConfigLayer {
   permission_mode?: string | null;
   approval_mode?: string | null;
   profile?: string | null;
-  subagents?: boolean | null;
+  workers?: boolean | null;
   theme?: string | null;
   permissions: { allow: string[]; ask: string[]; deny: string[] };
   memory: {
@@ -1011,7 +1011,7 @@ export interface SessionCheckpoint {
   created_at?: string;
 }
 
-export interface ActiveSubagent {
+export interface ActiveWorker {
   id: string;
   label: string;
   elapsed_secs: number;
@@ -1293,7 +1293,7 @@ export interface Engagement {
     spend_ceiling_usd?: number | null;
     approval_ceiling: "ask" | "approve-safe" | "auto-approve";
     permission_ceiling: "read-only" | "workspace-write" | "full-access";
-    subagent_budget?: number | null;
+    worker_budget?: number | null;
     max_turns?: number | null;
     min_satisfaction: Satisfaction;
   };

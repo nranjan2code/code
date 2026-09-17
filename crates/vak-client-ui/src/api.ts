@@ -549,9 +549,9 @@ export type RoutingEnvelope = {
   provenance?: string;
 };
 
-// ---- subagents (attach / steer / stop) ---------------------------------------
+// ---- workers (attach / steer / stop) ---------------------------------------
 
-export interface ActiveSubagent {
+export interface ActiveWorker {
   id: string;
   label: string;
   agent_id?: string | null;
@@ -560,22 +560,22 @@ export interface ActiveSubagent {
   parent_session_id: string;
 }
 
-export function listSubagents(id: string): Promise<{ subagents: ActiveSubagent[] }> {
-  return req(`/sessions/${id}/subagents`);
+export function listWorkers(id: string): Promise<{ workers: ActiveWorker[] }> {
+  return req(`/sessions/${id}/workers`);
 }
 
-export function steerSubagent(id: string, child: string, text: string): Promise<void> {
-  return req(`/sessions/${id}/subagents/${encodeURIComponent(child)}/steer`, {
+export function steerWorker(id: string, child: string, text: string): Promise<void> {
+  return req(`/sessions/${id}/workers/${encodeURIComponent(child)}/steer`, {
     method: "POST",
     body: JSON.stringify({ text }),
   });
 }
 
-export function stopSubagent(
+export function stopWorker(
   id: string,
   child: string,
 ): Promise<void> {
-  return req(`/sessions/${id}/subagents/${encodeURIComponent(child)}/stop`, { method: "POST" });
+  return req(`/sessions/${id}/workers/${encodeURIComponent(child)}/stop`, { method: "POST" });
 }
 
 /// Dispatch forensics (docs/design/27 Phases A+B+R): per-dispatch receipts

@@ -39,7 +39,7 @@ export type Item =
       reason: string;
       resolved: null | "allowed" | "denied" | "gone";
     }
-  | { kind: "subagent"; label: string; lines: string[]; open: boolean; isError: boolean }
+  | { kind: "worker"; label: string; lines: string[]; open: boolean; isError: boolean }
   | { kind: "system"; text: string };
 
 export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_workspaces: [] });
@@ -1157,49 +1157,49 @@ export function applyEvent(
       resolved: null,
     });
     opts.onApproval?.(ev.ApprovalRequested.id, ev.ApprovalRequested.tool);
-  } else if ("SubagentStarted" in ev) {
+  } else if ("WorkerStarted" in ev) {
     pushItem(b, id, {
-      kind: "subagent",
-      label: ev.SubagentStarted.label,
+      kind: "worker",
+      label: ev.WorkerStarted.label,
       lines: [],
       open: false,
       isError: false,
     });
-  } else if ("SubagentToolCall" in ev) {
+  } else if ("WorkerToolCall" in ev) {
     patchLast(
       b,
       id,
-      (it) => it.kind === "subagent",
+      (it) => it.kind === "worker",
       (it) => {
-        if (it.kind !== "subagent") return it;
-        const lines = [...it.lines, `${ev.SubagentToolCall.name}${ev.SubagentToolCall.is_error ? " ✗" : ""}`];
+        if (it.kind !== "worker") return it;
+        const lines = [...it.lines, `${ev.WorkerToolCall.name}${ev.WorkerToolCall.is_error ? " ✗" : ""}`];
         return { ...it, lines: lines.slice(-12) };
       },
     );
-  } else if ("SubagentUsage" in ev) {
+  } else if ("WorkerUsage" in ev) {
     patchLast(
       b,
       id,
-      (it) => it.kind === "subagent",
+      (it) => it.kind === "worker",
       (it) =>
-        it.kind === "subagent"
+        it.kind === "worker"
           ? {
               ...it,
-              lines: [...it.lines, `tokens ↑${ev.SubagentUsage.input_tokens} ↓${ev.SubagentUsage.output_tokens}`],
+              lines: [...it.lines, `tokens ↑${ev.WorkerUsage.input_tokens} ↓${ev.WorkerUsage.output_tokens}`],
             }
           : it,
     );
-  } else if ("SubagentFinished" in ev) {
+  } else if ("WorkerFinished" in ev) {
     patchLast(
       b,
       id,
-      (it) => it.kind === "subagent",
+      (it) => it.kind === "worker",
       (it) =>
-        it.kind === "subagent"
+        it.kind === "worker"
           ? {
               ...it,
-              isError: ev.SubagentFinished.is_error,
-              lines: [...it.lines, `done in ${(ev.SubagentFinished.elapsed_ms / 1000).toFixed(1)}s`],
+              isError: ev.WorkerFinished.is_error,
+              lines: [...it.lines, `done in ${(ev.WorkerFinished.elapsed_ms / 1000).toFixed(1)}s`],
             }
           : it,
     );

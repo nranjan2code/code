@@ -557,11 +557,11 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         // about, which is precisely how a broken integration stayed
         // invisible.
         format!(
-            "extensions: {} skills · {} hooks · {} mcp servers · subagents {}",
+            "extensions: {} skills · {} hooks · {} mcp servers · workers {}",
             core.skills().len(),
             core.effective_hooks().iter().filter(|h| h.enabled).count(),
             core.effective_mcp().servers.len(),
-            if core.config().subagents { "on" } else { "off" },
+            if core.config().workers { "on" } else { "off" },
         ),
     ];
 

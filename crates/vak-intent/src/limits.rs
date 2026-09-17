@@ -253,7 +253,7 @@ pub struct Limits {
     #[serde(default)]
     pub permission_ceiling: PermissionCeiling,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subagent_budget: Option<usize>,
+    pub worker_budget: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<usize>,
     /// The weakest evidence that may close this work as fulfilled. Raising it
@@ -282,7 +282,7 @@ impl Limits {
             spend_ceiling_usd: None,
             approval_ceiling: ApprovalCeiling::AutoApprove,
             permission_ceiling: PermissionCeiling::FullAccess,
-            subagent_budget: None,
+            worker_budget: None,
             max_turns: None,
             min_satisfaction: Satisfaction::Asserted,
         }
@@ -306,7 +306,7 @@ impl Limits {
             spend_ceiling_usd: meet_cap(self.spend_ceiling_usd, other.spend_ceiling_usd),
             approval_ceiling: self.approval_ceiling.meet(other.approval_ceiling),
             permission_ceiling: self.permission_ceiling.meet(other.permission_ceiling),
-            subagent_budget: meet_cap(self.subagent_budget, other.subagent_budget),
+            worker_budget: meet_cap(self.worker_budget, other.worker_budget),
             max_turns: meet_cap(self.max_turns, other.max_turns),
             min_satisfaction: if other.min_satisfaction.rank() > self.min_satisfaction.rank() {
                 other.min_satisfaction
@@ -331,7 +331,7 @@ impl Limits {
             && cap_is_at_most(self.spend_ceiling_usd, baseline.spend_ceiling_usd)
             && self.approval_ceiling.rank() <= baseline.approval_ceiling.rank()
             && self.permission_ceiling.rank() <= baseline.permission_ceiling.rank()
-            && cap_is_at_most(self.subagent_budget, baseline.subagent_budget)
+            && cap_is_at_most(self.worker_budget, baseline.worker_budget)
             && cap_is_at_most(self.max_turns, baseline.max_turns)
             && self.min_satisfaction.rank() >= baseline.min_satisfaction.rank()
     }
@@ -395,10 +395,10 @@ impl Limits {
                 self.permission_ceiling.as_str()
             ));
         }
-        if self.subagent_budget != baseline.subagent_budget
-            && let Some(budget) = self.subagent_budget
+        if self.worker_budget != baseline.worker_budget
+            && let Some(budget) = self.worker_budget
         {
-            out.push(format!("at most {budget} subagent(s)"));
+            out.push(format!("at most {budget} worker(s)"));
         }
         if self.max_turns != baseline.max_turns
             && let Some(turns) = self.max_turns
@@ -432,7 +432,7 @@ mod tests {
                 spend_ceiling_usd: Some(0.01),
                 approval_ceiling: ApprovalCeiling::Ask,
                 permission_ceiling: PermissionCeiling::ReadOnly,
-                subagent_budget: Some(0),
+                worker_budget: Some(0),
                 max_turns: Some(1),
                 min_satisfaction: Satisfaction::Attested,
                 ..Limits::unrestricted()
@@ -501,7 +501,7 @@ mod tests {
             spend_ceiling_usd: Some(0.5),
             approval_ceiling: ApprovalCeiling::Ask,
             permission_ceiling: PermissionCeiling::ReadOnly,
-            subagent_budget: Some(0),
+            worker_budget: Some(0),
             max_turns: Some(2),
             min_satisfaction: Satisfaction::Attested,
             required_modalities: BTreeSet::from([Modality::Image]),
@@ -532,7 +532,7 @@ mod tests {
                 ..narrow.clone()
             },
             Limits {
-                subagent_budget: Some(4),
+                worker_budget: Some(4),
                 ..narrow.clone()
             },
             Limits {

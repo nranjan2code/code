@@ -136,16 +136,16 @@ def main():
     search_ok = "search" in wiki_src()
     record("P2 survived 429 window", ok and t and search_ok and h_429 > 0, f"(429s injected: {h_429})")
 
-    # P3 — 503 storm during subagent delegation
+    # P3 — 503 storm during worker delegation
     set_mode("503")
     h_before = hits()["injected"].get("503", 0)
     schedule([(20, "pass")])
     ok, out = run(sid,
-        "Delegate to a subagent with the task tool: have it write chaoswiki/docs.md "
+        "Delegate to a worker with the task tool: have it write chaoswiki/docs.md "
         "documenting WikiStore's API from reading the source. Then verify the file exists.")
     h_503 = hits()["injected"].get("503", 0) - h_before
     doc_ok = os.path.isfile(f"{CWD}/chaoswiki/docs.md")
-    record("P3 subagent through 503 storm", ok and doc_ok and h_503 > 0, f"(503s injected: {h_503})")
+    record("P3 worker through 503 storm", ok and doc_ok and h_503 > 0, f"(503s injected: {h_503})")
 
     trunc = 0
     # P4 — truncated streams in a bounded window (real gateways flap)

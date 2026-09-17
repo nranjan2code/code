@@ -616,7 +616,7 @@ async fn cancel_endpoint_stops_a_running_session() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn subagent_endpoints_scope_and_wire() {
+async fn worker_endpoints_scope_and_wire() {
     let (base, _server) = spawn_server(
         Arc::new(Scripted {
             responses: Mutex::new(VecDeque::from(vec![text("no children")])),
@@ -637,20 +637,20 @@ async fn subagent_endpoints_scope_and_wire() {
 
     // No live children.
     let res = reqwest::Client::new()
-        .get(format!("{base}/sessions/{sid}/subagents"))
+        .get(format!("{base}/sessions/{sid}/workers"))
         .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["subagents"], serde_json::json!([]));
+    assert_eq!(body["workers"], serde_json::json!([]));
 
     // Steering/stopping a child this session does not own is 404 — never a
     // cross-session capability leak, and never a silent no-op.
     let client = reqwest::Client::new();
     for path in [
-        format!("/sessions/{sid}/subagents/child-nope/steer"),
-        format!("/sessions/{sid}/subagents/child-nope/stop"),
+        format!("/sessions/{sid}/workers/child-nope/steer"),
+        format!("/sessions/{sid}/workers/child-nope/stop"),
     ] {
         let res = client
             .post(format!("{base}{path}"))

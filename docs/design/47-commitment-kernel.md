@@ -129,7 +129,7 @@ Cheapest first, stopping once confidence clears the bar.
 
 | Tier | Cost | Reproducible |
 |---|---|---|
-| 0 — **declared**: CLI flags, flow intent, pinned channel policy, inherited subagent engagement | free | yes |
+| 0 — **declared**: CLI flags, flow intent, pinned channel policy, inherited worker engagement | free | yes |
 | 1 — **signals**: lexical, structural, deictic, workspace, session, surface, attachment | free | yes |
 | 2 — **local model**: strict JSON via Ollama | ~free | no |
 | 3 — **cloud model**: only below the tier-1 threshold | metered | no |
@@ -339,7 +339,7 @@ evidence tunes the ladder. *(Phase I8, not yet wired.)*
 10. **Unsupported modality fails typed, never silently degrades.** Dropping an
     image because the serving model is text-only is the "everything worked as
     designed and the outcome was a lie" failure `reach` exists to prevent.
-11. **Subagents inherit, narrowed.**
+11. **Workers inherit, narrowed.**
 
 ## What this replaces
 

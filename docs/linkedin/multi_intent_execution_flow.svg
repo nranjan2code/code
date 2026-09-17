@@ -147,10 +147,10 @@
 
     <g transform="translate(28, 560)">
       <rect width="474" height="220" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5" rx="10" />
-      <text x="20" y="30" class="font" font-size="14" font-weight="700" fill="#991b1b">SUBAGENT DELEGATION (TaskTool)</text>
+      <text x="20" y="30" class="font" font-size="14" font-weight="700" fill="#991b1b">WORKER DELEGATION (TaskTool)</text>
       <text x="20" y="58" class="font" font-size="14" fill="#7f1d1d">• Root agent decomposes complex work into children</text>
       <text x="20" y="82" class="font" font-size="14" fill="#7f1d1d">• Depth-1 construction: child cannot spawn children</text>
-      <text x="20" y="106" class="font" font-size="14" fill="#7f1d1d">• Isolated tool subset (e.g. read-only subagents)</text>
+      <text x="20" y="106" class="font" font-size="14" fill="#7f1d1d">• Isolated tool subset (e.g. read-only workers)</text>
       <text x="20" y="130" class="font" font-size="14" fill="#7f1d1d">• Discrete budget &amp; turn limits</text>
       <text x="20" y="154" class="font" font-size="14" fill="#7f1d1d">• Child reports structured output back to parent</text>
       <text x="20" y="186" class="font" font-size="13" font-weight="600" fill="#991b1b">Auditable lineage recorded in JSONL session logs</text>

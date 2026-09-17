@@ -89,7 +89,7 @@ Every message envelope carries:
 - W3C Distributed Tracing headers:
   - `traceparent`: `00-<trace_id_32_hex>-<span_id_16_hex>-01`
   - `tracestate`: vendor-specific state pairs.
-- Spawning child tasks or subagents calls `trace.child_span()`, preserving the global `trace_id` while generating a unique span ID.
+- Spawning child tasks or workers calls `trace.child_span()`, preserving the global `trace_id` while generating a unique span ID.
 
 ### 4.2 Merkle Causal Hash Chaining
 - Each envelope computes a canonical SHA-256 Merkle leaf:

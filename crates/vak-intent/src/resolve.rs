@@ -72,7 +72,7 @@ impl Default for ResolverConfig {
 /// Every field is optional; whatever is set overrides the corresponding axis
 /// and whatever is not falls through to the signal tier. This is what a
 /// `--act` flag, a flow's declared intent, a pinned channel policy, or a
-/// parent handing an engagement to a subagent all produce.
+/// parent handing an engagement to a worker all produce.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Declared {
     #[serde(default, skip_serializing_if = "Option::is_none")]

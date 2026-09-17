@@ -49,7 +49,7 @@ pub enum Act {
     Operate,
     /// Check a claim: run tests, audit, reproduce.
     Verify,
-    /// Decompose and delegate across subagents or flows.
+    /// Decompose and delegate across workers or flows.
     Orchestrate,
     /// Meta-work on the agent itself: config, permissions, memory, skills.
     Govern,

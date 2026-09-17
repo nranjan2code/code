@@ -1,4 +1,4 @@
-# 09 — Extensibility (skills · subagents · hooks · MCP · custom commands)
+# 09 — Extensibility (skills · workers · hooks · MCP · custom commands)
 Status: implemented in 2.0.0
 
 ## Skills (shipped)
@@ -37,7 +37,7 @@ Same-name precedence: project shadows user. Runtime discovery uses the winner,
 while inventory APIs retain losing entries with `shadowed` and provenance so
 the admin and desktop surfaces can explain why a skill is inactive.
 
-## Subagents (shipped, blocking + parallel fan-out + attach/steer)
+## Workers (shipped, blocking + parallel fan-out + attach/steer)
 
 The `task` tool delegates a self-contained prompt to a child agent:
 - child session JSONL linked via `parent_session_id`; greppable lineage
@@ -45,15 +45,15 @@ The `task` tool delegates a self-contained prompt to a child agent:
 - inherits permission engine/mode/approver/sandbox/model from parent core
 - final text returns as the tool result; abort/failure/turn-limit become
   typed error results
-- config: `subagents = false` disables
+- config: `workers = false` disables
 
 ### Live registry (attach/steer/stop)
 
 While a child runs it registers its steering queues and cancel token in a
-per-Core `SubagentRegistry` (`vak_agent`), keyed by the unique child
+per-Core `WorkerRegistry` (`vak_agent`), keyed by the unique child
 session id. UIs enumerate live children, push steering/follow-up text into
 a specific child, or cancel just that child. The TUI surfaces this as
-`Alt-S` / `/subagents`: attaching retargets the composer (Enter steers the
+`Alt-S` / `/workers`: attaching retargets the composer (Enter steers the
 child, Tab queues its follow-up, Ctrl-C stops only it, Esc detaches).
 Registration is removed when the tool call returns, so a finished child can
 never be steered.

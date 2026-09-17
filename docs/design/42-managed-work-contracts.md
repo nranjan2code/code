@@ -13,7 +13,7 @@ Given a complex request, Vak must be able to answer, from durable state:
 2. Which constraints and assumptions were understood?
 3. What work items were created?
 4. Which item is ready, running, blocked, delegated, or complete?
-5. Which parent agent, subagent, flow, tool, or human owns each item?
+5. Which parent agent, worker, flow, tool, or human owns each item?
 6. What evidence supports each result?
 7. Why is the overall work complete, incomplete, failed, or awaiting input?
 
@@ -33,7 +33,7 @@ This work must not:
 - replace the existing direct agent loop;
 - route every message through a planner;
 - create a project-management record for every simple answer;
-- give subagents broader permissions than their parent;
+- give workers broader permissions than their parent;
 - make model-authored text the source of progress truth;
 - allow a model to mark work complete without verification;
 - create a second durable store that competes with the session ledger;
@@ -55,7 +55,7 @@ The implementation builds on:
 - `PermissionEngine` before every effectful tool execution;
 - brokered and sandboxed tools in `vak-tools`;
 - frozen session contracts and capability descriptors;
-- child sessions and `SubagentRegistry` in `vak-agent/src/task.rs`;
+- child sessions and `WorkerRegistry` in `vak-agent/src/task.rs`;
 - static flows and dynamic planner in `vak-flow`;
 - goal mode and audited completion in `vak-agent/src/goal.rs`;
 - checkpoints, receipts, activities, SSE, and presentation projections;
@@ -89,14 +89,14 @@ complex request
   → deterministic validation
   → resolve material ambiguity
   → activate work items
-  → parent/tool/subagent/flow execution
+  → parent/tool/worker/flow execution
   → evidence collection
   → criterion verification
   → complete, continue, block, or ask
 ```
 
 The parent session owns the user-facing conversation and final answer. A
-subagent owns only its assigned item and returns evidence to the parent. A
+worker owns only its assigned item and returns evidence to the parent. A
 flow owns deterministic nodes. A scheduled task is a recurring automation.
 These are different concepts and must remain different in names and APIs.
 
@@ -112,14 +112,14 @@ definition, and lifecycle status.
 
 One independently trackable unit of work. It has dependencies, an owner,
 execution scope, status, and evidence. It is not necessarily a scheduled task
-and it is not necessarily a subagent.
+and it is not necessarily a worker.
 
 ### Scheduled task
 
 The existing recurring `TaskDef` managed by the `tasks` tool and task store.
 It fires later on a schedule. It is not a work item created for every turn.
 
-### Subagent task
+### Worker task
 
 The existing one-shot `task` tool call. It creates a child session and blocks
 the parent tool call until the child finishes. The implementation must attach
@@ -189,7 +189,7 @@ pub struct WorkItemDefinition {
 
 pub enum WorkOwner {
     ParentAgent,
-    Subagent,
+    Worker,
     Flow { name: String },
     Tool { name: String },
     Human,
@@ -459,7 +459,7 @@ evidence.
 Continuation is bounded by the existing max-turn and stop-guard policies.
 Exhaustion produces `Unverified` or `Failed` with a clear reason.
 
-## Subagent integration
+## Worker integration
 
 Extend the existing `task` tool arguments with optional:
 
@@ -495,7 +495,7 @@ Preserve all existing narrowing rules:
 - child path claims are enforced by the normal resource-claim scheduler;
 - child tools independently pass permission and sandbox checks.
 
-Keep `SubagentRegistry` for live list, steer, follow-up, and stop controls.
+Keep `WorkerRegistry` for live list, steer, follow-up, and stop controls.
 The registry must never be the only record of assignment or completion.
 
 ## Evidence
@@ -715,7 +715,7 @@ blocked/input outcome before effectful work begins.
 Exit: required unfinished work cannot be reported as complete; verified work
 can complete; failed verification re-enters execution with findings.
 
-### Phase 4 — subagent and flow ownership — complete
+### Phase 4 — worker and flow ownership — complete
 
 - Add contract/item fields to child session headers.
 - Link task tool calls to work items.
@@ -724,7 +724,7 @@ can complete; failed verification re-enters execution with findings.
 - Expose a managed-only `flow` tool through the core dispatcher. It validates
   the contract/item/flow owner tuple before execution, then the executor owns
   running, node evidence, completion-marker evidence, and final work state.
-- Add work-aware subagent events and UI.
+- Add work-aware worker events and UI.
 
 Exit: every delegated item can be traced parent → child/flow → evidence →
 verdict, including parallel execution.
@@ -777,7 +777,7 @@ contract authoring is required but invalid.
 - goal and work gates compose;
 - max-turn exhaustion is typed and durable.
 
-### Subagents and flows
+### Workers and flows
 
 - child inherits narrowed capabilities;
 - readonly child cannot write;
@@ -850,7 +850,7 @@ The implementation is complete only when all statements are true:
 - complex managed work has a durable, versioned contract;
 - material ambiguity pauses for input before effectful execution;
 - every required work item has an owner and dependency state;
-- parent, subagent, flow, tool, and human ownership are distinguishable;
+- parent, worker, flow, tool, and human ownership are distinguishable;
 - every effectful action passes the existing authorization boundary;
 - progress is projected from durable state, not generated prose;
 - child sessions and flow nodes are linked to work items;

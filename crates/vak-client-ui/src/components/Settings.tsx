@@ -37,7 +37,7 @@ type Page = "general" | "appearance" | "agent" | "prompts" | "permissions" | "re
 const pages: { id: Page; label: string; icon: IconName; hint: string; group: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions", group: "Experience" },
   { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion", group: "Experience" },
-  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents", group: "Agent & access" },
+  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns workers", group: "Agent & access" },
   { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "Agent & access" },
   { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals", group: "Agent & access" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Agent & access" },
@@ -1290,7 +1290,7 @@ export default function Settings() {
                 </Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
                 <Row title="Evidence freshness" description="How long a successful tool receipt remains fresh for outcome verification."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
-                <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
+                <Row title="Workers" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.workers ? "Enabled" : "Disabled in config"}</span></Row>
               </Group>
               <Group title="Credentials">
                 <Row

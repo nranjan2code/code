@@ -203,7 +203,7 @@ shipped behaviour rather than a proposal.
     atomically to `.vak/config.toml` before the live Core override is
     applied. `/health`, `/config`, `/providers`, admin snapshots, and session
     transcripts must report effective values and their source where relevant.
-    CLI flags, task pins, heartbeat pins, and subagent pins are scoped
+    CLI flags, task pins, heartbeat pins, and worker pins are scoped
     overrides and must remain visibly non-global. Session provider/model
     contracts freeze at session creation; changing workspace defaults never
     rewrites an existing session or silently changes its dispatch. Provider
@@ -344,7 +344,7 @@ shipped behaviour rather than a proposal.
     workspace. A project layer
     may inherit, replace a same-named item, add an item, or explicitly disable
     inheritance; it must never receive a copied snapshot of effective user
-    values. Session, task, bot, chat, and subagent pins resolve after the
+    values. Session, task, bot, chat, and worker pins resolve after the
     workspace and remain scoped. Admin, Desktop, CLI, and server APIs use the
     same explicit `user`/`project` vocabulary and expose provenance. A GET used
     to seed a write returns that exact layer, never the merged projection.
@@ -513,7 +513,7 @@ shipped behaviour rather than a proposal.
     shared at top-level `~/vak-home/` via `Core::shared_data_home()`. Agent identity is resolved at admission
     and cannot be supplied by untrusted client text. Bots identify transport credentials; channels identify
     endpoints; neither is an Agent. Paused, archived, or revoked Agents and endpoints fail closed, cancel
-    affected work, and never fall back to Vak. Internal tasks, tools, flows, and subagents inherit or
+    affected work, and never fall back to Vak. Internal tasks, tools, flows, and workers inherit or
     explicitly freeze Agent ownership and are projected back only through authorized Agent conversations
     (docs/design/64-agent-owned-platform.md). On the client presentation layer, Workbench execution telemetry
     and artifacts are partitioned per conversation session in `sessionWorkbenchMap`, guaranteeing that
@@ -525,7 +525,7 @@ shipped behaviour rather than a proposal.
     research, writing, operations, and quantitative analysis.
     - **Document ingestion (`doc_read`)** provides structured, token-bounded, token-efficient extraction across Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, and HTML/XML formats, strictly confined to the canonical workspace root (Invariant 10).
     - **Outcome presentation** treats all tables and datasets as living interactive surfaces: every markdown table generated in conversation provides client-side column sorting, search filtering, and instant CSV export (`InteractiveTable`).
-    - **Domain archetypes (`researcher`, `writer`, `operator`, `analyst`)** define standard behavioral expectations, epistemic stances, and specialist prompts without fragmenting core execution. Subagents spawned via `task` receive specialist archetype instructions and capabilities according to assigned roles.
+    - **Domain archetypes (`researcher`, `writer`, `operator`, `analyst`)** define standard behavioral expectations, epistemic stances, and specialist prompts without fragmenting core execution. Workers spawned via `task` receive specialist archetype instructions and capabilities according to assigned roles.
     - **Autonomous operations and scheduled executions (`AgentSchedule`, `AgentRunRecord`)** are owned by persistent Agent definitions, recording execution receipts to append-only ledgers (`agents_runs.jsonl`).
 
 ## Code rules
@@ -710,8 +710,8 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      spend-gate seam (docs/design/15-reliability.md), frozen-ladder
                      leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset
-                     (docs/design/42-managed-work-contracts.md), subagents (task tool) +
-                     parent-scoped SubagentRegistry
+                     (docs/design/42-managed-work-contracts.md), workers (task tool) +
+                     parent-scoped WorkerRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/17-context.md)
@@ -775,7 +775,7 @@ crates/vak-server/site
                      (crates/vak-server/site/README.md,
                      docs/design/48-web-client.md)
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
-                     subagent steer-stop/MCP management/memory
+                     worker steer-stop/MCP management/memory
                      CRUD/search-all/transcript.md/doctor/backup/
                      digest/inbox-ack endpoints) + always-on gateway:
                      chat-surface routing, persisted bindings,
@@ -806,7 +806,7 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      admin console: global event hub + SSE,
                      /admin/api/* data plane, embedded SolidJS SPA at
                      /admin (docs/design/33-admin-console.md), including
-                     memory CRUD/cleanup, live parent-scoped subagent
+                     memory CRUD/cleanup, live parent-scoped worker
                      controls, and the evidence-backed Operations Center
                      (`/ops/center`, durable incidents, action receipts, and
                      bookmarkable resource drill-downs) +
@@ -866,7 +866,7 @@ crates/vak-desktop   Tauri 2 SHELL over an embedded secured_router. The UI
                      scopes a shell's life to its pane), and the native save
                      dialog. Renders the schema-v2 outcome-first semantic
                      timeline/AST registry: sessions, split view, approvals, diff
-                     review, subagents tab, MCP manager, image attachments,
+                     review, workers tab, MCP manager, image attachments,
                      best-of-N, tasks (cron/script/pin), side chats,
                      memory tier editor, global search, diagnostics,
                      backup/digest cards, budget banner

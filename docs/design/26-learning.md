@@ -101,7 +101,7 @@ Reflection is an effectful write path, not an exception to permissions: it is
 skipped in `ReadOnly` mode, honors channel tool overlays, and applies through
 the same guarded memory/proposal repository used by the interactive tools.
 
-### Subagent ownership and termination
+### Worker ownership and termination
 
 Each delegated agent receives its own child JSONL session and context window,
 linked by `parent_session_id`. It does not receive a private memory file:

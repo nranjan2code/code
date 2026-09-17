@@ -45,7 +45,7 @@ function EmptyChat(props: { hasSession: boolean }) {
       setPreviewLoaded((current) => new Set([...current, session.session_id]));
       void api.presentation(session.session_id).then((timeline) => {
         const result = [...timeline.items].reverse().find((item) =>
-          (item.role === "assistant" || item.role === "subagent") &&
+          (item.role === "assistant" || item.role === "worker") &&
           (item.status === "succeeded" || item.status === "partial") &&
           item.fallback_text.trim().length > 0,
         );
@@ -153,7 +153,7 @@ function visibleItems(list: Item[]): Item[] {
   const cleanList = list.filter((it) => {
     // Child agents and orchestration steps belong to the selected agent's
     // internal workspace. The user-facing chat shows outcomes, not machinery.
-    if (it.kind === "subagent") return false;
+    if (it.kind === "worker") return false;
     if (it.kind === "user") {
       return stripControlScaffolding(it.text).length > 0;
     }
@@ -580,11 +580,11 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
   if (item.kind === "approval") {
     return <ApprovalCard item={item} sessionId={props.sessionId} />;
   }
-  if (item.kind === "subagent") {
+  if (item.kind === "worker") {
     return (
-      <details class="subagent">
+      <details class="worker">
         <summary>
-          subagent · {item.label}
+          worker · {item.label}
           {item.isError ? " ✗" : ""}
         </summary>
         <pre>{item.lines.join("\n")}</pre>

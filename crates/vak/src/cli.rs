@@ -924,7 +924,7 @@ pub(crate) enum PromptsAction {
     Diff,
     /// Render the exact prompt a given surface and role would receive
     Preview {
-        /// cli, desktop, server, background, subagent, or a chat channel
+        /// cli, desktop, server, background, worker, or a chat channel
         #[arg(long, default_value = "cli")]
         surface: String,
         /// Named agent role to apply
@@ -1420,7 +1420,7 @@ pub(crate) enum IntentAction {
     Explain {
         prompt: String,
         /// Pretend the request arrived on this surface: cli, desktop, server,
-        /// chat, cron, heartbeat, subagent.
+        /// chat, cron, heartbeat, worker.
         #[arg(long)]
         surface: Option<String>,
         /// Override the reading's act.

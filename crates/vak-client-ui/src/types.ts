@@ -33,7 +33,7 @@ export interface Message {
   content: ContentBlock[];
 }
 
-export type OutputRole = "system" | "user" | "assistant" | "tool" | "subagent";
+export type OutputRole = "system" | "user" | "assistant" | "tool" | "worker";
 export type OutputKind =
   | "message"
   | "information"
@@ -251,10 +251,10 @@ export type AgentEvent =
     }
   | { StreamOpened: Record<string, never> }
   | { ApprovalRequested: { id: string; tool: string; args_json: string; reason: string } }
-  | { SubagentStarted: { label: string } }
-  | { SubagentToolCall: { label: string; name: string; is_error: boolean } }
-  | { SubagentUsage: { label: string; input_tokens: number; output_tokens: number } }
-  | { SubagentFinished: { label: string; is_error: boolean; elapsed_ms: number } }
+  | { WorkerStarted: { label: string } }
+  | { WorkerToolCall: { label: string; name: string; is_error: boolean } }
+  | { WorkerUsage: { label: string; input_tokens: number; output_tokens: number } }
+  | { WorkerFinished: { label: string; is_error: boolean; elapsed_ms: number } }
   | { RunFinished: { summary: string; is_error: boolean } }
   | { Sandbox: SandboxEvent };
 
@@ -365,7 +365,7 @@ export interface ConfigSnapshot {
   sandbox: string;
   /// The rule lists the engine evaluates, effective across all layers.
   permissions: { allow: string[]; ask: string[]; deny: string[] };
-  subagents: boolean;
+  workers: boolean;
   max_retries: number;
   retry_base_backoff_ms: number;
   request_timeout_secs: number;

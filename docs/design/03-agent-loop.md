@@ -91,7 +91,7 @@ effect did not finish, whatever the final message says.
 
 ## Later phases
 
-All three former items shipped (permission gate, `task` subagents, resource-
+All three former items shipped (permission gate, `task` workers, resource-
 claim scheduler) — see 00-roadmap.md and 08-permissions.md. Remaining open
 ideas: stop-gate extension to catch fabricated verification (currently
-omission-only), per-subagent token attribution in the ledger itself.
+omission-only), per-worker token attribution in the ledger itself.

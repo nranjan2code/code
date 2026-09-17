@@ -481,7 +481,7 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
     limits.spend_ceiling_usd = authority.spend_limit_usd(chrono::Utc::now());
 
     // --- concurrency and length ----------------------------------------
-    limits.subagent_budget = match reading.act {
+    limits.worker_budget = match reading.act {
         Act::Converse | Act::Answer => Some(0),
         Act::Orchestrate => None,
         _ => None,

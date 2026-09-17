@@ -166,7 +166,7 @@ For multi-agent swarms operating across distributed machines, `crates/vak-bus` p
    
    $$\text{Envelope Hash}_{n} = \text{SHA256}(\text{Payload} \,\|\, \text{Envelope Hash}_{n-1} \,\|\, \text{Timestamp})$$
    
-   This guarantees linear event ordering, prevents causal split-brain across distributed subagents, and provides a tamper-evident audit log.
+   This guarantees linear event ordering, prevents causal split-brain across distributed workers, and provides a tamper-evident audit log.
 4. **Dead-Letter Queues (DLQ):** Unroutable or failed messages are captured with complete stack traces and diagnostic metadata for post-mortem forensics.
 
 ---

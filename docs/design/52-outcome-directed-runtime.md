@@ -67,7 +67,7 @@ receipts, closed presentation AST, and deterministic Markdown fallback.
 
 The inspected implementation already connects intent to capability domains and
 approval narrowing. It also derives limits with no production consumers found
-for intent turn caps, subagent caps, or ladder truncation. Model-classification
+for intent turn caps, worker caps, or ladder truncation. Model-classification
 application exists in the kernel but is not called by the production resolver.
 Misread detection examines a name slice while current selection uses domains.
 These observations motivate explicit consumer coverage and end-to-end tests;

@@ -20,9 +20,9 @@ The main interaction is:
 `agent in sidebar → agent conversation → plain user request → internal work → useful result`
 
 The user does not need to choose a task, thread, model, sandbox, flow, or
-subagent. Those remain inspectable in Details/history when needed, but they are
+worker. Those remain inspectable in Details/history when needed, but they are
 not competing destinations in the primary navigation. Internal lifecycle
-events and subagent chatter are not rendered as ordinary assistant prose.
+events and worker chatter are not rendered as ordinary assistant prose.
 
 ## Durable identity
 

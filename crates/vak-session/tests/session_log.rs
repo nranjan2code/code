@@ -392,7 +392,7 @@ fn restart_attaches_completed_child_for_verification_without_marking_it_succeede
 
     let mut log = SessionLog::create(dir.path().join("parent.jsonl"), header()).unwrap();
     let mut contract = work_contract("child-recovery");
-    contract.items[0].owner = WorkOwner::Subagent;
+    contract.items[0].owner = WorkOwner::Worker;
     log.append_work(WorkEvent {
         contract_id: "child-recovery".into(),
         revision: 0,
@@ -426,7 +426,7 @@ fn restart_attaches_completed_child_for_verification_without_marking_it_succeede
         revision: 0,
         kind: WorkEventKind::ItemAssigned {
             item_id: "one".into(),
-            owner: WorkOwner::Subagent,
+            owner: WorkOwner::Worker,
             child_session_id: Some("child-1".into()),
         },
     })

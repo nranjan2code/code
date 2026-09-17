@@ -1166,8 +1166,8 @@ fn activity_item(
                 detail: activity.detail.clone(),
             },
         ),
-        ActivityKind::Subagent => (
-            OutputRole::Subagent,
+        ActivityKind::Worker => (
+            OutputRole::Worker,
             OutputKind::Progress,
             OutputContent::Progress {
                 label: activity.label.clone(),
@@ -1448,32 +1448,32 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 format!("Continuing with {to_provider} · {to_model}"),
             ),
         }),
-        AgentEvent::SubagentStarted { label } => Some(OutputStreamEvent::ItemStarted {
+        AgentEvent::WorkerStarted { label } => Some(OutputStreamEvent::ItemStarted {
             item: live_item(
                 session_id,
-                format!("subagent-{label}"),
+                format!("worker-{label}"),
                 now,
-                OutputRole::Subagent,
+                OutputRole::Worker,
                 OutputKind::Progress,
                 OutputStatus::Running,
                 OutputContent::Progress {
                     label: label.clone(),
-                    detail: Some("Subagent started".into()),
+                    detail: Some("Worker started".into()),
                     percent: None,
                 },
                 format!("{label} started"),
             ),
         }),
-        AgentEvent::SubagentFinished {
+        AgentEvent::WorkerFinished {
             label,
             is_error,
             elapsed_ms,
         } => Some(OutputStreamEvent::ItemReplaced {
             item: live_item(
                 session_id,
-                format!("subagent-{label}"),
+                format!("worker-{label}"),
                 now,
-                OutputRole::Subagent,
+                OutputRole::Worker,
                 if is_error {
                     OutputKind::Error
                 } else {
@@ -1487,7 +1487,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 if is_error {
                     OutputContent::Error {
                         message: format!("{label} failed after {elapsed_ms} ms"),
-                        source: Some("subagent".into()),
+                        source: Some("worker".into()),
                         retryable: false,
                     }
                 } else {

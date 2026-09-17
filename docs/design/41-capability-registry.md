@@ -205,7 +205,7 @@ server is no longer invisible to the operator and present to the model.
 2. Runtime objects not present in the bound epoch are filtered before a
    request is built.
 3. Skill and MCP loaders may resolve only admitted entries.
-4. Subagents inherit the parent's bound epoch, narrowed to their actual tools
+4. Workers inherit the parent's bound epoch, narrowed to their actual tools
    and mode; they never rediscover a wider environment.
 5. Unknown names and kind mismatches are structured error values. They never
    panic the loop and never trigger an effect before authorization.
