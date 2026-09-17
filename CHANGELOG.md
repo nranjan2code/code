@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.2 — 2026-09-17
+
+- Dynamic capability admission across turn boundaries: Level-triggered `reconcile` on `has_pending_changes()` before turn admission, bumping `CapabilityRegistry` epoch and relaxing Stage 3 contract filtering so newly available MCP tools, skills, tools, and hooks are automatically admitted mid-session without process restart or session rotation.
+- Reactive MCP cache & secret invalidation: `set_mcp_secret_scoped`, `remove_mcp_secret_scoped`, and `apply_persisted_mcp_servers` automatically invalidate `mcp_cache`, bypass exponential backoff via `force_probe(&id)`, and trigger immediate reconcile.
+- Out-of-the-box MCP integration catalog parity: Removed all legacy hardcoded privileges or first-class status for Tavily; Tavily is an MCP catalog peer alongside Context7, Exa, and Firecrawl adhering to standard 4-tier configuration and sandboxed broker execution.
+- Universal search & research signal classification: Generalized presentation signals and forensics telemetry to match all search, research, and crawl tools rather than hardcoded tool names.
+- Full stack local macOS release: Synchronized release binaries, verified manifests, and updated launchd services.
+
 ## 3.2.1 — 2026-09-17
 
 - Persistent tray & autostart control: Added "Launch at login" check item to desktop menu bar tray and toggle to Settings Operations panel.

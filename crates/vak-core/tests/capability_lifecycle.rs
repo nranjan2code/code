@@ -293,3 +293,32 @@ fn an_unknown_domain_survives_and_matches() {
     assert!(serves.serves_any(&BTreeSet::from([parsed])));
     assert!(!serves.serves_any(&BTreeSet::from([Domain::Web])));
 }
+
+#[tokio::test]
+async fn force_probe_bypasses_backoff_and_admits_recovered_server() {
+    let provider = Fake::new(vec![declaration("search_srv", CapabilityKind::McpServer, true)]);
+    *provider.healthy.lock().unwrap() = false;
+    let (registry, _hints) = CapabilityRegistry::new(provider.clone());
+
+    // First pass: fails and enters backoff
+    registry.reconcile().await;
+    assert_eq!(registry.current().await.usable().count(), 0);
+    assert!(!registry.has_due_probes().await, "server should be in backoff");
+
+    // Operator fixes secret or attaches key
+    *provider.healthy.lock().unwrap() = true;
+    let id = CapabilityId::new(CapabilityKind::McpServer, "search_srv");
+    registry.force_probe(&id).await;
+
+    assert!(registry.has_due_probes().await, "force_probe should mark due immediately");
+    assert!(registry.has_pending_changes().await, "pending changes should be detected");
+
+    // Turn admission reconciliation
+    let delta = registry.reconcile().await;
+    assert!(delta.is_some());
+    let current = registry.current().await;
+    assert!(current.epoch >= 1);
+    assert_eq!(current.usable().count(), 1);
+    assert!(current.descriptors().iter().any(|d| d.name == "search_srv"));
+}
+

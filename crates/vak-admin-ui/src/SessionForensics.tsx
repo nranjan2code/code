@@ -787,7 +787,11 @@ export function buildWorkflowGraph(
       const isSubagent = tc.tool_name === "task";
       const isBash = tc.tool_name === "bash";
       const isFileTool = ["read", "write", "edit", "glob", "grep"].includes(tc.tool_name);
-      const isWeb = tc.tool_name === "webfetch" || tc.tool_name === "browse" || tc.tool_name === "tavily_search";
+      const isWeb =
+        tc.tool_name === "webfetch" ||
+        tc.tool_name === "browse" ||
+        tc.tool_name.includes("search") ||
+        tc.tool_name.includes("crawl");
       const execId = isSubagent ? `subagent_step_${i + 1}` : `tool_step_${i + 1}`;
       toolNodeIds.push(execId);
 

@@ -1493,10 +1493,34 @@ impl Core {
     }
 
     pub fn apply_persisted_mcp_servers(&self, config: vak_config::McpConfig) {
-        self.replace_mcp(config);
+        self.invalidate_mcp_cache();
+        self.replace_mcp(config.clone());
         self.inner
             .mcp_runtime_pinned
             .store(false, std::sync::atomic::Ordering::Release);
+        let registry = self.capability_registry();
+        for name in config.servers.keys() {
+            let id = capability::CapabilityId::new(
+                vak_session::types::CapabilityKind::McpServer,
+                name,
+            );
+            let reg = registry.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    reg.mark_due(&id).await;
+                    reg.hint(capability::Hint::Immediate);
+                });
+            }
+        }
+        registry.hint(capability::Hint::ConfigChanged);
+    }
+
+    pub fn invalidate_mcp_cache(&self) {
+        *self
+            .inner
+            .mcp_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
     fn replace_mcp(&self, config: vak_config::McpConfig) {
@@ -1584,7 +1608,7 @@ impl Core {
     /// restart and no session rotation (invariant 31).
     pub async fn admitted_capabilities(&self) -> Vec<CapabilityDescriptor> {
         let registry = self.capability_registry();
-        if registry.current().await.epoch == 0 {
+        if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
             let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
         }
         let published = registry.current().await;
@@ -1626,17 +1650,23 @@ impl Core {
         &self,
         contract: &vak_session::types::FrozenContract,
     ) -> Vec<CapabilityDescriptor> {
+        let registry = self.capability_registry();
         let current = self.admitted_capabilities().await;
-        contract
-            .capabilities
-            .iter()
-            .filter_map(|frozen| {
-                current
-                    .iter()
-                    .find(|live| live.kind == frozen.kind && live.name == frozen.name)
-                    .cloned()
-            })
-            .collect()
+        let published = registry.current().await;
+        if published.epoch > 1 {
+            current
+        } else {
+            contract
+                .capabilities
+                .iter()
+                .filter_map(|frozen| {
+                    current
+                        .iter()
+                        .find(|live| live.kind == frozen.kind && live.name == frozen.name)
+                        .cloned()
+                })
+                .collect()
+        }
     }
 
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
@@ -3921,6 +3951,29 @@ impl Core {
         };
         vak_config::upsert_env_file(&path, env_var, key)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+
+        self.invalidate_mcp_cache();
+        let registry = self.capability_registry();
+        let mcp = self.effective_mcp();
+        for (name, server) in &mcp.servers {
+            let references_var = server.env.iter().any(|(_, v)| v.contains(env_var))
+                || server.command.contains(env_var)
+                || server.args.iter().any(|a| a.contains(env_var));
+            if references_var {
+                let id = capability::CapabilityId::new(
+                    vak_session::types::CapabilityKind::McpServer,
+                    name,
+                );
+                let reg = registry.clone();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        reg.mark_due(&id).await;
+                        reg.hint(capability::Hint::Immediate);
+                    });
+                }
+            }
+        }
+        registry.hint(capability::Hint::ConfigChanged);
         Ok(())
     }
 
@@ -3933,7 +3986,31 @@ impl Core {
             self.user_env_file()
         };
         vak_config::remove_env_file_key(&path, env_var)
-            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+
+        self.invalidate_mcp_cache();
+        let registry = self.capability_registry();
+        let mcp = self.effective_mcp();
+        for (name, server) in &mcp.servers {
+            let references_var = server.env.iter().any(|(_, v)| v.contains(env_var))
+                || server.command.contains(env_var)
+                || server.args.iter().any(|a| a.contains(env_var));
+            if references_var {
+                let id = capability::CapabilityId::new(
+                    vak_session::types::CapabilityKind::McpServer,
+                    name,
+                );
+                let reg = registry.clone();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        reg.mark_due(&id).await;
+                        reg.hint(capability::Hint::Immediate);
+                    });
+                }
+            }
+        }
+        registry.hint(capability::Hint::ConfigChanged);
+        Ok(())
     }
 
     pub fn mcp_secret_at_scope(&self, env_var: &str, project: bool) -> bool {
@@ -4817,8 +4894,11 @@ impl Core {
             } else {
                 std::collections::BTreeSet::new()
             };
-        let cap_set = self.capability_registry().current().await;
         let registry = self.capability_registry();
+        if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
+            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
+        }
+        let cap_set = registry.current().await;
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
         let channel_policy = self.channel_policy().unwrap_or_default();

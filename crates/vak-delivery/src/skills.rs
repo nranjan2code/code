@@ -906,7 +906,12 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
                 signals.push("diff".into());
                 signals.push("files_changed".into());
             }
-            "websearch" | "tavily" => {
+            s if s == "websearch"
+                || s == "tavily"
+                || s.contains("search")
+                || s.contains("research")
+                || s.contains("crawl") =>
+            {
                 signals.push("citations".into());
                 signals.push("multiple_sources".into());
                 signals.push("research".into());

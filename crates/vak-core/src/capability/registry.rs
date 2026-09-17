@@ -225,11 +225,62 @@ impl CapabilityRegistry {
     /// anything usable on its own.
     pub async fn mark_due(&self, id: &CapabilityId) {
         let mut resolutions = self.resolutions.write().await;
-        if let Some(resolution) = resolutions.get_mut(id)
-            && !matches!(resolution, Resolution::Static)
-        {
-            *resolution = Resolution::Probing;
+        if let Some(resolution) = resolutions.get_mut(id) {
+            if !matches!(resolution, Resolution::Static) {
+                *resolution = Resolution::Probing;
+            }
+        } else {
+            resolutions.insert(id.clone(), Resolution::Probing);
         }
+    }
+
+    /// Mark `id` due and hint the reconcile loop for an immediate pass.
+    pub async fn force_probe(&self, id: &CapabilityId) {
+        self.mark_due(id).await;
+        self.hint(Hint::Immediate);
+    }
+
+    /// Whether any declared capability needs probing and is currently due.
+    pub async fn has_due_probes(&self) -> bool {
+        let now = SystemTime::now();
+        let declarations = self.provider.declare();
+        let resolutions = self.resolutions.read().await;
+        declarations.iter().any(|d| {
+            d.needs_probe
+                && resolutions
+                    .get(&d.id)
+                    .map(|r| r.is_due(now))
+                    .unwrap_or(true)
+        })
+    }
+
+    /// Whether the environment has pending changes that warrant a reconcile pass
+    /// before turn admission (due probes, declaration count mismatch, or digest changes).
+    pub async fn has_pending_changes(&self) -> bool {
+        let now = SystemTime::now();
+        let declarations = self.provider.declare();
+        let resolutions = self.resolutions.read().await;
+        let current = self.current.read().await;
+
+        let any_due = declarations.iter().any(|d| {
+            d.needs_probe
+                && resolutions
+                    .get(&d.id)
+                    .map(|r| r.is_due(now))
+                    .unwrap_or(true)
+        });
+        if any_due {
+            return true;
+        }
+
+        if declarations.len() != current.all().count() {
+            return true;
+        }
+
+        declarations.iter().any(|d| match current.get(&d.id) {
+            None => true,
+            Some(existing) => existing.digest != d.digest,
+        })
     }
 
     /// Whether `id` is revoked right now, regardless of the caller's epoch.

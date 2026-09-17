@@ -1,15 +1,18 @@
 Status: implemented in 3.0.24
 
-Tavily Integration via MCP
-==========================
+Tavily Out-of-the-Box MCP Integration
+====================================
 
 ## Overview
 
-Tavily is a search-as-a-service API that vak integrates with through the
-MCP (Model Context Protocol) bridge. The integration is SSRF-guarded: all
-HTTP egress flows through the brokered execution model (vak-tools), which
-scrubs the subprocess environment and enforces workspace-rooted filesystem
-access.
+Tavily is one peer in vak's curated out-of-the-box MCP integration catalog
+(alongside Context7, Exa, Firecrawl, and user-defined servers). It carries no
+hardcoded runtime privileges or special architectural status: like any MCP
+server, its configuration is inherited across four tiers (Global `~/vak-home` →
+Workspace `cwd` → Agent `~/vak-home/agents/<agent_id>` → Session), secrets are
+scoped via `.env`, and its tools (`tavily_search`) are discovered, probed, and
+bound dynamically by the Capability Registry. Egress is SSRF-guarded through
+sandboxed broker execution.
 
 ## Architecture
 
