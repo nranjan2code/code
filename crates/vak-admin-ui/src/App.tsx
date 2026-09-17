@@ -4638,21 +4638,44 @@ Approving connects the chat to a workspace, and lets you give it its own model a
 
 function CredentialsView(props: { ctx: GatewayCtx }) {
   return (
-    <section class="panel">
-      <div class="panel-title-row">
-        <div>
-          <h2>Bot tokens</h2>
-          <p class="dim">
-            One token per app — how vak signs in to Telegram, Discord, or Slack. Tokens are saved to
-            your private <code>.env</code>; this page can set or clear one, but never shows it again.
-            A chat id (like <code>telegram:12345</code>) is a different thing entirely and lives
-            under Chats.
-          </p>
+    <>
+      <Show when={selectedAgentId() !== "global"}>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding:12px 16px; background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px;">
+          <div>
+            <strong>🌐 Platform Gateway Credentials</strong>
+            <p class="dim" style="margin:2px 0 0;">
+              Bot tokens connect external chat applications to the platform. You can bind any bot directly to <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong> in the bot configuration below.
+            </p>
+          </div>
+          <button
+            class="ghost small"
+            onClick={() => {
+              setSelectedAgentId("global");
+              localStorage.setItem("vak_admin_selected_agent", "global");
+              setConfigScopePersisted("user");
+            }}
+          >
+            Switch to Global
+          </button>
         </div>
-        <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
-      </div>
-      <ExtraBotsList ctx={props.ctx} />
-    </section>
+      </Show>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Bot tokens</h2>
+            <p class="dim">
+              One token per app — how vak signs in to Telegram, Discord, or Slack. Tokens are saved to
+              your private <code>.env</code>; this page can set or clear one, but never shows it again.
+              A chat id (like <code>telegram:12345</code>) is a different thing entirely and lives
+              under Chats.
+            </p>
+          </div>
+          <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
+        </div>
+        <ExtraBotsList ctx={props.ctx} />
+      </section>
+    </>
   );
 }
 
@@ -6081,7 +6104,9 @@ function Settings() {
         >
           <span class="tab-icon">⚡</span> Event Bus & Fabric
           <span class={`tab-pill ${busData()?.runtime?.connected ? "pill-ok" : ""}`}>
-            {busData()?.runtime?.backend === "nats" ? "NATS" : "In-Process"}
+            {selectedAgentId() === "global"
+              ? (busData()?.runtime?.backend === "nats" ? "NATS" : "In-Process")
+              : "Global"}
           </span>
         </button>
         <button
@@ -6100,8 +6125,12 @@ function Settings() {
             <section class="panel">
               <div class="panel-title-row">
                 <div>
-                  <h2>Model Route</h2>
-                  <p class="dim">Primary provider and model answering turns, planned fresh per turn ladder.</p>
+                  <h2>{selectedAgentId() === "global" ? "Platform Model Route" : `Agent Model Route (✦ ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()})`}</h2>
+                  <p class="dim">
+                    {selectedAgentId() === "global"
+                      ? "Primary provider and model answering turns across the platform, planned fresh per turn ladder."
+                      : `Provider and model override answering turns for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}'s dedicated workspace.`}
+                  </p>
                 </div>
               </div>
               <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
@@ -6268,50 +6297,81 @@ function Settings() {
               </Show>
             </section>
 
-            <section class="panel">
-              <div class="panel-title-row">
-                <div>
-                  <h2>Provider Key Vault</h2>
-                  <p class="dim">
-                    Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
-                    scope’s private <code>.env</code> and never shown again.
-                  </p>
+            <Show
+              when={selectedAgentId() === "global"}
+              fallback={
+                <section class="panel">
+                  <div class="panel-title-row">
+                    <div>
+                      <h2>Provider Credentials</h2>
+                      <p class="dim">
+                        Provider keys are managed globally at the platform level and securely inherited by <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong>.
+                      </p>
+                    </div>
+                    <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
+                      {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
+                    </span>
+                  </div>
+                  <div style="margin-top: 14px;">
+                    <button
+                      class="ghost small"
+                      onClick={() => {
+                        setSelectedAgentId("global");
+                        localStorage.setItem("vak_admin_selected_agent", "global");
+                        setConfigScopePersisted("user");
+                      }}
+                    >
+                      🌐 Switch to Global to Manage Keys
+                    </button>
+                  </div>
+                </section>
+              }
+            >
+              <section class="panel">
+                <div class="panel-title-row">
+                  <div>
+                    <h2>Provider Key Vault</h2>
+                    <p class="dim">
+                      Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
+                      scope’s private <code>.env</code> and never shown again.
+                    </p>
+                  </div>
+                  <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
+                    {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
+                  </span>
                 </div>
-                <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
-                  {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
-                </span>
-              </div>
-              <div class="form-row">
-                <label>API Key / Bearer Token</label>
-                <input
-                  type="password"
-                  autocomplete="off"
-                  placeholder="sk-… or Bearer token"
-                  value={providerKeyInput()}
-                  onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
-                />
-              </div>
-              <div class="row-gap" style="margin-top:10px">
-                <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
-                  {savingKey() ? "Saving…" : "Save key"}
-                </button>
-                <Show when={keyConfigured()}>
-                  <button
-                    class="danger small"
-                    onClick={() =>
-                      void guard(async () => {
-                        if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
-                        await api.deleteProviderKey(selectedProvider(), configScope());
-                        await refetchProviders();
-                        setDiscoveredModels([]);
-                      }, `Key deleted for ${providerLabel(selectedProvider())}`)
-                    }
-                  >
-                    Revoke
+                <div class="form-row">
+                  <label>API Key / Bearer Token</label>
+                  <input
+                    type="password"
+                    autocomplete="off"
+                    placeholder="sk-… or Bearer token"
+                    value={providerKeyInput()}
+                    onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="row-gap" style="margin-top:10px">
+                  <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
+                    {savingKey() ? "Saving…" : "Save key"}
                   </button>
-                </Show>
-              </div>
-            </section>
+                  <Show when={keyConfigured()}>
+                    <button
+                      class="danger small"
+                      onClick={() =>
+                        void guard(async () => {
+                          if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
+                          await api.deleteProviderKey(selectedProvider(), configScope());
+                          await refetchProviders();
+                          setDiscoveredModels([]);
+                        }, `Key deleted for ${providerLabel(selectedProvider())}`)
+                      }
+                    >
+                      Revoke
+                    </button>
+                  </Show>
+                </div>
+              </section>
+            </Show>
           </div>
 
           <div class="stack">
@@ -6483,7 +6543,29 @@ function Settings() {
       </Show>
 
       <Show when={activeTab() === "infrastructure"}>
-        <div class="two-col">
+        <Show
+          when={selectedAgentId() === "global"}
+          fallback={
+            <div class="panel" style="padding: 36px 24px; text-align: center; max-width: 640px; margin: 24px auto;">
+              <div style="font-size: 32px; margin-bottom: 12px;">⚡</div>
+              <h2 style="margin-bottom: 8px;">Event Bus & Infrastructure is a Platform Capability</h2>
+              <p class="dim" style="max-width: 480px; margin: 0 auto 20px; line-height: 1.5; font-size: 14px;">
+                Distributed NATS Core, JetStream cluster connectivity, and envelope encryption are configured globally at the platform level and shared across all specialist agents.
+              </p>
+              <button
+                class="primary"
+                onClick={() => {
+                  setSelectedAgentId("global");
+                  localStorage.setItem("vak_admin_selected_agent", "global");
+                  setConfigScopePersisted("user");
+                }}
+              >
+                🌐 Switch to Global Platform Defaults
+              </button>
+            </div>
+          }
+        >
+          <div class="two-col">
           <div class="stack">
             <section class="panel">
               <div class="panel-title-row">
@@ -6615,6 +6697,7 @@ function Settings() {
             </div>
           </div>
         </div>
+        </Show>
       </Show>
 
       <Show when={activeTab() === "preferences"}>

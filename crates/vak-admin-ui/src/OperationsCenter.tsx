@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "./api";
-import { conn, navigate, pushToast, route } from "./store";
+import { conn, navigate, pushToast, route, selectedAgentId, setSelectedAgentId } from "./store";
 import type { OperationsSnapshot, SandboxEnvironmentRecord, SandboxCandidateRecord, SandboxPromotionRecord } from "./types";
 import "./focusTrap";
 
@@ -159,7 +159,18 @@ function OperationsContextBar(props: {
   const connectionLabel = () => conn() === "live" ? "Live stream" : conn() === "connecting" ? "Connecting" : "Disconnected";
   return <section class="ops-context-bar" aria-label="Operational context">
     <div class="ops-context-group">
-      <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => operationNavigate(operationPath(), { workspace: event.currentTarget.value })}>
+      <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => {
+        const val = event.currentTarget.value;
+        if (val === "all") {
+          setSelectedAgentId("global");
+          localStorage.setItem("vak_admin_selected_agent", "global");
+        } else if (val.startsWith("agent:")) {
+          const ag = val.slice("agent:".length);
+          setSelectedAgentId(ag);
+          localStorage.setItem("vak_admin_selected_agent", ag);
+        }
+        operationNavigate(operationPath(), { workspace: val });
+      }}>
         <option value="all">🌐 Global Platform</option>
         <optgroup label="Specialist Agents">
           <For each={props.data.agents ?? [{ id: "vak", name: "Vak" }]}>
@@ -291,6 +302,19 @@ function AutomationsView(props: { data: OperationsSnapshot }) {
 function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway" | "bridges", action: "start" | "stop" | "restart") => void; acting: string | null }) {
   const services = [{ id: "gateway" as const, label: "Gateway", info: props.data.services.gateway }, { id: "bridges" as const, label: "Chat bridges", info: props.data.services.bridges }];
   return <div class="operations-stack">
+    <Show when={selectedAgentId() !== "global"}>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding:12px 16px; background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px;">
+        <div>
+          <strong>🌐 Host Platform Services</strong>
+          <p class="dim" style="margin:2px 0 0;">
+            Daemon lifecycle and event fabric run at the platform level. Actions here apply to the host rather than an individual agent.
+          </p>
+        </div>
+        <button class="ghost small" onClick={() => { setSelectedAgentId("global"); localStorage.setItem("vak_admin_selected_agent", "global"); }}>
+          Switch to Global
+        </button>
+      </div>
+    </Show>
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Runtime</span><h2>Service manager</h2><p class="dim">Manager state and HTTP health are separate signals. Actions delegate to vak-ops.</p></div><StatusMark value={props.data.services.gateway_healthy ? "healthy" : "degraded"} /></div>
       <div class="operations-service-grid"><For each={services}>{(service) => <article class="operations-service-card"><div class="panel-title-row"><div><h3>{service.label}</h3><StatusMark value={service.info.state} /></div><span class="mono dim">port {props.data.ops_port}</span></div><div class="ops-action-row"><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "start")}>Start</button><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "restart")}>Restart</button><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "stop")}>Stop</button></div><Show when={props.acting === service.id}><span class="dim">Applying manager action…</span></Show></article>}</For></div>
     </section>
@@ -490,7 +514,15 @@ export function OperationsCenter(props: { section?: Section }) {
     if (current === "#/operations/sandbox" || current.startsWith("#/operations/sandbox/")) return "sandbox";
     return props.section ?? "overview";
   });
-  const workspace = createMemo(() => operationQuery().get("workspace") || "all");
+  const workspace = createMemo(() => {
+    const fromQuery = operationQuery().get("workspace");
+    if (fromQuery) return fromQuery;
+    const currentAgent = selectedAgentId();
+    if (currentAgent && currentAgent !== "global") {
+      return `agent:${currentAgent}`;
+    }
+    return "all";
+  });
   const timeWindow = createMemo<TimeWindow>(() => {
     const value = operationQuery().get("time");
     return value && value in timeWindowLabels ? value as TimeWindow : "live";
