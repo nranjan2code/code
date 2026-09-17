@@ -27,15 +27,15 @@ impl Store {
                 }
             }
         }
-        if let Some(parent) = sessions_home.parent() {
-            if parent.file_name().and_then(|s| s.to_str()) == Some("agents") {
-                if let Ok(siblings) = std::fs::read_dir(parent) {
-                    for sibling in siblings.flatten() {
-                        let s = sibling.path().join("sessions");
-                        if s.exists() && !roots.iter().any(|(_, r)| r == &s) {
-                            roots.push((sibling.path(), s));
-                        }
-                    }
+        if let Some(siblings) = sessions_home
+            .parent()
+            .filter(|p| p.file_name().and_then(|s| s.to_str()) == Some("agents"))
+            .and_then(|p| std::fs::read_dir(p).ok())
+        {
+            for sibling in siblings.flatten() {
+                let s = sibling.path().join("sessions");
+                if s.exists() && !roots.iter().any(|(_, r)| r == &s) {
+                    roots.push((sibling.path(), s));
                 }
             }
         }

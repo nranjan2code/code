@@ -648,12 +648,12 @@ impl GatewayState {
         let selected_agent = allowed_entry
             .and_then(|entry| {
                 let entry_agent = entry.agent_id.as_deref();
-                if entry.inherit_bot_policy {
-                    if let Some(bot_agent) = bot.as_ref().and_then(|b| b.agent_id.as_deref()) {
-                        if entry_agent.is_none() || entry_agent == Some("vak") {
-                            return Some(bot_agent);
-                        }
-                    }
+                let bot_agent = bot.as_ref().and_then(|b| b.agent_id.as_deref());
+                if entry.inherit_bot_policy
+                    && (entry_agent.is_none() || entry_agent == Some("vak"))
+                    && bot_agent.is_some()
+                {
+                    return bot_agent;
                 }
                 entry_agent
             })

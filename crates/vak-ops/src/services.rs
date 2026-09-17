@@ -704,32 +704,30 @@ pub fn set_service_autostart(name: &str, enabled: bool) -> Result<(), String> {
 
     let paths = Paths::default();
     let unit_path = unit_file_path(name, &paths);
-    if unit_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&unit_path) {
-            #[cfg(target_os = "macos")]
-            let replaced = if enabled {
-                content.replace(
-                    "<key>RunAtLoad</key>\n\t<false/>",
-                    "<key>RunAtLoad</key>\n\t<true/>",
-                )
+    if let Ok(content) = std::fs::read_to_string(&unit_path) {
+        #[cfg(target_os = "macos")]
+        let replaced = if enabled {
+            content.replace(
+                "<key>RunAtLoad</key>\n\t<false/>",
+                "<key>RunAtLoad</key>\n\t<true/>",
+            )
+        } else {
+            content.replace(
+                "<key>RunAtLoad</key>\n\t<true/>",
+                "<key>RunAtLoad</key>\n\t<false/>",
+            )
+        };
+        #[cfg(not(target_os = "macos"))]
+        let replaced = if enabled {
+            if !content.contains("[Install]") {
+                format!("{content}\n[Install]\nWantedBy=default.target\n")
             } else {
-                content.replace(
-                    "<key>RunAtLoad</key>\n\t<true/>",
-                    "<key>RunAtLoad</key>\n\t<false/>",
-                )
-            };
-            #[cfg(not(target_os = "macos"))]
-            let replaced = if enabled {
-                if !content.contains("[Install]") {
-                    format!("{content}\n[Install]\nWantedBy=default.target\n")
-                } else {
-                    content
-                }
-            } else {
-                content.replace("[Install]\nWantedBy=default.target\n", "")
-            };
-            let _ = write_atomic(&unit_path, &replaced);
-        }
+                content
+            }
+        } else {
+            content.replace("[Install]\nWantedBy=default.target\n", "")
+        };
+        let _ = write_atomic(&unit_path, &replaced);
     }
     Ok(())
 }

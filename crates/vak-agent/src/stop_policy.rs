@@ -383,10 +383,9 @@ impl StopPolicy {
                 if self.verify_gate
                     && verification_stale
                     && (spec.requires_execution() || Self::demands_verification(prompt))
+                    && (receipts.code_files_modified > 0 || Self::demands_code_execution(prompt))
                 {
-                    if receipts.code_files_modified > 0 || Self::demands_code_execution(prompt) {
-                        return Some(BlockReason::VerificationStale);
-                    }
+                    return Some(BlockReason::VerificationStale);
                 }
             } else if spec.requires_inspection() {
                 let direct_substantive = final_text.trim().len() >= 80

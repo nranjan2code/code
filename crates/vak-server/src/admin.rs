@@ -47,15 +47,18 @@ fn map_session_agents(shared: &std::path::Path) -> HashMap<String, String> {
             let agent_id = agent.file_name().to_string_lossy().into_owned();
             let agent_sessions = agent.path().join("sessions");
             if agent_sessions.exists() {
-                for entry in walkdir::WalkDir::new(&agent_sessions).max_depth(3) {
-                    if let Ok(e) = entry {
-                        if e.file_type().is_file()
-                            && e.path().extension().is_some_and(|ext| ext == "jsonl")
-                        {
-                            if let Some(stem) = e.path().file_stem().and_then(|s| s.to_str()) {
-                                map.insert(stem.to_string(), agent_id.clone());
-                            }
-                        }
+                for e in walkdir::WalkDir::new(&agent_sessions)
+                    .max_depth(3)
+                    .into_iter()
+                    .flatten()
+                {
+                    let path = e.path();
+                    let maybe_stem = (e.file_type().is_file()
+                        && path.extension().is_some_and(|ext| ext == "jsonl"))
+                    .then(|| path.file_stem().and_then(|s| s.to_str()))
+                    .flatten();
+                    if let Some(stem) = maybe_stem {
+                        map.insert(stem.to_string(), agent_id.clone());
                     }
                 }
             }
@@ -427,31 +430,33 @@ pub(crate) async fn import_session_store(
         }
     }
 
-    if candidate.is_none() {
-        if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
-            for agent in agents.flatten() {
-                let agent_home = agent.path();
-                let agent_sessions = agent_home.join("sessions");
-                if agent_sessions.exists() {
-                    for entry in walkdir::WalkDir::new(&agent_sessions)
-                        .min_depth(2)
-                        .max_depth(2)
-                        .into_iter()
-                        .filter_entry(|e| e.file_type().is_file())
-                        .flatten()
+    if let Some(agents) = candidate
+        .is_none()
+        .then(|| std::fs::read_dir(shared.join("agents")).ok())
+        .flatten()
+    {
+        for agent in agents.flatten() {
+            let agent_home = agent.path();
+            let agent_sessions = agent_home.join("sessions");
+            if agent_sessions.exists() {
+                for entry in walkdir::WalkDir::new(&agent_sessions)
+                    .min_depth(2)
+                    .max_depth(2)
+                    .into_iter()
+                    .filter_entry(|e| e.file_type().is_file())
+                    .flatten()
+                {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                        && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
                     {
-                        let path = entry.path();
-                        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                            && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
-                        {
-                            candidate = Some((agent_home.clone(), path.to_path_buf()));
-                            break;
-                        }
+                        candidate = Some((agent_home.clone(), path.to_path_buf()));
+                        break;
                     }
                 }
-                if candidate.is_some() {
-                    break;
-                }
+            }
+            if candidate.is_some() {
+                break;
             }
         }
     }

@@ -58,7 +58,7 @@ fn confirm(prompt: &str, yes: bool) -> bool {
     #[cfg(test)]
     {
         let _ = prompt;
-        return yes;
+        yes
     }
     #[cfg(not(test))]
     {

@@ -272,13 +272,13 @@ fn latest_session_id(core: &Core) -> Option<String> {
     for dir in session_dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
-                if let Ok(meta) = e.metadata() {
-                    if let Ok(m) = meta.modified() {
-                        let name = e.file_name().to_string_lossy().into_owned();
-                        if name.ends_with(".jsonl") {
-                            rows.push((m, name));
-                        }
-                    }
+                let name = e.file_name().to_string_lossy().into_owned();
+                let maybe_m = name
+                    .ends_with(".jsonl")
+                    .then(|| e.metadata().ok().and_then(|meta| meta.modified().ok()))
+                    .flatten();
+                if let Some(m) = maybe_m {
+                    rows.push((m, name));
                 }
             }
         }
@@ -1795,13 +1795,18 @@ fn run_sessions_list(cwd: PathBuf) {
     for dir in &session_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
-                if let Ok(meta) = entry.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        if name.ends_with(".jsonl") && !rows.iter().any(|(_, _, n)| n == &name) {
-                            rows.push((mtime, meta.len(), name));
-                        }
-                    }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let maybe_row = (name.ends_with(".jsonl")
+                    && !rows.iter().any(|(_, _, n)| n == &name))
+                .then(|| {
+                    entry
+                        .metadata()
+                        .ok()
+                        .and_then(|meta| meta.modified().ok().map(|m| (m, meta.len())))
+                })
+                .flatten();
+                if let Some((mtime, len)) = maybe_row {
+                    rows.push((mtime, len, name));
                 }
             }
         }
