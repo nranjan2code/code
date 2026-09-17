@@ -23,13 +23,15 @@ const TRAY_HOME_ID: &str = "desktop.home";
 const TRAY_APP_ID: &str = "desktop.app";
 const TRAY_ADMIN_ID: &str = "desktop.admin";
 const TRAY_WATCHDOG_ID: &str = "desktop.watchdog";
+const TRAY_AUTOSTART_ID: &str = "desktop.autostart";
 const TRAY_QUIT_ID: &str = "desktop.quit";
 const GATEWAY: usize = 0;
 const BRIDGES: usize = 1;
 
 struct TrayState {
     watchdog: Arc<AtomicBool>,
-    last_rendered: Mutex<Option<([vak_ops::State; 2], bool)>>,
+    autostart: Arc<AtomicBool>,
+    last_rendered: Mutex<Option<([vak_ops::State; 2], bool, bool)>>,
 }
 
 /// Start with the menu-bar icon only, leaving the main window hidden.
@@ -176,6 +178,7 @@ fn build_tray_menu(
     app: &tauri::AppHandle,
     states: &[vak_ops::State; 2],
     watchdog_on: bool,
+    autostart_on: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Vak", true, None::<&str>)?;
     // The same three destinations the landing page offers, in the same
@@ -199,6 +202,14 @@ fn build_tray_menu(
         watchdog_on,
         None::<&str>,
     )?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        TRAY_AUTOSTART_ID,
+        "Launch at login",
+        true,
+        autostart_on,
+        None::<&str>,
+    )?;
     let separator_watchdog = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit Vak", true, None::<&str>)?;
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
@@ -217,6 +228,7 @@ fn build_tray_menu(
     items.extend([
         &separator_bridges as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
         &watchdog,
+        &autostart,
         &separator_watchdog,
         &quit,
     ]);
@@ -227,7 +239,8 @@ fn refresh_tray(app: &AppHandle) {
     let states = states_now();
     let tray_state = app.state::<TrayState>();
     let watchdog_on = tray_state.watchdog.load(Ordering::SeqCst);
-    let snapshot = (states, watchdog_on);
+    let autostart_on = tray_state.autostart.load(Ordering::SeqCst);
+    let snapshot = (states, watchdog_on, autostart_on);
     let mut last = tray_state
         .last_rendered
         .lock()
@@ -237,7 +250,7 @@ fn refresh_tray(app: &AppHandle) {
     }
     if let (Some(tray), Ok(menu)) = (
         app.tray_by_id(TRAY_ID),
-        build_tray_menu(app, &states, watchdog_on),
+        build_tray_menu(app, &states, watchdog_on, autostart_on),
     ) {
         let _ = tray.set_menu(Some(menu));
         let _ = tray.set_tooltip(Some(status_tooltip(&states)));
@@ -341,6 +354,17 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
             persist_watchdog(new_value);
             refresh_tray(app);
         }
+        TRAY_AUTOSTART_ID => {
+            let tray = app.state::<TrayState>();
+            let new_value = !tray.autostart.load(Ordering::SeqCst);
+            tray.autostart.store(new_value, Ordering::SeqCst);
+            if let Err(err) =
+                vak_ops::services::set_service_autostart("com.vak.desktop", new_value)
+            {
+                notify("Vak", &format!("Could not update autostart setting: {err}"));
+            }
+            refresh_tray(app);
+        }
         TRAY_QUIT_ID => app.exit(0),
         _ => {
             for (prefix, service) in [
@@ -389,8 +413,10 @@ fn start_tray_monitor(app: AppHandle) {
 
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     let states = states_now();
-    let watchdog_on = app.state::<TrayState>().watchdog.load(Ordering::SeqCst);
-    let menu = build_tray_menu(app.handle(), &states, watchdog_on)?;
+    let tray_state = app.state::<TrayState>();
+    let watchdog_on = tray_state.watchdog.load(Ordering::SeqCst);
+    let autostart_on = tray_state.autostart.load(Ordering::SeqCst);
+    let menu = build_tray_menu(app.handle(), &states, watchdog_on, autostart_on)?;
     let mut tray = TrayIconBuilder::with_id("vak")
         .menu(&menu)
         .tooltip(status_tooltip(&states))
@@ -809,6 +835,21 @@ fn forget_workspace_desktop(cwd: String) {
     }
 }
 
+#[tauri::command]
+fn get_desktop_autostart(app: AppHandle) -> bool {
+    let tray = app.state::<TrayState>();
+    tray.autostart.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+fn set_desktop_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let tray = app.state::<TrayState>();
+    tray.autostart.store(enabled, Ordering::SeqCst);
+    vak_ops::services::set_service_autostart("com.vak.desktop", enabled)?;
+    refresh_tray(&app);
+    Ok(())
+}
+
 fn main() {
     // Augment GUI process PATH with canonical toolchain paths so brokers and MCP servers resolve node/python/etc.
     #[allow(unsafe_code)]
@@ -905,6 +946,9 @@ fn main() {
         })
         .manage(TrayState {
             watchdog: Arc::new(AtomicBool::new(load_watchdog())),
+            autostart: Arc::new(AtomicBool::new(
+                vak_ops::services::is_service_autostart_enabled("com.vak.desktop"),
+            )),
             last_rendered: Mutex::new(None),
         })
         .manage(pty::PtyMap::default())
@@ -962,6 +1006,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_info,
             forget_workspace_desktop,
+            get_desktop_autostart,
+            set_desktop_autostart,
             open_admin,
             review_workspace,
             start_backend,

@@ -82,6 +82,10 @@ export interface Host {
    *  launch from the desktop shell. */
   openAdmin(route: string): void;
 
+  /** Autostart on machine login/boot (desktop shell with tray only). */
+  getAutostart?(): Promise<boolean>;
+  setAutostart?(enabled: boolean): Promise<void>;
+
   /** `null` when this host has no terminal — see `can("terminal")`. */
   terminal(cwd: string): Promise<TerminalTransport | null>;
 

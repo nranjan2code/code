@@ -99,6 +99,14 @@ export const activeHost: Host = {
     void invoke("open_admin", { route });
   },
 
+  getAutostart(): Promise<boolean> {
+    return invoke<boolean>("get_desktop_autostart");
+  },
+
+  setAutostart(enabled: boolean): Promise<void> {
+    return invoke<void>("set_desktop_autostart", { enabled });
+  },
+
   async terminal(cwd: string): Promise<TerminalTransport | null> {
     let dataHandler: ((bytes: Uint8Array) => void) | null = null;
     let exitHandler: (() => void) | null = null;

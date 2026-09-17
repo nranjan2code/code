@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import * as api from "../api";
+import { host } from "../host";
 import Icon from "./Icon";
 
 function Status(props: { value: string; good?: boolean }) {
@@ -10,6 +11,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
   const [data, setData] = createSignal<api.OpsDiagnostics | null>(null);
   const [finops, setFinops] = createSignal<api.FinopsStatus | null>(null);
   const [doctor, setDoctor] = createSignal<api.DoctorReport | null>(null);
+  const [autostart, setAutostart] = createSignal<boolean>(true);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const refresh = async () => {
@@ -17,6 +19,10 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
     try {
       const [next, spend, doc] = await Promise.all([api.opsDiagnostics(), api.finopsStatus(), api.doctor()]);
       setData(next); setFinops(spend); setDoctor(doc); setError(null);
+      if (host.can("tray") && host.getAutostart) {
+        const auto = await host.getAutostart();
+        setAutostart(auto);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
@@ -24,6 +30,16 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
   const action = async (service: "gateway" | "bridges", verb: "start" | "stop" | "restart") => {
     try { await api.opsAction(service, verb); await refresh(); }
     catch (e) { props.onNotice?.(e instanceof Error ? e.message : String(e)); }
+  };
+  const toggleAutostart = async () => {
+    if (!host.setAutostart) return;
+    const next = !autostart();
+    try {
+      await host.setAutostart(next);
+      setAutostart(next);
+    } catch (e) {
+      props.onNotice?.(e instanceof Error ? e.message : String(e));
+    }
   };
   return <div class="operations-panel">
     <Show when={error()}><div class="settings-warning"><Icon name="shield" /> {error()} <button class="settings-button" onClick={() => void refresh()}>Retry</button></div></Show>
@@ -37,6 +53,23 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
         </section>
         <section class="operation-card"><header><div><h3>Background services</h3><p>Managed by vak-ops</p></div><Status value={data()!.services.gateway_healthy ? "healthy" : "unreachable"} /></header>
           <For each={["gateway", "bridges"] as const}>{(service) => <div class="operation-service"><div><strong>{service === "gateway" ? "Gateway" : "Chat bridges"}</strong><small>{data()!.services[service].state}</small></div><div><button class="settings-button" onClick={() => void action(service, "restart")}>Restart</button><button class="settings-button" onClick={() => void action(service, data()!.services[service].state === "running" ? "stop" : "start")}>{data()!.services[service].state === "running" ? "Stop" : "Start"}</button></div></div>}</For>
+          <Show when={host.can("tray")}>
+            <div class="operation-service">
+              <div>
+                <strong>Launch at login</strong>
+                <small>{autostart() ? "Starts in menu bar on boot" : "Manual launch only"}</small>
+              </div>
+              <div>
+                <button
+                  class="settings-button"
+                  classList={{ primary: autostart() }}
+                  onClick={() => void toggleAutostart()}
+                >
+                  {autostart() ? "Enabled" : "Disabled"}
+                </button>
+              </div>
+            </div>
+          </Show>
         </section>
         <section class="operation-card"><header><div><h3>Gateway</h3><p>Surfaces and approvals</p></div><Status value={data()!.gateway.enabled ? "enabled" : "disabled"} /></header>
           <div class="operation-facts"><span><b>Approvals</b>{data()!.gateway.approvals.mode}</span><span><b>Pending</b>{data()!.gateway.approvals.pending}</span><span><b>Bindings</b>{data()!.gateway.bindings.length}</span></div>

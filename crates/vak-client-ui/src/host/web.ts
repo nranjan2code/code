@@ -205,4 +205,10 @@ export const activeHost: Host = {
   async logout(): Promise<void> {
     await call("/auth/logout", { method: "POST", body: "{}" });
   },
+
+  async getAutostart(): Promise<boolean> {
+    return false;
+  },
+
+  async setAutostart(_enabled: boolean): Promise<void> {},
 };
