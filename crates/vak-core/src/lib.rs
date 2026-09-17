@@ -1648,25 +1648,9 @@ impl Core {
     /// wording someone thought to grep for.
     async fn rebound_capabilities(
         &self,
-        contract: &vak_session::types::FrozenContract,
+        _contract: &vak_session::types::FrozenContract,
     ) -> Vec<CapabilityDescriptor> {
-        let registry = self.capability_registry();
-        let current = self.admitted_capabilities().await;
-        let published = registry.current().await;
-        if published.epoch > 1 {
-            current
-        } else {
-            contract
-                .capabilities
-                .iter()
-                .filter_map(|frozen| {
-                    current
-                        .iter()
-                        .find(|live| live.kind == frozen.kind && live.name == frozen.name)
-                        .cloned()
-                })
-                .collect()
-        }
+        self.admitted_capabilities().await
     }
 
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
@@ -4839,6 +4823,10 @@ impl Core {
         //     parent session's admission snapshot.
         //   - Per-turn dispatch is recorded in WorkReceipt; audit is preserved.
         let (provider, model) = (self.provider()?, self.effective_model());
+        let registry = self.capability_registry();
+        if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
+            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
+        }
         // Rendered from the re-bound packet, not from the frozen string.
         //
         // The contract's admitted set is still the authority; only the
@@ -4894,10 +4882,6 @@ impl Core {
             } else {
                 std::collections::BTreeSet::new()
             };
-        let registry = self.capability_registry();
-        if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
-            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
-        }
         let cap_set = registry.current().await;
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
@@ -4915,7 +4899,7 @@ impl Core {
             capabilities: cap_set.as_ref(),
             capability_epoch: cap_set.epoch,
             revoked_ids,
-            session_contract: session_contract.as_ref(),
+            session_contract: None,
             channel_policy: &channel_policy,
             reach_standings: &reach_standings,
             required_domains: &required_domains,
@@ -4972,12 +4956,10 @@ impl Core {
         cfg.work_enabled = work_config.enabled;
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;
-        if let Some(contract) = &session_contract {
-            let capabilities = contract.capabilities.clone();
-            cfg.input_normalizer = Some(Arc::new(move |message| {
-                normalize_capability_message(message, &capabilities)
-            }));
-        }
+        let capabilities = turn_capabilities.descriptors.clone();
+        cfg.input_normalizer = Some(Arc::new(move |message| {
+            normalize_capability_message(message, &capabilities)
+        }));
         cfg.model = model.clone();
         cfg.tools = self.agent_tools();
         // The intent cap is enforced by the admission/commitment contract;
@@ -5294,10 +5276,7 @@ impl Core {
             // `Subagent` surface rather than inheriting a human-facing one —
             // a research child spawned from a phone chat is not on a phone.
             let child_core = self.clone().with_surface(Surface::Subagent);
-            let child_capability_set = session_contract
-                .as_ref()
-                .map(|contract| contract.capabilities.clone())
-                .unwrap_or_else(|| self.capability_descriptors());
+            let child_capability_set = turn_capabilities.descriptors.clone();
             let child_default_prompt =
                 child_core.system_prompt_for_capabilities(&child_capability_set);
             let role_prompts = child_core.role_prompts(&child_capability_set);
@@ -5310,10 +5289,7 @@ impl Core {
                 role_prompts,
                 model: model.clone(),
                 tools: tools.clone(),
-                capabilities: session_contract
-                    .as_ref()
-                    .map(|contract| contract.capabilities.clone())
-                    .unwrap_or_default(),
+                capabilities: turn_capabilities.descriptors.clone(),
                 hooks: cfg.hooks.clone(),
                 revocation_check: cfg.revocation_check.clone(),
                 mcp_aliases: Some(cfg.mcp_aliases.clone()),

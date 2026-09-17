@@ -263,11 +263,16 @@ impl CapabilityRegistry {
         let current = self.current.read().await;
 
         let any_due = declarations.iter().any(|d| {
+            let digest_changed = current
+                .get(&d.id)
+                .map(|c| c.digest != d.digest)
+                .unwrap_or(true);
             d.needs_probe
-                && resolutions
-                    .get(&d.id)
-                    .map(|r| r.is_due(now))
-                    .unwrap_or(true)
+                && (digest_changed
+                    || resolutions
+                        .get(&d.id)
+                        .map(|r| r.is_due(now))
+                        .unwrap_or(true))
         });
         if any_due {
             return true;
@@ -299,6 +304,7 @@ impl CapabilityRegistry {
     /// design. Returns the delta if a new epoch was published.
     pub async fn reconcile(&self) -> Option<CapabilityDelta> {
         let now = SystemTime::now();
+        let previous = self.current.read().await.clone();
         let declarations = self.provider.declare();
 
         // 1. Carry resolutions forward for ids that survived, so backoff and
@@ -308,13 +314,21 @@ impl CapabilityRegistry {
             declarations.iter().map(|d| d.id.clone()).collect();
         resolutions.retain(|id, _| declared_ids.contains(id));
         for declaration in &declarations {
-            resolutions.entry(declaration.id.clone()).or_insert({
-                if declaration.needs_probe {
-                    Resolution::Probing
-                } else {
-                    Resolution::Static
-                }
-            });
+            let digest_changed = previous
+                .get(&declaration.id)
+                .map(|c| c.digest != declaration.digest)
+                .unwrap_or(true);
+            if digest_changed && declaration.needs_probe {
+                resolutions.insert(declaration.id.clone(), Resolution::Probing);
+            } else {
+                resolutions.entry(declaration.id.clone()).or_insert({
+                    if declaration.needs_probe {
+                        Resolution::Probing
+                    } else {
+                        Resolution::Static
+                    }
+                });
+            }
         }
 
         // 2. Anything that needs probing and is due, probed concurrently.
@@ -324,10 +338,15 @@ impl CapabilityRegistry {
             .iter()
             .filter(|d| d.needs_probe)
             .filter(|d| {
-                resolutions
+                let digest_changed = previous
                     .get(&d.id)
-                    .map(|r| r.is_due(now))
-                    .unwrap_or(true)
+                    .map(|c| c.digest != d.digest)
+                    .unwrap_or(true);
+                digest_changed
+                    || resolutions
+                        .get(&d.id)
+                        .map(|r| r.is_due(now))
+                        .unwrap_or(true)
             })
             .map(|d| d.id.clone())
             .collect();
@@ -373,7 +392,6 @@ impl CapabilityRegistry {
         //    always refuse.
         let revoked = self.revoked.read().await.clone();
         let resolutions = self.resolutions.read().await;
-        let previous = self.current.read().await.clone();
         let capabilities: Vec<Capability> = declarations
             .into_iter()
             .map(|declaration| {

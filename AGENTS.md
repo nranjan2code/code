@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.2.2 — Dynamic capability admission across turns, reactive secret invalidation, and integration parity release shipped.**
+**Status: v3.2.3 — Dynamic capability admission across turns, reactive secret invalidation, and integration parity release shipped.**
 Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again and every version in `1.x`
@@ -60,7 +60,7 @@ SolidJS console at `/admin` covering observation (overview/search/
 security/inbox), operation (approvals/config/cancel), and interaction
 (prompts/steering/best-of-N fan-out) — shipped through Phase 3.
 Design docs above 33 cover the work added since: channel onboarding and
-multi-bot identity (34), Tavily (35), first-run onboarding (36),
+multi-bot identity (34), out-of-the-box MCP integrations (35), first-run onboarding (36),
 distribution (37), voice and personality (38), the plugin ecosystem (39),
 harness engineering lanes (40), the capability registry (41), managed work
 contracts (42), governed self-evolution (43), and shared/global

@@ -322,3 +322,73 @@ async fn force_probe_bypasses_backoff_and_admits_recovered_server() {
     assert!(current.descriptors().iter().any(|d| d.name == "search_srv"));
 }
 
+#[tokio::test]
+async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
+    let mut decl = declaration("search_srv", CapabilityKind::McpServer, true);
+    decl.digest = Some("unresolved_hash".into());
+    let provider = Fake::new(vec![decl.clone()]);
+    *provider.healthy.lock().unwrap() = false;
+    let (registry, _hints) = CapabilityRegistry::new(provider.clone());
+
+    // Turn 1: fails and stays in backoff
+    registry.reconcile().await;
+    assert_eq!(registry.current().await.usable().count(), 0);
+
+    // Operator adds secret globally between turns: digest changes and server becomes healthy
+    *provider.healthy.lock().unwrap() = true;
+    decl.digest = Some("resolved_hash_with_key".into());
+    *provider.declarations.lock().unwrap() = vec![decl];
+
+    // Registry must detect the pending change immediately without manual intervention
+    assert!(
+        registry.has_pending_changes().await,
+        "digest change from resolved secret must trigger pending changes"
+    );
+
+    // Turn 2 reconciliation runs at turn admission
+    let delta = registry.reconcile().await;
+    assert!(delta.is_some(), "reconcile must publish new epoch");
+    let current = registry.current().await;
+    assert!(current.epoch > 1, "epoch must advance");
+    assert_eq!(current.usable().count(), 1);
+
+    // Now verify TurnCapabilities::build admits the server even if session contract didn't have it
+    let contract = vak_session::types::FrozenContract {
+        app_version: "3.2.2".into(),
+        provider: "test".into(),
+        model: "test".into(),
+        route_ladder: vec![],
+        route_objective: "balanced".into(),
+        route_annotations: vec![],
+        system_prompt: "test".into(),
+        permission_mode: "full-access".into(),
+        capabilities: vec![], // Born with empty capabilities!
+        prompt_layers: vec![],
+    };
+    let inventory = current.mcp_inventory();
+    let empty_policy = vak_config::ChannelPolicy::default();
+    let required = BTreeSet::new();
+    let probe = vak_core::capability::TurnProbe {
+        capabilities: &current,
+        capability_epoch: current.epoch,
+        revoked_ids: BTreeSet::new(),
+        session_contract: None,
+        channel_policy: &empty_policy,
+        reach_standings: &[],
+        required_domains: &required,
+        mcp_inventory: Some(&inventory),
+        orientation_floor: &["read", "glob", "grep", "skill"],
+        builtin_names: vec!["read".into(), "glob".into()],
+    };
+    let tc = vak_core::capability::TurnCapabilities::build(&probe);
+    assert!(
+        tc.mcp_aliases.contains_key("search"),
+        "search tool must be admitted as callable alias in turn 2"
+    );
+    assert!(
+        tc.mcp_server_names.contains(&"search_srv".to_string()),
+        "search_srv must be admitted"
+    );
+}
+
+

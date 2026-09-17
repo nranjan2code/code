@@ -209,6 +209,25 @@ impl CapabilityProvider for Core {
             } else {
                 Serves::Declared(Domain::parse_list(&server.serves))
             };
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(name.as_bytes());
+            hasher.update(server.command.as_bytes());
+            for arg in &server.args {
+                hasher.update(arg.as_bytes());
+            }
+            for (k, v) in &server.env {
+                hasher.update(k.as_bytes());
+                if let Some(resolved) = crate::interpolate_env_var_with(v, |key| self.mcp_secret(key)) {
+                    hasher.update(b"resolved:");
+                    hasher.update(resolved.as_bytes());
+                } else {
+                    hasher.update(b"unresolved:");
+                    hasher.update(v.as_bytes());
+                }
+            }
+            let digest = Some(format!("{:x}", hasher.finalize()));
+
             out.push(Declaration {
                 id: CapabilityId::new(CapabilityKind::McpServer, &name),
                 origin: if name.starts_with("plugin.") {
@@ -221,7 +240,7 @@ impl CapabilityProvider for Core {
                 },
                 summary: "MCP server reached through the brokered mcp tool".into(),
                 serves,
-                digest: None,
+                digest,
                 source: None,
                 configuration: serde_json::Value::Null,
                 // The one kind that talks to something outside the process,

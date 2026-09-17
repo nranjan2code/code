@@ -191,13 +191,13 @@ fn passes_channel_reach_contract(
     if blocked.contains(id) || probe.revoked_ids.contains(id) {
         return false;
     }
-    // Stage 3: frozen contract (enforced for initial epoch; relaxed on dynamic refresh)
+    // Stage 3: contract constraint (enforced only when an explicit contract is passed)
     if let Some(contract) = probe.session_contract {
         let in_contract = contract
             .capabilities
             .iter()
             .any(|c| c.kind == id.kind && c.name == id.name);
-        if !in_contract && probe.capability_epoch <= 1 {
+        if !in_contract {
             return false;
         }
     }

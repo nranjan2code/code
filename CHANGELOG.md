@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.3 — 2026-09-17
+
+- Dynamic turn-boundary capability admission across turns without session contract lockout: Eliminated the flawed `epoch <= 1` lock in `TurnCapabilities::build` Stage 3, and made live turns evaluate capabilities dynamically from the live capability registry rather than restricting ongoing turns to the creation snapshot contract.
+- Reactive digest-driven secret resolution in `CapabilityProvider::declare`: Hashed command, args, env, and resolved secret status into `Declaration.digest` so that any API key changes in `.env` are recognized immediately by `has_pending_changes()`.
+- Out-of-the-box MCP integration catalog parity: Removed any residual privileged references to Tavily in architecture documentation; ensured all out-of-the-box and custom MCP integrations, skills, tools, and hooks participate uniformly in discovery, probing, and admission.
+- Verified live end-to-end integration: Validated that attaching or configuring keys between turns immediately admits tools into ongoing sessions and dispatches real-time queries through `mcp` without manual restarts or session rotation.
+
 ## 3.2.2 — 2026-09-17
 
 - Dynamic capability admission across turn boundaries: Level-triggered `reconcile` on `has_pending_changes()` before turn admission, bumping `CapabilityRegistry` epoch and relaxing Stage 3 contract filtering so newly available MCP tools, skills, tools, and hooks are automatically admitted mid-session without process restart or session rotation.
