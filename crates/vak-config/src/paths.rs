@@ -404,6 +404,9 @@ mod tests {
     fn agent_home_at_resolves_scoped_subdirectory() {
         let data = PathBuf::from("/tmp/vak-test-home");
         assert_eq!(agent_home_at(&data, "vak"), data.join("agents/vak"));
-        assert_eq!(agent_home_at(&data, "agent-123"), data.join("agents/agent-123"));
+        assert_eq!(
+            agent_home_at(&data, "agent-123"),
+            data.join("agents/agent-123")
+        );
     }
 }

@@ -673,7 +673,10 @@ pub fn is_service_autostart_enabled(name: &str) -> bool {
         let runner = SystemRunner;
         if let Some(stdout) = runner.text(
             "launchctl",
-            &["print-disabled".to_string(), format!("gui/{}", platform::uid(&runner))],
+            &[
+                "print-disabled".to_string(),
+                format!("gui/{}", platform::uid(&runner)),
+            ],
         ) {
             let pattern = format!("\"{name}\" => disabled");
             if stdout.contains(&pattern) {
@@ -705,9 +708,15 @@ pub fn set_service_autostart(name: &str, enabled: bool) -> Result<(), String> {
         if let Ok(content) = std::fs::read_to_string(&unit_path) {
             #[cfg(target_os = "macos")]
             let replaced = if enabled {
-                content.replace("<key>RunAtLoad</key>\n\t<false/>", "<key>RunAtLoad</key>\n\t<true/>")
+                content.replace(
+                    "<key>RunAtLoad</key>\n\t<false/>",
+                    "<key>RunAtLoad</key>\n\t<true/>",
+                )
             } else {
-                content.replace("<key>RunAtLoad</key>\n\t<true/>", "<key>RunAtLoad</key>\n\t<false/>")
+                content.replace(
+                    "<key>RunAtLoad</key>\n\t<true/>",
+                    "<key>RunAtLoad</key>\n\t<false/>",
+                )
             };
             #[cfg(not(target_os = "macos"))]
             let replaced = if enabled {

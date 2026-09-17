@@ -45,7 +45,8 @@ fn session_in_scope(
                 for entry in entries.flatten() {
                     let p = entry.path();
                     if p.is_dir() {
-                        let candidate = vak_session::SessionPath::new_session_file(&p, cwd, session_id);
+                        let candidate =
+                            vak_session::SessionPath::new_session_file(&p, cwd, session_id);
                         if candidate.exists() {
                             path = candidate;
                             break;

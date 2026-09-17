@@ -3956,7 +3956,8 @@ impl Core {
 
     fn scoped_secret(&self, env_var: &str) -> Option<String> {
         if self.agent_identity.is_some()
-            && let Some(val) = vak_config::read_env_file_var(&self.sessions_home().join(".env"), env_var)
+            && let Some(val) =
+                vak_config::read_env_file_var(&self.sessions_home().join(".env"), env_var)
         {
             return Some(val);
         }

@@ -151,7 +151,9 @@ pub fn search_extended(
                 else {
                     continue;
                 };
-                if exclude_session == Some(session_id.as_str()) || !seen_sessions.insert(session_id.clone()) {
+                if exclude_session == Some(session_id.as_str())
+                    || !seen_sessions.insert(session_id.clone())
+                {
                     continue;
                 }
                 collect_ranked(&path, &session_id, &terms, &phrase, None, &mut ranked)?;

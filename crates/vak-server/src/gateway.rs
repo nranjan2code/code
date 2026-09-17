@@ -2668,8 +2668,15 @@ fn session_matches_route(
     };
     session.header().is_some_and(|header| {
         let workspace_ok = header.cwd.as_path() == core.cwd().as_path();
-        let header_agent_id = header.agent.as_ref().map(|a| a.id.as_str()).unwrap_or("vak");
-        let core_agent_id = core.agent_identity().map(|a| a.id.as_str()).unwrap_or("vak");
+        let header_agent_id = header
+            .agent
+            .as_ref()
+            .map(|a| a.id.as_str())
+            .unwrap_or("vak");
+        let core_agent_id = core
+            .agent_identity()
+            .map(|a| a.id.as_str())
+            .unwrap_or("vak");
         let agent_ok = header_agent_id == core_agent_id;
         let conv_ok = core
             .conversation_context()
@@ -3603,12 +3610,9 @@ mod tests {
             core.cwd().clone(),
             core.clone(),
         );
-        state.gateway.bind(
-            &core,
-            "telegram:42".into(),
-            old_id.clone(),
-            "rev".into(),
-        );
+        state
+            .gateway
+            .bind(&core, "telegram:42".into(), old_id.clone(), "rev".into());
 
         // Core is re-resolved with the new agent identity (e.g. Researcher)
         let researcher_identity = vak_session::types::AgentIdentity {
@@ -3622,14 +3626,23 @@ mod tests {
         };
         let core_researcher = core.clone().with_agent_identity(Some(researcher_identity));
 
-        let fresh = resolve_session(&state, &core_researcher, "telegram:42").await.unwrap();
+        let fresh = resolve_session(&state, &core_researcher, "telegram:42")
+            .await
+            .unwrap();
         assert_ne!(fresh.id, old_id);
         {
             let lock = fresh
                 .session
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let agent = lock.as_ref().unwrap().header().unwrap().agent.as_ref().unwrap();
+            let agent = lock
+                .as_ref()
+                .unwrap()
+                .header()
+                .unwrap()
+                .agent
+                .as_ref()
+                .unwrap();
             assert_eq!(agent.id, "researcher");
         }
         let old_path =
@@ -3972,7 +3985,9 @@ mod tests {
         );
         let resolved_legacy = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
         assert_eq!(
-            resolved_legacy.agent_identity().map(|agent| agent.id.as_str()),
+            resolved_legacy
+                .agent_identity()
+                .map(|agent| agent.id.as_str()),
             Some("researcher")
         );
 
@@ -4021,7 +4036,9 @@ mod tests {
         );
         let resolved_override = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
         assert_eq!(
-            resolved_override.agent_identity().map(|agent| agent.id.as_str()),
+            resolved_override
+                .agent_identity()
+                .map(|agent| agent.id.as_str()),
             Some("support")
         );
 
@@ -4041,7 +4058,9 @@ mod tests {
         );
         let resolved_cleared = gw.core_for_entry(&core, "telegram:res-chat").unwrap();
         assert_eq!(
-            resolved_cleared.agent_identity().map(|agent| agent.id.as_str()),
+            resolved_cleared
+                .agent_identity()
+                .map(|agent| agent.id.as_str()),
             Some("researcher")
         );
     }

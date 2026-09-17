@@ -358,8 +358,7 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
             let tray = app.state::<TrayState>();
             let new_value = !tray.autostart.load(Ordering::SeqCst);
             tray.autostart.store(new_value, Ordering::SeqCst);
-            if let Err(err) =
-                vak_ops::services::set_service_autostart("com.vak.desktop", new_value)
+            if let Err(err) = vak_ops::services::set_service_autostart("com.vak.desktop", new_value)
             {
                 notify("Vak", &format!("Could not update autostart setting: {err}"));
             }

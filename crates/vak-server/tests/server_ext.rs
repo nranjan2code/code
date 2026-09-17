@@ -634,11 +634,7 @@ async fn side_chat_branches_off_and_restores_main_chain() {
     } else {
         cwd.join("home")
     };
-    let mut dir = std::fs::read_dir(vak_session::SessionPath::sessions_dir(
-        &home,
-        &cwd,
-    ))
-    .unwrap();
+    let mut dir = std::fs::read_dir(vak_session::SessionPath::sessions_dir(&home, &cwd)).unwrap();
     let path = dir.next().unwrap().unwrap().path();
     let raw = std::fs::read_to_string(path).unwrap();
     assert!(raw.contains("quick aside?"), "question persisted");

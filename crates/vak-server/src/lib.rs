@@ -1175,14 +1175,22 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
     let allowlist_snapshot = state.gateway.allowlist_snapshot();
     let allowlist_map: HashMap<String, String> = allowlist_snapshot
         .iter()
-        .map(|e| (e.key.clone(), e.agent_id.clone().unwrap_or_else(|| "vak".to_string())))
+        .map(|e| {
+            (
+                e.key.clone(),
+                e.agent_id.clone().unwrap_or_else(|| "vak".to_string()),
+            )
+        })
         .collect();
     let mut bound_targets = std::collections::HashSet::new();
     let mut bindings = gateway
         .into_iter()
         .map(|(target, binding)| {
             bound_targets.insert(target.clone());
-            let agent_id = allowlist_map.get(&target).cloned().unwrap_or_else(|| "vak".to_string());
+            let agent_id = allowlist_map
+                .get(&target)
+                .cloned()
+                .unwrap_or_else(|| "vak".to_string());
             serde_json::json!({
                 "target": target,
                 "session_id": binding.session_id,
@@ -8875,14 +8883,16 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
                                 if sub.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                                     let nested = sub.path().join(rel);
                                     if nested.is_file()
-                                        && let Some(canon) = confined_path(cwd, &nested.display().to_string())
+                                        && let Some(canon) =
+                                            confined_path(cwd, &nested.display().to_string())
                                     {
                                         return Some(canon);
                                     }
                                     if let Some(filename) = std::path::Path::new(rel).file_name() {
                                         let by_name = sub.path().join(filename);
                                         if by_name.is_file()
-                                            && let Some(canon) = confined_path(cwd, &by_name.display().to_string())
+                                            && let Some(canon) =
+                                                confined_path(cwd, &by_name.display().to_string())
                                         {
                                             return Some(canon);
                                         }
