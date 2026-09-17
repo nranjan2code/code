@@ -371,6 +371,7 @@ export interface AllowlistEntry {
   status: AllowlistStatus;
   workspace: string | null;
   agent_id?: string | null;
+  effective_agent_id?: string | null;
   route: AllowlistRoute | null;
   /// What the operator pinned, if anything. `null` = inherit the workspace.
   permission_mode: PermissionMode | null;

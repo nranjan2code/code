@@ -4391,6 +4391,7 @@ A connected chat â€” a Telegram group, a Discord channel, a Slack conversation â
                     const effectiveAgent = () => {
                       const e = entry();
                       if (!e) return "vak";
+                      if (e.effective_agent_id) return e.effective_agent_id;
                       if (e.agent_id && e.agent_id !== "vak") return e.agent_id;
                       if (e.inherit_bot_policy && e.bot_id) {
                         const b = botsById().get(e.bot_id);

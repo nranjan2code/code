@@ -1168,11 +1168,30 @@ fn allowlist_entry_json(state: &AppState, e: &crate::gateway::AllowlistEntry) ->
     // not just what was requested, so a capped override is visible rather
     // than mistaken for a live grant.
     let resolved = resolve_entry_permission(state, e);
+    let bot = if e.inherit_bot_policy {
+        e.bot_id.as_deref().and_then(|id| state.gateway.bot_get(id))
+    } else {
+        None
+    };
+    let effective_agent_id = if let Some(ref aid) = e.agent_id {
+        if aid != "vak" || !e.inherit_bot_policy {
+            aid.clone()
+        } else {
+            bot.as_ref()
+                .and_then(|b| b.agent_id.clone())
+                .unwrap_or_else(|| "vak".into())
+        }
+    } else {
+        bot.as_ref()
+            .and_then(|b| b.agent_id.clone())
+            .unwrap_or_else(|| "vak".into())
+    };
     serde_json::json!({
         "key": e.key,
         "status": e.status,
         "workspace": e.workspace,
         "agent_id": e.agent_id,
+        "effective_agent_id": effective_agent_id,
         "route": e.route,
         "permission_mode": e.permission_mode,
         "workspace_permission_mode": resolved.workspace_mode,

@@ -989,11 +989,13 @@ impl GatewayState {
     /// separately from the actual secret by the caller before this is
     /// invoked, keeping the write here free of the token value itself.
     pub(crate) fn bot_upsert(&self, core: &Core, bot: Bot) {
+        let id = bot.id.clone();
         self.bots
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(bot.id.clone(), bot);
+            .insert(id.clone(), bot);
         persist_bots(core, self);
+        self.invalidate_bindings_for_bot(core, &id);
     }
 
     /// Remove a bot row. Chats whose `bot_id` names it keep the id on
@@ -1008,6 +1010,7 @@ impl GatewayState {
             .is_some();
         if removed {
             persist_bots(core, self);
+            self.invalidate_bindings_for_bot(core, id);
         }
         removed
     }
@@ -1497,6 +1500,37 @@ impl GatewayState {
                 }
                 None => false,
             }
+        };
+        if touched {
+            persist_bindings(core, self);
+        }
+    }
+
+    pub(crate) fn invalidate_bindings_for_bot(&self, core: &Core, bot_id: &str) {
+        let keys: Vec<String> = {
+            let allowlist = self
+                .allowlist
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            allowlist
+                .values()
+                .filter(|entry| entry.bot_id.as_deref() == Some(bot_id))
+                .map(|entry| entry.key.clone())
+                .collect()
+        };
+        let touched = {
+            let mut bindings = self
+                .bindings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut changed = false;
+            for key in keys {
+                if let Some(binding) = bindings.get_mut(&key) {
+                    binding.route_revision = None;
+                    changed = true;
+                }
+            }
+            changed
         };
         if touched {
             persist_bindings(core, self);
@@ -2634,6 +2668,9 @@ fn session_matches_route(
     };
     session.header().is_some_and(|header| {
         let workspace_ok = header.cwd.as_path() == core.cwd().as_path();
+        let header_agent_id = header.agent.as_ref().map(|a| a.id.as_str()).unwrap_or("vak");
+        let core_agent_id = core.agent_identity().map(|a| a.id.as_str()).unwrap_or("vak");
+        let agent_ok = header_agent_id == core_agent_id;
         let conv_ok = core
             .conversation_context()
             .is_none_or(|expected| header.conversation.as_ref() == Some(expected));
@@ -2642,6 +2679,7 @@ fn session_matches_route(
             // Channel route overrides: session must match the pinned route.
             // Per-turn routing does not apply across explicit bot/channel splits.
             workspace_ok
+                && agent_ok
                 && conv_ok
                 && capabilities_ok
                 && header.contract.provider == provider
@@ -2649,7 +2687,7 @@ fn session_matches_route(
         } else {
             // No override: per-turn routing handles provider/model, so any
             // session in this workspace+conversation is valid if capabilities match.
-            workspace_ok && conv_ok && capabilities_ok
+            workspace_ok && agent_ok && conv_ok && capabilities_ok
         }
     })
 }
@@ -3545,6 +3583,58 @@ mod tests {
         let old_path =
             vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
         assert!(old_path.is_file(), "old append-only ledger remains intact");
+    }
+
+    #[tokio::test]
+    async fn agent_change_rotates_binding_without_rewriting_old_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let old = core
+            .start_session_with_route("provider-a".into(), "model-a".into())
+            .await
+            .unwrap();
+        let old_id = old.header().unwrap().session_id.clone();
+        crate::register_handle(
+            &state,
+            old_id.clone(),
+            old,
+            core.cwd().clone(),
+            core.clone(),
+        );
+        state.gateway.bind(
+            &core,
+            "telegram:42".into(),
+            old_id.clone(),
+            "rev".into(),
+        );
+
+        // Core is re-resolved with the new agent identity (e.g. Researcher)
+        let researcher_identity = vak_session::types::AgentIdentity {
+            id: "researcher".into(),
+            revision: 1,
+            name: "Researcher".into(),
+            personality: "curious".into(),
+            behaviour: "thorough".into(),
+            responsibilities: "deep research".into(),
+            instructions: String::new(),
+        };
+        let core_researcher = core.clone().with_agent_identity(Some(researcher_identity));
+
+        let fresh = resolve_session(&state, &core_researcher, "telegram:42").await.unwrap();
+        assert_ne!(fresh.id, old_id);
+        {
+            let lock = fresh
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let agent = lock.as_ref().unwrap().header().unwrap().agent.as_ref().unwrap();
+            assert_eq!(agent.id, "researcher");
+        }
+        let old_path =
+            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        assert!(old_path.is_file(), "old agent ledger remains intact");
     }
 
     /// One persona, not two. The `identity` prompt block wins over the
