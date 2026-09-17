@@ -22,7 +22,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 
 - Runs locally against the user's own machine, workspace, and connected tools, or on a headless Linux box reached through a browser (tunnel, tailnet, or a TLS-terminated hostname); provider credentials come from a gitignored project `.env`, a user secret store, or the environment.
 - Sessions are append-only JSONL ledgers; branching and compaction append rather than rewrite history.
-- Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
+- Agent turns, tools, workers, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
 - Every turn is resolved into a typed, recorded "intent": a reading on seven behavioural axes, and an engagement derived from it that can only *narrow* what the run may do. Work that outlives a session becomes a durable commitment whose completion the runtime verifies against the world rather than accepting from the model.
 - Supports multiple model providers (Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, Ollama for local use).
 - Extensibility (skills, hooks, MCP servers, custom commands, flows) is additive and does not bloat the core.
@@ -53,7 +53,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 ## Product Principles
 
 1. Auditability is not a feature bolt-on — every surface must produce the same reconstructable, inspectable record.
-2. Nothing acts without permission — every effect (tool, subagent, flow, server run) passes the same policy gate before dispatch, and this must stay visible/legible in the UI, not just enforced invisibly.
+2. Nothing acts without permission — every effect (tool, worker, flow, server run) passes the same policy gate before dispatch, and this must stay visible/legible in the UI, not just enforced invisibly.
 3. Failure is part of the contract — typed errors, partial-work preservation, and explicit failure states are first-class, not edge cases to hide.
 4. One core, many surfaces — design consistency and behavioral consistency across CLI, desktop, server, and gateways matters more than any single surface's polish in isolation.
 5. Local-first and user-controlled — the developer's own machine, keys, and codebase; the product should never feel like it's phoning home or acting behind the user's back.

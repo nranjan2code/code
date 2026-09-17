@@ -312,7 +312,7 @@ fn parse_surface(raw: &str) -> vak_core::Surface {
         "desktop" => vak_core::Surface::Desktop,
         "server" => vak_core::Surface::Server,
         "background" => vak_core::Surface::Background,
-        "subagent" => vak_core::Surface::Subagent,
+        "worker" => vak_core::Surface::Worker,
         channel => vak_core::Surface::Chat {
             channel: channel.to_string(),
         },

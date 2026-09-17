@@ -779,7 +779,7 @@ consequence.
 
 `density` defaults to `"outcome"`. In that mode `visibleItems`
 (`ChatPane.tsx`) keeps only user messages, *non-streaming* assistant text,
-system notes, and unresolved approvals — tool cards, thinking, subagents,
+system notes, and unresolved approvals — tool cards, thinking, workers,
 and streaming assistant text are all filtered out. `awaitingNextOutput`
 returns `false` whenever the last item is a streaming assistant or an
 in-flight tool, so the thinking indicator is *also* hidden. The settled

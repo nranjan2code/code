@@ -80,7 +80,7 @@ There is no global expertise mode. Depth follows the object:
   disclosure inside evidence, never the main answer.
 
 Details is task-scoped and user-opened. Opening it may reveal files, changes,
-terminal, preview, subagents, sources, commitments, and receipts relevant to the
+terminal, preview, workers, sources, commitments, and receipts relevant to the
 current conversation. It never opens because an event merely exists.
 
 ## Capability presentation contract
@@ -146,7 +146,7 @@ state; loading, unsupported, and failed previews are explicit.
 
 Keep narration outcome-oriented. Live commands use one compact activity row.
 After completion, show changed files, test status, and material risks. The task
-drawer provides diff, terminal, files, preview, pull request, subagents, and full
+drawer provides diff, terminal, files, preview, pull request, workers, and full
 receipts without turning every conversation into an IDE.
 
 ## States

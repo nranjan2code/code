@@ -63,7 +63,7 @@ keys still warn per convention.
 
 - The **current** session id is excluded — its content is already in
   context; recalling it would double-count.
-- Subagent ledgers (`child-*`) are included; they carry `parent_session_id`
+- Worker ledgers (`child-*`) are included; they carry `parent_session_id`
   and are legitimate knowledge.
 - Search reads only; it never mutates ledgers, and respects the frozen
   contract (no rewriting, branching untouched).

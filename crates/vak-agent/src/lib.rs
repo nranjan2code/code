@@ -17,7 +17,7 @@ pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
-pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
+pub use task::{ActiveWorker, WorkerHandle, WorkerRegistry, TaskDeps, TaskTool};
 pub use workspace::WorkspaceDelta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -216,20 +216,20 @@ pub enum AgentEvent {
         args_json: String,
         reason: String,
     },
-    SubagentStarted {
+    WorkerStarted {
         label: String,
     },
-    SubagentToolCall {
+    WorkerToolCall {
         label: String,
         name: String,
         is_error: bool,
     },
-    SubagentUsage {
+    WorkerUsage {
         label: String,
         input_tokens: u64,
         output_tokens: u64,
     },
-    SubagentFinished {
+    WorkerFinished {
         label: String,
         is_error: bool,
         elapsed_ms: u64,
@@ -243,7 +243,7 @@ pub enum AgentEvent {
         summary: String,
         /// Whether the run ended badly. Consumers must not have to sniff
         /// `summary` for a "failed:" prefix to know something broke —
-        /// errors are values (see SubagentFinished above).
+        /// errors are values (see WorkerFinished above).
         is_error: bool,
     },
     /// Live execution events from sandbox or bash commands.
@@ -1409,7 +1409,7 @@ impl Agent {
                 .map(|c| (c.id.clone(), c.name.clone()))
                 .collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
-            self.record_subagent_work(&task_assignments, &results).await;
+            self.record_worker_work(&task_assignments, &results).await;
             // Classify unresolved correctable tool failures this turn for the
             // repair budget (see `reconcile_repair_budget`). Computed before
             // `results` is consumed into tool-result blocks below, and keyed
@@ -1592,7 +1592,7 @@ impl Agent {
         let model = self.config.model.clone();
         let authoring_request = ChatRequest {
             model: model.clone(),
-            system: Some("You author durable work contracts. Return only one strict JSON object with keys objective, constraints, assumptions, criteria, and items. Each item must have item_id, title, instructions, dependencies, owner, required, readonly, path_claims, and criterion_ids. Owner must be one of parent_agent, subagent, flow, tool, or human. Criterion kind must be one of shell, file_exists, file_contains, tool_succeeded, flow_completed, external_receipt, or semantic. Do not include markdown or commentary.".into()),
+            system: Some("You author durable work contracts. Return only one strict JSON object with keys objective, constraints, assumptions, criteria, and items. Each item must have item_id, title, instructions, dependencies, owner, required, readonly, path_claims, and criterion_ids. Owner must be one of parent_agent, worker, flow, tool, or human. Criterion kind must be one of shell, file_exists, file_contains, tool_succeeded, flow_completed, external_receipt, or semantic. Do not include markdown or commentary.".into()),
             messages: vec![Message::user_text(prompt)],
             tools: Vec::new(),
             max_tokens: self.config.context_policy.max_output.min(8_000) as u32,
@@ -3106,7 +3106,7 @@ impl Agent {
                                     projection.contract.contract_id == contract_id
                                         && state.item_id == item_id
                                         && match (&definition.owner, tool, flow_name) {
-                                            (vak_session::types::WorkOwner::Subagent, "task", _) => true,
+                                            (vak_session::types::WorkOwner::Worker, "task", _) => true,
                                             (
                                                 vak_session::types::WorkOwner::Flow { name },
                                                 "flow",
@@ -3132,7 +3132,7 @@ impl Agent {
                         name: flow_name.unwrap_or_default().into(),
                     }
                 } else {
-                    vak_session::types::WorkOwner::Subagent
+                    vak_session::types::WorkOwner::Worker
                 };
                 session
                     .append_work(vak_session::types::WorkEvent {
@@ -3221,7 +3221,7 @@ impl Agent {
         });
     }
 
-    async fn record_subagent_work(
+    async fn record_worker_work(
         &self,
         assignments: &[(String, String, String)],
         results: &[(String, ToolRunOutput)],
@@ -3247,7 +3247,7 @@ impl Agent {
                 continue;
             };
             let child_id = match output {
-                ToolRunOutput::Ok(text) | ToolRunOutput::Err(text) => extract_subagent_id(text),
+                ToolRunOutput::Ok(text) | ToolRunOutput::Err(text) => extract_worker_id(text),
             };
             let revision = projection.contract.revision;
             let assigned = vak_session::types::WorkEvent {
@@ -3255,7 +3255,7 @@ impl Agent {
                 revision,
                 kind: vak_session::types::WorkEventKind::ItemAssigned {
                     item_id: item_id.clone(),
-                    owner: vak_session::types::WorkOwner::Subagent,
+                    owner: vak_session::types::WorkOwner::Worker,
                     child_session_id: child_id.clone(),
                 },
             };
@@ -3293,7 +3293,7 @@ impl Agent {
                         from: vak_session::types::WorkItemStatus::Running,
                         to: outcome,
                         attempt: after_running.items[item_id].attempt,
-                        reason: "subagent returned".into(),
+                        reason: "worker returned".into(),
                     },
                 });
             }
@@ -3404,8 +3404,8 @@ fn normalize_mcp_alias(
     call
 }
 
-fn extract_subagent_id(text: &str) -> Option<String> {
-    let prefix = "subagent '";
+fn extract_worker_id(text: &str) -> Option<String> {
+    let prefix = "worker '";
     let start = text.find(prefix)? + prefix.len();
     let rest = &text[start..];
     Some(rest.split('\'').next()?.to_string())

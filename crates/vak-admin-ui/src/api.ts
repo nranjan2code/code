@@ -55,7 +55,7 @@ import type {
   VoiceConfig,
   WorkReceipt,
   WorkProjection,
-  ActiveSubagent,
+  ActiveWorker,
   SandboxRecordsResponse,
   SandboxExecutionsResponse,
   CandidateManifest,
@@ -191,18 +191,18 @@ export const api = {
     );
   },
 
-  subagents: (sessionId: string): Promise<{ subagents: ActiveSubagent[] }> =>
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents`).then((r) => handle(r)),
+  workers: (sessionId: string): Promise<{ workers: ActiveWorker[] }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/workers`).then((r) => handle(r)),
 
-  steerSubagent: (sessionId: string, childId: string, text: string): Promise<void> =>
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(childId)}/steer`, {
+  steerWorker: (sessionId: string, childId: string, text: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/workers/${encodeURIComponent(childId)}/steer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
     }).then((r) => void handle(r)),
 
-  stopSubagent: (sessionId: string, childId: string): Promise<void> =>
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(childId)}/stop`, {
+  stopWorker: (sessionId: string, childId: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/workers/${encodeURIComponent(childId)}/stop`, {
       method: "POST",
     }).then((r) => void handle(r)),
 

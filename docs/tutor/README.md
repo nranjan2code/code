@@ -46,7 +46,7 @@ Shows how a workspace-scoped `Core` composes configuration, sessions, providers,
 
 ### [Inside one agent turn](vak-inside-one-agent-turn.png)
 
-Follows admission, context projection, provider streaming, assistant messages, the stop gate, tool waves, subagents, managed work, goal mode, receipts, checkpoints, and final outcomes.
+Follows admission, context projection, provider streaming, assistant messages, the stop gate, tool waves, workers, managed work, goal mode, receipts, checkpoints, and final outcomes.
 
 ## 5. Trust, configuration, and execution
 

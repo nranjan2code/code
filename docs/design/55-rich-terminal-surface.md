@@ -17,7 +17,7 @@ Status: **Real API-connected in v3.0.32**. Greenfield interactive console surfac
 |---|---|---|
 | Web & Dev Server Previews | `[PREVIEW]` / `↗` | Live dev server and image preview pills |
 | Diff Inspector | `[DIFF]` / `Δ` | Side-by-side git diffs |
-| Execution Timers | `1.4s` / `[RUN]` | Subagent and bash worker execution duration |
+| Execution Timers | `1.4s` / `[RUN]` | Worker and bash worker execution duration |
 | Human Gates & Approvals | `!` / `[GATE]` | HIL approval modal requests |
 | Profile & Memory | `•` / `[USER]` | `USER.md` memory notes |
 | Tool Success | `OK` / hairline `✓` | Tool execution completions |

@@ -127,7 +127,10 @@ pub struct FileConfig {
     pub ask: Vec<String>,
     #[serde(default)]
     pub deny: Vec<String>,
-    pub subagents: Option<bool>,
+    /// `subagents` is accepted as a legacy alias so existing `vak.toml`
+    /// files written before the subagent->worker rename keep working.
+    #[serde(alias = "subagents")]
+    pub workers: Option<bool>,
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
     pub max_retries: Option<u32>,
@@ -1263,7 +1266,7 @@ pub struct Config {
     pub allow: Vec<String>,
     pub ask: Vec<String>,
     pub deny: Vec<String>,
-    pub subagents: bool,
+    pub workers: bool,
     pub hooks: Vec<HookConfig>,
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
@@ -1528,7 +1531,7 @@ impl Default for Config {
             allow: Vec::new(),
             ask: Vec::new(),
             deny: Vec::new(),
-            subagents: true,
+            workers: true,
             hooks: Vec::new(),
             max_retries: 3,
             retry_base_backoff_ms: 500,
@@ -2423,20 +2426,20 @@ pub fn persist_permission_rules(
     write_config_atomically(&path, &root)
 }
 
-/// Persist the top-level `subagents` toggle for the current project.
+/// Persist the top-level `workers` toggle for the current project.
 /// Mirrors [`persist_project_preferences`]'s atomic-write shape exactly.
-pub fn persist_project_subagents(cwd: &Path, enabled: bool) -> Result<(), ConfigError> {
-    persist_subagents_at(project_path(cwd), enabled)
+pub fn persist_project_workers(cwd: &Path, enabled: bool) -> Result<(), ConfigError> {
+    persist_workers_at(project_path(cwd), enabled)
 }
 
-/// Persist the user-level `subagents` default, inherited by project
+/// Persist the user-level `workers` default, inherited by project
 /// configs through [`load_with_trust`] until they set their own override.
-pub fn persist_global_subagents(enabled: bool) -> Result<(), ConfigError> {
+pub fn persist_global_workers(enabled: bool) -> Result<(), ConfigError> {
     let path = global_path().ok_or_else(|| ConfigError::Write {
         path: PathBuf::from("<user-config>"),
         source: std::io::Error::other("user home is unavailable"),
     })?;
-    persist_subagents_at(path, enabled)
+    persist_workers_at(path, enabled)
 }
 
 /// Persist the optional `[work]` policy fields without disturbing unrelated
@@ -2619,7 +2622,7 @@ pub fn persist_plugins_network_allow(
     })
 }
 
-fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
+fn persist_workers_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
     static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let _guard = WRITE_LOCK
         .get_or_init(|| Mutex::new(()))
@@ -2643,7 +2646,10 @@ fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError>
             source: std::io::Error::other("top-level config must be a TOML table"),
         });
     };
-    table.insert("subagents".into(), toml::Value::Boolean(enabled));
+    table.insert("workers".into(), toml::Value::Boolean(enabled));
+    // Drop the legacy alias so we don't leave two competing keys behind
+    // once this layer has been rewritten under the new name.
+    table.remove("subagents");
     let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
         path: path.clone(),
         source: std::io::Error::other(error.to_string()),
@@ -3047,8 +3053,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.allow = merged.allow;
     cfg.ask = merged.ask;
     cfg.deny = merged.deny;
-    if let Some(sa) = merged.subagents {
-        cfg.subagents = sa;
+    if let Some(sa) = merged.workers {
+        cfg.workers = sa;
     }
     if let Some(r) = merged.max_retries {
         cfg.max_retries = r;
@@ -3536,6 +3542,9 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "allow",
     "ask",
     "deny",
+    "workers",
+    // Legacy alias for `workers`, kept so old configs don't trigger an
+    // "unknown key" warning.
     "subagents",
     "hooks",
     "max_retries",
@@ -3950,8 +3959,8 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
             base.deny.push(r);
         }
     }
-    if over.subagents.is_some() {
-        base.subagents = over.subagents;
+    if over.workers.is_some() {
+        base.workers = over.workers;
     }
     if over.max_retries.is_some() {
         base.max_retries = over.max_retries;
@@ -5311,5 +5320,26 @@ mod channel_autonomy_tests {
                 .plugins_network_deny
                 .contains(&"test-plugin-a".to_string())
         );
+    }
+
+    /// The persisted TOML field was renamed from `subagents` to `workers`.
+    /// An existing `vak.toml` with the old key (and no `workers` key) must
+    /// still be honored rather than silently falling back to the default.
+    #[test]
+    fn legacy_subagents_key_is_honored_as_workers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = project_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "subagents = false\n").unwrap();
+
+        let (fc, warnings) = parse_file(&path).unwrap();
+        assert_eq!(fc.workers, Some(false));
+        assert!(
+            warnings.is_empty(),
+            "legacy `subagents` key should not warn as unknown: {warnings:?}"
+        );
+
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.workers);
     }
 }

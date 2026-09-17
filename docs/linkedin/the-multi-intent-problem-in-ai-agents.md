@@ -291,9 +291,9 @@ The stop-guard intercepts the exit and injects an assertive steering prompt back
 
 ### 6. Architectural Delegation via `TaskTool` (Context De-Bloating)
 For complex multi-intent tasks (e.g., *"Refactor the auth middleware, update 12 integration tests, and benchmark performance"*), forcing all work into a single context window is an anti-pattern.
-* Vak delegates heavy sub-intents to depth-1 subagents via `TaskTool`.
-* Each subagent operates in an **isolated session ledger** with its own dedicated token budget (`subagent_budget`).
-* The subagent can run dozens of exploratory turns, compiles, and retries in its own environment. When finished, it returns only a concise, typed `TaskOutcome` receipt to the parent session.
+* Vak delegates heavy sub-intents to depth-1 workers via `TaskTool`.
+* Each worker operates in an **isolated session ledger** with its own dedicated token budget (`worker_budget`).
+* The worker can run dozens of exploratory turns, compiles, and retries in its own environment. When finished, it returns only a concise, typed `TaskOutcome` receipt to the parent session.
 * Thousands of intermediate exploratory tokens never enter the parent agent's context, eliminating context bloating at the architectural boundary.
 
 ---
@@ -324,7 +324,7 @@ This design is not just theoretical; it is battle-tested in code. The `vak-inten
 ### Pillar 3: Realistic Engineering Boundaries
 True reliability means knowing exactly where an architecture's boundaries lie:
 1. **Sequential Turn Execution vs. Premature Concurrency:** Vak intentionally executes compound intents sequentially within a single turn loop (the agent locates the bug, edits the file, and runs the tests in ordered steps). In coding and systems tasks, later steps depend on earlier ones. Naively splitting a single user turn into five parallel asynchronous threads breaks causality and creates race conditions on disk.
-2. **Multi-Turn Delegated Subagents:** When an objective genuinely warrants asynchronous or isolated execution, Vak provides `TaskTool`—spawning depth-1 subagents with their own scoped sessions and separate budgets.
+2. **Multi-Turn Delegated Workers:** When an objective genuinely warrants asynchronous or isolated execution, Vak provides `TaskTool`—spawning depth-1 workers with their own scoped sessions and separate budgets.
 3. **Graceful NLP Fallbacks:** The zero-token Tier-1 lexicon handles English imperative syntax, preambles, and morphological inflections with microsecond speed. If an input is non-English or genuinely ambiguous, it falls open to the baseline orientation floor or escalates cleanly to local/cloud model classification without crashing.
 
 ---

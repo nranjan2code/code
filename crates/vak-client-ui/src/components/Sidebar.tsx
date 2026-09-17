@@ -53,7 +53,7 @@ export default function Sidebar() {
           <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><Icon name="spark" /><span>{profile.name}</span></button>
         }</For>
         <Show when={query() && !shown().length}><p class="sb-empty">No matching agents.</p></Show>
-        <Show when={error()}><p class="subagent-error" role="alert">Could not load agents: {error()} Retrying automatically.</p></Show>
+        <Show when={error()}><p class="worker-error" role="alert">Could not load agents: {error()} Retrying automatically.</p></Show>
         <Show when={agentOpening()}><p role="status" class="sb-empty">Opening agent…</p></Show>
         <button type="button" class="sb-agent-item" onClick={() => { setSettingsScope("user"); setPendingSettingsPage("agent"); setSettingsOpen(true); }}><Icon name="add" /><span>Manage agents</span></button>
       </nav>

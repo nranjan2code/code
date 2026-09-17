@@ -92,7 +92,7 @@ def rust_targets() -> list[tuple[str, str, str]]:
 def capability(package: str, target: str, test: str = "") -> str:
     text = f"{package}/{target}/{test}".lower()
     groups = {
-        "agent-orchestration": ("adoption", "fanout", "subagent", "goal", "reliability", "run_endurance", "stop_guard", "steering", "task::"),
+        "agent-orchestration": ("adoption", "fanout", "worker", "goal", "reliability", "run_endurance", "stop_guard", "steering", "task::"),
         "memory-knowledge": ("memory", "learning", "reflection", "session_search", "search_endpoint", "personal_os"),
         "mcp": ("mcp",),
         "hooks": ("hook",),

@@ -103,7 +103,7 @@ pub enum Surface {
     /// A proactive check-in the runtime initiated.
     Heartbeat,
     /// A parent agent dispatching a child.
-    Subagent,
+    Worker,
 }
 
 impl Surface {
@@ -115,7 +115,7 @@ impl Surface {
             Surface::Chat => "chat",
             Surface::Cron => "cron",
             Surface::Heartbeat => "heartbeat",
-            Surface::Subagent => "subagent",
+            Surface::Worker => "worker",
         }
     }
 
@@ -127,7 +127,7 @@ impl Surface {
             "chat" | "telegram" | "discord" | "slack" | "gateway" => Some(Surface::Chat),
             "cron" | "task" | "schedule" | "watchdog" => Some(Surface::Cron),
             "heartbeat" => Some(Surface::Heartbeat),
-            "subagent" | "child" => Some(Surface::Subagent),
+            "worker" | "child" => Some(Surface::Worker),
             _ => None,
         }
     }
@@ -143,7 +143,7 @@ impl Surface {
             Surface::Cron | Surface::Heartbeat => Attendance::Unattended,
             // A child inherits its parent's attendance; this is only the
             // fallback when the parent said nothing.
-            Surface::Subagent => Attendance::Unattended,
+            Surface::Worker => Attendance::Unattended,
         }
     }
 }

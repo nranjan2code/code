@@ -689,12 +689,19 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/resume", post(resume_run))
         .route("/sessions/{id}/control-state", get(control_state))
         .route("/sessions/{id}/plan-change", post(plan_change))
-        .route("/sessions/{id}/subagents", get(list_subagents))
+        .route("/sessions/{id}/workers", get(list_workers))
+        .route(
+            "/sessions/{id}/workers/{child}/steer",
+            post(steer_worker),
+        )
+        .route("/sessions/{id}/workers/{child}/stop", post(stop_worker))
+        // Backward-compatible aliases for the old `subagents` route names.
+        .route("/sessions/{id}/subagents", get(list_workers))
         .route(
             "/sessions/{id}/subagents/{child}/steer",
-            post(steer_subagent),
+            post(steer_worker),
         )
-        .route("/sessions/{id}/subagents/{child}/stop", post(stop_subagent))
+        .route("/sessions/{id}/subagents/{child}/stop", post(stop_worker))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/outcome-review", post(record_outcome_review))
         .route("/sessions/{id}/events", get(events_sse))
@@ -3729,25 +3736,25 @@ pub(crate) fn register_handle(
                             framed,
                         );
                         let activity = match event {
-                            AgentEvent::SubagentStarted { label } => {
+                            AgentEvent::WorkerStarted { label } => {
                                 Some(vak_session::ActivityRecord {
-                                    activity_id: format!("subagent-{label}"),
+                                    activity_id: format!("worker-{label}"),
                                     turn: None,
-                                    kind: vak_session::ActivityKind::Subagent,
+                                    kind: vak_session::ActivityKind::Worker,
                                     status: vak_session::ActivityStatus::Running,
                                     label,
-                                    detail: Some("Subagent started".into()),
+                                    detail: Some("Worker started".into()),
                                     data: std::collections::BTreeMap::new(),
                                 })
                             }
-                            AgentEvent::SubagentFinished {
+                            AgentEvent::WorkerFinished {
                                 label,
                                 is_error,
                                 elapsed_ms,
                             } => Some(vak_session::ActivityRecord {
-                                activity_id: format!("subagent-{label}"),
+                                activity_id: format!("worker-{label}"),
                                 turn: None,
-                                kind: vak_session::ActivityKind::Subagent,
+                                kind: vak_session::ActivityKind::Worker,
                                 status: if is_error {
                                     vak_session::ActivityStatus::Failed
                                 } else {
@@ -5360,49 +5367,49 @@ fn deny_pending_approvals(handle: &SessionHandle) {
     }
 }
 
-// ---- Subagent control plane -------------------------------------------------
+// ---- Worker control plane -------------------------------------------------
 //
 // Children already stream lifecycle/tool events into the parent session's
 // SSE channel; these endpoints add the missing half: listing, steering, and
 // stopping from a remote surface. Scope-checked against the parent so one
 // session can never touch another's child.
 
-async fn list_subagents(
+async fn list_workers(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<serde_json::Value> {
-    let children = state.core.subagents().active_for(&id);
-    Json(serde_json::json!({ "subagents": children }))
+    let children = state.core.workers().active_for(&id);
+    Json(serde_json::json!({ "workers": children }))
 }
 
 #[derive(serde::Deserialize)]
-struct SubagentSteerBody {
+struct WorkerSteerBody {
     text: String,
 }
 
-async fn steer_subagent(
+async fn steer_worker(
     State(state): State<AppState>,
     Path((id, child)): Path<(String, String)>,
-    Json(body): Json<SubagentSteerBody>,
+    Json(body): Json<WorkerSteerBody>,
 ) -> StatusCode {
-    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
+    if state.core.workers().parent_of(&child).as_deref() != Some(id.as_str()) {
         return StatusCode::NOT_FOUND;
     }
-    if state.core.subagents().steer(&child, &body.text) {
+    if state.core.workers().steer(&child, &body.text) {
         StatusCode::ACCEPTED
     } else {
         StatusCode::CONFLICT
     }
 }
 
-async fn stop_subagent(
+async fn stop_worker(
     State(state): State<AppState>,
     Path((id, child)): Path<(String, String)>,
 ) -> StatusCode {
-    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
+    if state.core.workers().parent_of(&child).as_deref() != Some(id.as_str()) {
         return StatusCode::NOT_FOUND;
     }
-    if state.core.subagents().stop(&child) {
+    if state.core.workers().stop(&child) {
         StatusCode::ACCEPTED
     } else {
         StatusCode::CONFLICT
@@ -7300,7 +7307,7 @@ async fn intent_explain(
             Some(vak_intent::Surface::Cron | vak_intent::Surface::Heartbeat) => {
                 vak_core::Surface::Background
             }
-            Some(vak_intent::Surface::Subagent) => vak_core::Surface::Subagent,
+            Some(vak_intent::Surface::Worker) => vak_core::Surface::Worker,
             None => {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -10524,7 +10531,7 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "ask": permission_rules.1,
             "deny": permission_rules.2,
         },
-        "subagents": state.core.effective_subagents(),
+        "workers": state.core.effective_workers(),
         "max_retries": cfg.max_retries,
         "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
         "request_timeout_secs": cfg.request_timeout_secs,
@@ -10610,7 +10617,7 @@ fn config_layer_response(
         "permission_mode": layer.permission_mode.map(|mode| format!("{mode:?}")),
         "approval_mode": layer.approval_mode.map(|mode| mode.as_str()),
         "profile": layer.profile,
-        "subagents": layer.subagents,
+        "workers": layer.workers,
         "theme": layer.ui.theme,
         "permissions": {
             "allow": layer.allow,
@@ -10843,10 +10850,10 @@ struct ConfigPatch {
     voice_synthesis_model: Option<Option<String>>,
     #[serde(default)]
     voice_realtime_model: Option<Option<String>>,
-    /// Whether sub-agent delegation (the `task` tool) is available. Absent
+    /// Whether worker delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses.
     #[serde(default)]
-    subagents: Option<bool>,
+    workers: Option<bool>,
     /// `[memory]` toggles (docs/design/23-memory.md). Absent means "leave
     /// alone" — same convention every other field here already uses.
     #[serde(default)]
@@ -11228,17 +11235,17 @@ async fn patch_config_scope(
         changes.push(format!("theme={theme}"));
         state.core.apply_persisted_theme(theme);
     }
-    if let Some(subagents) = body.subagents {
+    if let Some(workers) = body.workers {
         let persisted = if global {
-            vak_config::persist_global_subagents(subagents)
+            vak_config::persist_global_workers(workers)
         } else {
-            vak_config::persist_project_subagents(state.core.cwd(), subagents)
+            vak_config::persist_project_workers(state.core.cwd(), workers)
         };
         if persisted.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        state.core.apply_persisted_subagents(subagents);
-        changes.push(format!("subagents={subagents}"));
+        state.core.apply_persisted_workers(workers);
+        changes.push(format!("workers={workers}"));
     }
     if body.memory_search_enabled.is_some()
         || body.memory_write_enabled.is_some()
@@ -11835,7 +11842,7 @@ async fn preview_prompt(
         "server" => vak_core::Surface::Server,
         "web" => vak_core::Surface::Web,
         "background" => vak_core::Surface::Background,
-        "subagent" => vak_core::Surface::Subagent,
+        "worker" => vak_core::Surface::Worker,
         _ => vak_core::Surface::Chat {
             channel: raw_surface.to_string(),
         },
@@ -15872,36 +15879,36 @@ mod configuration_control_tests {
         assert!(!fresh.effective_memory_write_enabled());
     }
 
-    /// Same live-without-restart guarantee as memory, for the `subagents`
+    /// Same live-without-restart guarantee as memory, for the `workers`
     /// toggle newly surfaced in the admin console's Settings page — it was
     /// previously read from `Core::config()` directly at both call sites,
     /// so a PATCH would have silently done nothing.
     #[tokio::test]
-    async fn patch_config_subagents_applies_live_and_persists() {
+    async fn patch_config_workers_applies_live_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
         let state = AppState::new(core.clone());
-        assert!(core.effective_subagents(), "default is on");
+        assert!(core.effective_workers(), "default is on");
 
         let response = patch_config(
             State(state.clone()),
             Json(ConfigPatch {
-                subagents: Some(false),
+                workers: Some(false),
                 ..Default::default()
             }),
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(
-            !core.effective_subagents(),
+            !core.effective_workers(),
             "must apply live without a restart"
         );
 
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_sessions_home(dir.path().join("home"));
         assert!(
-            !fresh.effective_subagents(),
+            !fresh.effective_workers(),
             "must be persisted to disk too"
         );
     }

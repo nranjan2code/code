@@ -209,7 +209,7 @@ turn in that session read the frozen values unconditionally, which caused:
   demand-scoring) ran exactly once at admission, then was inert for the session's life.
 - If a provider failed mid-session the frozen ladder was always tried first, even if
   the user had switched away from it.
-- Subagents inherited the parent session's frozen route rather than the current
+- Workers inherited the parent session's frozen route rather than the current
   effective route at spawn time.
 
 ### Design change

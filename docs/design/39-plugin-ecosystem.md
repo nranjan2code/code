@@ -7,7 +7,7 @@ Vak plugins are versioned capability packages. A plugin may contribute skills,
 commands, MCP connections, hooks, presentation recipes, or static assets, but
 installation never grants permission. Components enter the same registries and
 the same permission-before-dispatch boundary used by local runs, gateway runs,
-flows, plans, tasks, subagents, server runs, and desktop runs.
+flows, plans, tasks, workers, server runs, and desktop runs.
 
 The package kernel ships before any public marketplace. Local packages and
 repository catalogs exercise the complete inspect → install → review → enable

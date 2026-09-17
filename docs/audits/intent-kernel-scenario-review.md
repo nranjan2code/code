@@ -24,7 +24,7 @@ dependencies (no `vak_core`, no `vak_config`). It resolves a request into an
 `Intent` (reading + engagement) through a three-tier cascade:
 
 1. **Tier 0 — Declared:** Caller states axes outright (`--act`, pinned policies,
-   subagent handoffs). Coverage ≥ 1.0 → `Tier::Declared`.
+   worker handoffs). Coverage ≥ 1.0 → `Tier::Declared`.
 2. **Tier 1 — Signals:** Pure function of `[Request]` text. Lexicon-driven
    extraction across 7 axes: Act, Horizon, Stakes, Evidence, Clarity, Modality,
    Attendance. Confidence = weakest axis. Below floor → `Tier::General`

@@ -88,7 +88,7 @@ impl Autonomy {
     }
 
     /// The least delegated of the two. Used wherever two grants meet — a
-    /// per-chat grant under a per-bot grant, or a subagent under its parent —
+    /// per-chat grant under a per-bot grant, or a worker under its parent —
     /// so composition can only ever reduce.
     pub fn capped_by(self, ceiling: Autonomy) -> Autonomy {
         if self.rank() > ceiling.rank() {

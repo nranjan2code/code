@@ -77,7 +77,7 @@ $$\text{Limits}_{\text{effective}} = \text{Limits}_{\text{baseline}} \sqcap \tex
 ### Axis Resolution Cascade
 
 Intent is evaluated through an ordered, cost-conscious cascade:
-1. **Tier 0 (Declared):** Flags, CLI options, pinned subagent constraints. (Free, 100% reproducible).
+1. **Tier 0 (Declared):** Flags, CLI options, pinned worker constraints. (Free, 100% reproducible).
 2. **Tier 1 (Signals):** Deterministic lexical, structural, and workspace facts. (Free, 100% reproducible).
 3. **Tier 2 (Local Model):** Strict JSON inference via local Ollama. (Zero API cost, non-reproducible).
 4. **Tier 3 (Cloud Model):** Invoked only when confidence falls below the acceptance threshold.
@@ -190,8 +190,8 @@ flowchart LR
 
 For multi-agent swarms spanning multiple machines, `crates/vak-bus` provides an industrial distributed messaging fabric:
 
-![vak Subagent Lifecycle and Coordination](../market/vak-subagent-lifecycle.jpg)
-*Figure 3: Multi-agent subagent orchestration, tool claiming, and causal lineage.*
+![vak Worker Lifecycle and Coordination](../market/vak-worker-lifecycle.jpg)
+*Figure 3: Multi-agent worker orchestration, tool claiming, and causal lineage.*
 
 1. **Transport:** High-throughput **NATS Core + JetStream** with in-memory fallbacks for local test suites.
 2. **Zero-Trust Encryption:** Payloads are encrypted end-to-end using **AES-256-GCM** with keys derived per-workspace (`vak-bus::crypto::derive_workspace_key`).

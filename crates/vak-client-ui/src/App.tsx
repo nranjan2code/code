@@ -108,7 +108,7 @@ import WorkModal from "./components/WorkModal";
 const PreviewPane = lazy(() => import("./components/PreviewPane"));
 const ArtifactCanvas = lazy(() => import("./components/ArtifactCanvas"));
 const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
-const SubagentsPanel = lazy(() => import("./components/SubagentsPanel"));
+const WorkersPanel = lazy(() => import("./components/WorkersPanel"));
 const CommitmentsPanel = lazy(() => import("./components/CommitmentsPanel"));
 import WorkspaceGate from "./components/WorkspaceGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
@@ -1364,7 +1364,7 @@ export default function App() {
                     <PreviewPane />
                   </Show>
                   <Show when={tab() === "agents"}>
-                    <SubagentsPanel sessionId={activeId()} />
+                    <WorkersPanel sessionId={activeId()} />
                   </Show>
                   <Show when={tab() === "feeds"}>
                     <FeedsPanel />
@@ -1428,7 +1428,7 @@ function dockLabel(tab: import("./store").DockTab): string {
     preview: "Live preview",
     editor: "Files",
     pr: "Pull request",
-    agents: "Subagents",
+    agents: "Workers",
     feeds: "Feeds",
     commitments: "Commitments",
   }[tab];

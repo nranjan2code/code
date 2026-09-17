@@ -322,7 +322,7 @@ impl<'a> Widget for OpsView<'a> {
                 format!(
                     "{} ACTIVE AGENTS [{}]    {} PENDING TASKS [{}]",
                     Symbols::STATUS_ACTIVE,
-                    self.telemetry.active_subagents,
+                    self.telemetry.active_workers,
                     Symbols::STATUS_IDLE,
                     self.telemetry.pending_tasks
                 ),

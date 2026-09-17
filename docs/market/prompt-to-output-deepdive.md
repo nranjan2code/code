@@ -2,7 +2,7 @@
 
 > **Status:** Production Architecture Specification (v3.0.29)  
 > **Repository:** [vakcoder](file:///Users/nisheethranjan/Projects/vakcoder)  
-> **Focus:** Exhaustive tracing of an inbound user prompt through ingress, routing, intent classification, demand scoring, frozen ladders, prompt layering, agent & subagent orchestration, brokered sandboxing, verifiable done-contracts, and multi-surface output projection.
+> **Focus:** Exhaustive tracing of an inbound user prompt through ingress, routing, intent classification, demand scoring, frozen ladders, prompt layering, agent & worker orchestration, brokered sandboxing, verifiable done-contracts, and multi-surface output projection.
 
 ---
 
@@ -49,7 +49,7 @@ PHASE 5: AGENT LOOP & MULTI-AGENT ORCHESTRATION (vak-agent & vak-core)
   └─ 5.4 Execution Branching:
          ├─ Branch A: Direct Text Response
          ├─ Branch B: Brokered Tool Batch Execution
-         ├─ Branch C: Subagent Spawning (`Surface::Subagent`, Child Core, Role Prompts)
+         ├─ Branch C: Worker Spawning (`Surface::Worker`, Child Core, Role Prompts)
          └─ Branch D: Dynamic Multi-Step Planner DAG (`vak-flow`)
       │
       ▼
@@ -257,7 +257,7 @@ In [`crates/vak-agent`](file:///Users/nisheethranjan/Projects/vakcoder/crates/va
          ▼                            ▼                            ▼
 ┌──────────────────┐        ┌──────────────────┐        ┌──────────────────┐
 │    BRANCH A:     │        │    BRANCH B:     │        │    BRANCH C:     │
-│   Direct Text    │        │  Tool Execution  │        │ Subagent Spawning│
+│   Direct Text    │        │  Tool Execution  │        │ Worker Spawning│
 │   (Stop Policy)  │        │  (Broker Sandbox)│        │ (Surface::Subag) │
 └──────────────────┘        └──────────────────┘        └──────────────────┘
 ```
@@ -282,14 +282,14 @@ If the model generates no tool invocations, execution terminates conversational 
 #### Branch B: Tool Execution Batch
 If the model emits one or more tool calls (`ToolUse` blocks), the calls are parsed and dispatched in parallel across the permission broker.
 
-#### Branch C: Subagent Spawning (`subagent` tool)
+#### Branch C: Worker Spawning (`worker` tool)
 When a task benefits from isolated sub-delegation (e.g., performing a deep dependency audit or searching logs without polluting parent context):
-1. **Budget Check:** Verifies that subagents are enabled (`effective_subagents()`) and that the turn has remaining `subagent_budget`.
-2. **Child Core Cloning:** Clones the parent `Core` with a new surface: `Surface::Subagent`.
-   - *Why this is critical:* A subagent's consumer is the parent agent, not a human. Setting `Surface::Subagent` modifies prompt layer notes and prevents the subagent from outputting user-facing conversational fluff.
+1. **Budget Check:** Verifies that workers are enabled (`effective_workers()`) and that the turn has remaining `worker_budget`.
+2. **Child Core Cloning:** Clones the parent `Core` with a new surface: `Surface::Worker`.
+   - *Why this is critical:* A worker's consumer is the parent agent, not a human. Setting `Surface::Worker` modifies prompt layer notes and prevents the worker from outputting user-facing conversational fluff.
 3. **Role-Specific Prompts:** Loads specialized instructions from `.vak/prompts/agents/<role>/`.
-4. **Registry Registration:** Registers the running child in `Arc<SubagentRegistry>`, allowing human operators to inspect, attach to, or cancel subagents from the UI.
-5. **Sandboxed Child Loop:** The subagent runs its own isolated turn loop, producing an append-only child ledger. Its final output is returned to the parent agent as a typed `ToolResult`.
+4. **Registry Registration:** Registers the running child in `Arc<WorkerRegistry>`, allowing human operators to inspect, attach to, or cancel workers from the UI.
+5. **Sandboxed Child Loop:** The worker runs its own isolated turn loop, producing an append-only child ledger. Its final output is returned to the parent agent as a typed `ToolResult`.
 
 #### Branch D: Dynamic Multi-Step Planner DAG (`vak-flow`)
 If the prompt was admitted as a multi-step plan, `vak-flow` constructs a Directed Acyclic Graph (DAG) where nodes execute sequentially or concurrently based on dependency resolution.
@@ -298,7 +298,7 @@ If the prompt was admitted as a multi-step plan, `vak-flow` constructs a Directe
 
 ## 7. Phase 6: Permission Gate & Brokered Sandbox Execution
 
-Every effect proposed by an agent or subagent must pass through the **Broker Boundary** before touching host resources:
+Every effect proposed by an agent or worker must pass through the **Broker Boundary** before touching host resources:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -380,7 +380,7 @@ Once the turn outcome is verified, vak performs atomic persistence and delivers 
 | **2. Intent Kernel** | `vak-intent`, `vak-commit` | Prompt text, workspace permission ceiling | 7-axis classification; **Narrowing Invariant** enforced; capability slice emitted. |
 | **3. Demand Router** | `vak-llm` | Token budget, reasoning requirement, modality | DemandBand resolved; **Frozen Route Ladder** committed; FinOps budget admitted. |
 | **4. Prompt Layering** | `vak-core`, `vak-agent` | 6 prompt blocks across 7 inheritance tiers | Safety floor concatenated; code-owned interface contracts preserved. |
-| **5. Agent Orchestration** | `vak-agent`, `vak-core` | `derive_messages()`, steering queue | Streaming inference; parallel tool execution; isolated subagents spawned. |
+| **5. Agent Orchestration** | `vak-agent`, `vak-core` | `derive_messages()`, steering queue | Streaming inference; parallel tool execution; isolated workers spawned. |
 | **6. Broker & Sandbox** | `vak-permission`, `vak-sandbox`, `vak-tools` | Security mode (`ReadOnly`/`Restricted`), Landlock LSM | `__tool_worker` isolation in disposable process group; zero ambient secrets. |
 | **7. Done Verification** | `vak-commit`, `vak-agent` | Real-world compiler exit codes, test suites, git diffs | Satisfaction Lattice advances to `Verified`; model self-declaration rejected. |
 | **8. Ledger & Delivery** | `vak-session`, `vak-delivery`, `vak-store` | Verified turn outcome, CommonMark AST | Append-only JSONL commit; SQLite FTS5 sync; durable outbox channel delivery. |

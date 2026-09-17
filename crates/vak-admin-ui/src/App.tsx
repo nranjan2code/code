@@ -31,7 +31,7 @@ import type {
   GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
   PermissionMode, ProviderSummary, VoiceProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
-  ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
+  ActiveWorker, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
 
 // Theme state: initialized from localStorage and synchronized to document root dataset
@@ -5858,7 +5858,7 @@ function Settings() {
   const [savingKey, setSavingKey] = createSignal(false);
   const [maxTurnsInput, setMaxTurnsInput] = createSignal("");
   const [savingMaxTurns, setSavingMaxTurns] = createSignal(false);
-  const [togglingSubagents, setTogglingSubagents] = createSignal(false);
+  const [togglingWorkers, setTogglingWorkers] = createSignal(false);
   const [probing, setProbing] = createSignal(false);
   const [probeResult, setProbeResult] = createSignal<{
     ok: boolean;
@@ -6768,18 +6768,18 @@ function Settings() {
                 <label class="inherit-toggle">
                   <input
                     type="checkbox"
-                    checked={config()?.subagents ?? false}
-                    disabled={togglingSubagents()}
+                    checked={config()?.workers ?? false}
+                    disabled={togglingWorkers()}
                     onChange={(e) => {
                       const next = e.currentTarget.checked;
-                      setTogglingSubagents(true);
+                      setTogglingWorkers(true);
                       void guard(
-                        () => api.patchConfigScope(configScope(), { subagents: next }),
-                        next ? "Sub-agents enabled" : "Sub-agents disabled",
-                      ).finally(() => setTogglingSubagents(false));
+                        () => api.patchConfigScope(configScope(), { workers: next }),
+                        next ? "Workers enabled" : "Workers disabled",
+                      ).finally(() => setTogglingWorkers(false));
                     }}
                   />
-                  Sub-agents — allow delegating tasks to child workers
+                  Workers — allow delegating tasks to child workers
                 </label>
               </Show>
             </section>

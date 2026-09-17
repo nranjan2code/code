@@ -66,7 +66,7 @@ export default function FeedsPanel() {
   return (
     <div class="feeds-panel" role="tabpanel" aria-label="Feed pipeline">
       <Show when={error()}>
-        <div class="subagent-error">{error()}</div>
+        <div class="worker-error">{error()}</div>
       </Show>
 
       <div class="dock-head">

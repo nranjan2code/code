@@ -44,7 +44,7 @@ dashboard.
 
 Home shows an `Ongoing` collection from actual running sessions. The composer’s
 “Start next request separately” action creates a new session and leaves the
-current task running. The live subagent panel shows at most the real children,
+current task running. The live worker panel shows at most the real children,
 with the work label first and an optional “with Pip” identity beneath it.
 
 ### Useful rich result

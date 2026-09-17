@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, SubagentRegistry, TaskDeps, TaskTool, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, WorkerRegistry, TaskDeps, TaskTool, TurnOutcome};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
@@ -210,7 +210,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         max_turns: 4,
         outcome_objective: None,
         outcome: None,
-        subagent_budget: None,
+        worker_budget: None,
         max_retries: 0,
         retry_base_backoff_ms: 0,
         request_timeout: None,
@@ -231,7 +231,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         work_item_id: None,
         work_item_ids: vec![],
         events: None,
-        registry: Some(Arc::new(SubagentRegistry::new())),
+        registry: Some(Arc::new(WorkerRegistry::new())),
     }))];
     cfg.permission = Some(Arc::new(
         PermissionEngine::from_rule_strings(&["+task".to_string(), "+Bash(sleep *)".to_string()])

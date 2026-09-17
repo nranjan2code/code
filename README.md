@@ -32,7 +32,7 @@ Most agents make you choose between capability and legibility. vak is built arou
 | Principle | What it means in practice |
 |---|---|
 | **Model-visible means logged** | Anything sent to a model can be reconstructed from the session JSONL. |
-| **Permission before dispatch** | Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same policy engine. |
+| **Permission before dispatch** | Agent turns, tools, workers, flows, plans, evals, server runs, and desktop runs all pass through the same policy engine. |
 | **Append-only by default** | Branching and compaction create entries; they do not rewrite history. |
 | **Failure is part of the contract** | Typed errors, bounded retries, watchdogs, circuit breakers, frozen route ladders, and preserved partial output. |
 | **Extensions stay extensions** | Skills, hooks, MCP servers, custom commands, and flows add capability without bloating the kernel. |
@@ -453,7 +453,7 @@ Keep the core small; add specialized behavior at the edges:
 - **Hooks** observe and gate lifecycle events
 - **MCP** exposes external tool servers through a lazy meta-tool
 - **Commands** add project, plugin, or user Markdown templates
-- **Subagents** run lineage-linked child sessions with attach, steer, and stop controls
+- **Workers** run lineage-linked child sessions with attach, steer, and stop controls
 - **Flows** define validated, resumable DAGs with typed failure policy
 
 Start with the [extensibility design](docs/design/09-extensibility.md) and [flow design](docs/design/10-flows.md).

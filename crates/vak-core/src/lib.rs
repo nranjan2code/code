@@ -450,7 +450,7 @@ struct CoreInner {
     memory_reflection_override: std::sync::Mutex<Option<bool>>,
     memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
     /// Same no-pin, always-take-latest shape as the memory overrides above.
-    subagents_override: std::sync::Mutex<Option<bool>>,
+    workers_override: std::sync::Mutex<Option<bool>>,
     work_override: std::sync::Mutex<Option<vak_config::WorkResolved>>,
     /// Same no-pin, always-take-latest shape. `None` follows the cached
     /// `inner.config.plugins`; `refresh_persisted_preferences` re-derives
@@ -471,7 +471,7 @@ struct CoreInner {
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
-    subagents: Arc<vak_agent::SubagentRegistry>,
+    workers: Arc<vak_agent::WorkerRegistry>,
     trust_project_config: bool,
     extra_allow: std::sync::Mutex<Vec<String>>,
     user_env_override: std::sync::Mutex<Option<PathBuf>>,
@@ -608,7 +608,7 @@ pub struct Core {
     /// shared workspace state behind the `Arc`.
     surface: Surface,
     /// Named agent role for this turn, selecting a `prompts/agents/<name>`
-    /// sub-layer. Set for subagents spawned with an explicit role.
+    /// sub-layer. Set for workers spawned with an explicit role.
     prompt_role: Option<String>,
     agent_identity: Option<vak_session::types::AgentIdentity>,
     conversation_context: Option<vak_session::types::ConversationContext>,
@@ -699,7 +699,7 @@ pub enum Surface {
     /// A child agent. Its reply is consumed by the parent agent, not by a
     /// person, so it must not inherit the parent's human-facing guidance —
     /// a research child spawned from a phone chat is not itself on a phone.
-    Subagent,
+    Worker,
 }
 
 impl Surface {
@@ -715,7 +715,7 @@ impl Surface {
             Surface::Web => "web",
             Surface::Chat { channel } => channel,
             Surface::Background => "background",
-            Surface::Subagent => "subagent",
+            Surface::Worker => "worker",
         }
     }
 
@@ -759,7 +759,7 @@ file you are talking about."
 and there is no one to ask a follow-up question. Finish what you can decide \
 on your own, and leave the outcome where the next reader will find it."
                 .to_string(),
-            Surface::Subagent => "subagent. Your reply is read by the agent \
+            Surface::Worker => "worker. Your reply is read by the agent \
 that spawned you, not by a person. Answer it completely and in full — state \
 what you found, what you changed, and what you could not resolve — rather \
 than briefly, since it cannot ask you a follow-up question."
@@ -1012,7 +1012,7 @@ impl Core {
                 memory_write_enabled_override: std::sync::Mutex::new(None),
                 memory_reflection_override: std::sync::Mutex::new(None),
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
-                subagents_override: std::sync::Mutex::new(None),
+                workers_override: std::sync::Mutex::new(None),
                 work_override: std::sync::Mutex::new(None),
                 plugins_override: std::sync::Mutex::new(None),
                 finops_max_run_usd_override: std::sync::Mutex::new(None),
@@ -1020,7 +1020,7 @@ impl Core {
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
-                subagents: Arc::new(vak_agent::SubagentRegistry::new()),
+                workers: Arc::new(vak_agent::WorkerRegistry::new()),
                 trust_project_config,
                 extra_allow: std::sync::Mutex::new(extra_allow),
                 user_env_override: std::sync::Mutex::new(None),
@@ -1159,7 +1159,7 @@ impl Core {
 
     /// Re-read the layered provider/model defaults. Runtime-pinned cores are
     /// deliberately excluded so a global admin edit cannot rewrite a scoped
-    /// CLI, task, heartbeat, or subagent contract.
+    /// CLI, task, heartbeat, or worker contract.
     pub fn refresh_persisted_route(&self) -> Result<RouteSelection, CoreError> {
         let current = self.effective_route();
         if current.runtime_pinned {
@@ -2340,14 +2340,14 @@ impl Core {
         );
     }
 
-    /// Whether sub-agent delegation (the `task` tool) is available right
+    /// Whether worker delegation (the `task` tool) is available right
     /// now — live-effective, same shape as the memory accessors above.
-    pub fn effective_subagents(&self) -> bool {
-        Self::read_override(&self.inner.subagents_override).unwrap_or(self.inner.config.subagents)
+    pub fn effective_workers(&self) -> bool {
+        Self::read_override(&self.inner.workers_override).unwrap_or(self.inner.config.workers)
     }
 
-    pub fn apply_persisted_subagents(&self, enabled: bool) {
-        Self::write_override(&self.inner.subagents_override, Some(enabled));
+    pub fn apply_persisted_workers(&self, enabled: bool) {
+        Self::write_override(&self.inner.workers_override, Some(enabled));
     }
 
     /// Whether bounded web fetch is available right now — live-effective.
@@ -2516,7 +2516,7 @@ impl Core {
             config.memory.reflection,
             config.memory.skill_proposals,
         );
-        self.apply_persisted_subagents(config.subagents);
+        self.apply_persisted_workers(config.workers);
         self.apply_persisted_finops_caps(
             Some(config.finops.max_run_usd),
             Some(config.finops.max_day_usd),
@@ -3258,9 +3258,9 @@ impl Core {
             .collect()
     }
 
-    /// Live subagents spawned by this Core's runs, for attach/steer UIs.
-    pub fn subagents(&self) -> Arc<vak_agent::SubagentRegistry> {
-        self.inner.subagents.clone()
+    /// Live workers spawned by this Core's runs, for attach/steer UIs.
+    pub fn workers(&self) -> Arc<vak_agent::WorkerRegistry> {
+        self.inner.workers.clone()
     }
 
     pub fn custom_commands(&self) -> Vec<custom_commands::CustomCommand> {
@@ -3282,7 +3282,7 @@ impl Core {
             .iter()
             .map(|t| t.name().to_string())
             .collect();
-        if self.effective_subagents() {
+        if self.effective_workers() {
             names.push("task".into());
         }
         names.push("tasks".into());
@@ -4797,7 +4797,7 @@ impl Core {
             .header()
             .map(|header| {
                 self.inner
-                    .subagents
+                    .workers
                     .active_for(&header.session_id)
                     .into_iter()
                     .map(|child| child.id)
@@ -4817,7 +4817,7 @@ impl Core {
         //     of any open session, not just new sessions.
         //   - The auto-routing algorithm (evidence, beliefs, v2 ordering) is
         //     re-evaluated every turn, not frozen at admission.
-        //   - Subagents inherit the Core's current effective route, not the
+        //   - Workers inherit the Core's current effective route, not the
         //     parent session's admission snapshot.
         //   - Per-turn dispatch is recorded in WorkReceipt; audit is preserved.
         let (provider, model) = (self.provider()?, self.effective_model());
@@ -5256,7 +5256,7 @@ impl Core {
         if self.effective_browse() {
             tools.push(Arc::new(vak_tools::WebBrowseTool));
         }
-        if self.effective_subagents()
+        if self.effective_workers()
             && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
         {
             let managed_projection = session.work_projection().ok().flatten();
@@ -5271,9 +5271,9 @@ impl Core {
                 read_only_tools.push(skill_tool.clone());
             }
             // A child's reader is this agent, not a person, so it gets the
-            // `Subagent` surface rather than inheriting a human-facing one —
+            // `Worker` surface rather than inheriting a human-facing one —
             // a research child spawned from a phone chat is not on a phone.
-            let child_core = self.clone().with_surface(Surface::Subagent);
+            let child_core = self.clone().with_surface(Surface::Worker);
             let child_capability_set = turn_capabilities.descriptors.clone();
             let child_default_prompt =
                 child_core.system_prompt_for_capabilities(&child_capability_set);
@@ -5297,7 +5297,7 @@ impl Core {
                     self.effective_max_turns(),
                     engagement.limits.max_turns,
                 ),
-                subagent_budget: engagement.limits.subagent_budget,
+                worker_budget: engagement.limits.worker_budget,
                 max_retries: cfg.max_retries,
                 retry_base_backoff_ms: cfg.retry_base_backoff_ms,
                 request_timeout: cfg.request_timeout,
@@ -5318,7 +5318,7 @@ impl Core {
                 work_item_id: None,
                 work_item_ids: managed_work_item_ids,
                 events: Some(events.clone()),
-                registry: Some(self.inner.subagents.clone()),
+                registry: Some(self.inner.workers.clone()),
             })));
         }
         // The authoritative turn plan owns all filtering. Tool factories may
@@ -6480,11 +6480,11 @@ mod channel_mcp_network_tests {
         }
     }
 
-    /// A subagent's reader is the parent agent, so it must not inherit a
+    /// A worker's reader is the parent agent, so it must not inherit a
     /// human-facing surface. Before prompt layers, a research child spawned
     /// from a phone chat was told its reply was read on a phone.
     #[test]
-    fn subagent_surface_replaces_the_parents_human_surface() {
+    fn worker_surface_replaces_the_parents_human_surface() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let chat = core.clone().with_surface(crate::Surface::Chat {
@@ -6492,9 +6492,9 @@ mod channel_mcp_network_tests {
         });
         assert!(chat.system_prompt().contains("chat gateway (telegram)"));
 
-        let child = chat.clone().with_surface(crate::Surface::Subagent);
+        let child = chat.clone().with_surface(crate::Surface::Worker);
         let prompt = child.system_prompt();
-        assert!(prompt.contains("Surface: subagent"));
+        assert!(prompt.contains("Surface: worker"));
         // Not a bare "chat gateway" check: the seed identity legitimately
         // lists chat gateways among the surfaces one core drives.
         assert!(

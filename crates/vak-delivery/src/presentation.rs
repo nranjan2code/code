@@ -11,7 +11,7 @@ pub enum OutputRole {
     User,
     Assistant,
     Tool,
-    Subagent,
+    Worker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

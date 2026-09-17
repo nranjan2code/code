@@ -282,7 +282,7 @@ fn test_telemetry_tick_and_rates() {
     assert_eq!(default.cpu_percent, 0.0);
     assert_eq!(default.rss_mb, 0.0);
     assert_eq!(default.spend_today_usd, 0.0);
-    assert_eq!(default.active_subagents, 0);
+    assert_eq!(default.active_workers, 0);
     assert_eq!(default.bus_dlq_count, 0);
     assert_eq!(default.anthropic_latency_ms, 0);
     assert!(default.token_rate_history.is_empty());

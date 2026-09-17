@@ -6536,8 +6536,8 @@ button.inbox-meta-tag:hover {
   line-height: 1.4;
 }
 
-/* 8. Subagents Panel */
-.subagents-panel {
+/* 8. Workers Panel */
+.workers-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -6546,12 +6546,12 @@ button.inbox-meta-tag:hover {
   flex-direction: column;
   gap: 8px;
 }
-.subagents-grid {
+.workers-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
 }
-.subagent-card {
+.worker-card {
   background: var(--surface-raised);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -6560,7 +6560,7 @@ button.inbox-meta-tag:hover {
   align-items: center;
   justify-content: space-between;
 }
-.subagent-head {
+.worker-head {
   display: flex;
   flex-direction: column;
   gap: 2px;

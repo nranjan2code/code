@@ -101,7 +101,7 @@ Primary-source review on 2026-08-23 found recurring failure classes:
   scrubbed environment, emits a bounded response, and cannot mutate policy.
   Missing executables, malformed protocol, unsupported restricted sandboxes,
   and non-zero worker exits fail closed.
-- The same path is used by normal turns, explore/task subagents, static flows,
+- The same path is used by normal turns, explore/task workers, static flows,
   dynamic plans, and CLI evals. Flow Bash no longer bypasses the configured
   tool registry, permission decision/approver, or sandbox.
 - MCP servers are external workers with an empty-by-default environment,

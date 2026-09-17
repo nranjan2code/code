@@ -47,9 +47,9 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
    - **`writer`**: Publication-ready drafting, narrative coherence, tone adaptation, progressive refinement (wave/bright).
    - **`operator`**: Operational reliability, environment triage, runbook execution, system safety (sun/calm).
    - **`analyst`**: Quantitative reasoning, data aggregation, decision matrices, statistical synthesis (spark/quiet).
-2. **Subagent Role Inheritance**:
+2. **Worker Role Inheritance**:
    - Roles admitted into `Core::prompt_role_names()` and `role_prompts`.
-   - Subagents dispatched via `task` automatically inherit domain archetype instructions in their prompt layers.
+   - Workers dispatched via `task` automatically inherit domain archetype instructions in their prompt layers.
 3. **Verification**:
    - `general_multi_agent_collaboration` eval case tests end-to-end multi-disciplinary delegation combining quantitative metrics, citations, and executive synthesis.
 

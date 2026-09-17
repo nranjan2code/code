@@ -76,10 +76,10 @@ This briefing includes 6 dedicated 2D engineering and market infographics (flat,
 
 ---
 
-### 7. The Agent & Subagent Lifecycle ([`vak-subagent-lifecycle.jpg`](vak-subagent-lifecycle.jpg))
-*How the parent agent loop executes, evaluates delegation heuristics, enforces Depth-1 recursion limits, spawns child sessions with `Surface::Subagent`, and manages live steering via `SubagentRegistry`.*
+### 7. The Agent & Worker Lifecycle ([`vak-worker-lifecycle.jpg`](vak-worker-lifecycle.jpg))
+*How the parent agent loop executes, evaluates delegation heuristics, enforces Depth-1 recursion limits, spawns child sessions with `Surface::Worker`, and manages live steering via `WorkerRegistry`.*
 
-![The vak Agent & Subagent Lifecycle](vak-subagent-lifecycle.jpg)
+![The vak Agent & Worker Lifecycle](vak-worker-lifecycle.jpg)
 
 ---
 
@@ -94,11 +94,11 @@ This market analysis and architecture briefing is split into four comprehensive 
    - Comprehensive breakdown of the **Commitment Engine** (`vak-commit`) and verifiable Done-Contracts.
    - The broker boundary (`__tool_worker`), OS Landlock LSM containment, and Docker sandboxes.
 
-2. **[The Agent & Subagent Engine: Execution Loop & Lifecycle Control](agent-and-subagents.md)**
+2. **[The Agent & Worker Engine: Execution Loop & Lifecycle Control](agent-and-workers.md)**
    - Detailed operational analysis of `crates/vak-agent` and `crates/vak-core`.
    - The 4 delegation heuristics: Context Preservation, Role Specialization, Concurrency, and Work Contracts.
-   - Depth-1 recursion containment, `Surface::Subagent` replacement, and atomic budget tracking.
-   - Live telemetry, `SubagentRegistry` handles, in-flight operator steering, and graceful cancellation.
+   - Depth-1 recursion containment, `Surface::Worker` replacement, and atomic budget tracking.
+   - Live telemetry, `WorkerRegistry` handles, in-flight operator steering, and graceful cancellation.
 
 3. **[From Prompt to Final Output: End-to-End Execution Flow & Routing Logic](prompt-to-output-deepdive.md)**
    - Tracing an inbound prompt through the 8 execution phases.

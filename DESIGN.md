@@ -256,7 +256,7 @@ Buttons, chips, and inputs are quiet and confident: restrained color (the accent
 - **Background:** `surface` for resting cards, `surface-raised` for anything meant to sit "on top" (composer, modal, popovers).
 - **Shadow Strategy:** none at rest; see Elevation & Depth for floating elements.
 - **Border:** 1px, `border` or `border-soft`.
-- **Internal Padding:** 13px for compact cards (prompt chips, tool/subagent blocks), 21–22px for modals, up to 36–42px for centered feature cards (gate-card).
+- **Internal Padding:** 13px for compact cards (prompt chips, tool/worker blocks), 21–22px for modals, up to 36–42px for centered feature cards (gate-card).
 
 ### Inputs / Fields
 - **Style:** filled (`#292925`/`surface-active`-family background), 1px transparent border by default, 7–8px radius.

@@ -509,7 +509,7 @@ fn act_orchestrate_scenarios() {
     let cases: &[&str] = &[
         "orchestrate the migration",
         "coordinate the teams",
-        "delegate to the subagent",
+        "delegate to the worker",
         "run these jobs in parallel",
         "orchestrate the rollout",
         "coordinate with ops",
@@ -2036,7 +2036,7 @@ fn lattice_widening_any_field_is_detected() {
         spend_ceiling_usd: Some(0.5),
         approval_ceiling: ApprovalCeiling::Ask,
         permission_ceiling: PermissionCeiling::ReadOnly,
-        subagent_budget: Some(0),
+        worker_budget: Some(0),
         max_turns: Some(2),
         min_satisfaction: Satisfaction::Attested,
         required_modalities: BTreeSet::from([Modality::Image]),
@@ -2067,7 +2067,7 @@ fn lattice_widening_any_field_is_detected() {
             ..narrow.clone()
         },
         Limits {
-            subagent_budget: Some(4),
+            worker_budget: Some(4),
             ..narrow.clone()
         },
         Limits {
@@ -2414,7 +2414,7 @@ fn surface_attendance_mapping() {
         Attendance::Unattended
     );
     assert_eq!(
-        Surface::Subagent.implied_attendance(),
+        Surface::Worker.implied_attendance(),
         Attendance::Unattended
     );
 }
@@ -2928,20 +2928,20 @@ fn slicing_unrestricted_when_confidence_below_floor() {
 }
 
 // ================================================================
-// Part 18: Subagent budget and max turns
+// Part 18: Worker budget and max turns
 // ================================================================
 
 #[test]
-fn subagent_budget_zero_for_converse_and_answer() {
+fn worker_budget_zero_for_converse_and_answer() {
     for act in [Act::Converse, Act::Answer] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::None);
         let engagement = derive(&r, &Authority::default(), true);
-        assert_eq!(engagement.limits.subagent_budget, Some(0));
+        assert_eq!(engagement.limits.worker_budget, Some(0));
     }
 }
 
 #[test]
-fn subagent_budget_unlimited_for_orchestrate() {
+fn worker_budget_unlimited_for_orchestrate() {
     let r = reading_simple(
         Act::Orchestrate,
         Horizon::Turn,
@@ -2949,7 +2949,7 @@ fn subagent_budget_unlimited_for_orchestrate() {
         Evidence::None,
     );
     let engagement = derive(&r, &Authority::default(), true);
-    assert_eq!(engagement.limits.subagent_budget, None);
+    assert_eq!(engagement.limits.worker_budget, None);
 }
 
 #[test]
@@ -3714,7 +3714,7 @@ fn pipeline_greeting_read_only() {
     assert_eq!(intent.reading.attendance, Attendance::Interactive);
     assert!(intent.engagement.limits.is_at_most(&Limits::unrestricted()));
     assert_eq!(intent.engagement.limits.ladder_limit, Some(1));
-    assert_eq!(intent.engagement.limits.subagent_budget, Some(0));
+    assert_eq!(intent.engagement.limits.worker_budget, Some(0));
 }
 
 #[test]
@@ -3833,9 +3833,9 @@ fn pipeline_workspace_repo_adds_domain() {
 }
 
 #[test]
-fn pipeline_subagent_surface_inherits_unattended() {
+fn pipeline_worker_surface_inherits_unattended() {
     let mut request = req("check the status");
-    request.surface = Surface::Subagent;
+    request.surface = Surface::Worker;
     let extraction = extract(&request);
     assert_eq!(extraction.attendance, Attendance::Unattended);
 }

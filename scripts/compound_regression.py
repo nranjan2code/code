@@ -124,7 +124,7 @@ def run_offline_matrix(results: list[Result], repeat: int, feed_site: str | None
 
     for index in range(repeat):
         results.append(assert_result(run(f"agent-hooks-mcp-{index}", [
-            "cargo", "test", "-q", "-p", "vak-agent", "--test", "hooks", "--test", "subagents",
+            "cargo", "test", "-q", "-p", "vak-agent", "--test", "hooks", "--test", "workers",
             "-p", "vak-hooks", "--test", "hooks", "-p", "vak-mcp", "--test", "mcp_roundtrip",
             "--", "--test-threads=8",
         ])))

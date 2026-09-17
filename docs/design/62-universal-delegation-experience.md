@@ -462,7 +462,7 @@ gets a welcoming composer and a few broad examples; no sample activity is shown
 as real. Scheduled and Inbox continue to use their existing canonical stores.
 
 Use “conversation” for the place people talk and “task” for work Vak is doing.
-“Result” names a deliverable. Technical terms such as subagent, dispatch receipt,
+“Result” names a deliverable. Technical terms such as worker, dispatch receipt,
 and execution environment belong in Details or settings.
 
 On first launch, open the canonical default workspace (`~/vak-home`) automatically
@@ -635,7 +635,7 @@ independent evidence of real-world reliability or requirements to copy a brand.
 - [Meta introduces Muse](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/amp/)
   — personal delegation, persistent execution, and review of sensitive actions.
 - [Meta describes Muse Spark](https://about.fb.com/news/2026/04/introducing-muse-spark-meta-superintelligence-labs/)
-  — parallel subagents contributing to one user request.
+  — parallel workers contributing to one user request.
 
 Vak's own contracts govern implementation. Its identity remains universal,
 inspectable, extensible, and simple to use.

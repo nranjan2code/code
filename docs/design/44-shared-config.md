@@ -47,7 +47,7 @@ Session / Task / Bot / Chat / Pin ────────┘
 
 1. **CLI flags** — scoped overrides, never global.
 2. **Task/session pins** — applied at session creation.
-3. **Subagent pins** — scoped to the subagent's lifetime.
+3. **Worker pins** — scoped to the worker's lifetime.
 4. **Chat policy** — bot → chat → workspace (rule 23).
 5. **Bot routing** — per-bot route override or workspace default.
 6. **Workspace** — the project config (`.vak/config.toml`).

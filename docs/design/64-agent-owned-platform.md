@@ -236,7 +236,7 @@ evidence. Removal requires explicit disposition of endpoint, schedule, and
 outbox references; dangling references fail visibly.
 
 There is one resolver used by desktop, CLI, TUI, voice, gateway, schedules,
-heartbeats, flows, best-of-N, and subagents:
+heartbeats, flows, best-of-N, and workers:
 
 ```text
 resolve_agent(workspace, agent_id, endpoint?)

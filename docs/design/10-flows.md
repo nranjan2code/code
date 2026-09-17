@@ -40,7 +40,7 @@ report when upstream failed).
   dependencies automatically; unknown references are validation errors.
 - **Layered execution**: topological layers run sequentially; nodes within a
   layer run concurrently (JoinSet). Agent nodes spawn child sessions with
-  `parent_session_id` lineage — same narrowing rules as subagents.
+  `parent_session_id` lineage — same narrowing rules as workers.
 - **Typed failure policy**: `required` (default true) — failure fails the
   flow and marks every transitive dependent `skipped` in the ledger;
   `required = false` — node fails, dependents are skipped, but merge nodes

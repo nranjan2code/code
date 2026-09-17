@@ -266,7 +266,7 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
             provider: core.effective_provider(),
             model: core.effective_model(),
             // Legacy single-model admission (empty ladder), same as
-            // subagent children; dispatch falls back to the primary leg.
+            // worker children; dispatch falls back to the primary leg.
             route_ladder: Vec::new(),
             route_objective: String::new(),
             route_annotations: Vec::new(),

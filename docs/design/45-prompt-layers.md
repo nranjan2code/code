@@ -67,7 +67,7 @@ built-in seed (shipped, code-owned)
   → Surface     per surface kind (cli | desktop | server | chat | background)
   → Bot         gateway bots.json
   → Chat        gateway allowlist.json
-  → Agent role  subagent role definition
+  → Agent role  worker role definition
 ```
 
 Agent custom instructions are an additive contribution at the Agent tier. They
@@ -278,16 +278,16 @@ meaningless as a speech style directive. An explicit `voice_override` on the
 request still wins, since that is the admin console's Preview button
 auditioning a value directly.
 
-## Agents and subagents
+## Agents and workers
 
 Worth doing, and the current behaviour is actively wrong.
 
-A subagent today inherits `deps.system_prompt` **verbatim** — including, since
-doc 07 v0.2.1, the parent's `Surface:` line. A research subagent spawned from
+A worker today inherits `deps.system_prompt` **verbatim** — including, since
+doc 07 v0.2.1, the parent's `Surface:` line. A research worker spawned from
 a Telegram turn is currently told its reply is read as a chat message on a
 phone. It is not: its reader is the parent agent.
 
-1. **`Surface::Subagent { parent }`.** Its output is consumed by another
+1. **`Surface::Worker { parent }`.** Its output is consumed by another
    agent, so it should be complete and structured rather than short and
    conversational — the opposite of the chat guidance it inherits now. This is
    a bug fix, not a feature.
@@ -301,7 +301,7 @@ phone. It is not: its reader is the parent agent.
    `PermissionMode::capped_by`. Doc 44 already states agent overlays are
    restrictive; this is that rule applied to text.
 
-The benefit is real but bounded: role prompts make subagents *specialised*,
+The benefit is real but bounded: role prompts make workers *specialised*,
 not *trusted*. A role cannot grant its child anything the parent lacked, and
 the guardrail floor reaches the deepest child in the tree.
 
@@ -329,7 +329,7 @@ Shipped:
 5. Gateway `Bot.prompt` and `AllowlistEntry.prompt` tiers, resolved by
    `resolve_prompt_overlays` and attached per inbound message beside
    `with_default_deliver_to` (`vak-server/src/gateway.rs`).
-6. `Surface::Subagent` and named roles: `task({role})` is constrained by a
+6. `Surface::Worker` and named roles: `task({role})` is constrained by a
    schema `enum` of admitted roles, and an unadmitted name is refused rather
    than silently falling back to the default prompt.
 
@@ -372,7 +372,7 @@ it used to do.
   and no narrower layer can drop a wider layer's note.
 - Recorded descriptors keep composition order (broadest first), not the wire
   name's alphabetical order.
-- A subagent's prompt names `Subagent`, never the parent's human surface.
+- A worker's prompt names `Worker`, never the parent's human surface.
 - A role prompt cannot widen guardrails, capabilities, or permission mode.
 - An unadmitted role name is refused, never silently ignored.
 - An inbound gateway message cannot write any prompt layer.

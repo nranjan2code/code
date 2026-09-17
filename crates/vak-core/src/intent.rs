@@ -44,7 +44,7 @@ pub fn intent_surface(surface: &Surface) -> IntentSurface {
         Surface::Server | Surface::Unknown => IntentSurface::Server,
         Surface::Chat { .. } => IntentSurface::Chat,
         Surface::Background => IntentSurface::Cron,
-        Surface::Subagent => IntentSurface::Subagent,
+        Surface::Worker => IntentSurface::Worker,
     }
 }
 

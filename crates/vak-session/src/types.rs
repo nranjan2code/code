@@ -372,7 +372,7 @@ pub struct WorkItemDefinition {
 #[serde(rename_all = "snake_case")]
 pub enum WorkOwner {
     ParentAgent,
-    Subagent,
+    Worker,
     Flow { name: String },
     Tool { name: String },
     Human,
@@ -523,7 +523,7 @@ pub enum ActivityKind {
     Approval,
     Retry,
     RouteFallback,
-    Subagent,
+    Worker,
     Diagnostic,
     Run,
     /// A provisional or committed speech recognition segment.

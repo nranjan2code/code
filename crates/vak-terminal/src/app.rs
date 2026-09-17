@@ -390,13 +390,13 @@ impl TerminalApp {
             self.telemetry.push_token_rate(total);
         }
 
-        if event_json.get("SubagentStarted").is_some() {
+        if event_json.get("WorkerStarted").is_some() {
             self.telemetry
-                .set_active_subagents(self.telemetry.active_subagents.saturating_add(1));
+                .set_active_workers(self.telemetry.active_workers.saturating_add(1));
         }
-        if event_json.get("SubagentFinished").is_some() {
+        if event_json.get("WorkerFinished").is_some() {
             self.telemetry
-                .set_active_subagents(self.telemetry.active_subagents.saturating_sub(1));
+                .set_active_workers(self.telemetry.active_workers.saturating_sub(1));
         }
 
         if event_json.get("RunFinished").is_some() {
