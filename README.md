@@ -106,11 +106,15 @@ entirely.
 
 | What | Where |
 |---|---|
-| Shared configuration | `~/vak-home/.vak/config.toml` |
-| Shared secrets | `~/vak-home/.env` |
-| Project overrides | `<workspace>/.vak/config.toml` |
-| Project secrets | `<workspace>/.env` |
-| Sessions, ledgers, gateway state | the platform data home |
+| Shared platform defaults | `~/vak-home/.vak/config.toml` |
+| Shared platform secrets | `~/vak-home/.env` |
+| Agent private config & memory | `~/vak-home/agents/<agent_id>/` |
+| Agent private secrets | `~/vak-home/agents/<agent_id>/.env` |
+| Agent session ledgers | `~/vak-home/agents/<agent_id>/sessions/<cwd-hash>/` |
+| Quarantined execution scratch | `<workspace>/.vak/scratch/<agent_id>/` |
+| Execution workspace overrides | `<workspace>/.vak/config.toml` |
+| Execution workspace secrets | `<workspace>/.env` |
+| Shared infrastructure (gateway, FinOps, Ops) | `~/vak-home/` |
 
 Real environment variables take precedence over any `.env`. Secrets are
 never forwarded as ambient Bash or MCP subprocess state, and project `.env`

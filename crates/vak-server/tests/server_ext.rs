@@ -628,8 +628,14 @@ async fn side_chat_branches_off_and_restores_main_chain() {
 
     // ...but the sibling branch stays reconstructable in the JSONL.
     tokio::time::sleep(Duration::from_millis(100)).await;
+    let agent_home = cwd.join("home").join("agents").join("vak");
+    let home = if agent_home.exists() {
+        agent_home
+    } else {
+        cwd.join("home")
+    };
     let mut dir = std::fs::read_dir(vak_session::SessionPath::sessions_dir(
-        &cwd.join("home"),
+        &home,
         &cwd,
     ))
     .unwrap();
@@ -1148,7 +1154,14 @@ async fn checkpoints_list_and_restore_roundtrip() {
     assert!(!cwd.join("stray.txt").exists());
     // Observed-at-capture files are rewritten, never removed: the ledger
     // must survive the rewind untouched.
-    let ledger = vak_session::SessionPath::sessions_dir(&home, &cwd).join(format!("{id}.jsonl"));
+    let agent_home = home.join("agents").join("vak");
+    let ledger_home = if agent_home.exists() {
+        agent_home
+    } else {
+        home.clone()
+    };
+    let ledger =
+        vak_session::SessionPath::sessions_dir(&ledger_home, &cwd).join(format!("{id}.jsonl"));
     assert!(
         ledger.is_file(),
         "rewind must never delete the session ledger"

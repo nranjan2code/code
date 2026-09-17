@@ -251,12 +251,42 @@ impl Drop for StoreLock {
 /// heading and malformed headings attach to whatever precedes them, so a
 /// hand-edit never silently loses content.
 pub fn list_notes(home: &Path, cwd: &Path) -> Vec<NoteBlock> {
-    blocks_at(&memory_path(home, cwd))
+    let mut notes = blocks_at(&memory_path(home, cwd));
+    if notes.is_empty() {
+        let agents_dir = home.join("agents");
+        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let agent_notes = blocks_at(&memory_path(&p, cwd));
+                    if !agent_notes.is_empty() {
+                        notes.extend(agent_notes);
+                    }
+                }
+            }
+        }
+    }
+    notes
 }
 
 /// Parse the global profile tier.
 pub fn list_profile_notes(home: &Path) -> Vec<NoteBlock> {
-    blocks_at(&profile_path(home))
+    let mut notes = blocks_at(&profile_path(home));
+    if notes.is_empty() {
+        let agents_dir = home.join("agents");
+        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let agent_notes = blocks_at(&profile_path(&p));
+                    if !agent_notes.is_empty() {
+                        notes.extend(agent_notes);
+                    }
+                }
+            }
+        }
+    }
+    notes
 }
 
 fn blocks_at(path: &Path) -> Vec<NoteBlock> {

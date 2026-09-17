@@ -323,6 +323,10 @@ pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinit
     let bytes = serde_json::to_vec_pretty(&values).map_err(|e| e.to_string())?;
     std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&temp, &target).map_err(|e| e.to_string())?;
+    for profile in &next {
+        let agent_dir = vak_config::paths::agent_home(&profile.id);
+        let _ = std::fs::create_dir_all(&agent_dir);
+    }
     Ok(next)
 }
 

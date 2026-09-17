@@ -104,7 +104,7 @@ pub(crate) fn repair_known_failures(core: &Core, report: &health::HealthReport) 
         // UI), not something doctor may guess at.
         if check.label == health::GATEWAY_CHANNELS_LABEL {
             let days = core.config().gateway.pending_expiry_days;
-            let denied = health::expire_pending_entries(&core.sessions_home(), days);
+            let denied = health::expire_pending_entries(&core.shared_data_home(), days);
             lines.push(if denied.is_empty() {
                 format!(
                     "gateway channels ({detail}): nothing mechanically repairable \
@@ -159,7 +159,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
-        let path = health::allowlist_path(&core.sessions_home());
+        let path = health::allowlist_path(&core.shared_data_home());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             path,

@@ -503,6 +503,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
 
         // Record entity via tool

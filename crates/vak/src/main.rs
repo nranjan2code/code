@@ -254,18 +254,35 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
 }
 
 fn latest_session_id(core: &Core) -> Option<String> {
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
-    let mut rows: Vec<_> = std::fs::read_dir(&dir)
-        .ok()?
-        .flatten()
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            Some((
-                meta.modified().ok()?,
-                e.file_name().to_string_lossy().into_owned(),
-            ))
-        })
-        .collect();
+    let mut session_dirs = Vec::new();
+    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    if direct.exists() {
+        session_dirs.push(direct);
+    }
+    let shared = core.shared_data_home();
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            let s = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd());
+            if s.exists() && !session_dirs.contains(&s) {
+                session_dirs.push(s);
+            }
+        }
+    }
+    let mut rows: Vec<_> = Vec::new();
+    for dir in session_dirs {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                if let Ok(meta) = e.metadata() {
+                    if let Ok(m) = meta.modified() {
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        if name.ends_with(".jsonl") {
+                            rows.push((m, name));
+                        }
+                    }
+                }
+            }
+        }
+    }
     rows.sort_by_key(|(m, _)| std::cmp::Reverse(*m));
     rows.first()
         .map(|(_, name)| name.trim_end_matches(".jsonl").to_string())
@@ -1760,25 +1777,38 @@ fn run_sessions_list(cwd: PathBuf) {
     let Ok(core) = Core::new(cwd) else {
         return;
     };
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        println!("no sessions yet ({})", dir.display());
-        return;
-    };
-    let mut rows: Vec<(std::time::SystemTime, u64, String)> = entries
-        .flatten()
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            Some((
-                meta.modified().ok()?,
-                meta.len(),
-                e.file_name().to_string_lossy().into_owned(),
-            ))
-        })
-        .collect();
+    let mut session_dirs = Vec::new();
+    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    if direct.exists() {
+        session_dirs.push(direct.clone());
+    }
+    let shared = core.shared_data_home();
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            let s = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd());
+            if s.exists() && !session_dirs.contains(&s) {
+                session_dirs.push(s);
+            }
+        }
+    }
+    let mut rows: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
+    for dir in &session_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(mtime) = meta.modified() {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        if name.ends_with(".jsonl") && !rows.iter().any(|(_, _, n)| n == &name) {
+                            rows.push((mtime, meta.len(), name));
+                        }
+                    }
+                }
+            }
+        }
+    }
     rows.sort_by_key(|(mtime, _, _)| std::cmp::Reverse(*mtime));
     if rows.is_empty() {
-        println!("no sessions yet ({})", dir.display());
+        println!("no sessions yet ({})", direct.display());
         return;
     }
     for (_mtime, size, name) in rows {

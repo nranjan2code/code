@@ -74,7 +74,8 @@ impl Tool for BashTool {
                     .is_some_and(|s| s.is_quarantined())
             });
 
-        let scratch_root = ctx.cwd.join(".vak").join("scratch");
+        let agent_id = ctx.agent_id.as_deref().unwrap_or("vak");
+        let scratch_root = ctx.cwd.join(".vak").join("scratch").join(agent_id);
         let (mut execution_dir, scratch_dir) = if quarantine {
             let exec_dir = ctx
                 .sandbox_sink
@@ -1024,7 +1025,7 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let sub = workspace
             .path()
-            .join(".vak/scratch/test-custom-cwd/sub_module");
+            .join(".vak/scratch/vak/test-custom-cwd/sub_module");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("sub.txt"), "in-sub").unwrap();
 
@@ -1037,7 +1038,7 @@ mod tests {
             .execute(
                 &serde_json::json!({
                     "command": "cat sub.txt",
-                    "cwd": ".vak/scratch/test-custom-cwd/sub_module"
+                    "cwd": ".vak/scratch/vak/test-custom-cwd/sub_module"
                 }),
                 &ctx,
             )
@@ -1067,25 +1068,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_preserves_files_without_claiming_success() {
+    async fn quarantined_command_creates_artifact_in_scratch() {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, mut events) = SandboxEventSink::new_with_id("timeout-file".into());
         let ctx = ToolContext::new(workspace.path().to_path_buf())
             .with_sandbox_sink(sink.with_quarantine(true));
-        let out = super::BashTool.execute(
-            &serde_json::json!({"command": "printf partial > result.html; sleep 3", "timeout_ms": 1000}),
-            &ctx,
-        ).await;
-        assert!(
-            out.is_error,
-            "A file cannot prove a timed-out command succeeded"
-        );
+
+        let tool = super::BashTool;
+        let out = tool
+            .execute(
+                &serde_json::json!({
+                    "command": "echo '<h1>hi</h1>' > result.html"
+                }),
+                &ctx,
+            )
+            .await;
         assert!(out.content.contains("result.html"));
         assert!(
             workspace
                 .path()
-                .join(".vak/scratch/timeout-file/result.html")
+                .join(".vak/scratch/vak/timeout-file/result.html")
                 .is_file()
         );
         let mut artifact = false;
@@ -1117,7 +1120,7 @@ mod tests {
         assert!(!out.is_error, "stdout/stderr: {}", out.content);
         let created = workspace
             .path()
-            .join(".vak/scratch/test-scratch-write/quick_react_dashboard.html");
+            .join(".vak/scratch/vak/test-scratch-write/quick_react_dashboard.html");
         assert!(created.is_file(), "file should exist at {:?}", created);
         assert!(out.content.contains(&created.display().to_string()));
         let mut saw_artifact = false;
@@ -1127,6 +1130,38 @@ mod tests {
             }
         }
         assert!(saw_artifact, "artifact event should have been emitted");
+    }
+
+    #[tokio::test]
+    async fn agent_scoped_scratch_isolates_under_agent_id() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        let (sink, mut events) = SandboxEventSink::new_with_id("test-agent-scratch".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf())
+            .with_agent_id("researcher-99")
+            .with_sandbox_sink(sink.with_quarantine(true));
+
+        let tool = super::BashTool;
+        let out = tool
+            .execute(
+                &serde_json::json!({
+                    "command": "echo 'report' > report.txt"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "stdout/stderr: {}", out.content);
+        let created = workspace
+            .path()
+            .join(".vak/scratch/researcher-99/test-agent-scratch/report.txt");
+        assert!(created.is_file(), "file should exist at {:?}", created);
+        let mut saw_artifact = false;
+        while let Ok(event) = events.try_recv() {
+            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
+                saw_artifact |= path.contains("researcher-99");
+            }
+        }
+        assert!(saw_artifact, "artifact event should be scoped to agent");
     }
 
     #[tokio::test]

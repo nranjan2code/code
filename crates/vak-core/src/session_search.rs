@@ -31,7 +31,30 @@ fn session_in_scope(
     if agent_id.is_none() && audience_id.is_none() {
         return true;
     }
-    let path = vak_session::SessionPath::new_session_file(home, cwd, session_id);
+    let mut path = vak_session::SessionPath::new_session_file(home, cwd, session_id);
+    if !path.exists() {
+        if let Some(parent) = home.parent().and_then(|p| p.parent()) {
+            let p = vak_session::SessionPath::new_session_file(parent, cwd, session_id);
+            if p.exists() {
+                path = p;
+            }
+        }
+        if !path.exists() {
+            let agents_dir = home.join("agents");
+            if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let candidate = vak_session::SessionPath::new_session_file(&p, cwd, session_id);
+                        if candidate.exists() {
+                            path = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
@@ -75,11 +98,10 @@ impl vak_tools::Tool for SessionSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search PAST sessions of this workspace (other conversations, their \
-         user requests and assistant answers) plus your durable memory notes \
-         and the global user profile. Use when the user references earlier \
-         work ('that script we wrote', 'the bug from Tuesday') or when prior \
-         decisions or stated preferences would help. Returns ranked snippets \
+        "Search past conversations and sessions (user requests and assistant answers) \
+         plus your durable memory notes and the user profile. Use when the user \
+         references earlier work ('that script we wrote', 'the bug from Tuesday') or when \
+         prior decisions or stated preferences would help. Returns ranked snippets \
          with the source id and date. Read-only; current conversation is \
          excluded."
     }
@@ -321,6 +343,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
 
         let out = tool
@@ -358,6 +381,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)
@@ -431,6 +455,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
         let out = tool
             .execute(
@@ -480,6 +505,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
         let out = tool
             .execute(

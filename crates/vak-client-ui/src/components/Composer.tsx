@@ -582,7 +582,7 @@ export default function Composer(props: { cwd: string }) {
             <details class="composer-more">
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
-                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Workspace: ${props.cwd.split("/").pop()}`}</span></button>
+                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Target: ${props.cwd.split("/").pop() || "root"}`}</span></button>
                 <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
                 <select

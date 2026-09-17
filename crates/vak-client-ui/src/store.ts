@@ -157,7 +157,33 @@ export interface WorkbenchExecution {
   timestamp: string;
 }
 
-export const [workbenchExecutions, setWorkbenchExecutions] = createSignal<WorkbenchExecution[]>([]);
+const [sessionWorkbenchMap, setSessionWorkbenchMap] = createSignal<Record<string, WorkbenchExecution[]>>({});
+
+export function workbenchExecutions(): WorkbenchExecution[] {
+  const sid = activeId();
+  if (!sid) return [];
+  return sessionWorkbenchMap()[sid] ?? [];
+}
+
+export function setWorkbenchExecutions(
+  updater: WorkbenchExecution[] | ((prev: WorkbenchExecution[]) => WorkbenchExecution[])
+) {
+  const sid = activeId();
+  if (!sid) return;
+  setWorkbenchExecutionsFor(sid, updater);
+}
+
+export function setWorkbenchExecutionsFor(
+  sessionId: string,
+  updater: WorkbenchExecution[] | ((prev: WorkbenchExecution[]) => WorkbenchExecution[])
+) {
+  setSessionWorkbenchMap((prev) => {
+    const current = prev[sessionId] ?? [];
+    const next = typeof updater === "function" ? updater(current) : updater;
+    return { ...prev, [sessionId]: next };
+  });
+}
+
 export const [workbenchLoadError, setWorkbenchLoadError] = createSignal<string | null>(null);
 const [activeExecutionId, setActiveExecutionSignal] = createSignal<string | null>(localStorage.getItem("vak.activeExecutionId"));
 export { activeExecutionId };
@@ -191,7 +217,7 @@ export function openWorkbenchFolder(_path?: string) {
   setDockTab("workbench");
 }
 
-export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>>, preferLive = false) {
+export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Record<string, unknown>>, preferLive = false) {
   const rebuilt = new Map<string, WorkbenchExecution>();
   for (const raw of events) {
     const kind = raw.kind as string | undefined;
@@ -237,12 +263,14 @@ export function hydrateWorkbenchExecutions(events: Array<Record<string, unknown>
     else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
     else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
   }
-  if (rebuilt.size) setWorkbenchExecutions((prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
+  if (rebuilt.size) setWorkbenchExecutionsFor(sessionId, (prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
 }
 
 /** A Workbench is scoped to the currently selected task, never global app history. */
-export function resetWorkbenchExecutions() {
-  setWorkbenchExecutions([]);
+export function resetWorkbenchExecutions(clearHistoryForSessionId?: string) {
+  if (clearHistoryForSessionId) {
+    setWorkbenchExecutionsFor(clearHistoryForSessionId, []);
+  }
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
@@ -511,7 +539,8 @@ export function goalAppliesTo(id: string | null): ArmedGoal | null {
   return current.sessionId === null || current.sessionId === id ? current : null;
 }
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
-export const [workspacePickerOpen, setWorkspacePickerOpen] = createSignal(false);
+export const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "create" | "target">("fleet");
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
@@ -1239,7 +1268,6 @@ export function applyEvent(
     cueTurnFinish(ev.RunFinished.is_error);
     opts.onFinish?.(ev.RunFinished.summary);
   } else if ("Sandbox" in ev) {
-    if (id !== activeId()) return;
     const sb = ev.Sandbox;
     if (sb.kind === "ExecutionStarted") {
       const execId = sb.execution_id;
@@ -1257,7 +1285,7 @@ export function applyEvent(
         artifacts: [],
         timestamp: new Date().toLocaleTimeString(),
       };
-      setWorkbenchExecutions((prev) => {
+      setWorkbenchExecutionsFor(id, (prev) => {
         const existing = prev.find((item) => item.id === execId);
         if (!existing) return [...prev, newExec];
         // Re-attachment can replay ExecutionStarted after hydration. Keep
@@ -1272,28 +1300,30 @@ export function applyEvent(
           status: item.status === "completed" || item.status === "failed" ? item.status : "running",
         } : item);
       });
-      setActiveExecutionId(execId);
+      if (id === activeId()) {
+        setActiveExecutionId(execId);
+      }
     } else if (sb.kind === "Stdout") {
       const execId = sb.execution_id;
       if (execId) {
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) => (e.id === execId ? { ...e, stdout: e.stdout + sb.chunk } : e))
         );
       }
     } else if (sb.kind === "Stderr") {
       const execId = sb.execution_id;
       if (execId) {
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) => (e.id === execId ? { ...e, stderr: e.stderr + sb.chunk } : e))
         );
       }
     } else if (sb.kind === "OutputTruncated") {
       const execId = sb.execution_id;
-      if (execId) setWorkbenchExecutions((prev) => prev.map((e) => e.id === execId ? { ...e, outputTruncated: true } : e));
+      if (execId) setWorkbenchExecutionsFor(id, (prev) => prev.map((e) => e.id === execId ? { ...e, outputTruncated: true } : e));
     } else if (sb.kind === "PackageInstalled") {
       const execId = sb.execution_id;
       if (execId) {
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) => (e.id === execId ? { ...e, packages: [...e.packages, ...sb.packages] } : e))
         );
       }
@@ -1302,7 +1332,7 @@ export function applyEvent(
       if (execId) {
         // A deliverable is the primary outcome of execution. Surface the
         // result pane as soon as one exists; activity remains one click away.
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) =>
             e.id === execId
               ? {
@@ -1319,7 +1349,7 @@ export function applyEvent(
     } else if (sb.kind === "ProcessTelemetry") {
       const execId = sb.execution_id;
       if (execId) {
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) =>
             e.id === execId
               ? {
@@ -1335,7 +1365,7 @@ export function applyEvent(
     } else if (sb.kind === "ExecutionFinished") {
       const execId = sb.execution_id;
       if (execId) {
-        setWorkbenchExecutions((prev) =>
+        setWorkbenchExecutionsFor(id, (prev) =>
           prev.map((e) =>
             e.id === execId
               ? {

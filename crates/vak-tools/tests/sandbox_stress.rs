@@ -22,7 +22,7 @@ async fn nested_data_artifacts_stay_in_execution_scratch() {
     assert!(
         workspace
             .path()
-            .join(".vak/scratch/stress-data/nested/deeper/data.csv")
+            .join(".vak/scratch/vak/stress-data/nested/deeper/data.csv")
             .is_file()
     );
     let mut saw_nested = false;

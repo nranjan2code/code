@@ -17,6 +17,7 @@ fn ctx_with(cwd: &std::path::Path, mode: SandboxMode) -> ToolContext {
         limits: Default::default(),
         sandbox: Some(Arc::new(Seatbelt::new(mode, cwd))),
         sandbox_sink: None,
+        agent_id: None,
     }
 }
 
@@ -173,6 +174,7 @@ async fn deny_sandbox_returns_error_at_runtime() {
             "unavailable in this configuration",
         ))),
         sandbox_sink: None,
+        agent_id: None,
     };
 
     let out = BashTool
@@ -200,6 +202,7 @@ async fn off_mode_allows_unrestricted_writes() {
         limits: Default::default(),
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     };
 
     let out = run(

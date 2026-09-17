@@ -81,6 +81,7 @@ async fn call_output_is_bounded_before_entering_the_session() {
         },
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     };
     let out = tool
         .execute(

@@ -409,6 +409,49 @@ pub fn retired_plugins_check(core: &Core) -> HealthCheck {
     }
 }
 
+/// Check whether agent workspaces are valid and readable.
+pub fn agent_roster_check(core: &Core) -> HealthCheck {
+    let agents_dir = core.shared_data_home().join("agents");
+    if !agents_dir.exists() {
+        return HealthCheck {
+            label: "agent roster".into(),
+            detail: Ok("1 agent active (default: vak)".into()),
+        };
+    }
+    match std::fs::read_dir(&agents_dir) {
+        Ok(read) => {
+            let mut names = Vec::new();
+            for entry in read.flatten() {
+                if entry.path().is_dir()
+                    && let Some(name) = entry.file_name().to_str()
+                {
+                    names.push(name.to_string());
+                }
+            }
+            names.sort();
+            if names.is_empty() {
+                HealthCheck {
+                    label: "agent roster".into(),
+                    detail: Ok("1 agent active (default: vak)".into()),
+                }
+            } else {
+                HealthCheck {
+                    label: "agent roster".into(),
+                    detail: Ok(format!(
+                        "{} agent workspace(s) verified ({})",
+                        names.len(),
+                        names.join(", ")
+                    )),
+                }
+            }
+        }
+        Err(e) => HealthCheck {
+            label: "agent roster".into(),
+            detail: Err(format!("failed to read agents directory: {e}")),
+        },
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -471,12 +514,13 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     });
     checks.push(capability_health_check(core));
     checks.push(gateway_channels_check(
-        &core.sessions_home(),
+        &core.shared_data_home(),
         core.config().gateway.pending_expiry_days,
     ));
     checks.push(layout_check());
     checks.push(version_parity_check(&install::resolve_manifest_path(None)));
     checks.push(retired_plugins_check(core));
+    checks.push(agent_roster_check(core));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -727,7 +771,8 @@ mod tests {
                 "gateway channels",
                 "install layout",
                 "self version parity",
-                "retired plugins"
+                "retired plugins",
+                "agent roster",
             ]
         );
         assert_eq!(
@@ -739,7 +784,7 @@ mod tests {
         assert!(home_check.detail.is_ok());
         assert_eq!(
             home_check.detail.as_ref().ok(),
-            Some(&home.path().display().to_string())
+            Some(&core.sessions_home().display().to_string())
         );
         // Default config carries no warnings and no active session ladder.
         assert!(report.checks.iter().any(|c| c.label == "config warnings"));
@@ -906,5 +951,25 @@ mod tests {
             report.failures,
             report.checks.iter().filter(|c| c.failed()).count()
         );
+    }
+
+    #[test]
+    fn agent_roster_check_discovers_configured_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(home.path().to_path_buf());
+
+        let agent1 = home.path().join("agents").join("researcher");
+        let agent2 = home.path().join("agents").join("writer");
+        std::fs::create_dir_all(&agent1).unwrap();
+        std::fs::create_dir_all(&agent2).unwrap();
+
+        let check = agent_roster_check(&core);
+        assert!(!check.failed());
+        let detail = check.detail.expect("should pass");
+        assert!(detail.contains("2 agent workspace(s) verified"));
+        assert!(detail.contains("researcher"));
+        assert!(detail.contains("writer"));
     }
 }

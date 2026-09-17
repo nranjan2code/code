@@ -413,7 +413,7 @@ impl Core {
 }
 
 fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
-    finops::FinOpsLedger::new(&core.inner.sessions_home)
+    finops::FinOpsLedger::new(&core.shared_data_home())
 }
 
 struct CoreInner {
@@ -2406,7 +2406,7 @@ impl Core {
             // the ledger would silently keep writing to the original
             // location. The reflection call site already got this right;
             // the per-turn call site this replaces did not.
-            &self.sessions_home(),
+            &self.shared_data_home(),
             &finops,
             self.inner.day_budget.clone(),
         ));
@@ -2837,7 +2837,7 @@ impl Core {
     fn user_env_file(&self) -> PathBuf {
         Self::read_override(&self.inner.user_env_override)
             .or_else(vak_config::user_env_path)
-            .unwrap_or_else(|| self.sessions_home().join(".env"))
+            .unwrap_or_else(|| self.shared_data_home().join(".env"))
     }
 
     /// SDK seam: inject a provider directly (tests, embedded runtimes).
@@ -2848,6 +2848,18 @@ impl Core {
     }
 
     pub fn sessions_home(&self) -> PathBuf {
+        let base = Self::read_override(&self.inner.sessions_home_override)
+            .unwrap_or_else(|| self.inner.sessions_home.clone());
+        if let Some(agent) = self.agent_identity.as_ref() {
+            let home = vak_config::paths::agent_home_at(&base, &agent.id);
+            let _ = std::fs::create_dir_all(&home);
+            return home;
+        }
+        base
+    }
+
+    /// Root shared data home across all agents (gateway allowlist, scheduler tasks, FinOps ledger).
+    pub fn shared_data_home(&self) -> PathBuf {
         Self::read_override(&self.inner.sessions_home_override)
             .unwrap_or_else(|| self.inner.sessions_home.clone())
     }
@@ -3121,14 +3133,22 @@ impl Core {
         if let Some(agent) = &self.agent_identity
             && agent.id != "vak"
         {
+            let agent_home = self.sessions_home();
+            let agent_prompts_dir = prompts::layer_dir(&agent_home);
+            let mut agent_layer = prompts::read_layer(&agent_prompts_dir);
+            if agent_layer.identity.is_none() {
+                agent_layer.identity = Some(format!(
+                    "You are {}. {}\nWorking style: {}\nUseful for: {}\nThis identity does not grant tools, permissions, credentials or budget.",
+                    agent.name, agent.personality, agent.behaviour, agent.responsibilities
+                ));
+            }
+            if agent_layer.instructions.is_none() && !agent.instructions.trim().is_empty() {
+                agent_layer.instructions = Some(agent.instructions.clone());
+            }
             layers.push(prompts::LayerInput::new(
                 prompts::PromptLayer::Agent,
                 Some(format!("agent:{}@{}", agent.id, agent.revision)),
-                prompts::LayerContent {
-                    identity: Some(format!("You are {}. {}\nWorking style: {}\nUseful for: {}\nThis identity does not grant tools, permissions, credentials or budget.", agent.name, agent.personality, agent.behaviour, agent.responsibilities)),
-                    instructions: (!agent.instructions.trim().is_empty()).then(|| agent.instructions.clone()),
-                    ..Default::default()
-                },
+                agent_layer,
             ));
         }
         layers
@@ -3783,7 +3803,9 @@ impl Core {
             return (false, false, false);
         };
         let project = vak_config::read_env_file_var(&self.inner.cwd.join(".env"), env).is_some();
-        let user = vak_config::read_env_file_var(&self.user_env_file(), env).is_some();
+        let agent = self.agent_identity.is_some()
+            && vak_config::read_env_file_var(&self.sessions_home().join(".env"), env).is_some();
+        let user = agent || vak_config::read_env_file_var(&self.user_env_file(), env).is_some();
         let process = std::env::var(env)
             .ok()
             .is_some_and(|v| !v.trim().is_empty());
@@ -3933,6 +3955,11 @@ impl Core {
     }
 
     fn scoped_secret(&self, env_var: &str) -> Option<String> {
+        if self.agent_identity.is_some()
+            && let Some(val) = vak_config::read_env_file_var(&self.sessions_home().join(".env"), env_var)
+        {
+            return Some(val);
+        }
         vak_config::read_env_file_var(&self.inner.cwd.join(".env"), env_var)
             .or_else(|| vak_config::read_env_file_var(&self.user_env_file(), env_var))
             .or_else(|| std::env::var(env_var).ok())
@@ -4601,13 +4628,23 @@ impl Core {
         if !self.effective_commitment() {
             return authority;
         }
-        if let Some(id) = commitment_id
-            && let Ok(Some(commitment)) =
-                vak_commit::CommitmentLedger::new(&self.sessions_home()).get(id)
-            && let Some(envelope) = commitment.envelope
-            && envelope.is_live(chrono::Utc::now())
-        {
-            authority.envelope = Some(envelope);
+        if let Some(id) = commitment_id {
+            let maybe_commitment = vak_commit::CommitmentLedger::new(&self.sessions_home())
+                .get(id)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    vak_commit::CommitmentLedger::new(&self.shared_data_home())
+                        .get(id)
+                        .ok()
+                        .flatten()
+                });
+            if let Some(commitment) = maybe_commitment
+                && let Some(envelope) = commitment.envelope
+                && envelope.is_live(chrono::Utc::now())
+            {
+                authority.envelope = Some(envelope);
+            }
         }
         authority
     }
@@ -5077,7 +5114,7 @@ impl Core {
         // slash command one transport would have to reimplement.
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.shared_data_home(),
             }));
         }
         if self.effective_memory_search_enabled() {
@@ -5093,7 +5130,8 @@ impl Core {
                 exclude_session_id: exclude,
                 agent_id: session
                     .header()
-                    .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone())),
+                    .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()))
+                    .or_else(|| self.agent_identity.as_ref().map(|agent| agent.id.clone())),
                 audience_id: session.header().and_then(|header| {
                     header
                         .conversation
@@ -5111,7 +5149,7 @@ impl Core {
         // gateway) routes a task's result back into this conversation
         // unless the model names a different one explicitly.
         tools.push(Arc::new(tools_tasks::TasksTool {
-            sessions_home: self.sessions_home(),
+            sessions_home: self.shared_data_home(),
             cwd: self.inner.cwd.clone(),
             default_deliver_to: self.default_deliver_to.clone(),
         }));
@@ -6245,7 +6283,7 @@ mod channel_mcp_network_tests {
 
         // Persist an invariant note to memory.
         crate::memory::append_note(
-            &home,
+            &core.sessions_home(),
             &cwd,
             "invariant",
             "safety",
@@ -8499,5 +8537,48 @@ mod spend_gate_persistence_tests {
         assert!(prompts.contains_key("writer"));
         assert!(prompts["analyst"].contains("Data Analyst"));
         assert!(prompts["researcher"].contains("Research Analyst"));
+    }
+
+    #[test]
+    fn agent_scoped_secret_takes_precedence_over_shared_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let mut core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(home.path().to_path_buf());
+        core.set_user_env_path(home.path().join(".env"));
+
+        std::fs::write(
+            home.path().join(".env"),
+            "ANTHROPIC_API_KEY=shared-anthropic-key\n",
+        )
+        .unwrap();
+
+        let agent = vak_session::types::AgentIdentity {
+            id: "specialist".into(),
+            revision: 1,
+            name: "Specialist".into(),
+            personality: "Focused".into(),
+            behaviour: "Analytical".into(),
+            responsibilities: "Auditing".into(),
+            instructions: "Audit carefully".into(),
+        };
+        core = core.with_agent_identity(Some(agent));
+
+        assert_eq!(
+            core.provider_secret("ANTHROPIC_API_KEY"),
+            Some("shared-anthropic-key".into())
+        );
+
+        let agent_home = core.sessions_home();
+        std::fs::write(
+            agent_home.join(".env"),
+            "ANTHROPIC_API_KEY=agent-private-key\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            core.provider_secret("ANTHROPIC_API_KEY"),
+            Some("agent-private-key".into())
+        );
     }
 }

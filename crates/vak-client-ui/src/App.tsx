@@ -59,8 +59,9 @@ import {
   setSearchOpen,
   settingsOpen,
   setSettingsOpen,
-  workspacePickerOpen,
-  setWorkspacePickerOpen,
+  agentPickerOpen,
+  setAgentPickerOpen,
+  setAgentPickerTab,
   inboxOpen,
   setInboxOpen,
   transcriptViewId,
@@ -121,7 +122,7 @@ import FeedsModal from "./components/FeedsModal";
 import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
-import WorkspacePickerModal from "./components/WorkspacePickerModal";
+import AgentPickerModal from "./components/AgentPickerModal";
 
 const streams = new Map<string, EventSource>();
 const presentationStreams = new Map<string, EventSource>();
@@ -208,8 +209,8 @@ async function hydrate(id: string) {
     }
     if (activeId() === id) {
       setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
-      hydrateWorkbenchExecutions(sandbox.events, isRunning(id));
     }
+    hydrateWorkbenchExecutions(id, sandbox.events, isRunning(id));
   } catch (error) {
     if (!isRunning(id)) {
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
@@ -469,7 +470,9 @@ export async function activate(id: string) {
 
 let openingAgent: Promise<string | null> | null = null;
 export async function openAgentChat(agentId = "vak"): Promise<string | null> {
-  if (openingAgent) return null;
+  while (openingAgent) {
+    await openingAgent;
+  }
   setAgentOpening(true);
   const source = api.backendUrl();
   const cwd = backend().cwd;
@@ -925,7 +928,8 @@ export async function switchWorkspace(cwd?: string) {
   if (workspaceSwitching()) return;
   try {
     if (!cwd && !host.can("native-dialogs")) {
-      setWorkspacePickerOpen(true);
+      setAgentPickerTab("target");
+      setAgentPickerOpen(true);
       return;
     }
     const dir = cwd ?? (await host.pickWorkspace());
@@ -1096,7 +1100,7 @@ export default function App() {
       if (!mod) {
         if (e.key === "Escape") {
           if (showShortcuts()) setShowShortcuts(false);
-          else if (workspacePickerOpen()) setWorkspacePickerOpen(false);
+          else if (agentPickerOpen()) setAgentPickerOpen(false);
           else if (searchOpen()) setSearchOpen(false);
           else if (settingsOpen()) setSettingsOpen(false);
           else if (bestOfOpen()) setBestOfOpen(false);
@@ -1393,7 +1397,7 @@ export default function App() {
           <Toast />
           <SearchModal />
           <FeedsModal />
-          <WorkspacePickerModal />
+          <AgentPickerModal />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>

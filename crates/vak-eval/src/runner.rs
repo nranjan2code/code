@@ -435,6 +435,7 @@ async fn run_case_with_tools(
         limits: Default::default(),
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     };
     promote_scratch_artifacts(&cwd);
     let verify_tool = BashTool;

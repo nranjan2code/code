@@ -152,6 +152,52 @@ create a persistent Agent, attach a Bot, approve an endpoint, link external
 identities, widen its authority, or re-route a person to another Agent. Those
 are user/operator actions.
 
+## Agent workspace and execution scratch topology
+
+In an Agent-owned platform, each Agent (the default `vak` or any custom user-defined Agent) is granted an independent filesystem workspace directly under the user's data home:
+
+```text
+~/vak-home/
+├── agents/
+│   ├── vak/
+│   │   ├── sessions/<cwd-hash>/<session-id>.jsonl
+│   │   ├── memory/
+│   │   └── config.toml
+│   └── <custom-agent-id>/
+│       ├── sessions/<cwd-hash>/<session-id>.jsonl
+│       ├── memory/
+│       └── config.toml
+├── gateway/
+│   ├── allowlist.json
+│   └── bots.json
+├── operations/
+│   ├── incidents.jsonl
+│   └── actions.jsonl
+├── finops/
+│   └── ledger.jsonl
+├── index/
+└── tasks.json
+```
+
+1. **Private Agent Workspaces (`vak_config::paths::agent_home`)**:
+   - `Core::sessions_home()` resolves through `self.agent_identity` to `<base>/agents/<agent_id>/`.
+   - Each Agent's session logs, memory notes (`append_note`), reflection entries, and local configuration stay completely isolated.
+   - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
+
+2. **Quarantined Execution Scratch (`.vak/scratch/<agent_id>/`)**:
+   - Tool execution (`BashTool`) creates and bounds runtime quarantine directories strictly per Agent: `<cwd>/.vak/scratch/<agent_id>/<execution-id>/`.
+   - Concurrent tasks spawned by different Agents in the same workspace never collide, overwrite, or see intermediate artifacts, virtual environments, or partial scripts of another Agent.
+   - Promotion manifests (`CandidateManifest`) and diff viewers review candidates out of the agent-scoped scratch path.
+
+3. **Global Shared Infrastructure (`Core::shared_data_home()`)**:
+   - Cross-agent services access top-level `~/vak-home/` directly via `shared_data_home()`.
+   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), FinOps token ledger, global full-text search index, and scheduled background tasks (`tasks.json`).
+
+4. **Client Presentation and Workbench Isolation (`vak-client-ui`)**:
+   - The desktop and web UI maintains `sessionWorkbenchMap: Record<string, WorkbenchExecution[]>`, keying execution events by session ID rather than a single flat global array.
+   - Live SSE execution events for background agents continue streaming and populating their respective views when the user switches tabs or focuses another conversation.
+   - `openAgentChat` serializes concurrent admission requests with a mutual exclusion gate, guaranteeing no user request is dropped or answered with `null` during agent switching.
+
 ## Resolution and rotation
 
 An endpoint's target resolves exactly once per admission:

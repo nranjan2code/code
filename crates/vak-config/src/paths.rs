@@ -73,6 +73,17 @@ pub fn gateway_workspace() -> PathBuf {
     gateway_workspace_at(&data_home(), &default_workspace())
 }
 
+/// Per-agent data home: sessions, memory, and agent-specific config.
+/// Under data_home()/agents/<agent_id>/
+pub fn agent_home(agent_id: &str) -> PathBuf {
+    agent_home_at(&data_home(), agent_id)
+}
+
+/// Per-agent data home resolved from an explicit data home root.
+pub fn agent_home_at(data: &std::path::Path, agent_id: &str) -> PathBuf {
+    data.join("agents").join(agent_id)
+}
+
 /// Resolve the gateway workspace from an explicit data home. This variant
 /// keeps server tests isolated when a `Core` uses a temporary sessions home.
 pub fn gateway_workspace_at(data: &std::path::Path, default: &std::path::Path) -> PathBuf {
@@ -387,5 +398,12 @@ mod tests {
         std::fs::write(&path, "relative\n").unwrap();
         let default = PathBuf::from("/Users/example/vak-home");
         assert_eq!(gateway_workspace_at(data.path(), &default), default);
+    }
+
+    #[test]
+    fn agent_home_at_resolves_scoped_subdirectory() {
+        let data = PathBuf::from("/tmp/vak-test-home");
+        assert_eq!(agent_home_at(&data, "vak"), data.join("agents/vak"));
+        assert_eq!(agent_home_at(&data, "agent-123"), data.join("agents/agent-123"));
     }
 }

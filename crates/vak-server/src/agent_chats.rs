@@ -68,7 +68,6 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         }
         profile.identity()
     };
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     // The desktop surface has one durable conversation per selected Agent.
     // This is deliberately derived from the Agent identity, not from browser
     // storage or a transient session id, so reopening the same Agent resumes
@@ -82,6 +81,10 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             bot_id: None,
         }),
     };
+    let core = core
+        .with_agent_identity(Some(identity.clone()))
+        .with_conversation_context(Some(conversation.clone()));
+    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
@@ -159,9 +162,6 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         return Json(serde_json::json!({"session_id": sid, "agent": h.agent, "cwd": core.cwd()}))
             .into_response();
     }
-    let core = core
-        .with_agent_identity(Some(identity.clone()))
-        .with_conversation_context(Some(conversation));
     let session = match core.start_session().await {
         Ok(session) => session,
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),

@@ -501,6 +501,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
 
         let csv = "name,dept,salary\nAlice,Eng,120000\nBob,Sales,85000\nCharlie,Eng,140000\nDave,Sales,90000\nEve,Eng,110000\n";

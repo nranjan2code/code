@@ -126,7 +126,12 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     );
     let (_, a) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     let sid = a["session_id"].as_str().unwrap().to_owned();
-    let ledger = SessionPath::new_session_file(&core.sessions_home(), &cwd, &sid);
+    let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
+    let ledger = SessionPath::new_session_file(&newsy_home, &cwd, &sid);
+    assert!(
+        !SessionPath::new_session_file(&core.sessions_home(), &cwd, &sid).exists(),
+        "Newsy session must not be in Vak workspace"
+    );
     let first = std::fs::read_to_string(ledger)
         .unwrap()
         .lines()
@@ -248,7 +253,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     let other_dir = temp.path().join("other-workspace");
     std::fs::create_dir_all(&other_dir).unwrap();
     let other_core = vak_core::Core::new_with_trust(other_dir, true).unwrap();
-    other_core.set_sessions_home(core.sessions_home());
+    other_core.set_sessions_home(core.shared_data_home());
     other_core.set_provider_instance(capture);
     let other_app = vak_server::router(other_core);
     call(
@@ -264,7 +269,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     // Concurrent process simulation: a second server instance sharing the same workspace
     // and sessions home (e.g. gateway service when desktop application holds the writer lock).
     let concurrent_core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
-    concurrent_core.set_sessions_home(core.sessions_home());
+    concurrent_core.set_sessions_home(core.shared_data_home());
     concurrent_core.set_provider_instance(Arc::new(Capture::default()));
     let concurrent_app = vak_server::router(concurrent_core);
 

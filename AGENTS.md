@@ -68,7 +68,7 @@ configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
 outcome-directed runtime release, the 2026 unified sandboxed execution runtime
 (`bash` execution engine with streaming events, live ANSI terminal rendering with
 `\r` carriage return folding, 500ms process telemetry with RSS memory and duration
-badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/`
+badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/<agent_id>/`
 with live sandboxed iframe/image/code artifact preview, and package installation tracking),
 the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
 NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues),
@@ -77,10 +77,11 @@ one calm conversation with contextual task details, unified navigation, clean pr
 scaffolding scrubbing, typed work objects, theme packs across Dark Obsidian, Quiet Sage, Soft Paper,
 High Contrast, and Light, and sandboxed artifact inspection that opens only when relevant or requested).
 The Agent-owned platform (`docs/design/64-agent-owned-platform.md`) is now authoritative:
-Agents own conversations, memory boundaries, lifecycle, channel targets, scheduled work,
-request admission, and delivery provenance; Bots are transport identities and channels are
-endpoints, while internal tasks remain implementation details behind the Agent conversation.
-Document 63 is retained as historical context only.
+Agents own conversations, dedicated workspaces (`~/vak-home/agents/<agent_id>/`), private session ledgers,
+memory boundaries, lifecycle, channel targets, scheduled work, request admission, and delivery provenance;
+Bots are transport identities and channels are endpoints, while internal tasks remain implementation details
+behind the Agent conversation. Global infrastructure (gateway, operations, FinOps, FTS, tasks) remains shared
+at `~/vak-home/` via `Core::shared_data_home()`. Document 63 is retained as historical context only.
 Each carries its own `Status:` line — read it before assuming a document describes
 shipped behaviour rather than a proposal.
 
@@ -347,10 +348,11 @@ shipped behaviour rather than a proposal.
     workspace and remain scoped. Admin, Desktop, CLI, and server APIs use the
     same explicit `user`/`project` vocabulary and expose provenance. A GET used
     to seed a write returns that exact layer, never the merged projection.
-    Secrets follow the same lookup chain but stay outside TOML: project secret
-    → Shared secret → process environment. A project secret must never enter a
-    process-global override map where another pooled workspace could observe
-    it. Curated integrations are executable definitions backed by real
+    Secrets follow the same lookup chain but stay outside TOML: Agent private secret
+    (`~/vak-home/agents/<agent_id>/.env`) → project secret (`<workspace>/.env`) → Shared
+    platform secret (`~/vak-home/.env`) → process environment. An Agent or project secret
+    must never enter a process-global override map where another pooled workspace or agent
+    could observe it. Curated integrations are executable definitions backed by real
     packages; the product must not advertise mock, placeholder, or TODO
     capabilities.
 
@@ -469,14 +471,14 @@ shipped behaviour rather than a proposal.
     just a credential in an access log. The web terminal is off by default
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
-35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/`, and observable in Workbench.**
+35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/<agent_id>/`, and observable in Workbench.**
     Universal execution via `bash` executes in quarantined operational environments
     strictly confined to the canonical workspace boundary (`<ws>`).
     Execution processes run with scrubbed environments (`env_clear`), passing only
     minimal operational paths (`PATH`, `HOME`, virtual environment paths) and zero
     parent credentials or model API keys. Intermediate execution artifacts, virtual
     environments, site-packages, compiled bundles, and generated files are
-    strictly quarantined under `.vak/scratch/` and must never contaminate workspace
+    strictly quarantined under `.vak/scratch/<agent_id>/<execution-id>/` and must never contaminate workspace
     project source trees or git-tracked directories unless explicitly copied as an
     outcome artifact requested by the user. All executions stream live stdout,
     stderr, package detection events, and status directly to the Workbench panel
@@ -500,16 +502,23 @@ shipped behaviour rather than a proposal.
     the real context window or default conservatively (8,192 tokens) to ensure context
     compaction triggers reliably on local hardware rather than overflowing context.
 
-37. **Agent ownership is mandatory for new work.** Every newly admitted session,
-    request, scheduled run, child/delegated run, and channel delivery has one
-    resolved Agent identity plus its ConversationKey, audience, origin, and
-    configuration revision. Agent identity is resolved at admission and cannot
-    be supplied by untrusted client text. Bots identify transport credentials;
-    channels identify endpoints; neither is an Agent. Paused, archived, or
-    revoked Agents and endpoints fail closed, cancel affected work, and never
-    fall back to Vak. Internal tasks, tools, flows, and subagents inherit or
-    explicitly freeze Agent ownership and are projected back only through
-    authorized Agent conversations (docs/design/64-agent-owned-platform.md).
+37. **Agent ownership is mandatory for new work and isolates workspaces, memory, and execution.**
+    Every newly admitted session, request, scheduled run, child/delegated run, and channel delivery has one
+    resolved Agent identity plus its ConversationKey, audience, origin, and configuration revision.
+    Each top-level agent (the built-in `vak` and user-defined custom agents) owns a dedicated workspace under
+    `~/vak-home/agents/<agent_id>/`, encompassing private append-only session ledgers under `sessions/<cwd-hash>/`,
+    private memory under `memory/`, and private configuration, with quarantined execution scratch partitioned
+    under `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the gateway allowlist, bots,
+    operations incidents, actions receipts, FinOps ledger, FTS search index, and scheduled tasks) remains
+    shared at top-level `~/vak-home/` via `Core::shared_data_home()`. Agent identity is resolved at admission
+    and cannot be supplied by untrusted client text. Bots identify transport credentials; channels identify
+    endpoints; neither is an Agent. Paused, archived, or revoked Agents and endpoints fail closed, cancel
+    affected work, and never fall back to Vak. Internal tasks, tools, flows, and subagents inherit or
+    explicitly freeze Agent ownership and are projected back only through authorized Agent conversations
+    (docs/design/64-agent-owned-platform.md). On the client presentation layer, Workbench execution telemetry
+    and artifacts are partitioned per conversation session in `sessionWorkbenchMap`, guaranteeing that
+    executions in background agents are never dropped or cross-contaminated when switching active chats,
+    with serialized admission gates preventing dropped requests.
 
 38. **Universal outcome presentation, polyglot document ingestion, and domain specialist delegation are platform-level contracts.**
     vak is a universal assistant operating with domain neutrality across engineering,

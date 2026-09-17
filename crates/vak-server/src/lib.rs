@@ -3751,15 +3751,37 @@ pub(crate) fn import_session_sync(
     session_id: &str,
 ) -> bool {
     let dir = home.join("sessions");
-    let Ok(read) = std::fs::read_dir(&dir) else {
-        return false;
+    if let Ok(read) = std::fs::read_dir(&dir) {
+        for project in read.flatten() {
+            let candidate = project.path().join(format!("{session_id}.jsonl"));
+            if candidate.is_file()
+                && let Ok(stats) = store.import_session(home, &candidate)
+            {
+                return stats.entries_indexed > 0 || stats.skipped > 0;
+            }
+        }
+    }
+    let shared = if home.join("agents").is_dir() {
+        home.to_path_buf()
+    } else if let Some(parent) = home.parent().and_then(|p| p.parent()) {
+        parent.to_path_buf()
+    } else {
+        home.to_path_buf()
     };
-    for project in read.flatten() {
-        let candidate = project.path().join(format!("{session_id}.jsonl"));
-        if candidate.is_file()
-            && let Ok(stats) = store.import_session(home, &candidate)
-        {
-            return stats.entries_indexed > 0 || stats.skipped > 0;
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            let agent_home = agent.path();
+            let agent_sessions = agent_home.join("sessions");
+            if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
+                for project in projects.flatten() {
+                    let candidate = project.path().join(format!("{session_id}.jsonl"));
+                    if candidate.is_file()
+                        && let Ok(stats) = store.import_session(&agent_home, &candidate)
+                    {
+                        return stats.entries_indexed > 0 || stats.skipped > 0;
+                    }
+                }
+            }
         }
     }
     false
@@ -3803,19 +3825,7 @@ async fn attach_session(
     } else if let Ok(s) = state.core.open_session_read_only(&body.session_id).await {
         Ok(s)
     } else {
-        let home = state.core.sessions_home();
-        let sessions_dir = home.join("sessions");
-        let mut found = None;
-        if let Ok(entries) = std::fs::read_dir(sessions_dir) {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join(format!("{}.jsonl", body.session_id));
-                if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
-                    found = Some(s);
-                    break;
-                }
-            }
-        }
-        found.ok_or_else(|| {
+        find_session_on_disk(&state.core, &body.session_id).ok_or_else(|| {
             vak_core::CoreError::Session(vak_session::SessionError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("session not found: {}", body.session_id),
@@ -3893,6 +3903,25 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
                         .any(|existing| existing.path() == file.path());
                     if !duplicate {
                         entries.push(file);
+                    }
+                }
+            }
+        }
+    }
+    let shared_home = state.core.shared_data_home();
+    if let Ok(agents) = std::fs::read_dir(shared_home.join("agents")) {
+        for agent in agents.flatten() {
+            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
+                for project in projects.flatten() {
+                    if let Ok(files) = std::fs::read_dir(project.path()) {
+                        for file in files.flatten() {
+                            let duplicate = entries
+                                .iter()
+                                .any(|existing| existing.path() == file.path());
+                            if !duplicate {
+                                entries.push(file);
+                            }
+                        }
                     }
                 }
             }
@@ -6597,24 +6626,17 @@ fn markdown_response(md: String) -> axum::response::Response {
         .into_response()
 }
 
-/// Historical sessions live on disk but not in the in-memory handle map
-/// (a fresh server process starts with an empty map). Open read-only for
-/// Historical sessions live on disk but not in the in-memory handle map
-/// (a fresh server process starts with an empty map). Open read-only for
-/// export/inspection without mutating run bookkeeping.
-fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
-    let path = state
-        .core
-        .sessions_home()
+/// Find a session log on disk across current sessions_home and all agent directories.
+fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog> {
+    let home = core.sessions_home();
+    let path = home
         .join("sessions")
-        .join(vak_core::memory::hash_cwd(state.core.cwd()))
+        .join(vak_core::memory::hash_cwd(core.cwd()))
         .join(format!("{id}.jsonl"));
     if let Ok(s) = vak_session::SessionLog::open_read_only(path) {
         return Some(s);
     }
-    let home = state.core.sessions_home();
-    let sessions_dir = home.join("sessions");
-    if let Ok(entries) = std::fs::read_dir(sessions_dir) {
+    if let Ok(entries) = std::fs::read_dir(home.join("sessions")) {
         for entry in entries.flatten() {
             let candidate = entry.path().join(format!("{id}.jsonl"));
             if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
@@ -6622,7 +6644,27 @@ fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::Se
             }
         }
     }
+    let shared = core.shared_data_home();
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
+                for project in projects.flatten() {
+                    let candidate = project.path().join(format!("{id}.jsonl"));
+                    if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+    }
     None
+}
+
+/// Historical sessions live on disk but not in the in-memory handle map
+/// (a fresh server process starts with an empty map). Open read-only for
+/// export/inspection without mutating run bookkeeping.
+fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
+    find_session_on_disk(&state.core, id)
 }
 
 /// Read only the immutable first header entry without acquiring the session's
@@ -7495,15 +7537,18 @@ async fn list_checkpoints(
     // A session with no snapshots yet has no directory; that's an empty
     // list, not an error.
     let list = match vak_core::checkpoints::list(&state.core.sessions_home(), &id) {
-        Ok(list) => list,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
+        Ok(list) if !list.is_empty() => list,
+        _ => match vak_core::checkpoints::list(&state.core.shared_data_home(), &id) {
+            Ok(list) => list,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+                    .into_response();
+            }
+        },
     };
     let checkpoints: Vec<serde_json::Value> = list
         .iter()
@@ -7543,7 +7588,9 @@ async fn restore_checkpoint(
         .get(&id)
         .map(|h| h.cwd.clone())
         .unwrap_or_else(|| state.core.cwd().clone());
-    let cp = match vak_core::checkpoints::load(&state.core.sessions_home(), &id, seq) {
+    let cp = match vak_core::checkpoints::load(&state.core.sessions_home(), &id, seq)
+        .or_else(|_| vak_core::checkpoints::load(&state.core.shared_data_home(), &id, seq))
+    {
         Ok(cp) => cp,
         Err(_) => {
             return (
@@ -7576,11 +7623,11 @@ async fn restore_checkpoint(
 // ---- archive (sidebar visibility; ledgers stay untouched) --------------------
 
 fn archive_path(core: &Core) -> PathBuf {
-    core.sessions_home().join("archive.json")
+    core.shared_data_home().join("archive.json")
 }
 
 fn deleted_path(core: &Core) -> PathBuf {
-    core.sessions_home().join("deleted.json")
+    core.shared_data_home().join("deleted.json")
 }
 
 fn read_archive(core: &Core) -> HashMap<String, bool> {
@@ -7617,6 +7664,25 @@ fn write_archive(core: &Core, map: &HashMap<String, bool>) {
     }
 }
 
+fn find_session_in_cwd(core: &Core, id: &str) -> bool {
+    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd())
+        .join(format!("{id}.jsonl"));
+    if direct.is_file() {
+        return true;
+    }
+    let shared = core.shared_data_home();
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            let candidate = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd())
+                .join(format!("{id}.jsonl"));
+            if candidate.is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[derive(serde::Deserialize)]
 struct ArchiveBody {
     archived: bool,
@@ -7627,8 +7693,7 @@ async fn set_archived(
     Path(id): Path<String>,
     Json(body): Json<ArchiveBody>,
 ) -> axum::response::Response {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
-    if !dir.join(format!("{id}.jsonl")).is_file() {
+    if !find_session_in_cwd(&state.core, &id) {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
@@ -7645,8 +7710,7 @@ async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
-    if !dir.join(format!("{id}.jsonl")).is_file() {
+    if !find_session_in_cwd(&state.core, &id) {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
@@ -7683,19 +7747,10 @@ async fn delete_session(
 }
 
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
-    // `archive.json`/`deleted.json` are shared, global-by-session-id maps —
-    // not scoped to a workspace — but a ledger file only ever lives under
-    // *this* process's own `sessions_dir(sessions_home, cwd)`. Single-item
-    // delete already respects that boundary by checking the file exists
-    // there before acting; this bulk form iterated every archived id in the
-    // global map with no such check, so running it from one workspace
-    // could soft-delete archived sessions that belong to a completely
-    // different project.
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
     let archive = read_archive(&state.core);
     let local_archived: Vec<String> = archive
         .into_iter()
-        .filter(|(id, archived)| *archived && dir.join(format!("{id}.jsonl")).is_file())
+        .filter(|(id, archived)| *archived && find_session_in_cwd(&state.core, id))
         .map(|(id, _)| id)
         .collect();
     let running_archived = local_archived.iter().any(|id| {
@@ -8743,7 +8798,7 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
                 return Some(canon);
             }
 
-            // Search execution subdirectories under .vak/scratch
+            // Search execution subdirectories under .vak/scratch (including agent-scoped .vak/scratch/<agent_id>/<exec_id>)
             if let Ok(entries) = std::fs::read_dir(&scratch_dir) {
                 for entry in entries.flatten() {
                     if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -8752,6 +8807,26 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
                             && let Some(canon) = confined_path(cwd, &sub_path.display().to_string())
                         {
                             return Some(canon);
+                        }
+                        if let Ok(sub_entries) = std::fs::read_dir(entry.path()) {
+                            for sub in sub_entries.flatten() {
+                                if sub.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                    let nested = sub.path().join(rel);
+                                    if nested.is_file()
+                                        && let Some(canon) = confined_path(cwd, &nested.display().to_string())
+                                    {
+                                        return Some(canon);
+                                    }
+                                    if let Some(filename) = std::path::Path::new(rel).file_name() {
+                                        let by_name = sub.path().join(filename);
+                                        if by_name.is_file()
+                                            && let Some(canon) = confined_path(cwd, &by_name.display().to_string())
+                                        {
+                                            return Some(canon);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         if let Some(filename) = std::path::Path::new(rel).file_name() {
                             let by_name = entry.path().join(filename);
@@ -14081,6 +14156,7 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
         limits: vak_tools::OutputLimits::default(),
         sandbox: core.agent_sandbox(),
         sandbox_sink: None,
+        agent_id: core.agent_identity().map(|a| a.id.clone()),
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
     let out = bash.execute(&args, &ctx).await;

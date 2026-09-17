@@ -249,6 +249,15 @@ pub fn discover_with_diagnostics(
     plugins: &[(PathBuf, String)],
 ) -> (Vec<Skill>, Vec<SkillDiagnostic>) {
     let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
+    let agents_dir = home.join("agents");
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                roots.push((p.join("skills"), None));
+            }
+        }
+    }
     roots.extend(
         plugins
             .iter()
@@ -298,6 +307,15 @@ pub fn discover_all_with_plugins(
     plugins: &[(PathBuf, String)],
 ) -> Vec<Skill> {
     let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
+    let agents_dir = home.join("agents");
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                roots.push((p.join("skills"), None));
+            }
+        }
+    }
     roots.extend(
         plugins
             .iter()
@@ -624,6 +642,7 @@ mod tests {
             limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         };
         let loaded = tool
             .execute(&serde_json::json!({"name": "code-task"}), &ctx)

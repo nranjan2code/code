@@ -60,7 +60,7 @@ PY
     assert!(!workspace.path().join("app").exists());
     let candidate = vak_sandbox::candidate_manifest(
         "stack-candidate",
-        &workspace.path().join(".vak/scratch/workflow-stack"),
+        &workspace.path().join(".vak/scratch/vak/workflow-stack"),
         workspace.path(),
     )
     .unwrap();
@@ -108,7 +108,7 @@ PY
     assert!(events.iter().any(|e| matches!(e, vak_tools::SandboxEvent::ArtifactGenerated { path, .. } if path.ends_with("research/synthesis.md"))));
     let candidate = vak_sandbox::candidate_manifest(
         "research-candidate",
-        &workspace.path().join(".vak/scratch/workflow-research"),
+        &workspace.path().join(".vak/scratch/vak/workflow-research"),
         workspace.path(),
     )
     .unwrap();
@@ -166,7 +166,7 @@ PY
     );
     let candidate = vak_sandbox::candidate_manifest(
         "docs-candidate",
-        &workspace.path().join(".vak/scratch/workflow-docs"),
+        &workspace.path().join(".vak/scratch/vak/workflow-docs"),
         workspace.path(),
     )
     .unwrap();

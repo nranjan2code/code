@@ -219,13 +219,8 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
 
 // ---- Review queue API -------------------------------------------------------
 
-/// Pending drafts, newest first. When a proposal screens as a near copy of
-/// an accepted skill, the returned `description` carries a
-/// `[duplicate-of: <name>]` suffix (every review surface renders the
-/// description) and the flag persists as a `duplicate-of:` frontmatter line
-/// so hand edits and later listings agree.
-pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
-    let Ok(entries) = std::fs::read_dir(proposals_dir(home, cwd)) else {
+fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillProposal> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -243,9 +238,6 @@ pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
     if !found.is_empty() {
         let accepted = accepted_skill_bodies(home, cwd);
         for (id, path, skill) in found {
-            // Back-fill here also covers reflection-authored drafts (queued
-            // outside this module) and proposals whose twin was promoted
-            // after they were queued; both end up with the same header line.
             let tag = screen_proposal(&path, &skill.name, &accepted);
             out.push(SkillProposal {
                 id,
@@ -255,8 +247,30 @@ pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
             });
         }
     }
-    out.sort_by(|a, b| b.id.cmp(&a.id));
     out
+}
+
+/// Pending drafts, newest first. When a proposal screens as a near copy of
+/// an accepted skill, the returned `description` carries a
+/// `[duplicate-of: <name>]` suffix (every review surface renders the
+/// description) and the flag persists as a `duplicate-of:` frontmatter line
+/// so hand edits and later listings agree.
+pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
+    let mut proposals = list_proposals_in_dir(&proposals_dir(home, cwd), home, cwd);
+    if proposals.is_empty() {
+        let agents_dir = home.join("agents");
+        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let agent_props = list_proposals_in_dir(&proposals_dir(&p, cwd), home, cwd);
+                    proposals.extend(agent_props);
+                }
+            }
+        }
+    }
+    proposals.sort_by(|a, b| b.id.cmp(&a.id));
+    proposals
 }
 
 /// Install a proposal into user-level discovery. Refuses to silently
@@ -393,6 +407,15 @@ fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
 /// same roots skills::discover walks, read-only from this side.
 fn accepted_skill_bodies(home: &Path, cwd: &Path) -> Vec<(String, String)> {
     let mut roots = vec![cwd.join(".vak/skills"), home.join("skills")];
+    let agents_dir = home.join("agents");
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                roots.push(p.join("skills"));
+            }
+        }
+    }
     roots.dedup();
     let mut out: Vec<(String, String)> = Vec::new();
     for root in roots {

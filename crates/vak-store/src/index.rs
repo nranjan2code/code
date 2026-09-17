@@ -14,8 +14,32 @@ impl Store {
         conn: &rusqlite::Connection,
         sessions_home: &Path,
     ) -> Result<RebuildStats, StoreError> {
-        let root = sessions_home.join("sessions");
-        if !root.exists() {
+        let mut roots = Vec::new();
+        let direct = sessions_home.join("sessions");
+        if direct.exists() {
+            roots.push((sessions_home.to_path_buf(), direct));
+        }
+        if let Ok(agents) = std::fs::read_dir(sessions_home.join("agents")) {
+            for agent in agents.flatten() {
+                let s = agent.path().join("sessions");
+                if s.exists() {
+                    roots.push((agent.path(), s));
+                }
+            }
+        }
+        if let Some(parent) = sessions_home.parent() {
+            if parent.file_name().and_then(|s| s.to_str()) == Some("agents") {
+                if let Ok(siblings) = std::fs::read_dir(parent) {
+                    for sibling in siblings.flatten() {
+                        let s = sibling.path().join("sessions");
+                        if s.exists() && !roots.iter().any(|(_, r)| r == &s) {
+                            roots.push((sibling.path(), s));
+                        }
+                    }
+                }
+            }
+        }
+        if roots.is_empty() {
             return Ok(RebuildStats {
                 files_scanned: 0,
                 entries_indexed: 0,
@@ -26,22 +50,24 @@ impl Store {
         let mut entries_indexed = 0usize;
         let mut fts_rows = 0usize;
 
-        for entry in WalkDir::new(&root)
-            .min_depth(2)
-            .max_depth(2)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| e.file_type().is_file())
-        {
-            let entry = entry.map_err(|e| std::io::Error::other(e.to_string()))?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
+        for (home, root) in roots {
+            for entry in WalkDir::new(&root)
+                .min_depth(2)
+                .max_depth(2)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| e.file_type().is_file())
+            {
+                let entry = entry.map_err(|e| std::io::Error::other(e.to_string()))?;
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let stats = self.import_file(conn, &home, path)?;
+                entries_indexed += stats.entries_indexed;
+                fts_rows += stats.fts_rows;
+                files_scanned += 1;
             }
-            let stats = self.import_file(conn, sessions_home, path)?;
-            entries_indexed += stats.entries_indexed;
-            fts_rows += stats.fts_rows;
-            files_scanned += 1;
         }
 
         Ok(RebuildStats {

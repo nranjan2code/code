@@ -23,6 +23,9 @@ import {
   splitId,
   itemsOf,
   agentForSession,
+  setAgentPickerOpen,
+  setAgentPickerTab,
+  backend,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -109,8 +112,38 @@ export default function WorkspaceHeader() {
           <button type="button" class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
         </Show>
         <div class="workspace-title">
-          <div class="workspace-title-row">
-            <h1>{title()}</h1>
+          <div class="workspace-title-row" style="display: flex; align-items: center; gap: 8px;">
+            <button
+              type="button"
+              class="agent-header-btn"
+              style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; padding: 2px 6px; border-radius: var(--radius-sm); cursor: pointer; color: var(--text);"
+              onClick={() => {
+                setAgentPickerTab("fleet");
+                setAgentPickerOpen(true);
+              }}
+              title="Switch Agent Specialist"
+            >
+              <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                <span style="font-size: 14px; opacity: 0.85;">✦</span>
+                <span>{title()}</span>
+                <span style="font-size: 11px; opacity: 0.6;">▾</span>
+              </h1>
+            </button>
+
+            <button
+              type="button"
+              class="target-dir-pill"
+              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 11.5px; color: var(--muted); cursor: pointer; text-decoration: none;"
+              onClick={() => {
+                setAgentPickerTab("target");
+                setAgentPickerOpen(true);
+              }}
+              title={`Execution Target: ${backend().cwd || "default"}`}
+            >
+              <Icon name="folder" size={12} />
+              <span>{backend().cwd ? (backend().cwd as string).split("/").pop() || "root" : "workspace"}</span>
+            </button>
+
             <Show when={activeId()}>
               <span class="run-state" classList={{ active: isRunning(activeId()) }}>
                 <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"

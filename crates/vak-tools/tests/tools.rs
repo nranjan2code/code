@@ -22,6 +22,7 @@ async fn run(tool: &dyn Tool, dir: &Path, args: serde_json::Value) -> ToolOutput
         },
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     };
     tool.execute(&args, &ctx).await
 }
@@ -297,6 +298,7 @@ async fn output_truncation_keeps_head_and_tail() {
         },
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     });
     let t = truncated.truncate_output(out.content);
     assert!(t.len() < 600);
@@ -317,6 +319,7 @@ fn truncate_output_handles_multibyte_without_overflow() {
         },
         sandbox: None,
         sandbox_sink: None,
+        agent_id: None,
     };
     // The original underflow repro: 20k chars but 60k bytes. Byte-gating
     // said "truncate", char math said head+tail > total => subtract

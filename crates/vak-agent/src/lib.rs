@@ -2276,6 +2276,7 @@ impl Agent {
             limits: Default::default(),
             sandbox: Some(sandbox),
             sandbox_sink: None,
+            agent_id: None,
         };
         let input = serde_json::json!({ "command": cmd });
         let out = match tokio::time::timeout(
@@ -2799,6 +2800,12 @@ impl Agent {
             .header()
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
+        let agent_id = self
+            .session
+            .lock()
+            .await
+            .header()
+            .and_then(|h| h.agent.as_ref().map(|a| a.id.clone()));
         let skill_names = self
             .session
             .lock()
@@ -2890,6 +2897,7 @@ impl Agent {
                                 &self.config.tools,
                                 &cwd,
                                 &session_id,
+                                agent_id.as_deref(),
                                 &skill_names,
                                 hooks.as_ref(),
                                 hook_recorder.as_ref(),
@@ -2975,12 +2983,14 @@ impl Agent {
                 let hooks = hooks.clone();
                 let hook_recorder = hook_recorder.clone();
                 let tool_activity_recorder = tool_activity_recorder.clone();
+                let agent_id = agent_id.clone();
                 join.spawn(async move {
                     let r = execute_one(
                         call,
                         &tools,
                         &cwd,
                         &session_id,
+                        agent_id.as_deref(),
                         &skill_names,
                         hooks.as_ref(),
                         hook_recorder.as_ref(),
@@ -3478,6 +3488,7 @@ async fn execute_one(
     tools: &[Arc<dyn Tool>],
     cwd: &std::path::Path,
     session_id: &str,
+    agent_id: Option<&str>,
     skill_names: &[String],
     hooks: Option<&Arc<Vec<vak_hooks::HookDef>>>,
     hook_recorder: Option<&HookRecorder>,
@@ -3582,6 +3593,7 @@ async fn execute_one(
                 limits: Default::default(),
                 sandbox: sandbox.cloned(),
                 sandbox_sink: Some(sandbox_sink),
+                agent_id: agent_id.map(|s| s.to_string()),
             };
             let result_ctx = ctx.clone();
             let tool = tool.clone();

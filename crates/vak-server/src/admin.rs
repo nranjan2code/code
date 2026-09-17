@@ -362,39 +362,73 @@ pub(crate) async fn import_session_store(
         return Json(serde_json::json!({ "ok": false, "error": "store not available" }));
     };
     let home = state.core.sessions_home();
-    let sessions_dir = home.join("sessions");
-    if !sessions_dir.exists() {
-        return Json(serde_json::json!({ "error": "no sessions directory" }));
-    }
-    for entry in walkdir::WalkDir::new(&sessions_dir)
-        .min_depth(2)
-        .max_depth(2)
-        .into_iter()
-        .filter_entry(|e| e.file_type().is_file())
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-            && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
+    let shared = state.core.shared_data_home();
+
+    let mut candidate: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
+
+    let direct = home.join("sessions");
+    if direct.exists() {
+        for entry in walkdir::WalkDir::new(&direct)
+            .min_depth(2)
+            .max_depth(2)
+            .into_iter()
+            .filter_entry(|e| e.file_type().is_file())
+            .flatten()
         {
-            match store.import_session(&home, path) {
-                Ok(stats) => {
-                    return Json(serde_json::json!({
-                        "ok": true,
-                        "entries_indexed": stats.entries_indexed,
-                        "fts_rows": stats.fts_rows,
-                        "skipped": stats.skipped,
-                    }));
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
+            {
+                candidate = Some((home.clone(), path.to_path_buf()));
+                break;
+            }
+        }
+    }
+
+    if candidate.is_none() {
+        if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+            for agent in agents.flatten() {
+                let agent_home = agent.path();
+                let agent_sessions = agent_home.join("sessions");
+                if agent_sessions.exists() {
+                    for entry in walkdir::WalkDir::new(&agent_sessions)
+                        .min_depth(2)
+                        .max_depth(2)
+                        .into_iter()
+                        .filter_entry(|e| e.file_type().is_file())
+                        .flatten()
+                    {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                            && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
+                        {
+                            candidate = Some((agent_home.clone(), path.to_path_buf()));
+                            break;
+                        }
+                    }
                 }
-                Err(e) => {
-                    return Json(serde_json::json!({
-                        "ok": false,
-                        "error": e.to_string(),
-                    }));
+                if candidate.is_some() {
+                    break;
                 }
+            }
+        }
+    }
+
+    if let Some((agent_home, path)) = candidate {
+        match store.import_session(&agent_home, &path) {
+            Ok(stats) => {
+                return Json(serde_json::json!({
+                    "ok": true,
+                    "entries_indexed": stats.entries_indexed,
+                    "fts_rows": stats.fts_rows,
+                    "skipped": stats.skipped,
+                }));
+            }
+            Err(e) => {
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": e.to_string(),
+                }));
             }
         }
     }
@@ -865,37 +899,43 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     {
         push(entry.workspace.display().to_string());
     }
-    let root = state.core.sessions_home().join("sessions");
-    let Ok(projects) = std::fs::read_dir(&root) else {
-        return seen;
-    };
-    for project in projects.flatten() {
-        let Ok(files) = std::fs::read_dir(project.path()) else {
-            continue;
+    let shared = state.core.shared_data_home();
+    let mut scan_sessions_root = |sessions_root: std::path::PathBuf| {
+        let Ok(projects) = std::fs::read_dir(&sessions_root) else {
+            return;
         };
-        // Any ledger in the directory names the same cwd, so the first
-        // readable header is enough.
-        for file in files.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Ok(handle) = std::fs::File::open(&path) else {
+        for project in projects.flatten() {
+            let Ok(files) = std::fs::read_dir(project.path()) else {
                 continue;
             };
-            let mut first = String::new();
-            if std::io::BufReader::new(handle)
-                .read_line(&mut first)
-                .is_err()
-            {
-                continue;
+            for file in files.flatten() {
+                let path = file.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Ok(handle) = std::fs::File::open(&path) else {
+                    continue;
+                };
+                let mut first = String::new();
+                if std::io::BufReader::new(handle)
+                    .read_line(&mut first)
+                    .is_err()
+                {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&first)
+                    && let Some(cwd) = v["cwd"].as_str()
+                {
+                    push(cwd.to_string());
+                    break;
+                }
             }
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&first)
-                && let Some(cwd) = v["cwd"].as_str()
-            {
-                push(cwd.to_string());
-                break;
-            }
+        }
+    };
+    scan_sessions_root(state.core.sessions_home().join("sessions"));
+    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+        for agent in agents.flatten() {
+            scan_sessions_root(agent.path().join("sessions"));
         }
     }
     seen

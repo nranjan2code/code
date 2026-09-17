@@ -31,6 +31,7 @@ pub struct ToolContext {
     pub limits: OutputLimits,
     pub sandbox: Option<Arc<dyn crate::sandbox::Sandbox>>,
     pub sandbox_sink: Option<crate::sandbox_events::SandboxEventSink>,
+    pub agent_id: Option<String>,
 }
 
 impl ToolContext {
@@ -41,11 +42,17 @@ impl ToolContext {
             limits: OutputLimits::default(),
             sandbox: None,
             sandbox_sink: None,
+            agent_id: None,
         }
     }
 
     pub fn with_sandbox_sink(mut self, sink: crate::sandbox_events::SandboxEventSink) -> Self {
         self.sandbox_sink = Some(sink);
+        self
+    }
+
+    pub fn with_agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
         self
     }
 

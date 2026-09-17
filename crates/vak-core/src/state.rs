@@ -119,6 +119,16 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
+        path: "agents",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        kind: Kind::Ledger,
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
         path: "security-events.jsonl",
         root: Root::Data,
         owner: "vak-core",

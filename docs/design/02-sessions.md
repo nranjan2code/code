@@ -4,7 +4,8 @@ Status: implemented in 2.0.0
 ## Format
 
 One JSONL file per session at
-`$VAK_HOME/sessions/<cwd-hash>/<session-id>.jsonl`. Every line:
+`$VAK_HOME/agents/<agent-id>/sessions/<cwd-hash>/<session-id>.jsonl` (with the
+default agent using `agents/vak/sessions/`). Every line:
 
 ```json
 {"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction|receipt|goal", …}

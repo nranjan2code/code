@@ -253,7 +253,7 @@ The current invariant 35 needs a precise update alongside implementation: interm
 
 ## 10. Delivery slices and proof of completion
 
-**Slice 1 — trustworthy draft execution.** `vak-sandbox` is the new ownership boundary. Execution IDs, live broker event frames, process-group cancellation, per-execution `.vak/scratch/<execution-id>` roots, recursive artifact discovery, control-file denial, and partial-output retention are implemented. Candidate export and compare-before-write promotion are exposed through the authenticated server and Workbench. Remaining verification work must prove source immutability across every backend.
+**Slice 1 — trustworthy draft execution.** `vak-sandbox` is the new ownership boundary. Execution IDs, live broker event frames, process-group cancellation, per-agent execution `.vak/scratch/<agent-id>/<execution-id>` roots, recursive artifact discovery, control-file denial, and partial-output retention are implemented. Candidate export and compare-before-write promotion are exposed through the authenticated server and Workbench. Remaining verification work must prove source immutability across every backend.
 
 **Slice 2 — prepare, run and preview.** Readiness probes, useful prepared environments, scoped setup recipes, resource/network receipts, multimodal result previews and retained drafts. Demonstrate both data/document work and an application becoming runnable without host pollution or FullAccess. Retain direct answers and brokered connectors as first-class paths.
 

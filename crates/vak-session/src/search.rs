@@ -125,21 +125,37 @@ pub fn search_extended(
         });
     }
 
-    let dir = SessionPath::sessions_dir(sessions_home, cwd);
-    if let Ok(read) = std::fs::read_dir(&dir) {
-        for file_entry in read.flatten() {
-            let path = file_entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
+    let mut dirs = vec![SessionPath::sessions_dir(sessions_home, cwd)];
+    if let Some(parent) = sessions_home.parent().and_then(|p| p.parent()) {
+        dirs.push(SessionPath::sessions_dir(parent, cwd));
+    }
+    let agents_dir = sessions_home.join("agents");
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                dirs.push(SessionPath::sessions_dir(&p, cwd));
             }
-            let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
-            else {
-                continue;
-            };
-            if exclude_session == Some(session_id.as_str()) {
-                continue;
+        }
+    }
+    dirs.dedup();
+    let mut seen_sessions = std::collections::HashSet::new();
+    for dir in dirs {
+        if let Ok(read) = std::fs::read_dir(&dir) {
+            for file_entry in read.flatten() {
+                let path = file_entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
+                else {
+                    continue;
+                };
+                if exclude_session == Some(session_id.as_str()) || !seen_sessions.insert(session_id.clone()) {
+                    continue;
+                }
+                collect_ranked(&path, &session_id, &terms, &phrase, None, &mut ranked)?;
             }
-            collect_ranked(&path, &session_id, &terms, &phrase, None, &mut ranked)?;
         }
     }
 
@@ -192,16 +208,28 @@ pub fn search_all_extended(
             })
         })
         .collect();
-    let root = home.join("sessions");
-    let mut projects: Vec<PathBuf> = match std::fs::read_dir(&root) {
-        Ok(read) => read
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    let mut session_roots = vec![home.join("sessions")];
+    if let Some(parent) = home.parent().and_then(|p| p.parent()) {
+        session_roots.push(parent.join("sessions"));
+    }
+    let agents_dir = home.join("agents");
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                session_roots.push(p.join("sessions"));
+            }
+        }
+    }
+    session_roots.dedup();
+    let mut projects: Vec<PathBuf> = Vec::new();
+    for root in session_roots {
+        if let Ok(read) = std::fs::read_dir(&root) {
+            projects.extend(read.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+    }
     projects.sort();
+    projects.dedup();
     for dir in projects {
         let Ok(read) = std::fs::read_dir(&dir) else {
             continue;

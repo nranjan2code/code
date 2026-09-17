@@ -1080,10 +1080,10 @@ export default function Settings() {
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <div class="settings-nav-label">Settings scope</div>
         <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
-          <button type="button" aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Shared</button>
-          <button type="button" aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>This workspace</button>
+          <button type="button" aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Platform Defaults</button>
+          <button type="button" aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>Active Agent</button>
         </div>
-        <p class="settings-scope-copy">Shared is your default. This workspace only changes what belongs to this folder.</p>
+        <p class="settings-scope-copy">Platform defaults apply everywhere. Active Agent overrides apply to this specialist agent.</p>
         <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
           {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
         </For>
