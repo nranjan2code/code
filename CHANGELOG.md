@@ -1,5 +1,13 @@
 # Changelog
- 
+
+## 3.2.1 — 2026-09-17
+
+- Persistent tray & autostart control: Added "Launch at login" check item to desktop menu bar tray and toggle to Settings Operations panel.
+- Configurable service supervisor: Synchronized `RunAtLoad` in `com.vak.desktop.plist` and `systemd` user units with platform `launchctl enable/disable` and `systemctl --user enable/disable`.
+- Cross-process autostart persistence: Persisted `autostart` setting in `tray.json` so `vak self services-sync` preserves operator choice.
+- Always-available desktop tray: Window close action hides the window while preserving menu bar residency; explicit "Quit Vak" cleanly terminates the process.
+- Full stack local macOS release: Synchronized release binaries, verified manifests, and updated launchd services.
+
 ## 3.2.0 — 2026-09-17
 
 - Agent-owned platform release (`docs/design/64-agent-owned-platform.md`): Agents are authoritative owners of conversations, private session ledgers, memory boundaries, channel targets, and delivery provenance.
