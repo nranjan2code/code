@@ -635,6 +635,12 @@ fn skip_workspace_dir(path: &std::path::Path) -> bool {
                 ".git"
                     | "target"
                     | "node_modules"
+                    // `.vak` holds tool-internal state, including every
+                    // other Agent's isolated workspace nested under
+                    // `.vak/agents/<id>/workspace` (see
+                    // vak_config::paths::agent_workspace) — an artifact scan
+                    // must never wander into another Agent's files.
+                    | ".vak"
                     | ".vak-home"
                     | ".venv"
                     | "venv"

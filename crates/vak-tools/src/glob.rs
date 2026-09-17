@@ -104,6 +104,12 @@ impl Tool for GlobTool {
 pub fn is_ignored(path: &Path) -> bool {
     path.file_name()
         .and_then(|f| f.to_str())
-        .map(|f| f == ".git" || f == "node_modules" || f == "target")
+        // `.vak` holds tool-internal state, including every other Agent's
+        // isolated workspace nested under `.vak/agents/<id>/workspace` (see
+        // vak_config::paths::agent_workspace) — walking into it here would
+        // let a glob/grep from one Agent's session read another Agent's
+        // supposedly isolated files. `fs_tree`'s directory-browser walk
+        // already excludes it for the same reason.
+        .map(|f| f == ".git" || f == "node_modules" || f == "target" || f == ".vak")
         .unwrap_or(false)
 }

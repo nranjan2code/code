@@ -3951,8 +3951,16 @@ async fn attach_session(
             {
                 c
             } else {
-                vak_core::Core::new_with_trust(session_cwd.clone(), true)
-                    .unwrap_or_else(|_| state.core.clone())
+                // `resolve_at` failing here is not a trust decision — an
+                // unconditional `true` would let a workspace whose trust
+                // prompt an operator declined have its hooks/MCP
+                // servers/`.env` applied anyway. Recompute trust the same
+                // way `resolve_at` does rather than assuming it.
+                vak_core::Core::new_with_trust(
+                    session_cwd.clone(),
+                    vak_core::trust::is_trusted(&session_cwd),
+                )
+                .unwrap_or_else(|_| state.core.clone())
             };
             // The header id can differ from the requested one; if that handle
             // is already live, keep it rather than replacing it.
@@ -4038,8 +4046,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             .ok()
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entry_count, cwd) = summarize_jsonl(&path);
-        let agent = agent_chats::header(&path).ok().and_then(|h| h.agent);
+        let (created_at, title, entry_count, cwd, agent) = summarize_jsonl(&path);
         // A user-created Agent lives in its own isolated workspace (see
         // agent_chats::open / agent_workspace), independent of whichever
         // default workspace the browser client currently has open — that
@@ -4088,15 +4095,22 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
 /// Bounded scan: header line for created_at + first user message as title.
 fn summarize_jsonl(
     path: &std::path::Path,
-) -> (Option<String>, Option<String>, u64, Option<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    u64,
+    Option<String>,
+    Option<vak_session::types::AgentIdentity>,
+) {
     use std::io::BufRead;
     let Ok(file) = std::fs::File::open(path) else {
-        return (None, None, 0, None);
+        return (None, None, 0, None, None);
     };
     let mut reader = std::io::BufReader::new(file);
     let mut created_at = None;
     let mut title = None;
     let mut cwd = None;
+    let mut agent = None;
     let mut entries = 0u64;
     let mut line = String::new();
     loop {
@@ -4110,6 +4124,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Header(h) => {
                             created_at = Some(h.created_at.to_rfc3339());
                             cwd = Some(h.cwd.to_string_lossy().into_owned());
+                            agent = h.agent;
                         }
                         vak_session::EntryPayload::Message(rec) => {
                             if title.is_none() && rec.message.role == vak_llm::Role::User {
@@ -4143,7 +4158,7 @@ fn summarize_jsonl(
             Err(_) => break,
         }
     }
-    (created_at, title, entries, cwd)
+    (created_at, title, entries, cwd, agent)
 }
 
 #[derive(serde::Deserialize)]
@@ -10859,8 +10874,10 @@ struct ConfigPatch {
     #[serde(default)]
     voice_realtime_model: Option<Option<String>>,
     /// Whether worker delegation (the `task` tool) is available. Absent
-    /// means "leave alone", same convention every field here uses.
-    #[serde(default)]
+    /// means "leave alone", same convention every field here uses. The
+    /// `subagents` alias keeps a client sending the pre-rename field name
+    /// (a saved script, an unrefreshed admin tab) from silently no-opping.
+    #[serde(default, alias = "subagents")]
     workers: Option<bool>,
     /// `[memory]` toggles (docs/design/23-memory.md). Absent means "leave
     /// alone" — same convention every other field here already uses.
@@ -11850,7 +11867,9 @@ async fn preview_prompt(
         "server" => vak_core::Surface::Server,
         "web" => vak_core::Surface::Web,
         "background" => vak_core::Surface::Background,
-        "worker" => vak_core::Surface::Worker,
+        // "subagent" is kept for admin-console requests built against the
+        // pre-rename surface name.
+        "worker" | "subagent" => vak_core::Surface::Worker,
         _ => vak_core::Surface::Chat {
             channel: raw_surface.to_string(),
         },

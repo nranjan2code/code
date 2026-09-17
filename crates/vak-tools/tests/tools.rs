@@ -242,6 +242,57 @@ async fn glob_finds_nested_files() {
     assert!(!out.content.contains("docs/c.md"));
 }
 
+/// `.vak/agents/<id>/workspace` is another Agent's isolated project
+/// workspace (see `vak_config::paths::agent_workspace`), nested inside the
+/// shared base workspace on disk. Glob/grep must never wander into it — the
+/// whole point of an isolated workspace is defeated if a different Agent's
+/// tool calls can read its files.
+#[tokio::test]
+async fn glob_does_not_walk_into_another_agents_isolated_workspace() {
+    let dir = tempdir().unwrap();
+    for p in ["notes.md", ".vak/agents/other-agent/workspace/secret.md"] {
+        run(
+            &WriteTool,
+            dir.path(),
+            serde_json::json!({"path": p, "content": "x"}),
+        )
+        .await;
+    }
+    let out = run(
+        &GlobTool,
+        dir.path(),
+        serde_json::json!({"pattern": "**/*.md"}),
+    )
+    .await;
+    assert!(!out.is_error);
+    assert!(out.content.contains("notes.md"));
+    assert!(!out.content.contains("secret.md"));
+}
+
+#[tokio::test]
+async fn grep_does_not_walk_into_another_agents_isolated_workspace() {
+    let dir = tempdir().unwrap();
+    run(
+        &WriteTool,
+        dir.path(),
+        serde_json::json!({"path": "notes.md", "content": "the answer is 42\n"}),
+    )
+    .await;
+    run(
+        &WriteTool,
+        dir.path(),
+        serde_json::json!({
+            "path": ".vak/agents/other-agent/workspace/secret.md",
+            "content": "the answer is 42\n"
+        }),
+    )
+    .await;
+    let out = run(&GrepTool, dir.path(), serde_json::json!({"pattern": "42"})).await;
+    assert!(!out.is_error);
+    assert!(out.content.contains("notes.md"));
+    assert!(!out.content.contains("secret.md"));
+}
+
 #[tokio::test]
 async fn grep_matches_with_include_filter() {
     let dir = tempdir().unwrap();

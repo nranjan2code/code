@@ -87,8 +87,37 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
     // workspace switch uses, so trust/permission/sandbox resolution is
     // identical to a local run rooted there. The built-in "vak" agent keeps
     // the process's own workspace for backward compatibility.
-    let workspace = vak_config::paths::agent_workspace(active.cwd(), &identity.id);
-    if let Err(e) = std::fs::create_dir_all(&workspace) {
+    //
+    // The base workspace must match whichever root `agents::save` used to
+    // persist this profile (`agents.rs` saves "user"-scope agents under
+    // `default_workspace()`, "workspace"-scope under the saving request's
+    // own cwd) — otherwise, whenever the active core points somewhere other
+    // than `default_workspace()` (a browser workspace switch, a gateway
+    // channel), a "user"-scope agent's precreated directory and its actual
+    // runtime workspace would silently diverge. `agents::effective` already
+    // gives the workspace layer precedence over the shared layer for a
+    // duplicate id, so mirror that precedence here.
+    let default_root = vak_config::paths::default_workspace();
+    let base = if identity.id == "vak" {
+        active.cwd().clone()
+    } else {
+        let is_workspace_scoped = active.cwd() != &default_root
+            && agents::load(active.cwd())
+                .unwrap_or_default()
+                .iter()
+                .any(|p| p.id == identity.id);
+        if is_workspace_scoped {
+            active.cwd().clone()
+        } else {
+            default_root
+        }
+    };
+    let workspace = vak_config::paths::agent_workspace(&base, &identity.id);
+    // `agents::save` already creates this directory once at agent-creation
+    // time; opening an agent is idempotent and hit repeatedly (reload, tab
+    // switch, reconnect), so skip the mkdir once it's confirmed to exist
+    // rather than paying the syscalls on every open.
+    if !workspace.is_dir() && let Err(e) = std::fs::create_dir_all(&workspace) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
     let core = if workspace == *active.cwd() {
@@ -100,7 +129,17 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
             .resolve_at(&workspace, None, std::time::Instant::now())
         {
             Ok(core) => core,
-            Err(_) => match vak_core::Core::new_with_trust(workspace.clone(), true) {
+            // `resolve_at` failing (a transient permission-ceiling recheck
+            // error on a cache hit, or `Core::new_with_trust`'s own IO/config
+            // error) is not itself a trust decision — falling back to an
+            // unconditional `true` here would let an operator-declined
+            // workspace's hooks/MCP servers/`.env` apply anyway, exactly the
+            // bypass `vak_core::trust` exists to close. Recompute trust the
+            // same way `resolve_at` does rather than assuming it.
+            Err(_) => match vak_core::Core::new_with_trust(
+                workspace.clone(),
+                vak_core::trust::is_trusted(&workspace),
+            ) {
                 Ok(core) => core,
                 Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
             },
@@ -115,6 +154,23 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
         resolved.set_sessions_home(active.shared_data_home());
         if let Some(provider) = active.provider_instance_override() {
             resolved.set_provider_instance(provider);
+        }
+        // A user-pinned safety ceiling (e.g. read-only mode, or a hardened
+        // sandbox backend) is a this-session/this-app control, not a
+        // per-project-directory config value — it must not silently loosen
+        // the moment a different Agent's Core is resolved from that
+        // workspace's own on-disk config. Carry the pin forward the same
+        // way a persisted config value already is via `sessions_home`.
+        if let Some(mode) = active.permission_mode_override_value() {
+            // Cap against this workspace's own resolved ceiling, the same
+            // way a per-channel override is capped in `core_pool.rs` — a
+            // pin from a more-permissive workspace must never grant more
+            // access than this agent's own config already allows.
+            let ceiling = resolved.effective_permission_mode();
+            resolved.set_permission_mode(mode.capped_by(ceiling));
+        }
+        if let Some(backend) = active.sandbox_backend_override_value() {
+            resolved.set_sandbox_backend(Some(backend));
         }
         resolved
     };

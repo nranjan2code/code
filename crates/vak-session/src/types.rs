@@ -372,6 +372,11 @@ pub struct WorkItemDefinition {
 #[serde(rename_all = "snake_case")]
 pub enum WorkOwner {
     ParentAgent,
+    /// A ledger entry written before the subagent->worker rename stored this
+    /// as "subagent" — the alias keeps sessions logged before that upgrade
+    /// from silently failing to parse (which would break the hash-chain
+    /// integrity check on the next entry too).
+    #[serde(alias = "subagent")]
     Worker,
     Flow { name: String },
     Tool { name: String },
@@ -523,6 +528,10 @@ pub enum ActivityKind {
     Approval,
     Retry,
     RouteFallback,
+    /// A ledger entry written before the subagent->worker rename stored this
+    /// as "subagent" — the alias keeps sessions logged before that upgrade
+    /// from silently failing to parse.
+    #[serde(alias = "subagent")]
     Worker,
     Diagnostic,
     Run,

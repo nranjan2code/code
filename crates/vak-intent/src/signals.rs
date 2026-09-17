@@ -127,7 +127,9 @@ impl Surface {
             "chat" | "telegram" | "discord" | "slack" | "gateway" => Some(Surface::Chat),
             "cron" | "task" | "schedule" | "watchdog" => Some(Surface::Cron),
             "heartbeat" => Some(Surface::Heartbeat),
-            "worker" | "child" => Some(Surface::Worker),
+            // "subagent" is kept for callers (saved scripts, dashboards,
+            // muscle memory) built against the pre-rename surface name.
+            "worker" | "child" | "subagent" => Some(Surface::Worker),
             _ => None,
         }
     }

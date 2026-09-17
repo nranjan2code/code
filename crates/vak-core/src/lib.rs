@@ -1411,6 +1411,19 @@ impl Core {
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// The runtime-pinned permission mode, if one is active (see
+    /// `permission_mode_runtime_pinned`), so it can be carried over to a
+    /// freshly-resolved `Core` for another workspace/agent — otherwise a
+    /// user-pinned restriction (e.g. read-only) silently would not apply the
+    /// moment a different Agent's Core is resolved from disk config.
+    pub fn permission_mode_override_value(&self) -> Option<vak_config::PermissionMode> {
+        if self.permission_mode_runtime_pinned() {
+            Self::read_override(&self.inner.mode_override)
+        } else {
+            None
+        }
+    }
+
     pub fn effective_approval_mode(&self) -> vak_config::ApprovalMode {
         Self::read_override(&self.inner.approval_mode_override)
             .unwrap_or(self.inner.config.approval_mode)
@@ -1471,6 +1484,15 @@ impl Core {
     /// via None). Session-scoped like every other override; never persisted.
     pub fn set_sandbox_backend(&self, backend: Option<String>) {
         Self::write_override(&self.inner.sandbox_backend_override, backend);
+    }
+
+    /// The runtime-pinned sandbox backend, if one is active, so it can be
+    /// carried over to a freshly-resolved `Core` for another workspace/agent
+    /// — otherwise a user-pinned backend (e.g. forcing "docker" for a
+    /// hardened run) silently would not apply the moment a different
+    /// Agent's Core is resolved from disk config.
+    pub fn sandbox_backend_override_value(&self) -> Option<String> {
+        Self::read_override(&self.inner.sandbox_backend_override)
     }
 
     pub fn effective_sandbox_backend(&self) -> String {

@@ -191,13 +191,18 @@ fn passes_channel_reach_contract(
     if blocked.contains(id) || probe.revoked_ids.contains(id) {
         return false;
     }
-    // Stage 3: contract constraint (enforced only when an explicit contract is passed)
+    // Stage 3: frozen contract (enforced for initial epoch; relaxed on dynamic
+    // refresh). A capability admitted after session start — a newly resolved
+    // secret, a server that came back healthy — did not exist when the
+    // contract was frozen, so it can never appear in `contract.capabilities`;
+    // enforcing this check unconditionally would make it permanently
+    // unreachable for the life of the session (see 64c1f4e2).
     if let Some(contract) = probe.session_contract {
         let in_contract = contract
             .capabilities
             .iter()
             .any(|c| c.kind == id.kind && c.name == id.name);
-        if !in_contract {
+        if !in_contract && probe.capability_epoch <= 1 {
             return false;
         }
     }
