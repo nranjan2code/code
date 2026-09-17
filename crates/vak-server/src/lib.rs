@@ -2049,8 +2049,8 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
 /// directly, so a PATCH from `patch_finops` (below) is reflected
 /// immediately rather than only after a restart.
 async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let ledger = vak_core::finops::FinOpsLedger::new(&state.core.sessions_home());
-    let activity = vak_core::finops::ActivityLedger::new(&state.core.sessions_home()).all_rows();
+    let ledger = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home());
+    let activity = vak_core::finops::ActivityLedger::new(&state.core.shared_data_home()).all_rows();
     let rows = ledger.all_rows();
     let now = chrono::Utc::now();
     let day_start = now
@@ -7473,7 +7473,7 @@ async fn inbox_list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<InboxQuery>,
 ) -> Json<serde_json::Value> {
-    let home = state.core.sessions_home();
+    let home = state.core.shared_data_home();
     let unread_count = vak_core::inbox::unread_count(&home);
     let limit = q
         .limit
@@ -7508,7 +7508,7 @@ async fn inbox_list(
 
 async fn inbox_unread_count(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "count": vak_core::inbox::unread_count(&state.core.sessions_home())
+        "count": vak_core::inbox::unread_count(&state.core.shared_data_home())
     }))
 }
 
@@ -7519,7 +7519,7 @@ async fn inbox_ack(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.shared_data_home();
     if !vak_core::inbox::list(&home, vak_core::inbox::MAX_SCAN)
         .iter()
         .any(|e| e.id == id)
@@ -14162,7 +14162,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                     } else {
                         let dedupe_key = Some(format!("inbox|{child_session}"));
                         let _ = vak_core::inbox::record_with_result_and_key(
-                            &st.core.sessions_home(),
+                            &st.core.shared_data_home(),
                             vak_core::inbox::Kind::TaskSummary,
                             &format!("routine '{task_name}' finished"),
                             &format!("routine '{task_name}' finished:\n{text}"),
@@ -14313,7 +14313,7 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
                 }
                 None => {
                     let _ = vak_core::inbox::record(
-                        &state.core.sessions_home(),
+                        &state.core.shared_data_home(),
                         vak_core::inbox::Kind::TaskSummary,
                         &title,
                         &outcome.text,
@@ -14558,7 +14558,7 @@ pub fn start_scheduler(state: &AppState) {
                 // it lands in the attention layer rather than only in a log.
                 for id in report.expired.iter().chain(report.escalated.iter()) {
                     let _ = vak_core::inbox::record(
-                        &st.core.sessions_home(),
+                        &st.core.shared_data_home(),
                         vak_core::inbox::Kind::TaskSummary,
                         "Commitment closed without you",
                         &format!("{id} reached the end of its window or escalation policy."),
@@ -14594,12 +14594,12 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
     };
     // Read through the EFFECTIVE sessions home (an embedded server may
     // have relocated it); Core::spend_day_usd pins the constructed path.
-    let day_total =
-        vak_core::finops::FinOpsLedger::new(&state.core.sessions_home()).day_total_usd(Utc::now());
+    let day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
+        .day_total_usd(Utc::now());
     let Some(level) = vak_core::finops::alert_level(day_total, cap) else {
         return;
     };
-    let home = state.core.sessions_home();
+    let home = state.core.shared_data_home();
     if let Some(last) = vak_core::finops::last_alert(&home, level)
         && last.ts.with_timezone(&Utc).date_naive() == Utc::now().date_naive()
     {

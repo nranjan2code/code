@@ -2126,7 +2126,7 @@ async fn gateway_inbound(
                 if !verdict {
                     let short = resolved.id.get(..8).unwrap_or(resolved.id.as_str());
                     let _ = vak_core::inbox::record(
-                        &state.core.sessions_home(),
+                        &state.core.shared_data_home(),
                         vak_core::inbox::Kind::ApprovalDenied,
                         &format!("approval denied [{short}]"),
                         &format!(
@@ -3097,7 +3097,7 @@ pub(crate) async fn deliver_and_record_with_result(
 ) -> Result<&'static str, String> {
     let dedupe_key = result_id.map(|result| format!("{target}|{result}|{}", inbox_kind as u8));
     let _ = vak_core::inbox::record_with_result_and_key(
-        &core.sessions_home(),
+        &core.shared_data_home(),
         inbox_kind,
         &title,
         text,
@@ -3149,7 +3149,7 @@ async fn deliver_approval_and_record(
     task_id: Option<&str>,
 ) -> Result<(), String> {
     let _ = vak_core::inbox::record(
-        &core.sessions_home(),
+        &core.shared_data_home(),
         inbox_kind,
         &title,
         &approval.detail,

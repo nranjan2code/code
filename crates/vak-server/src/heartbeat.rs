@@ -312,7 +312,7 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
     let n = stripped.len();
     let title = format!("heartbeat: {n} finding{}", if n == 1 { "" } else { "s" });
     let body = stripped.join("\n");
-    let home = state.core.sessions_home();
+    let home = state.core.shared_data_home();
     let _ = vak_core::inbox::record(
         &home,
         vak_core::inbox::Kind::Heartbeat,
