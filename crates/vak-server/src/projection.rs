@@ -224,6 +224,29 @@ fn snapshot_inner(
     let mut scan_turn = 0usize;
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
     let mut pending_tool_context: Option<TurnTool> = None;
+    // Tracks, per semantic_type, the id of the most recently pushed
+    // tool-emitted `Structured` card within the CURRENT logical answer —
+    // reset on a genuine new user request. Paired with `repair_armed`
+    // below: a same-type card is only ever superseded (not just recorded)
+    // while armed, i.e. strictly after a `[fence-check]`/
+    // `[duplicate-card-check]` repair-nudge fired for this answer. Without
+    // that guard, two intentionally distinct same-type cards the model
+    // emits back-to-back in one turn (e.g. "here's revenue, and here's
+    // cost", both `chart`) would be wrongly collapsed to one — nothing
+    // else in this projection distinguishes "two calls in one batch" from
+    // "a retry of the same call".
+    //
+    // Why this exists: a weak/small local model sometimes "retries" a
+    // repair nudge by calling the same `emit_*_card` tool again rather
+    // than only fixing its prose (observed live against gemma4:e2b-mlx),
+    // which otherwise leaves two separate `Structured` items for what the
+    // user experiences as one card. See `ids_to_remove` below: the earlier
+    // attempt is dropped in favor of the retry's result, mirroring
+    // `vak-agent`'s own bounded repair-turn semantics (the model's LATEST
+    // attempt is authoritative).
+    let mut card_group_by_type: HashMap<String, String> = HashMap::new();
+    let mut repair_armed = false;
+    let mut ids_to_remove: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -233,8 +256,20 @@ fn snapshot_inner(
                         _ => false,
                     })
                 {
+                    let is_repair_nudge = record.message.content.iter().any(|block| match block {
+                        ContentBlock::Text { text } => {
+                            text.contains("[fence-check]") || text.contains("[duplicate-card-check]")
+                        }
+                        _ => false,
+                    });
                     scan_turn += 1;
                     pending_tool_context = None;
+                    if is_repair_nudge {
+                        repair_armed = true;
+                    } else {
+                        card_group_by_type.clear();
+                        repair_armed = false;
+                    }
                 }
                 for block in &record.message.content {
                     match block {
@@ -800,8 +835,14 @@ fn snapshot_inner(
                                     .into_iter()
                                     .enumerate()
                                 {
+                                    let item_id = format!("{id}-structured-{structured_index}");
+                                    let previous = card_group_by_type
+                                        .insert(output.semantic_type.clone(), item_id.clone());
+                                    if repair_armed && let Some(superseded) = previous {
+                                        ids_to_remove.insert(superseded);
+                                    }
                                     timeline.items.push(OutputItem {
-                                        id: format!("{id}-structured-{structured_index}"),
+                                        id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
                                         turn_id: turn_id.clone(),
                                         role: OutputRole::Tool,
@@ -918,6 +959,9 @@ fn snapshot_inner(
             positions.insert(item.id.clone(), deduplicated.len());
             deduplicated.push(item);
         }
+    }
+    if !ids_to_remove.is_empty() {
+        deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
     timeline.items = deduplicated;
     timeline.cursor = chain_cursor(session);
@@ -2418,4 +2462,250 @@ mod tests {
         );
         assert_eq!(user_items[0].turn_id, "turn-1");
     }
+
+    /// Regression coverage for a verified real bug: `gemma4:e2b-mlx`
+    /// (via Ollama) called `emit_chart_card` successfully, then vak-agent's
+    /// fence-check repair asked it to fix a malformed fence in its
+    /// following text, and instead of just editing the text it called
+    /// `emit_chart_card` AGAIN — leaving two separate `Structured` tool
+    /// results for what the user experiences as one card (confirmed via
+    /// `vak export`/direct `snapshot()` against the real session). A
+    /// `[fence-check]` (or `[duplicate-card-check]`) nudge marks a retry of
+    /// the SAME answer, not a new user request, so a second same-type card
+    /// after one of these markers must supersede the earlier one rather
+    /// than both surviving into the timeline.
+    #[test]
+    fn a_retried_tool_card_after_a_repair_nudge_supersedes_the_earlier_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("duplicate-card.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "duplicate-card".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+
+        log.append_message(MessageRecord {
+            message: Message::user_text("show me a chart"),
+            meta: None,
+        })
+        .expect("append user message");
+
+        let chart_result = |summary: &str| {
+            format!(
+                r#"{{"semantic_type":"chart","payload":{{"chart_type":"line","series":[],"accessible_summary":"{summary}"}}}}"#
+            )
+        };
+
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "emit_chart_card".into(),
+                input: serde_json::json!({}),
+            }]),
+            meta: None,
+        })
+        .expect("append call 1");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-1".into(),
+                    content: chart_result("first attempt"),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result 1");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "```vak\n{broken json\n```".into(),
+                }],
+            },
+            meta: None,
+        })
+        .expect("append malformed fence");
+
+        // The repair nudge: same logical answer, not a new user request.
+        log.append_message(MessageRecord {
+            message: Message::user_text(
+                "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse. Resend it.",
+            ),
+            meta: None,
+        })
+        .expect("append fence-check nudge");
+
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-2".into(),
+                name: "emit_chart_card".into(),
+                input: serde_json::json!({}),
+            }]),
+            meta: None,
+        })
+        .expect("append call 2");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-2".into(),
+                    content: chart_result("retried attempt"),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result 2");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "Chart is displayed above.".into(),
+                }],
+            },
+            meta: None,
+        })
+        .expect("append final prose");
+
+        let timeline = snapshot("duplicate-card", &log);
+        let chart_items: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(&item.content, OutputContent::Structured { output } if output.semantic_type == "chart")
+            })
+            .collect();
+        assert_eq!(
+            chart_items.len(),
+            1,
+            "the earlier attempt's card must be superseded, not left duplicated: {chart_items:?}"
+        );
+        assert_eq!(
+            chart_items[0]
+                .provenance
+                .as_ref()
+                .and_then(|p| p.tool_call_id.as_deref()),
+            Some("call-2"),
+            "the SURVIVING card must be the retried (latest) attempt, not the first"
+        );
+    }
+
+    /// A second same-type card with NO repair nudge in between is a
+    /// legitimate distinct card (e.g. "chart A, then chart B") and must
+    /// NOT be collapsed.
+    #[test]
+    fn two_same_type_cards_with_no_repair_nudge_both_survive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("two-charts.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "two-charts".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+
+        log.append_message(MessageRecord {
+            message: Message::user_text("show me revenue and cost charts"),
+            meta: None,
+        })
+        .expect("append user message");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "emit_chart_card".into(),
+                input: serde_json::json!({}),
+            }]),
+            meta: None,
+        })
+        .expect("append call 1");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-1".into(),
+                    content: r#"{"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}"#.into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result 1");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-2".into(),
+                name: "emit_chart_card".into(),
+                input: serde_json::json!({}),
+            }]),
+            meta: None,
+        })
+        .expect("append call 2");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-2".into(),
+                    content: r#"{"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}"#.into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result 2");
+
+        let timeline = snapshot("two-charts", &log);
+        let chart_items: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(&item.content, OutputContent::Structured { output } if output.semantic_type == "chart")
+            })
+            .collect();
+        assert_eq!(
+            chart_items.len(),
+            2,
+            "two intentional cards of the same type with no repair nudge between them must both survive: {chart_items:?}"
+        );
+    }
 }
+
