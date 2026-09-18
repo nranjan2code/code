@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.1 — 2026-09-18
+
+- Fixed a turn that fails before producing a document rendering as a completely blank transcript entry: tool errors, document-less outcomes, and lifecycle-only fallback text are all filtered out of the chat view in production (`showOperatorChrome()` is hardcoded `false`), so the whole item list could empty out with no fallback, leaving the user staring at an empty `Turn` section with no answer and no explanation. `Turn` now shows a neutral "no result" notice pointing to task details instead of rendering nothing.
+- Fixed `.thinking-row` (the animated "working" ellipsis) missing from the chat column's alignment selector, so it rendered flush against the left edge of the pane instead of aligned with the rest of the transcript.
+- Fixed `AdaptiveTreeView`'s "Show original" disclosure being the one presentation fallback not gated behind `showOperatorChrome()`, unconditionally shipping the raw internal `vak`-fence JSON payload to every user; also stopped its metric node rendering a bare "—" placeholder card when no real value ever bound.
+- Gave `.sidebar-settings` its base styling — it had no rule beyond a stray `min-height`, so the sidebar's Settings button rendered as an unstyled native `<button>`.
+
 ## 3.4.0 — 2026-09-18
 
 - Live provider/model/credential config: Core previously resolved its provider/model route once at construction and cached it forever, so a config write from another process (e.g. `vak setup`) never reached an already-running desktop/server Core. Fixed by tracking a cheap config-file fingerprint and re-deriving on change, and wiring the desktop/web Settings UI to the server's existing config-change event stream.
