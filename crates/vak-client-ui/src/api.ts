@@ -1550,10 +1550,6 @@ export function listPresentations(): Promise<PresentationLibraryResponse> {
   return req("/presentations");
 }
 
-export function listPresentationPrimitives(): Promise<string[]> {
-  return req("/presentations/primitives");
-}
-
 export function getPresentationSpec(id: string, revision: number): Promise<unknown> {
   return req(`/presentations/specs/${encodeURIComponent(id)}/${revision}`);
 }

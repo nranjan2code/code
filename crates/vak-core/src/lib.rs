@@ -3004,7 +3004,16 @@ impl Core {
             ),
             None => String::new(),
         };
+        // Coverage is generated, examples are not. The registry is read in
+        // process, not over `GET /presentations/primitives` — prompt
+        // resolution already runs host-side, and that endpoint answers a
+        // different question (primitives) for a different audience.
+        let presentation_catalogue = prompts::presentation_catalogue_section(
+            &capability_contract,
+            &vak_delivery::skills::built_in_semantic_types(),
+        );
         let runtime = prompts::RuntimeSections {
+            presentation_catalogue,
             capability_contract,
             sandbox_contract: if has_bash {
                 sandbox_contract

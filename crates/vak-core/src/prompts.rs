@@ -308,6 +308,10 @@ pub struct RuntimeSections {
     /// The tool/skill/MCP boundary. Not advice — a factual description of
     /// this turn's callable interface.
     pub capability_contract: String,
+    /// Generated tail of the presentation contract: the semantic types the
+    /// compiled-in delivery registry accepts but the curated examples do not
+    /// name. See [`presentation_catalogue_section`].
+    pub presentation_catalogue: String,
     /// Sandbox-specific contract (bash, .vak/scratch/, live preview).
     /// Only populated when `bash` is in the admitted tools; empty otherwise
     /// so channel bots that lack execution get a cleaner, shorter prompt.
@@ -519,6 +523,10 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     for section in [
         identity.trim(),
         runtime.capability_contract.trim(),
+        // Immediately after the curated worked examples it supplements —
+        // a reader (or a model) must see the catalogue as the tail of the
+        // same contract, not as an unrelated later section.
+        runtime.presentation_catalogue.trim(),
         runtime.sandbox_contract.trim(),
     ] {
         if !section.is_empty() {
@@ -661,6 +669,50 @@ pub fn render_guardrails(rules: &[String]) -> String {
         .collect()
 }
 
+// ------------------------------------------- presentation catalogue ---
+
+/// Semantic types named by the curated capability contract, either as a
+/// backticked prose name or inside a worked ```vak example.
+///
+/// Substring matching would be wrong here: `recipe` is a substring of
+/// `recipe.card` and `table` of `comparison_table`, so a type genuinely
+/// missing from the prompt would look taught. Both forms are anchored.
+fn contract_teaches(contract: &str, semantic_type: &str) -> bool {
+    contract.contains(&format!("`{semantic_type}`"))
+        || contract.contains(&format!("\"semantic_type\":\"{semantic_type}\""))
+}
+
+/// Accepted semantic types the curated contract does not already name.
+fn untaught_semantic_types<'a>(contract: &str, accepted: &'a [String]) -> Vec<&'a str> {
+    accepted
+        .iter()
+        .map(String::as_str)
+        .filter(|semantic_type| !contract_teaches(contract, semantic_type))
+        .collect()
+}
+
+/// The dynamic tail of the presentation contract: every `semantic_type` the
+/// compiled-in delivery registry accepts that the curated worked examples do
+/// not already name.
+///
+/// The examples stay hand-written — their payload shapes are the load-bearing
+/// pedagogy and no enum can generate them — but *coverage* is derived, so a
+/// newly registered semantic type is advertised the moment it exists instead
+/// of waiting for someone to notice the prompt is stale.
+pub fn presentation_catalogue_section(contract: &str, accepted: &[String]) -> String {
+    let extra = untaught_semantic_types(contract, accepted);
+    if extra.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\nAlso accepted as `semantic_type`, with no worked example above: {}. \
+         Use one only when it genuinely matches the result; infer the payload \
+         from the type's name and the shapes above (a `title` plus `items`, \
+         `rows`, or `fields`), and fall back to prose if you are unsure.\n",
+        extra.join(", ")
+    )
+}
+
 // ---------------------------------------------------------------- seed ---
 
 /// The shipped prompt, split on its `<!-- block: ... -->` markers.
@@ -801,12 +853,127 @@ pub fn sub_layer_dir(root: &Path, kind: &str, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     fn seed_content() -> LayerContent {
         seed("test").0
+    }
+
+    /// Every worked ```vak example in `system-prompt.md`, as
+    /// `(semantic_type, payload)`.
+    fn taught_examples() -> Vec<(String, serde_json::Value)> {
+        let contract = seed("test").1;
+        let mut out = Vec::new();
+        for block in contract.split("```vak").skip(1) {
+            let body = block.split("```").next().unwrap().trim();
+            // The contract also mentions the fence inline while explaining
+            // the format (```vak\n{...}\n```); that placeholder is prose.
+            if !body.starts_with('{') || !body.contains("\"semantic_type\"") {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(body)
+                .unwrap_or_else(|error| panic!("prompt example is not JSON: {error}\n{body}"));
+            out.push((
+                value["semantic_type"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("prompt example has no semantic_type:\n{body}"))
+                    .to_string(),
+                value["payload"].clone(),
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn every_prompt_example_is_accepted_by_the_delivery_registry() {
+        // The prompt teaches by example, and an example the runtime rejects
+        // is worse than no example: the model follows it and the block is
+        // silently discarded or dumped as raw JSON. This is the check that
+        // replaces the manual audit — it exercises the real registry and the
+        // real payload validators, not a name lookup.
+        let examples = taught_examples();
+        assert!(
+            examples.len() >= 10,
+            "expected the contract to carry worked examples, found {}",
+            examples.len()
+        );
+        let registry = vak_delivery::skills::built_in_skill_registry();
+        for (semantic_type, payload) in examples {
+            let output = vak_delivery::skills::StructuredOutput {
+                semantic_type: semantic_type.clone(),
+                schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
+                skill_id: "core".into(),
+                skill_version: "1.0.0".into(),
+                payload,
+            };
+            registry
+                .validate(&output, "desktop", &[])
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "system-prompt.md teaches `{semantic_type}`, which the delivery \
+                         registry rejects: {error}"
+                    )
+                });
+        }
+    }
+
+    #[test]
+    fn presentation_catalogue_lists_only_untaught_semantic_types() {
+        let contract = seed("test").1;
+        let accepted = vak_delivery::skills::built_in_semantic_types();
+        let extra = untaught_semantic_types(&contract, &accepted);
+        // Present in the registry, absent from the curated examples.
+        for expected in ["coding.benchmark", "data.grid", "search_results"] {
+            assert!(
+                extra.contains(&expected),
+                "catalogue omits registry type `{expected}`: {extra:?}"
+            );
+        }
+        // Already taught — as a worked example, or by name in the prose
+        // catalogue. Repeating these dilutes the example rather than adding
+        // coverage.
+        for taught in [
+            "recipe.card",
+            "coding.diff",
+            "link.preview",
+            "table",
+            "metric",
+            "map",
+            "simulation",
+        ] {
+            assert!(
+                !extra.contains(&taught),
+                "catalogue repeats already-taught `{taught}`: {extra:?}"
+            );
+        }
+        // `recipe` is a distinct accepted type that the contract never names,
+        // and the `recipe.card` example must not mask it: anchored matching,
+        // not substring matching.
+        assert!(
+            extra.contains(&"recipe"),
+            "`recipe` masked by `recipe.card`"
+        );
+        assert!(
+            presentation_catalogue_section(&contract, &accepted)
+                .contains("Also accepted as `semantic_type`")
+        );
+    }
+
+    #[test]
+    fn resolved_prompt_carries_the_generated_catalogue() {
+        let contract = seed("test").1;
+        let accepted = vak_delivery::skills::built_in_semantic_types();
+        let runtime = RuntimeSections {
+            capability_contract: contract.clone(),
+            presentation_catalogue: presentation_catalogue_section(&contract, &accepted),
+            ..Default::default()
+        };
+        let resolved = resolve(&[], &runtime);
+        assert!(resolved.text.contains("Also accepted as `semantic_type`"));
+        assert!(resolved.text.contains("coding.benchmark"));
+        assert!(resolved.text.contains("search_results"));
     }
 
     #[test]

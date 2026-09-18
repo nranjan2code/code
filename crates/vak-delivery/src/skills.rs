@@ -668,6 +668,10 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "research_brief",
             "faq",
             "timeline",
+            "table",
+            "dataframe",
+            "recipe",
+            "news",
             "coding.deployment",
             "coding.incident",
             "coding.benchmark",
@@ -702,6 +706,21 @@ pub fn built_in_skill_registry() -> SkillRegistry {
         outcome_requirements: Vec::new(),
     });
     registry
+}
+
+/// Every `semantic_type` the built-in registry will accept, sorted and
+/// de-duplicated. This is the compiled-in vocabulary a model may legally
+/// emit in a ```vak block; prompt building reads it so the advertised
+/// catalogue cannot drift from what the server actually validates.
+pub fn built_in_semantic_types() -> Vec<String> {
+    let mut types: Vec<String> = built_in_skill_registry()
+        .skills
+        .values()
+        .flat_map(|skill| skill.provides.iter().cloned())
+        .collect();
+    types.sort();
+    types.dedup();
+    types
 }
 
 pub fn signals_from_text(text: &str) -> Vec<String> {
@@ -1706,6 +1725,36 @@ fn validate_payload(
                     })
                 })
         }
+        // The list renderer only reads an array under one of these keys, and
+        // only labels an item from one of these fields. A payload that keys
+        // its options as, say, `options: [{name, score, pros, cons}]` is not
+        // an error anywhere — it simply renders as a raw JSON dump, which is
+        // the failure this validator exists to make loud.
+        "decision" | "decision_analysis" => [
+            "choices",
+            "items",
+            "steps",
+            "milestones",
+            "slots",
+            "agenda",
+            "tasks",
+            "questions",
+            "qa",
+            "entries",
+        ]
+        .iter()
+        .find_map(|key| array(payload, key))
+        .is_some_and(|items| {
+            items.iter().all(|item| {
+                item.is_string()
+                    || item.is_number()
+                    || [
+                        "label", "title", "name", "question", "task", "text", "choice", "activity",
+                    ]
+                    .iter()
+                    .any(|field| item[*field].is_string())
+            })
+        }),
         "plan.timeline" => {
             strings(payload, &["title"])
                 && array(payload, "items").is_some_and(|items| {
@@ -1832,6 +1881,26 @@ mod tests {
             registry.validate(&output, "desktop", &[]),
             Err(SkillError::MissingCapability(_))
         ));
+    }
+
+    #[test]
+    fn every_seed_semantic_type_is_accepted_by_the_registry() {
+        // A seed presentation that accepts a semantic type the delivery
+        // registry does not declare can never be reached: `validate` rejects
+        // the output as `UnknownType` before the compiler ever sees it. This
+        // is the drift that left `table` unroutable while a `table` seed and
+        // a `table` prompt example both existed.
+        let accepted = built_in_semantic_types();
+        for record in vak_presentation::seeds::built_in_seed_pack() {
+            for semantic_type in &record.spec.accepts {
+                assert!(
+                    accepted.contains(semantic_type),
+                    "seed {} accepts `{semantic_type}`, which no skill in the built-in \
+                     registry provides — the output would be rejected as UnknownType",
+                    record.spec.id
+                );
+            }
+        }
     }
 
     #[test]
