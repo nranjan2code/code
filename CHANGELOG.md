@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.0 — 2026-09-18
+
+- Self-checking presentation prompt coverage: A drift test now validates every worked ```vak example in `system-prompt.md` against the real delivery registry (`vak_delivery::skills::SkillRegistry::validate`) instead of just a matching enum name, and a dynamic catalogue (`RuntimeSections::presentation_catalogue`) lists any registry-accepted semantic type still missing a worked example. Fixed a live bug found in the process: `table`, `dataframe`, `recipe`, and `news` had seed presentations but were missing from the core skill's `provides` list, silently rejecting every `table` block the model emitted. Removed the dead, already-drifted `list_presentation_primitives` endpoint.
+- Generic presentation renderer migration: Replaced nine bespoke presentation components with a single declarative `GenericSpecRenderer`, extended the `Primitive` vocabulary with Recipe/Research/UiPreview, and aligned the model system prompt with the actual renderer contract. Gave the generic metric card the same canvas-card chrome as every other presentation card.
+- Onboarding and agent picker: Added `AgentCreateWizard` and `OnboardingWelcome`, replaced `AgentsPanel` with an updated `AgentPickerModal`, and wired agent-glyph/recents/capability-icon helpers through App, ChatPane, Settings, Sidebar, and WorkspaceHeader.
+
 ## 3.2.5 — 2026-09-18
 
 - Per-Agent config-layer isolation: Generalized `resolve_scoped_core`/`AgentScopeQuery` from memory/learning-proposal endpoints to hooks, MCP servers/integrations, permission rules, prompt layers (including the assembled effective-prompt endpoint), skills/custom commands, the plugin store, general config endpoints, `set_permission_mode`, commitments, and checkpoints — closing the same-shape gap `list_sessions` once had, everywhere it still existed.
