@@ -371,6 +371,21 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
         in_backup: false,
     },
+    // The advisory cross-process lock guarding the two entries above
+    // (see `EncryptedFileStore::with_lock` in vak-config). Contains no
+    // secret material and is safe to lose — a missing lock file just
+    // degrades a future access to unsynchronized, it doesn't corrupt
+    // anything already on disk.
+    StateEntry {
+        path: ".credential_key.lock",
+        root: Root::Shared,
+        owner: "vak-config",
+        schema: None,
+        kind: Kind::Derived,
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
+        in_backup: false,
+    },
     // ---- the Shared layer ----
     StateEntry {
         path: ".vak/config.toml",
