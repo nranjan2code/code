@@ -975,6 +975,15 @@ fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline)
             // Nothing happened in this turn yet (still streaming) — not a failure.
             continue;
         }
+        let is_settled = non_progress
+            .iter()
+            .any(|item| !matches!(item.status, OutputStatus::Pending | OutputStatus::Running));
+        if !is_settled {
+            // The turn's only non-progress item is itself still Pending/Running
+            // (e.g. a bare "Outcome/Running" marker) — this fires on every
+            // poll of a turn that simply hasn't finished yet, not a failure.
+            continue;
+        }
         let kinds: Vec<String> = non_progress
             .iter()
             .map(|item| format!("{:?}/{:?}", item.kind, item.status))
