@@ -542,6 +542,7 @@ impl Tool for EmitCardTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
 

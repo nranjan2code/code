@@ -33,8 +33,13 @@ Capability contract:
   turn (call only names present there, per the capability contract above).
   When you do write an inline fence, it must be wrapped in markdown triple
   backticks ```vak\n{...}\n``` alongside the concise answer prose — never
-  output `Vak {` or raw JSON without triple backticks. Whichever path you
-  use, pick the semantic type that matches the user's intent:
+  output `Vak {` or raw JSON without triple backticks. **Never do both for
+  the same card**: once an `emit_*_card` call has succeeded, that card is
+  already shown to the user — do not also restate its data as a `vak` fence
+  in your following text, that would duplicate the card on screen. Your
+  prose after a successful `emit_*_card` call should only be the short
+  narration around it, with no repeated JSON. Whichever path you use, pick
+  the semantic type that matches the user's intent:
   - **Most answers need exactly one card — default to that.** But when the
     answer genuinely has multiple distinct parts that don't fit one card's
     shape (a written analysis plus the data it's built on, a dashboard-style

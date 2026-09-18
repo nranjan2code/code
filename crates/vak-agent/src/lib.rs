@@ -759,6 +759,18 @@ impl Agent {
         let mut pending_grounding_check: Option<Vec<String>> = None;
         let mut grounding_repair_attempted = false;
         let mut malformed_fence_repair_attempted = false;
+        // `semantic_type`s successfully emitted via an `emit_*_card` tool
+        // call in the immediately preceding batch. A tool-emitted card is
+        // already shown to the user (vak-server's projection pushes it from
+        // the tool result independently of the assistant's own text), so if
+        // the model's very next answer *also* writes a `vak` fence
+        // repeating the same semantic_type, that's a second, duplicate card
+        // — observed live against the real local model (gemma4:e2b-mlx):
+        // it called `emit_chart_card` successfully, then still wrote out
+        // the identical chart as a trailing fence. Same bounded-repair
+        // pattern as `pending_grounding_check`/`malformed_fence_repair_attempted`.
+        let mut pending_duplicate_card_check: Option<Vec<String>> = None;
+        let mut duplicate_card_repair_attempted = false;
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1321,6 +1333,37 @@ impl Agent {
                         continue;
                     }
                 }
+                // Duplicate-card enforcement: the model already emitted a
+                // card via `emit_*_card` this turn, then its own trailing
+                // text repeats the same semantic_type as a `vak` fence —
+                // that fence renders as a SECOND card (vak-server's
+                // projection and the client's own fence-parsing are
+                // independent paths; nothing dedupes across them). One
+                // bounded repair turn asking the model to drop the
+                // redundant fence, mirroring the two checks above.
+                if !duplicate_card_repair_attempted
+                    && let Some(emitted_types) = pending_duplicate_card_check.take()
+                    && !emitted_types.is_empty()
+                {
+                    let text = response.text_content();
+                    if let Some(dup_type) = find_duplicate_card_fence(&text, &emitted_types) {
+                        duplicate_card_repair_attempted = true;
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
+                        let _ = self.session.lock().await.append_message(MessageRecord {
+                            message: Message::user_text(format!(
+                                "[duplicate-card-check]: You already emitted a `{dup_type}` card via the matching \
+                                 emit_*_card tool call above, and the user already sees it. Resend your answer \
+                                 WITHOUT the ```vak fence that repeats it — just the short narration around the \
+                                 card is needed, no restated JSON."
+                            )),
+                            meta: None,
+                        });
+                        turn += 1;
+                        continue;
+                    }
+                }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
                         .session
@@ -1535,6 +1578,28 @@ impl Agent {
                 None
             } else {
                 Some(retrieval_tool_names)
+            };
+            let emitted_card_types: Vec<String> = results
+                .iter()
+                .filter_map(|(id, out)| match out {
+                    ToolRunOutput::Ok(content) => {
+                        let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
+                        (name.starts_with("emit_") && name.ends_with("_card"))
+                            .then(|| serde_json::from_str::<serde_json::Value>(content).ok())
+                            .flatten()
+                            .and_then(|v| {
+                                v.get("semantic_type")
+                                    .and_then(|s| s.as_str())
+                                    .map(str::to_string)
+                            })
+                    }
+                    ToolRunOutput::Err(_) => None,
+                })
+                .collect();
+            pending_duplicate_card_check = if emitted_card_types.is_empty() {
+                None
+            } else {
+                Some(emitted_card_types)
             };
             for (id, out) in &results {
                 match out {
@@ -3483,6 +3548,31 @@ fn find_malformed_vak_fence(text: &str) -> Option<String> {
         }
         if let Err(err) = serde_json::from_str::<serde_json::Value>(body) {
             return Some(err.to_string());
+        }
+    }
+    None
+}
+
+/// Scans an assistant's final text for a `vak` fence whose `semantic_type`
+/// matches one already emitted via a successful `emit_*_card` tool call in
+/// the same turn, and returns that semantic_type if found. See
+/// `pending_duplicate_card_check` for why this fence would otherwise render
+/// as a second, redundant card.
+fn find_duplicate_card_fence(text: &str, emitted_types: &[String]) -> Option<String> {
+    let mut search_from = 0usize;
+    while let Some(rel_open) = text[search_from..].find("```vak") {
+        let open = search_from + rel_open;
+        let body_start = open + text[open..].find('\n')? + 1;
+        let Some(rel_close) = text[body_start..].find("```") else {
+            return None; // Unclosed fence: streaming/truncated, not our concern here.
+        };
+        let body = &text[body_start..body_start + rel_close];
+        search_from = body_start + rel_close + 3;
+        if let Some(dup_type) = emitted_types
+            .iter()
+            .find(|t| body.contains(&format!("\"semantic_type\":\"{t}\"")))
+        {
+            return Some(dup_type.clone());
         }
     }
     None
