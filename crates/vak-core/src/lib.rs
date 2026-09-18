@@ -2245,26 +2245,6 @@ impl Core {
         (!usable.is_empty()).then_some(usable)
     }
 
-    /// Servers that were probed and failed, with the reason — the
-    /// counterpart of `cached_mcp_inventory`. Feeds the standing section and
-    /// the operator report from the same probe result, so the model and
-    /// `doctor` cannot disagree about which servers are down.
-    fn failed_mcp_servers(&self) -> Vec<(String, String)> {
-        let Some(probed) = self
-            .inner
-            .mcp_cache
-            .lock()
-            .ok()
-            .and_then(|c| c.as_ref().and_then(|c| c.inventory.clone()))
-        else {
-            return Vec::new();
-        };
-        probed
-            .into_iter()
-            .filter_map(|(server, outcome)| outcome.err().map(|reason| (server, reason)))
-            .collect()
-    }
-
     /// Replace lifecycle hooks for subsequent turns without restarting the
     /// desktop/server process. Persistence is owned by the server surface.
     pub fn set_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
@@ -3558,18 +3538,40 @@ impl Core {
         // front of the model and — through `health::collect` — in front of
         // the operator, from the same probe result, so the two cannot
         // disagree about which servers are down.
-        for (server, reason) in self.failed_mcp_servers() {
-            out.push(CapabilityDiagnostic {
-                kind: "mcp-server".into(),
-                name: server.clone(),
-                reason,
-                source: Some("[mcp.servers]".into()),
-                remedy: format!(
-                    "check the `{server}` entry under [mcp.servers] — command, args, and any required env"
-                ),
-                // A server that will not answer is broken, not chosen.
-                deliberate: false,
-            });
+        //
+        // Reads `capability::registry::Resolution::Degraded` (via
+        // `CapabilityRegistry::current_blocking`), not the older
+        // `Core::mcp_cache`/`failed_mcp_servers()` path. Those were two
+        // independently-evolved sources for the same fact — the registry
+        // has real backoff/attempt tracking `mcp_cache` never did, and is
+        // already the single source of truth for the discovered tool
+        // catalog itself (see `mcp_config_section`'s doc comment, which
+        // describes fixing this exact class of two-sources-disagree defect
+        // for the catalog; this closes the matching gap for health status).
+        for capability in self.capability_registry().current_blocking().all() {
+            if capability.id.kind != vak_session::types::CapabilityKind::McpServer {
+                continue;
+            }
+            if let capability::resolution::Resolution::Degraded { failure, .. } =
+                &capability.resolution
+            {
+                let server = capability.id.name.clone();
+                out.push(CapabilityDiagnostic {
+                    kind: "mcp-server".into(),
+                    name: server.clone(),
+                    reason: failure.reason.clone(),
+                    source: Some("[mcp.servers]".into()),
+                    remedy: if failure.remedy.is_empty() {
+                        format!(
+                            "check the `{server}` entry under [mcp.servers] — command, args, and any required env"
+                        )
+                    } else {
+                        failure.remedy.clone()
+                    },
+                    // A server that will not answer is broken, not chosen.
+                    deliberate: false,
+                });
+            }
         }
 
         out

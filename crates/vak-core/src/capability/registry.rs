@@ -180,6 +180,22 @@ impl CapabilityRegistry {
         self.current.read().await.clone()
     }
 
+    /// Best-effort synchronous read of the current published set, for
+    /// diagnostics/reporting call sites (`capability_diagnostics`, `/doctor`,
+    /// the system prompt) that are not themselves async. Reconciliation is
+    /// an eventually-consistent background loop by design — a rare
+    /// contended `try_read` just means this diagnostic reflects the
+    /// previous epoch for one more instant, not a correctness problem.
+    /// Falls back to an empty set only if the lock is actually contended
+    /// (never blocks), which a caller reporting "nothing degraded" during
+    /// that instant is a harmless, self-correcting understatement.
+    pub fn current_blocking(&self) -> Arc<CapabilitySet> {
+        self.current
+            .try_read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| Arc::new(CapabilitySet::empty()))
+    }
+
     pub async fn status(&self) -> ReconcileStatus {
         self.status.read().await.clone()
     }
@@ -546,6 +562,31 @@ mod tests {
             configuration: serde_json::Value::Null,
             needs_probe,
         }
+    }
+
+    #[tokio::test]
+    async fn current_blocking_reflects_a_published_degraded_mcp_server() {
+        // The sync accessor `capability_diagnostics()` (crates/vak-core/src/lib.rs)
+        // now uses instead of the older, disconnected `Core::mcp_cache` path
+        // — this is the exact shape it reads: an admitted MCP server whose
+        // probe failed shows up as `Resolution::Degraded` in the published
+        // set, readable without `.await`.
+        let provider = Fake::new(vec![decl("search", CapabilityKind::McpServer, true)]);
+        *provider.probe_ok.lock().unwrap() = false;
+        let (registry, _rx) = CapabilityRegistry::new(provider);
+        registry.reconcile().await;
+
+        let blocking = registry.current_blocking();
+        let cap = blocking
+            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
+            .expect("declared server must still be present, just degraded");
+        assert!(
+            matches!(cap.resolution, Resolution::Degraded { .. }),
+            "expected Degraded, got {:?}",
+            cap.resolution
+        );
+        // And it must agree with the async accessor — same underlying lock.
+        assert_eq!(blocking.epoch, registry.current().await.epoch);
     }
 
     #[tokio::test]
