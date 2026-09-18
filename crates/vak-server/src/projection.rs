@@ -921,7 +921,60 @@ fn snapshot_inner(
     }
     timeline.items = deduplicated;
     timeline.cursor = chain_cursor(session);
+    log_turns_with_no_visible_answer(session_id, &timeline);
     timeline
+}
+
+/// Mirrors the client's `Turn` filter (vak-client-ui's
+/// `PresentationRenderer.tsx`): a turn is a *real answer* only if it carries
+/// a `Document`/`Structured`/`Adaptive` item, or an `Outcome` with a
+/// document attached. Everything else — bare outcomes, tool errors,
+/// progress/retry/information — is invisible to a non-operator client.
+///
+/// If a turn has items but none of them qualify, the chat pane renders
+/// nothing for it (now backstopped by a "no result" notice client-side,
+/// but that's a fallback, not an explanation). Log it here so *why* is
+/// inspectable from this process's log instead of only guessable from the
+/// UI after the fact.
+fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline) {
+    let mut turns: BTreeMap<&str, Vec<&OutputItem>> = BTreeMap::new();
+    for item in &timeline.items {
+        turns.entry(item.turn_id.as_str()).or_default().push(item);
+    }
+    for (turn_id, items) in turns {
+        let has_real_answer = items.iter().any(|item| match &item.content {
+            OutputContent::Document { .. }
+            | OutputContent::Structured { .. }
+            | OutputContent::Adaptive { .. } => true,
+            OutputContent::Outcome { document, .. } => document.is_some(),
+            _ => false,
+        });
+        if has_real_answer {
+            continue;
+        }
+        let non_progress: Vec<&&OutputItem> = items
+            .iter()
+            .filter(|item| {
+                !matches!(
+                    item.kind,
+                    OutputKind::Progress | OutputKind::Retry | OutputKind::Information
+                )
+            })
+            .collect();
+        if non_progress.is_empty() {
+            // Nothing happened in this turn yet (still streaming) — not a failure.
+            continue;
+        }
+        let kinds: Vec<String> = non_progress
+            .iter()
+            .map(|item| format!("{:?}/{:?}", item.kind, item.status))
+            .collect();
+        eprintln!(
+            "[projection] session={session_id} turn={turn_id} produced no visible answer ({} non-progress item(s): {}) — client renders a fallback notice for this turn",
+            non_progress.len(),
+            kinds.join(", ")
+        );
+    }
 }
 
 fn chain_cursor(session: &SessionLog) -> Option<String> {

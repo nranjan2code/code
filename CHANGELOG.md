@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.2 — 2026-09-18
+
+- Added per-turn diagnostic logging to `vak-server`'s projection layer (`log_turns_with_no_visible_answer`): whenever a turn has items but none of them qualify as a real answer under the same rule the client's `Turn` filter uses (document/structured/adaptive content, or an outcome carrying a document), the gateway now logs the turn id, session id, and the kind/status of every non-progress item it produced. Previously this class of failure (a turn ending with only a tool error, a bare document-less outcome, etc. — the exact case the 3.4.1 blank-transcript fix backstops) was invisible in `~/Library/Logs/vak/gateway.log`, which only ever logged process startup; there was no way to tell after the fact whether a turn actually produced a result that got filtered, or never produced one at all.
+
 ## 3.4.1 — 2026-09-18
 
 - Fixed a turn that fails before producing a document rendering as a completely blank transcript entry: tool errors, document-less outcomes, and lifecycle-only fallback text are all filtered out of the chat view in production (`showOperatorChrome()` is hardcoded `false`), so the whole item list could empty out with no fallback, leaving the user staring at an empty `Turn` section with no answer and no explanation. `Turn` now shows a neutral "no result" notice pointing to task details instead of rendering nothing.
