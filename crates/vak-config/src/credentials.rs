@@ -472,6 +472,7 @@ fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
