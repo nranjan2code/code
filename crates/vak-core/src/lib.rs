@@ -5850,7 +5850,8 @@ impl Core {
                     _ => Vec::new(),
                 })
                 .collect();
-            let wanted = misread::escalated_capability(&engagement, &attempted);
+            let wanted =
+                misread::escalated_capability(&turn_capabilities.excluded_by_domain_slice, &attempted);
             let outcome = match (&wanted, &outcome) {
                 (Some(_), _) => misread::Outcome::Escalated,
                 (None, TurnOutcome::Aborted { .. }) => misread::Outcome::Abandoned,

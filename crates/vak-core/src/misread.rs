@@ -15,7 +15,7 @@
 //! **unknown**, TTL-filtered, and absence is a neutral prior rather than a
 //! zero. A reading nobody corrected is not thereby proven right.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -232,22 +232,27 @@ impl MisreadLedger {
     }
 }
 
-/// Detect the measured misread: a capability the slice removed, that the model
-/// then tried to call anyway.
+/// Detect the measured misread: a capability the domain slice removed, that
+/// the model then tried to call anyway.
 ///
-/// Only meaningful when the slice actually narrowed something. `CapabilitySlice::All`
-/// removed nothing, so nothing it "withheld" can have been wanted.
-pub fn escalated_capability(
-    engagement: &vak_intent::Engagement,
-    attempted: &[String],
-) -> Option<String> {
-    match &engagement.limits.capabilities {
-        vak_intent::CapabilitySlice::All => None,
-        vak_intent::CapabilitySlice::Only { .. } => attempted
-            .iter()
-            .find(|name| !engagement.limits.capabilities.allows(name))
-            .cloned(),
-    }
+/// `excluded_by_domain_slice` is `TurnCapabilities::excluded_by_domain_slice`
+/// (crates/vak-core/src/capability/turn.rs) — the names that passed channel +
+/// reach + contract (they really were admitted to this session) but were
+/// then hidden from this turn by domain slicing. `attempted` is every tool
+/// name the model tried to invoke this turn, admitted or not.
+///
+/// This used to check `engagement.limits.capabilities` (a `CapabilitySlice`),
+/// but nothing in production ever narrows that field — domain slicing (the
+/// mechanism that actually runs) narrows `required_domains` instead, which
+/// `CapabilitySlice` never reflected. That made this function permanently
+/// dead: `CapabilitySlice::All` always matched and the signal never fired.
+/// Now it reads directly from what actually excluded the capability this
+/// turn.
+pub fn escalated_capability(excluded_by_domain_slice: &BTreeSet<String>, attempted: &[String]) -> Option<String> {
+    attempted
+        .iter()
+        .find(|name| excluded_by_domain_slice.contains(name.as_str()))
+        .cloned()
 }
 
 /// Acts whose readings are contradicted often enough to be worth a look.
@@ -272,7 +277,7 @@ pub fn act_of(cell: &CellAccuracy) -> Option<Act> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use vak_intent::{CapabilitySlice, Reading, Stakes};
+    use vak_intent::{Reading, Stakes};
 
     fn reading(act: Act, stakes: Stakes) -> Reading {
         Reading {
@@ -283,23 +288,29 @@ mod tests {
     }
 
     #[test]
-    fn a_withheld_capability_the_model_then_wanted_is_the_measured_misread() {
-        let mut engagement = vak_intent::Engagement::general();
-        engagement.limits.capabilities = CapabilitySlice::only(["read", "grep"]);
+    fn a_domain_excluded_capability_the_model_then_wanted_is_the_measured_misread() {
+        // `excluded_by_domain_slice` is what `TurnCapabilities::build`
+        // (crates/vak-core/src/capability/turn.rs) actually populates from
+        // live domain slicing — this replaces the old, permanently-dead
+        // `CapabilitySlice`-based check (nothing in production ever set
+        // `engagement.limits.capabilities` to `Only`, only `required_domains`
+        // was ever narrowed).
+        let excluded = BTreeSet::from(["bash".to_string()]);
         assert_eq!(
-            escalated_capability(&engagement, &["read".into(), "bash".into()]),
+            escalated_capability(&excluded, &["read".into(), "bash".into()]),
             Some("bash".into())
         );
-        // Nothing wanted that was not withheld.
-        assert_eq!(escalated_capability(&engagement, &["read".into()]), None);
+        // Nothing wanted that was not excluded.
+        assert_eq!(escalated_capability(&excluded, &["read".into()]), None);
     }
 
-    /// A turn that was never narrowed cannot have escalated past a narrowing.
+    /// A turn where nothing was domain-excluded cannot have escalated past
+    /// an exclusion that never happened.
     #[test]
-    fn an_unsliced_engagement_reports_no_escalation() {
-        let engagement = vak_intent::Engagement::general();
+    fn no_exclusions_reports_no_escalation() {
+        let excluded = BTreeSet::new();
         assert_eq!(
-            escalated_capability(&engagement, &["bash".into(), "anything".into()]),
+            escalated_capability(&excluded, &["bash".into(), "anything".into()]),
             None
         );
     }

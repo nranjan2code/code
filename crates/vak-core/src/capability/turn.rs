@@ -74,6 +74,16 @@ pub struct TurnCapabilities {
     /// `Agent::tool_definitions()` that previously appended the `work`
     /// tool *after* all filters had already run.
     pub flow_admitted: bool,
+    /// Names of Tool/McpServer/Skill capabilities that passed channel +
+    /// reach + contract (stages 1-3 — they really were admitted to this
+    /// session) but were then hidden by the domain slice (stage 4) for
+    /// this specific turn. This is the actual live mechanism behind the
+    /// misread self-correction signal (`vak_core::misread::escalated_capability`,
+    /// see its module doc): if the model asks for one of these names
+    /// anyway, the intent reading that produced `required_domains`
+    /// measurably missed. Previously nothing populated this, so that
+    /// signal never fired outside tests — see crates/vak-core/src/misread.rs.
+    pub excluded_by_domain_slice: BTreeSet<String>,
 }
 
 // --- TurnProbe ------------------------------------------------------------
@@ -489,6 +499,18 @@ impl TurnCapabilities {
             })
             .collect();
 
+        let excluded_by_domain_slice: BTreeSet<String> = surviving
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.id.kind,
+                    CapabilityKind::Tool | CapabilityKind::McpServer | CapabilityKind::Skill
+                )
+            })
+            .filter(|c| !passes_domain_slice(c, probe))
+            .map(|c| c.id.name.clone())
+            .collect();
+
         TurnCapabilities {
             tool_names,
             descriptors,
@@ -497,6 +519,7 @@ impl TurnCapabilities {
             hooks,
             frozen_skills,
             flow_admitted,
+            excluded_by_domain_slice,
         }
     }
 }
@@ -671,6 +694,43 @@ mod tests {
         let tc = TurnCapabilities::build(&probe);
         assert!(tc.mcp_aliases.contains_key("get_weather"));
         assert!(!tc.mcp_aliases.contains_key("format_code"));
+    }
+
+    #[test]
+    fn excluded_by_domain_slice_tracks_hidden_but_admitted_capabilities() {
+        // The real signal behind `misread::escalated_capability`: a tool
+        // that was admitted (would pass channel+reach+contract) but got
+        // hidden from THIS turn by the domain slice must show up here, so
+        // the model asking for it anyway is a measured misread — not a
+        // silently-dropped signal (see crates/vak-core/src/misread.rs).
+        let set = CapabilitySet::new(
+            1,
+            vec![
+                make_cap(
+                    "code_server",
+                    CapabilityKind::McpServer,
+                    Serves::declared([Domain::CodeExec]),
+                ),
+                make_cap("generic_tool", CapabilityKind::Tool, Serves::Undeclared),
+            ],
+        );
+        let required = BTreeSet::from([Domain::Web, Domain::LiveData]);
+        let policy = empty_policy();
+        let probe = make_probe(&set, None, &policy, &[], &required, None);
+        let tc = TurnCapabilities::build(&probe);
+        assert!(
+            tc.excluded_by_domain_slice.contains("code_server"),
+            "a CodeExec-only server must be excluded when required_domains is [Web, LiveData]: {:?}",
+            tc.excluded_by_domain_slice
+        );
+        // Undeclared capabilities fail open (always survive), so they must
+        // NOT appear as "excluded" even though they weren't explicitly
+        // requested — that would produce a false misread signal every turn.
+        assert!(
+            !tc.excluded_by_domain_slice.contains("generic_tool"),
+            "an undeclared (fail-open) tool must never be reported as domain-excluded: {:?}",
+            tc.excluded_by_domain_slice
+        );
     }
 
     #[test]
