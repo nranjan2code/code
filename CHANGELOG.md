@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.0 — 2026-09-18
+
+- Live provider/model/credential config: Core previously resolved its provider/model route once at construction and cached it forever, so a config write from another process (e.g. `vak setup`) never reached an already-running desktop/server Core. Fixed by tracking a cheap config-file fingerprint and re-deriving on change, and wiring the desktop/web Settings UI to the server's existing config-change event stream.
+- Credential storage moved off `.env`: secrets now go through `vak_config::credentials`, an OS-native secret service (macOS Keychain / Windows Credential Manager / Linux Secret Service) by default, with an AES-256-GCM encrypted-file fallback for hosts with no reachable secret service. No plaintext secret file is written by this codebase anymore.
+- Fixed periodic UI flicker on running executions: streamed updates produced new object references each chunk, causing Solid's reference-keyed `<For>` to remount rows and restart pulse animations every tick. Switched the affected lists (vak-client-ui `WorkbenchPanel`, vak-admin-ui `Home`) to `<Index>`, gated several previously unconditional polling intervals on tab visibility, and stopped the workbench pulse timer from ticking when nothing is running.
+- Fixed two dead/undefined CSS custom properties (`--danger`, `--panel-alt`) that silently fell through to fallback values, replaced hardcoded status colors with theme tokens so they re-theme correctly across presets, and removed a handful of dead duplicate CSS rules left over from prior design passes.
+
 ## 3.3.0 — 2026-09-18
 
 - Self-checking presentation prompt coverage: A drift test now validates every worked ```vak example in `system-prompt.md` against the real delivery registry (`vak_delivery::skills::SkillRegistry::validate`) instead of just a matching enum name, and a dynamic catalogue (`RuntimeSections::presentation_catalogue`) lists any registry-accepted semantic type still missing a worked example. Fixed a live bug found in the process: `table`, `dataframe`, `recipe`, and `news` had seed presentations but were missing from the core skill's `provides` list, silently rejecting every `table` block the model emitted. Removed the dead, already-drifted `list_presentation_primitives` endpoint.
