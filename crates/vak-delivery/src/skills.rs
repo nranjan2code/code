@@ -630,6 +630,34 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "trend",
             "timeseries",
             "bar_chart",
+            // Same gap, same shape: the client (PresentationRenderer.tsx
+            // STRUCTURED_RENDERERS) has had renderers for these ten since
+            // commits 85408ebc and 1d34cd6b ("support all 62+ outcome
+            // render types") but this registry was never updated alongside
+            // them, so every one of them was rejected by
+            // SkillRegistry::validate() with UnknownType before ever
+            // reaching that client code — confirmed by diffing
+            // built_in_semantic_types() against STRUCTURED_RENDERERS' keys
+            // while building the emit_*_card tool-calling path (2026-09-18,
+            // see docs/design/67-presentation-renderer-guide.md Step 0).
+            // None of them need a dedicated validate_payload() arm: each
+            // shares its shape with an already-registered sibling
+            // (metric_chart/comparison_chart/telemetry.chart with chart;
+            // telemetry.metric/weather with metric; decision_matrix/
+            // criteria_matrix/tradeoff_analysis with table;
+            // lifestyle.recipe/lifestyle.culinary_recipe with recipe.card),
+            // so the shared, permissive fallthrough in validate_payload
+            // already covers them.
+            "metric_chart",
+            "comparison_chart",
+            "telemetry.chart",
+            "telemetry.metric",
+            "weather",
+            "decision_matrix",
+            "criteria_matrix",
+            "tradeoff_analysis",
+            "lifestyle.recipe",
+            "lifestyle.culinary_recipe",
             "media.image",
             "media.video",
             "media.audio",

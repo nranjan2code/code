@@ -29,7 +29,7 @@
 //! `vak_delivery::structured_outputs_from_tool_result_with` pipeline
 //! (originally built for third-party/MCP tool results that self-declare a
 //! `semantic_type`) already scans any tool's result for exactly this shape,
-//! validates it against `SkillRegistry` — the real 84-type allowlist,
+//! validates it against `SkillRegistry` — the real 97-type allowlist,
 //! independent of anything the model claims — and turns it into a rendered
 //! card. That pipeline is untouched; this just gives it schema-clean input
 //! instead of a hand-rolled markdown fence.
@@ -376,6 +376,7 @@ const SHAPES: &[CardShape] = &[
             "coding.benchmark", "coding.dependencies", "data.grid", "table", "dataframe",
             "comparison", "comparison_table", "pros_cons", "inventory", "scorecard",
             "budget", "finance_summary", "invoice_summary", "travel_options",
+            "decision_matrix", "criteria_matrix", "tradeoff_analysis",
         ],
         payload_schema: table_payload_schema,
     },
@@ -395,7 +396,7 @@ const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_recipe_card",
         description: "Emit a recipe card with ingredients and steps.",
-        semantic_types: &["recipe.card", "recipe", "recipe_summary"],
+        semantic_types: &["recipe.card", "recipe", "recipe_summary", "lifestyle.recipe", "lifestyle.culinary_recipe"],
         payload_schema: recipe_payload_schema,
     },
     CardShape {
@@ -407,7 +408,7 @@ const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_chart_card",
         description: "Emit a chart card for a numeric series over time or categories.",
-        semantic_types: &["chart", "trend", "timeseries", "bar_chart"],
+        semantic_types: &["chart", "trend", "timeseries", "bar_chart", "metric_chart", "comparison_chart", "telemetry.chart"],
         payload_schema: chart_payload_schema,
     },
     CardShape {
@@ -419,7 +420,7 @@ const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_metric_card",
         description: "Emit a metric card: a single measurement (weather, a KPI, a benchmark number) or a small grid of several.",
-        semantic_types: &["metric"],
+        semantic_types: &["metric", "telemetry.metric", "weather"],
         payload_schema: metric_payload_schema,
     },
 ];
