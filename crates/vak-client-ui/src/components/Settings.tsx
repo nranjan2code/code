@@ -864,6 +864,13 @@ export default function Settings() {
     }
   };
   onMount(() => void load());
+  // Live-reflect config/credential writes made elsewhere (CLI `vak setup`,
+  // another client) instead of only ever showing what was true at mount
+  // time (docs/design/44-shared-config.md, "Liveness").
+  onMount(() => {
+    const events = api.openConfigEvents(() => void load());
+    onCleanup(() => events.close());
+  });
   const visiblePages = createMemo(() => {
     const needle = query().trim().toLowerCase();
     return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
@@ -1351,7 +1358,7 @@ export default function Settings() {
                   title={`${keyProvider()} — ${currentProviderInfo()?.env_var ?? "no key needed"}`}
                   description={
                     currentProviderInfo()?.requires_key
-                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · ${currentProviderInfo()?.pool_size ?? 0} credential${(currentProviderInfo()?.pool_size ?? 0) === 1 ? "" : "s"} in the routing pool · stored in ~/.vak/.env with owner-only permissions. A real environment variable takes precedence.`
+                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · ${currentProviderInfo()?.pool_size ?? 0} credential${(currentProviderInfo()?.pool_size ?? 0) === 1 ? "" : "s"} in the routing pool · stored in this device's secure credential store (OS keychain, or an encrypted file when no keychain is available). A real environment variable takes precedence.`
                       : `${keyProvider()} runs locally and needs no key.`
                   }
                 >
@@ -1874,7 +1881,7 @@ export default function Settings() {
                 </Row>
                 <Row
                   title="Include secrets"
-                  description="Adds provider API keys from .env files. Anyone with this folder can spend your credits — keep it offline and delete it when restored."
+                  description="Adds your provider API keys (from the encrypted credential store; nothing is added if this device uses the OS keychain instead). Anyone with this folder can spend your credits — keep it offline and delete it when restored."
                   danger
                 >
                   <Switch label="Include secrets in export" checked={includeSecrets()} onChange={setIncludeSecrets} />

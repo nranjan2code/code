@@ -728,6 +728,29 @@ export function getConfig(agent?: string): Promise<ConfigSnapshot> {
   return req(withAgent("/config", agent));
 }
 
+/**
+ * Subscribe to server-side config/credential changes (docs/design/44-shared-config.md,
+ * "Liveness") so a write from another surface (CLI `vak setup`, another
+ * client) is reflected here without a manual refresh or app restart.
+ *
+ * Reuses the admin event hub's existing broadcast stream rather than a
+ * dedicated endpoint — every `emit_config_changed(...)` call server-side
+ * already fires a `ConfigChanged` event on it. `onChange` is called on
+ * every such event; callers decide what to re-fetch.
+ */
+export function openConfigEvents(onChange: () => void): EventSource {
+  const es = eventSource("/admin/api/events");
+  es.onmessage = (message) => {
+    try {
+      const event = JSON.parse(message.data);
+      if (event?.type === "ConfigChanged") onChange();
+    } catch {
+      // ignore malformed/keep-alive frames
+    }
+  };
+  return es;
+}
+
 export function listProviders(): Promise<import("./types").ProvidersResponse> {
   return req("/providers");
 }

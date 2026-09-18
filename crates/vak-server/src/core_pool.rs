@@ -184,7 +184,7 @@ impl CorePool {
         // Trust is read from the one marker store, not assumed. This used to
         // pass `true` unconditionally, so a workspace whose trust prompt an
         // operator had declined in a terminal still had its hooks, MCP
-        // servers, `permission_mode` and `.env` applied the moment a chat
+        // servers, `permission_mode` and secret scope applied the moment a chat
         // routed a turn into it — two answers to "is this workspace
         // trusted?", which is exactly what `vak_core::trust` exists to end.
         //

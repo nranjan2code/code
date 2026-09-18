@@ -10,7 +10,8 @@ Tavily is one peer in vak's curated out-of-the-box MCP integration catalog
 hardcoded runtime privileges or special architectural status: like any MCP
 server, its configuration is inherited across four tiers (Global `~/vak-home` →
 Workspace `cwd` → Agent `~/vak-home/agents/<agent_id>` → Session), secrets are
-scoped via `.env`, and its tools (`tavily_search`) are discovered, probed, and
+scoped via the credential store (docs/design/44-shared-config.md, "Secrets
+Chain"), and its tools (`tavily_search`) are discovered, probed, and
 bound dynamically by the Capability Registry. Egress is SSRF-guarded through
 sandboxed broker execution.
 

@@ -24,7 +24,7 @@
 //! rather than duplicating it — both the automatic launch below and the
 //! always-present "Open Vak" menu item rely on that guarantee.
 //! "Open Admin Console" opens a pre-authenticated link built from the
-//! gateway token `self install` pins into the canonical `.env`
+//! gateway token `self install` pins into the canonical secret scope
 //! (`ensure_gateway_token`, crates/vak/src/install/mod.rs) — see
 //! `open_admin_console` for why that has to be a query param and not a
 //! URL fragment.
@@ -324,14 +324,14 @@ fn desktop_binary() -> Option<std::path::PathBuf> {
 /// window and must not wait on it or inherit its lifetime.
 /// Resolve the managed gateway port from the same user-level environment as
 /// the server. The tray is launched directly by the session manager, so it
-/// never passes through the CLI's dotenv-loading path first and has to
-/// source the canonical user `.env` itself.
+/// never passes through the CLI's secret-loading path first and has to
+/// source the canonical user secret scope itself.
 ///
-/// That file is `~/vak-home/.env` (`vak_config::user_env_path`), beside the
-/// Shared config layer — not `data_home()/.env`, which is where this used
-/// to look and where nothing has been written since the canonical layout
-/// landed. Reading the wrong path meant the tray found no
-/// `VAK_GATEWAY_TOKEN` and could not build an authenticated admin URL.
+/// That scope is named by `vak_config::user_env_path()`, beside the
+/// Shared config layer — not one keyed off `data_home()`, which is where
+/// this used to look and where nothing has been written since the
+/// canonical layout landed. Reading the wrong scope meant the tray found
+/// no `VAK_GATEWAY_TOKEN` and could not build an authenticated admin URL.
 fn ops_config() -> vak_ops::OpsConfig {
     if let Some(env_path) = vak_config::user_env_path() {
         vak_config::replace_env_files(&[env_path.as_path()]);
@@ -339,8 +339,8 @@ fn ops_config() -> vak_ops::OpsConfig {
     vak_ops::OpsConfig::detect()
 }
 
-/// The token written into the canonical `.env` when setup activates the
-/// gateway. `None`
+/// The token written into the canonical secret scope when setup activates
+/// the gateway. `None`
 /// on an install that predates that pinning step -- the token still
 /// exists (freshly minted on every boot), it is just not discoverable
 /// from outside the running process, so there is nothing to build a link

@@ -149,7 +149,7 @@ pub(crate) fn resolve_agent_core(
                 // error on a cache hit, or `Core::new_with_trust`'s own IO/config
                 // error) is not itself a trust decision — falling back to an
                 // unconditional `true` here would let an operator-declined
-                // workspace's hooks/MCP servers/`.env` apply anyway, exactly the
+                // workspace's hooks/MCP servers/secret scope apply anyway, exactly the
                 // bypass `vak_core::trust` exists to close. Recompute trust the
                 // same way `resolve_at` does rather than assuming it.
                 Err(_) => match vak_core::Core::new_with_trust(

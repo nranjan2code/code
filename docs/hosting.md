@@ -53,25 +53,35 @@ cd /path/to/the/workspace-the-gateway-should-serve
   `launchctl bootout gui/$UID/com.vak.desktop` /
   `systemctl --user disable --now vak-desktop.service` — re-running
   `self services-sync` will recreate it.
-- Put `VAK_GATEWAY_TOKEN` and channel credentials in `~/vak-home/.env`
-  before starting services so bridges keep working across restarts.
+- `VAK_GATEWAY_TOKEN` is pinned automatically on first activation
+  (`ensure_gateway_token`) — nothing to set by hand. Set channel
+  credentials (bot tokens, provider keys) through the admin/Settings API
+  (`PUT /config/key`, the gateway bot endpoints) before starting services
+  so bridges keep working across restarts; there is no file to hand-edit —
+  secrets are never stored as plaintext (docs/design/44-shared-config.md,
+  "Secrets Chain").
 - Re-run `self install` after upgrading binaries and `self services-sync` after
   changing the served workspace or generated-unit contract.
 - `self services-sync` records the workspace directory in each generated unit;
   run it from the workspace that the gateway should serve. This keeps the
-  gateway's provider/model config and project `.env` aligned with that
+  gateway's provider/model config and the project secret scope aligned with that
   workspace instead of inheriting launchd/systemd's default directory. Units
   also preserve non-secret `HOME`, while the shared resolver falls back to the
   OS account home for GUI launches that omit it.
 
 ## Secrets
 
-All user-level secrets live in the canonical user `.env` at
-`~/vak-home/.env` (0600) — provider keys, bot tokens, and
-`VAK_GATEWAY_TOKEN` — beside the Shared config layer at
+All user-level secrets — provider keys, bot tokens, and
+`VAK_GATEWAY_TOKEN` — live in the canonical Shared secret scope, resolved
+through `vak_config::credentials` to an OS-native secret service (macOS
+Keychain / Windows Credential Manager / Linux Secret Service) or, when
+none is reachable (the common case for a headless server with no D-Bus
+session), an AES-256-GCM encrypted-file fallback under the shared data
+home — never a plaintext file (docs/design/44-shared-config.md, "Secrets
+Chain"). This sits beside the Shared config layer at
 `~/vak-home/.vak/config.toml`. Sessions, ledgers, and gateway state live
 separately under the platform data home (`~/Library/Application Support/vak`
-on macOS, `~/.local/share/vak` on Linux), which holds no secrets.
+on macOS, `~/.local/share/vak` on Linux).
 
 Nothing secret is written to config.toml, generated units, the repo, or logs. Generated bearer tokens are
 printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
@@ -195,10 +205,10 @@ migration.
 
 | Symptom | Check |
 |---|---|
-| bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAK_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
+| bridge replies "(gateway unreachable)" | gateway down or token mismatch — `vak open admin --print` prints the pinned `VAK_GATEWAY_TOKEN` as a loopback-only link; compare it against what the bridge is configured with |
 | replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
-| model errors | `/health` shows effective provider/model plus provenance/revision; keys live in `~/vak-home/.env` |
+| model errors | `/health` shows effective provider/model plus provenance/revision; keys live in the Shared secret scope (docs/design/44-shared-config.md, "Secrets Chain"), not a file — use the Settings UI or `PUT /config/key` to check/change them |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
 | Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |
 

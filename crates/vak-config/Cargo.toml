@@ -9,6 +9,8 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 vak-llm = { path = "../vak-llm" }
+ring = { workspace = true }
+keyring = { workspace = true, features = ["sync-secret-service", "vendored"] }
 
 [lints]
 workspace = true

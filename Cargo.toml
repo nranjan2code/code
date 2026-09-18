@@ -103,6 +103,10 @@ sha2 = "0.10"
 # Ed25519 verification for signed plugin/catalog evidence; no signing or key generation.
 ring = "=0.17.14"
 hex = "0.4"
+# Cross-platform OS secret storage (macOS Keychain / Windows Credential
+# Manager / Linux Secret Service) for the credential store
+# (docs/design/44-shared-config.md, "Secrets Chain").
+keyring = "3"
 # Embeds the built admin SPA (crates/vak-admin-ui/dist) into the binary
 include_dir = "0.7"
 globset = "0.4"

@@ -118,11 +118,14 @@ shipped behaviour rather than a proposal.
    `FrozenContract.route_ladder` / `.provider` / `.model` fields are the
    **initial admission snapshot** for audit only; `WorkReceipt` is the
    authoritative per-turn dispatch record.
-8. **Secrets never enter git.** API keys live in `.env` (project) or
-   the canonical user `.env` at `~/vak-home/.env`
-   (`vak_config::user_env_path`, gitignored), loaded via
-   `vak_config::load_env_file/get_var`. Real environment variables take
-   precedence over `.env`. Never hardcode, echo, or commit keys. Keys are
+8. **Secrets never enter git.** API keys live in the project secret scope or
+   the canonical shared secret scope named by `vak_config::user_env_path`
+   — resolved through `vak_config::credentials` to an OS-native secret
+   service or an encrypted-file fallback, never a plaintext file, so there
+   is nothing here for git to accidentally pick up. Point lookups go
+   through `vak_config::read_env_file_var/get_var`. Real environment
+   variables take precedence over a stored secret. Never hardcode, echo,
+   or commit keys. Keys are
    user-supplied and user-revocable: `Core::set_provider_key` /
    `remove_provider_key` own the whole lifecycle, and both invalidate the
    cached provider client and the discovered-model cache.
@@ -339,8 +342,8 @@ shipped behaviour rather than a proposal.
     request handler. Desktop and tray Operations Center links use the same
     bound listener port and bearer/cookie authentication as the admin console.
 27. **User configuration is the base layer; narrower scopes store only
-    intent.** The Shared layer (`~/vak-home/.vak/config.toml` plus
-    `~/vak-home/.env` and its capability stores) is inherited by every
+    intent.** The Shared layer (`~/vak-home/.vak/config.toml` plus its
+    shared secret scope and other capability stores) is inherited by every
     workspace. A project layer
     may inherit, replace a same-named item, add an item, or explicitly disable
     inheritance; it must never receive a copied snapshot of effective user
@@ -348,11 +351,18 @@ shipped behaviour rather than a proposal.
     workspace and remain scoped. Admin, Desktop, CLI, and server APIs use the
     same explicit `user`/`project` vocabulary and expose provenance. A GET used
     to seed a write returns that exact layer, never the merged projection.
-    Secrets follow the same lookup chain but stay outside TOML: Agent private secret
-    (`~/vak-home/agents/<agent_id>/.env`) → project secret (`<workspace>/.env`) → Shared
-    platform secret (`~/vak-home/.env`) → process environment. An Agent or project secret
+    Secrets follow the same lookup chain but stay outside TOML: Agent private
+    secret scope → project secret scope → Shared platform secret scope →
+    process environment. Secret scopes are never literal `.env` files — they
+    resolve through `vak_config::credentials` to an OS-native secret service
+    (macOS Keychain / Windows Credential Manager / Linux Secret Service) or,
+    when none is reachable (the common headless case), an encrypted-file
+    fallback; no plaintext secret file is ever written
+    (docs/design/44-shared-config.md, "Secrets Chain"). An Agent or project secret
     must never enter a process-global override map where another pooled workspace or agent
-    could observe it. Curated integrations are executable definitions backed by real
+    could observe it. A config write from one process must reach an
+    already-running `Core`/UI in another without a restart
+    (docs/design/44-shared-config.md, "Liveness"). Curated integrations are executable definitions backed by real
     packages; the product must not advertise mock, placeholder, or TODO
     capabilities.
 
@@ -736,7 +746,8 @@ crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/17-context.md)
 crates/vak-config    layered TOML config + atomic persisted workspace
-                     preferences + .env secret loading + canonical filesystem
+                     preferences + credential-store secret loading (OS
+                     keychain or encrypted-file fallback) + canonical filesystem
                      paths (paths.rs: data_home, cache_home,
                      logs_dir) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
@@ -976,7 +987,7 @@ see. `.gitignore` has to keep negating each of them out of the blanket
 `vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
 `set_home_override`) before `Core::new`/`Core::new_with_trust`. Without it,
 `load_with_trust` reads the operator's real Shared layer — `~/vak-home/.vak/config.toml`
-and `~/vak-home/.env` — so the suite exercises whatever that machine happens
+and the real Shared secret scope — so the suite exercises whatever that machine happens
 to have configured. Twenty-one test files did exactly that: a real MCP
 server was advertised inside tests, and a personal provider key could make
 an "unconfigured" case pass on one machine and fail in CI. Neither
@@ -995,7 +1006,7 @@ doc citing a path that no longer exists; docs whose `Status:` line says
 "proposal" are skipped, because their paths are targets rather than
 citations.
 
-Live checks (needs API key in `.env`):
+Live checks (needs a provider key set via the Settings UI, `PUT /config/key`, or an environment variable):
 
 ```
 target/debug/vak eval                    # deterministic suite, ~100ms

@@ -143,7 +143,7 @@ persistence it fixes.
 ## Token pinning
 
 Bridges must survive gateway restarts without human help:
-`VAK_GATEWAY_TOKEN` (from the user `.env`) overrides the random
+`VAK_GATEWAY_TOKEN` (from the Shared secret scope) overrides the random
 per-process bearer token. The value is honoured verbatim and never logged;
 when absent, a fresh token is printed only to an interactive terminal and is
 suppressed in service logs. Generated service units carry only non-secret

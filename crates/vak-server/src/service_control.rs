@@ -13,8 +13,8 @@
 //! this module to the service manager.
 //!
 //! **2. A record is not an activation.** Creating a bot, renaming it,
-//! setting its token, or revoking it writes `bots.json` / `.env` and
-//! nothing else. Registering an OS service is a separate, explicit act —
+//! setting its token, or revoking it writes `bots.json` / the credential
+//! store and nothing else. Registering an OS service is a separate, explicit act —
 //! [`reconcile`] — for the same reason `vak self install` no longer starts
 //! services (`docs/design/46-stabilization-install-and-onboarding.md` D6):
 //! configuring something and activating it are different decisions, and
@@ -26,8 +26,9 @@
 //! cleared token effective by bouncing a process would put orchestration
 //! back in the request path — and it did: an API handler shelled out to
 //! `launchctl`, which blocked. A bridge watches its own credential instead
-//! (`surfaces::CredentialWatch`), so revoking one is a fact about `.env`
-//! that takes effect within a poll cycle, with nothing orchestrating it.
+//! (`surfaces::CredentialWatch`), so revoking one is a fact about the
+//! credential store that takes effect within a poll cycle, with nothing
+//! orchestrating it.
 
 use serde::Serialize;
 

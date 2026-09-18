@@ -6,7 +6,7 @@
 //! The gateway stays transport-agnostic; this client runs anywhere it can
 //! reach both Telegram and a vak-server — laptop, VPS, sidecar. Launched via
 //! `vak telegram --server URL --token GATEWAY_TOKEN` with
-//! `TELEGRAM_BOT_TOKEN` in the environment (.env included).
+//! `TELEGRAM_BOT_TOKEN` in the environment (the credential store included).
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -933,9 +933,10 @@ impl TelegramBridge {
         let watch = (!self.token_env.is_empty())
             .then(|| super::CredentialWatch::new(&self.token_env, &self.bot_token));
         loop {
-            // Revocation and rotation are facts about `.env`, noticed here
-            // within one poll cycle, rather than something an API handler
-            // orchestrates by restarting this process.
+            // Revocation and rotation are facts about the credential
+            // store, noticed here within one poll cycle, rather than
+            // something an API handler orchestrates by restarting this
+            // process.
             if let Some(watch) = &watch {
                 match watch.check() {
                     super::CredentialState::Unchanged => {}

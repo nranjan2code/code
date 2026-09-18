@@ -151,8 +151,10 @@ Why this shape:
   considered: Svelte 5 (fine), React (heavier, ecosystem not needed).
 - **Editor/diff: CodeMirror 6** (merge-view for diffs) — an order lighter
   than Monaco, good enough for spot edits; xterm.js for PTY panes.
-- **Secrets:** unchanged — `.env` loading stays in vak_config; the renderer
-  never sees keys. Settings in tauri-plugin-store; keychain integration later.
+- **Secrets:** credential storage stays in vak_config (`vak_config::credentials`,
+  docs/design/44-shared-config.md); the renderer never sees keys. Settings in
+  tauri-plugin-store; keychain integration shipped — OS-native secret
+  service by default, with an encrypted-file fallback where none is reachable.
 - **Security:** strict CSP, no remote content in the webview, capabilities
   least-privilege, loopback token auth on the local port.
 
@@ -166,7 +168,7 @@ Why this shape:
 | 4 delta AND snapshot | every pane subscribes at its level; Verbose=delta firehose, Summary=snapshot projection |
 | 5 abort preserves partial output | stop button cancels token; partial transcript remains visible and persisted |
 | 7 retry/breaker/endurance | watchdog + breaker states surfaced (Codex lesson: never fake-alive spinners) |
-| 8 secrets | .env/keychain only; renderer storage forbidden for keys |
+| 8 secrets | OS keychain or encrypted-file fallback only; renderer storage forbidden for keys |
 
 ## What we will NOT copy
 
@@ -432,21 +434,23 @@ contract (`vak-server/tests/server_ext.rs` covers every one):
   sidebar after an app restart answered `POST /run` with 404 — the handle was
   never re-registered. Attach is idempotent for live sessions.
 - **Secrets actually reach the shell (critical).** The desktop boot now loads
-  the user `.env` always plus the picked workspace's trusted `.env` — the
-  exact CLI contract — before starting the Core. Previously the shell loaded
-  no env files at all, so CLI users' keys never worked in the app until they
-  happened to export them globally.
+  the user secret scope always plus the picked workspace's trusted secret
+  scope — the exact CLI contract — before starting the Core. Previously the
+  shell loaded no secrets at all, so CLI users' keys never worked in the app
+  until they happened to export them globally.
 - **Provider/key/model setup is first-class** (shared layer, not desktop-only):
   - `GET /providers` — registry names, which env var authenticates each,
     whether credentials resolve right now, curated model suggestions per
     provider. Never returns secret values.
   - `PUT /config/key {provider, key}` — upserts into the user-level
-    the user `.env` (0600, atomic replace, shared by TUI/exec/serve) and
-    registers a runtime override so the very next request uses it — no
+    secret scope (resolved through `vak_config::credentials` — OS keychain
+    or the encrypted-file fallback, atomic replace, shared by TUI/exec/serve)
+    and registers a runtime override so the very next request uses it — no
     restart. Keys are accepted once and never echoed back.
-  - Lookup precedence stays: runtime override → real environment → .env
-    files (invariant 8 intact). `openai`/`openrouter` auth now honors `.env`
-    like every other provider (they read raw process env previously).
+  - Lookup precedence stays: runtime override → real environment → stored
+    secret (invariant 8 intact). `openai`/`openrouter` auth now honors the
+    stored secret like every other provider (they read raw process env
+    previously).
   - UI: a "Connect a model" gate step appears when the workspace has no
     usable credential — provider picker (with ✓ for configured), model field
     fed by the curated lists (free-form still wins), password input, one
@@ -525,7 +529,7 @@ The API makes this distinction explicit: `PATCH /config/global` and
 `GET|PUT /config/mcp` address the active project. Writes are atomic and reload
 the running Core before responding, so Desktop, Admin, gateway cores, and
 future turns all observe the same real configuration. Secrets remain in the
-user `.env`/secret store and MCP configuration only contains an environment
+user secret store and MCP configuration only contains an environment
 variable reference such as `${TAVILY_API_KEY}`. Feeds remain workspace-scoped:
 they are data and sources belonging to the active project, never an implicit
 global capability.

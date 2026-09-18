@@ -422,6 +422,11 @@ struct CoreInner {
     sessions_home: PathBuf,
     registry: ProviderRegistry,
     route: std::sync::Mutex<RouteSelection>,
+    /// Fingerprint of the config files `route` was last derived from
+    /// (docs/design/44-shared-config.md, "Liveness"). Checked on every
+    /// `effective_route()` call so a write from another process (e.g.
+    /// `vak setup`) is picked up without waiting for pool eviction/restart.
+    route_fingerprint: std::sync::Mutex<u64>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     evidence_max_age_override: std::sync::Mutex<Option<i64>>,
@@ -950,6 +955,7 @@ impl Core {
     pub fn new_with_trust(cwd: PathBuf, trust_project_config: bool) -> Result<Self, CoreError> {
         let config = vak_config::load_with_trust(&cwd, trust_project_config)?;
         let route = route_from_config(&cwd, &config, false);
+        let route_fingerprint = vak_config::config_fingerprint(&cwd);
         // Canonical layout (doc 32): one resolver for the whole workspace.
         // The cwd fallback covers exotic environments with no HOME.
         let sessions_home = vak_config::paths::data_home();
@@ -992,6 +998,7 @@ impl Core {
                 sessions_home,
                 registry: default_registry(),
                 route: std::sync::Mutex::new(route),
+                route_fingerprint: std::sync::Mutex::new(route_fingerprint),
                 max_turns_override: std::sync::Mutex::new(None),
                 max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 evidence_max_age_override: std::sync::Mutex::new(None),
@@ -1188,11 +1195,33 @@ impl Core {
     }
 
     pub fn effective_route(&self) -> RouteSelection {
+        self.refresh_route_if_stale();
         self.inner
             .route
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Cheap (stat-only) check for whether the config files the cached
+    /// route was derived from have changed since — e.g. another process
+    /// ran `vak setup` while this `Core` was already resolved and pooled.
+    /// Only pays for a full re-parse + re-derivation when the fingerprint
+    /// actually moved (docs/design/44-shared-config.md, "Liveness").
+    fn refresh_route_if_stale(&self) {
+        let current_fp = vak_config::config_fingerprint(&self.inner.cwd);
+        {
+            let mut last_fp = self
+                .inner
+                .route_fingerprint
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if *last_fp == current_fp {
+                return;
+            }
+            *last_fp = current_fp;
+        }
+        let _ = self.refresh_persisted_route();
     }
 
     fn replace_route(&self, route: RouteSelection) {
@@ -3640,8 +3669,8 @@ impl Core {
                         .or_else(|| Some("https://api.openai.com/v1".into())),
                 })
             }
-            // get_var (not raw env) so user-level and project .env files
-            // authenticate these providers exactly like every other one.
+            // get_var (not raw env) so user-level and project secret
+            // scopes authenticate these providers exactly like every other one.
             "openai" | "openrouter" | "openrouter-responses" => {
                 let (env, default_base, override_env) = if provider == "openai" {
                     (
@@ -4111,11 +4140,11 @@ impl Core {
             .unwrap_or(id)
     }
 
-    /// Persist a bot's token into the Shared `~/vak-home/.env` (0600) and
+    /// Persist a bot's token into the Shared secret scope and
     /// register a runtime override so an in-process check is correct right
     /// away. `env` is the bot's own `token_env` (`BOT_TOKEN__<ID>`); the
-    /// bridge unit re-reads `.env` itself on restart. The token never
-    /// re-enters any response.
+    /// bridge unit re-reads the credential store itself on restart. The
+    /// token never re-enters any response.
     pub fn set_bot_token(&self, env: &str, token: &str) -> Result<String, CoreError> {
         let token = token.trim();
         if token.is_empty() {
@@ -4128,8 +4157,8 @@ impl Core {
         Ok(env.to_string())
     }
 
-    /// Revoke a bot's stored token: strip it from the user `.env` and drop
-    /// the runtime override. A token exported in the real environment
+    /// Revoke a bot's stored token: strip it from the user secret scope
+    /// and drop the runtime override. A token exported in the real environment
     /// cannot be unset from here — the caller is told so it can say as much.
     pub fn remove_bot_token(&self, env: &str) -> Result<RemovedKey, CoreError> {
         let path = self.user_env_file();
@@ -8645,9 +8674,10 @@ mod spend_gate_persistence_tests {
         core.set_sessions_home(home.path().to_path_buf());
         core.set_user_env_path(home.path().join(".env"));
 
-        std::fs::write(
-            home.path().join(".env"),
-            "ANTHROPIC_API_KEY=shared-anthropic-key\n",
+        vak_config::upsert_env_file(
+            &home.path().join(".env"),
+            "ANTHROPIC_API_KEY",
+            "shared-anthropic-key",
         )
         .unwrap();
 
@@ -8668,9 +8698,10 @@ mod spend_gate_persistence_tests {
         );
 
         let agent_home = core.sessions_home();
-        std::fs::write(
-            agent_home.join(".env"),
-            "ANTHROPIC_API_KEY=agent-private-key\n",
+        vak_config::upsert_env_file(
+            &agent_home.join(".env"),
+            "ANTHROPIC_API_KEY",
+            "agent-private-key",
         )
         .unwrap();
 

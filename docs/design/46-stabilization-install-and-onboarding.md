@@ -266,13 +266,13 @@ Pick a directory. Default offered: `~/vak-home`, created on demand — the
 same canonical path durable services resolve independently (invariant 18).
 
 Scan for onboarding-relevant facts only: git status, `.vak/config.toml`,
-project `.env`, and which privileged sections the project requests (hooks,
-MCP servers, provider endpoint, sandbox, gateway, permission grants, allow
-rules, prompt layers).
+the project secret scope, and which privileged sections the project requests
+(hooks, MCP servers, provider endpoint, sandbox, gateway, permission grants,
+allow rules, prompt layers).
 
 If none exist, open it — no prompt. If any exist, a dedicated trust review
 lists exactly what the project asks for, and offers **Open safely** (project
-privileged config and `.env` stay demoted), **Trust this workspace**
+privileged config and secret scope stay demoted), **Trust this workspace**
 (canonical-path decision persisted), or **Cancel**.
 
 Selecting a folder is no longer the act of trusting it. This is the single
@@ -285,8 +285,8 @@ Transactional from the user's point of view:
 1. Choose a provider from the live inventory. Configured ones are marked;
    Ollama shows as local/keyless when reachable.
 2. Enter the credential if one is required. Stored only through
-   `Core::set_provider_key` into the canonical user `.env` — never argv,
-   never onboarding state, never logs.
+   `Core::set_provider_key` into the canonical Shared secret scope — never
+   argv, never onboarding state, never logs.
 3. **Authenticate by discovering models.** A stored key is not success.
 4. Choose a discovered model. An exact-ID escape hatch exists for providers
    that cannot enumerate, and is labelled *route unverified*.
@@ -324,7 +324,7 @@ All four catalog entries, rendered identically: name, one-line description,
 what it needs, documentation link, key field where required, enable toggle.
 Alphabetical. None enabled by default (D4). Greyed with an explanation when
 Node is absent. Enabling writes the managed server definition and hot-applies
-it; the key goes to the canonical `.env` and is never returned to any UI.
+it; the key goes to the canonical secret scope and is never returned to any UI.
 
 ### Step 7 — Channels (always-on mode only)
 

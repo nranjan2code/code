@@ -23,7 +23,9 @@ specified in `docs/design/46-stabilization-install-and-onboarding.md`.
 ## Wizard Steps (P0)
 
 1. **Provider selection**: Prompt for API key (or Ollama endpoint). Keys are
-   written to `.vak/.env` (gitignored) and loaded via `vak_config::get_var`.
+   written to the project secret scope, resolved through
+   `vak_config::credentials` (docs/design/44-shared-config.md, "Secrets
+   Chain") — never a plaintext file — and read back via `vak_config::get_var`.
 2. **Posture selection**: Choose `read-only`, `workspace-write`, or
    `full-access` permission mode.
 3. **Skill seeding**: Populate `~/.vak/skills/` with the curated skill catalog
@@ -44,7 +46,7 @@ a default provider key.
 
 ## Security
 
-- The wizard never reads the operator's real `.env` — it writes a fresh one.
+- The wizard never reads the operator's real secret scope — it writes a fresh one.
 - Provider keys are never echoed, logged, or stored in `.vak/config.toml`.
 - The `--trust` flag must be passed explicitly by the operator; an untrusted
   first-run configuration cannot grant itself execution power.

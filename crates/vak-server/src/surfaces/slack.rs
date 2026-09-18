@@ -12,7 +12,7 @@
 //! interactive Block Kit buttons.
 //!
 //! Launched via `vak slack --server URL --token GATEWAY_TOKEN` with
-//! `SLACK_BOT_TOKEN` in the environment (.env included).
+//! `SLACK_BOT_TOKEN` in the environment (the credential store included).
 
 use serde_json::Value;
 

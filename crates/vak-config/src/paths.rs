@@ -293,8 +293,8 @@ pub fn set_home_override(path: &std::path::Path) {
 ///
 /// **Every test that builds a `Core` must call this.** Without it,
 /// `load_with_trust` reads the operator's real Shared layer
-/// (`~/vak-home/.vak/config.toml` and `~/vak-home/.env`), so a personal
-/// setting silently changes what the test exercises — a real MCP server
+/// (`~/vak-home/.vak/config.toml` and the real Shared secret scope), so a
+/// personal setting silently changes what the test exercises — a real MCP server
 /// gets advertised, `[memory] reflection = true` consumes a scripted
 /// provider response, a real provider key makes an "unconfigured" case
 /// pass. Tests were reading the developer's machine.

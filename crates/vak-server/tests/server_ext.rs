@@ -1504,8 +1504,10 @@ async fn providers_listing_and_key_storage_roundtrip() {
     let body_text = serde_json::to_string(&saved).unwrap();
     assert!(!body_text.contains("sk-test-123"), "key must not echo back");
 
-    let file = std::fs::read_to_string(&user_env).unwrap();
-    assert!(file.contains("OPENCODE_API_KEY=sk-test-123"));
+    assert_eq!(
+        vak_config::read_env_file_var(&user_env, "OPENCODE_API_KEY"),
+        Some("sk-test-123".to_string())
+    );
 
     // The runtime override makes it visible to auth lookups instantly.
     let after: serde_json::Value = client
@@ -1531,24 +1533,15 @@ async fn providers_listing_and_key_storage_roundtrip() {
         .send()
         .await
         .unwrap();
-    let file = std::fs::read_to_string(&user_env).unwrap();
     assert_eq!(
-        file.matches("OPENCODE_API_KEY=").count(),
-        1,
+        vak_config::read_env_file_var(&user_env, "OPENCODE_API_KEY"),
+        Some("sk-test-456".to_string()),
         "upsert must replace, not duplicate"
     );
-    assert!(file.contains("OPENCODE_API_KEY=sk-test-456"));
 
-    // Revoking strips the key, leaves the rest of the file intact, and
-    // flips the provider back to unconfigured.
-    std::fs::write(
-        &user_env,
-        format!(
-            "{}\nUNRELATED_VALUE=keep-me\n",
-            std::fs::read_to_string(&user_env).unwrap().trim_end()
-        ),
-    )
-    .unwrap();
+    // Revoking strips the key, leaves an unrelated one in the same scope
+    // intact, and flips the provider back to unconfigured.
+    vak_config::upsert_env_file(&user_env, "UNRELATED_VALUE", "keep-me").unwrap();
     let removed: serde_json::Value = client
         .delete(format!("{base}/config/key"))
         .json(&serde_json::json!({ "provider": "opencode-zen" }))
@@ -1561,11 +1554,15 @@ async fn providers_listing_and_key_storage_roundtrip() {
     assert_eq!(removed["env_var"], "OPENCODE_API_KEY");
     assert_eq!(removed["configured"], false);
     assert_eq!(removed["shadowed_by_env"], false);
-    let file = std::fs::read_to_string(&user_env).unwrap();
-    assert!(!file.contains("OPENCODE_API_KEY"), "key must be gone");
-    assert!(
-        file.contains("UNRELATED_VALUE=keep-me"),
-        "revoking one key must not disturb the rest of the file"
+    assert_eq!(
+        vak_config::read_env_file_var(&user_env, "OPENCODE_API_KEY"),
+        None,
+        "key must be gone"
+    );
+    assert_eq!(
+        vak_config::read_env_file_var(&user_env, "UNRELATED_VALUE"),
+        Some("keep-me".to_string()),
+        "revoking one key must not disturb another in the same scope"
     );
     let after_remove: serde_json::Value = client
         .get(format!("{base}/providers"))

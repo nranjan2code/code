@@ -13,7 +13,7 @@
 //!
 //! - the session ledgers under `<data_home>/sessions/<hash>/`,
 //! - memory, checkpoints, receipts, or commitments,
-//! - the project's own `.vak/config.toml`, `.env`, or trust decision.
+//! - the project's own `.vak/config.toml`, secret scope, or trust decision.
 //!
 //! So re-adding it later restores everything, which is the property that
 //! makes forgetting safe to offer as a one-click action. Deleting a

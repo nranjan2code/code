@@ -339,10 +339,10 @@ async fn main() {
         })
         .unwrap_or(current_dir);
 
-    // User-level secrets always load. The PROJECT .env is only loaded for
-    // trusted workspaces: a cloned repository must not be able to inject
-    // VAK_*_BASE_URL (credential redirection) or other env on first
-    // run.
+    // User-level secrets always load. The PROJECT secret scope is only
+    // loaded for trusted workspaces: a cloned repository must not be able
+    // to inject VAK_*_BASE_URL (credential redirection) or other env on
+    // first run.
     if let Some(env_path) = vak_config::user_env_path() {
         vak_config::load_env_file(&env_path);
     }
@@ -608,7 +608,7 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace trust: a project's .vak/config.toml and .env can grant
+// Workspace trust: a project's .vak/config.toml and secret scope can grant
 // execution power (permission mode, allow rules, hooks, MCP servers, base
 // URL redirection). First use of an untrusted workspace demotes those keys
 // until the user confirms — per-directory, remembered under ~/.vak.
@@ -649,7 +649,9 @@ fn trust_marker_path(cwd: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
-    if !vak_config::project_path(cwd).is_file() && !cwd.join(".env").is_file() {
+    if !vak_config::project_path(cwd).is_file()
+        && !vak_config::credentials::scope_has_any(&cwd.join(".env"))
+    {
         return true;
     }
     if flag {
@@ -666,7 +668,7 @@ fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
             "This directory ({}) contains a project-level Vak",
             cwd.display()
         );
-        eprintln!("config (.vak/config.toml) and/or .env that can run commands,");
+        eprintln!("config (.vak/config.toml) and/or secrets that can run commands,");
         eprintln!("auto-approve tools, or redirect API traffic.");
         eprint!("Trust this workspace? [y/N] ");
         let _ = std::io::stderr().flush();
@@ -2123,9 +2125,9 @@ async fn run_eval(
 ///
 /// The point is that nobody should have to go and find this machine's
 /// access token to reach a server on this machine. The token is read from
-/// the pinned user `.env` and handed over as a one-shot `?token=`, which
-/// the client immediately exchanges for a session cookie and erases from
-/// the address bar.
+/// the pinned Shared secret scope and handed over as a one-shot `?token=`,
+/// which the client immediately exchanges for a session cookie and erases
+/// from the address bar.
 ///
 /// LOOPBACK ONLY, and not by convention: the server refuses `?token=` from
 /// any non-loopback host (invariant 34), so this URL authenticates nothing
@@ -2284,12 +2286,14 @@ async fn run_serve(
     }
 }
 
-/// The user `.env` path, or a generic phrase when it cannot be resolved —
-/// every bridge's "where do I put this token" hint reads the same.
-fn env_hint() -> String {
-    vak_config::user_env_path()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "the user .env".into())
+/// How to tell someone to set a secret, now that there is no file to name
+/// — every bridge's "where do I put this token" hint reads the same.
+/// Resolved through `vak_config::credentials` (OS keychain or the
+/// encrypted-file fallback), so the actionable advice is the Settings UI,
+/// `PUT /config/key`, or an environment variable — never a path to edit
+/// by hand.
+fn env_hint() -> &'static str {
+    "the Settings UI, PUT /config/key, or an environment variable"
 }
 
 /// Env-first gateway token so it stays out of `ps`/plist arguments,
@@ -2301,7 +2305,7 @@ fn bridge_gateway_token(token_flag: Option<String>) -> Option<String> {
             Some(t) if !t.trim().is_empty() => Some(t),
             _ => {
                 eprintln!(
-                    "error: gateway token missing — set VAK_GATEWAY_TOKEN in {} or pass --token",
+                    "error: gateway token missing — set VAK_GATEWAY_TOKEN via {}, or pass --token",
                     env_hint()
                 );
                 None
@@ -2310,14 +2314,14 @@ fn bridge_gateway_token(token_flag: Option<String>) -> Option<String> {
     }
 }
 
-/// .env-aware bot-token lookup so a bridge credential never has to be
-/// exported by hand.
+/// Credential-store-aware bot-token lookup so a bridge credential never
+/// has to be exported by hand.
 fn bridge_bot_token(env_var: &str) -> Option<String> {
     match vak_config::get_var(env_var) {
         Some(t) if !t.trim().is_empty() => Some(t),
         _ => {
             eprintln!(
-                "error: {env_var} is not set (put it in .env or {})",
+                "error: {env_var} is not set — set it via {}",
                 env_hint()
             );
             None

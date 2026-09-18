@@ -1,6 +1,7 @@
 //! vak-config: layered configuration. Defaults < global file < project file
 //! < environment. Unknown keys are ignored with a warning, never fatal.
 
+pub mod credentials;
 pub mod finops;
 pub mod paths;
 
@@ -354,7 +355,8 @@ pub struct ServerResolved {
     ///
     /// The token exists to stop OTHER local processes driving the agent.
     /// Against a process running as *you* it was never much of a boundary —
-    /// that process can read the 0600 `.env` the token is pinned in. What it
+    /// that process can read the same credential store the token is pinned
+    /// in. What it
     /// does protect is a machine with other human users on it, who can reach
     /// 127.0.0.1 but cannot read your files.
     ///
@@ -1707,6 +1709,37 @@ pub fn global_path() -> Option<PathBuf> {
 
 pub fn project_path(cwd: &Path) -> PathBuf {
     cwd.join(".vak/config.toml")
+}
+
+/// Cheap, stat-only "has anything changed" signal for the global + project
+/// config layers. Callers that hold a resolved value derived from these
+/// files (e.g. `Core`'s cached `RouteSelection`) can compare fingerprints on
+/// every access instead of re-parsing TOML, and only pay for a full re-load
+/// when this value actually moves (docs/design/44-shared-config.md,
+/// "Liveness").
+pub fn config_fingerprint(cwd: &Path) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for path in [global_path(), Some(project_path(cwd))].into_iter().flatten() {
+        let (mtime_nanos, len) = std::fs::metadata(&path)
+            .and_then(|m| m.modified().map(|t| (t, m.len())))
+            .map(|(t, len)| {
+                let nanos = t
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
+                (nanos, len)
+            })
+            .unwrap_or((0, 0));
+        for byte in mtime_nanos
+            .to_le_bytes()
+            .into_iter()
+            .chain(len.to_le_bytes())
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    hash
 }
 
 /// Initialize the project layer used by interactive clients.
@@ -4317,45 +4350,38 @@ fn dotenv_extra() -> std::sync::MutexGuard<'static, ExtraMap> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Loads KEY=VALUE pairs from a .env file into the extra-env table.
-/// Existing real environment variables are never overridden.
+/// Loads a scope's stored secrets (docs/design/44-shared-config.md,
+/// "Secrets Chain") into the extra-env table. `path` is a scope hint — the
+/// directory that used to hold a literal `.env` file — not a file read
+/// directly; see [`credentials`]. Existing real environment variables are
+/// never overridden. Only the encrypted-file credential backend can
+/// enumerate a scope's contents; an OS-native secret service is reached by
+/// point lookup only, so bulk-seeding this cache has no effect there (see
+/// `CredentialStore::list`) — callers needing a specific key from that
+/// backend should resolve it explicitly instead of relying on this cache.
 pub fn load_env_file(path: &std::path::Path) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
+    // `credentials::list` can itself take the `dotenv_extra` lock further
+    // down (e.g. `EncryptedFileStore::new` reads `VAK_HOME` via `get_var`
+    // on first use) — it must run to completion BEFORE this function takes
+    // that lock itself, or a thread deadlocks against its own held guard.
+    let entries = credentials::list(path);
     let mut extra = dotenv_extra();
-    merge_env_text(&mut extra, &text);
-}
-
-/// Replaces file-sourced environment values as one atomic scope change.
-/// Runtime overrides and real environment variables remain untouched.
-pub fn replace_env_files(paths: &[&std::path::Path]) {
-    let mut extra = dotenv_extra();
-    extra.clear();
-    for path in paths {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            merge_env_text(&mut extra, &text);
-        }
+    for (key, value) in entries {
+        extra.entry(key).or_insert(value);
     }
 }
 
-fn merge_env_text(extra: &mut ExtraMap, text: &str) {
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = value.trim().trim_matches('"').trim_matches('\'');
-        if key.is_empty() {
-            continue;
-        }
-        extra
-            .entry(key.to_string())
-            .or_insert_with(|| value.to_string());
+/// Replaces credential-sourced environment values as one atomic scope
+/// change. Runtime overrides and real environment variables remain
+/// untouched.
+pub fn replace_env_files(paths: &[&std::path::Path]) {
+    // Same ordering requirement as `load_env_file` above: resolve every
+    // scope's entries before touching the `dotenv_extra` lock.
+    let entries: Vec<_> = paths.iter().flat_map(|path| credentials::list(path)).collect();
+    let mut extra = dotenv_extra();
+    extra.clear();
+    for (key, value) in entries {
+        extra.entry(key).or_insert(value);
     }
 }
 
@@ -4397,104 +4423,36 @@ pub fn forget_dotenv_var(key: &str) {
     dotenv_extra().remove(key);
 }
 
-/// `~/vak-home/.env` — the shared secret store inherited by every workspace.
+/// Scope hint for the shared secret layer inherited by every workspace
+/// (docs/design/44-shared-config.md, "Secrets Chain"). No file is written
+/// at this literal path anymore — it only identifies the scope passed to
+/// [`credentials`]; kept as a `~/vak-home/.env`-shaped path so existing
+/// callers' scoping (same directory = same layer) is unchanged.
 pub fn user_env_path() -> Option<std::path::PathBuf> {
     Some(crate::paths::default_workspace().join(".env"))
 }
 
-/// Reads one value from a specific dotenv file without merging it into the
+/// Reads one credential from a specific scope without merging it into the
 /// process-wide environment cache. Scoped MCP credentials use this so two
 /// pooled workspaces can resolve different values for the same variable.
+/// `path` is a scope hint (previously a literal `.env` path), not a file
+/// read directly — see [`credentials`].
 pub fn read_env_file_var(path: &std::path::Path, key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    text.lines().find_map(|line| {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            return None;
-        }
-        let (candidate, value) = line.split_once('=')?;
-        (candidate.trim() == key).then(|| {
-            value
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string()
-        })
-    })
+    credentials::get(path, key)
 }
 
-/// Removes every definition of `key` from `path`, preserving the rest of
-/// the file. Missing file or missing key are both a no-op success.
+/// Removes `key` from the scope named by `path`. A missing scope or key is
+/// a no-op success.
 pub fn remove_env_file_key(path: &std::path::Path, key: &str) -> std::io::Result<()> {
-    let Ok(existing) = std::fs::read_to_string(path) else {
-        return Ok(());
-    };
-    let mut lines: Vec<String> = Vec::new();
-    for line in existing.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            lines.push(line.to_string());
-            continue;
-        }
-        match line.split_once('=') {
-            Some((k, _)) if k.trim() == key => continue,
-            _ => lines.push(line.to_string()),
-        }
-    }
-    let mut out = lines.join("\n");
-    out.push('\n');
-    let tmp = path.with_extension("env.tmp");
-    std::fs::write(&tmp, out)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    credentials::remove(path, key)
 }
 
-/// Upserts `KEY=VALUE` into `path` (created if missing, 0600 on unix).
-/// Existing lines for KEY are replaced; everything else is preserved.
+/// Upserts `key = value` into the scope named by `path`, persisted through
+/// whichever [`credentials::CredentialStore`] backend this host resolved
+/// (OS-native secret service, or the encrypted-file fallback) — never as
+/// plaintext.
 pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::io::Result<()> {
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let mut replaced = false;
-    let mut lines: Vec<String> = Vec::new();
-    for line in existing.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            lines.push(line.to_string());
-            continue;
-        }
-        match line.split_once('=') {
-            Some((k, _)) if k.trim() == key => {
-                if !replaced {
-                    lines.push(format!("{key}={value}"));
-                    replaced = true;
-                }
-                // drop duplicate definitions of the same key
-            }
-            _ => lines.push(line.to_string()),
-        }
-    }
-    if !replaced {
-        lines.push(format!("{key}={value}"));
-    }
-    let mut out = lines.join("\n");
-    out.push('\n');
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("env.tmp");
-    std::fs::write(&tmp, out)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    credentials::set(path, key, value)
 }
 
 #[cfg(test)]

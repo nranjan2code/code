@@ -101,7 +101,7 @@ export default function CheckpointsModal() {
           </For>
 
           <div class="bo-foot" style="margin-top:10px">
-            <span class="hint">newest work wins · .env and keys are never snapshotted</span>
+            <span class="hint">newest work wins · keys and other secrets are never snapshotted</span>
             <button class="btn primary" onClick={() => setHistoryOpen(false)}>Close</button>
           </div>
         </div>

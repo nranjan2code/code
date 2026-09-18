@@ -14,7 +14,7 @@
 //! follow-up that removes that limit.
 //!
 //! Launched via `vak discord --server URL --token GATEWAY_TOKEN` with
-//! `DISCORD_BOT_TOKEN` in the environment (.env included).
+//! `DISCORD_BOT_TOKEN` in the environment (the credential store included).
 
 use serde_json::Value;
 

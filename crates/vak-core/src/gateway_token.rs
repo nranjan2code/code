@@ -20,16 +20,8 @@ pub fn ensure_gateway_token() -> Result<(), String> {
     let Some(path) = vak_config::user_env_path() else {
         return Ok(());
     };
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let already_set = existing
-        .lines()
-        .any(|line| line.split_once('=').is_some_and(|(k, _)| k.trim() == KEY));
-    if already_set {
+    if vak_config::read_env_file_var(&path, KEY).is_some() {
         return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
     }
     let token = format!("vk_{}", uuid::Uuid::now_v7());
     vak_config::upsert_env_file(&path, KEY, &token)
@@ -52,23 +44,18 @@ mod tests {
     fn activation_pins_a_token_and_never_replaces_an_existing_one() {
         let home = vak_config::paths::isolate_home_for_tests();
         let path = vak_config::user_env_path().expect("user env path");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        let _ = std::fs::remove_file(&path);
+        vak_config::remove_env_file_key(&path, "VAK_GATEWAY_TOKEN").unwrap();
         vak_config::clear_override("VAK_GATEWAY_TOKEN");
 
         ensure_gateway_token().unwrap();
-        let first = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            first.contains("VAK_GATEWAY_TOKEN=vk_"),
-            "a token must be pinned: {first}"
-        );
+        let first = vak_config::read_env_file_var(&path, "VAK_GATEWAY_TOKEN")
+            .expect("a token must be pinned");
+        assert!(first.starts_with("vk_"), "a token must be pinned: {first}");
 
         // Re-activating must not invalidate a link already in use.
         ensure_gateway_token().unwrap();
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
+            vak_config::read_env_file_var(&path, "VAK_GATEWAY_TOKEN").unwrap(),
             first,
             "re-activation replaced an existing token"
         );

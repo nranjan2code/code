@@ -518,9 +518,9 @@ buttons play the same role as Telegram's inline keyboard for approvals.
 channels/Registered channels panels (which are already surface-agnostic
 in rendering, since they key everything off `surface:chat`) with:
 - a bot-token field per surface in Desktop Settings, mirroring the
-  existing Telegram token field exactly (same storage convention:
-  `.env` at the user data home, owner-only permissions, save restarts the
-  bridge).
+  existing Telegram token field exactly (same storage convention: the
+  user secret scope, resolved through `vak_config::credentials`, save
+  restarts the bridge).
 - a surface icon/label in the Admin UI channel list so a mixed
   Telegram+Discord+Slack deployment reads clearly at a glance (the
   `gateway` icon path already in App.tsx's icon map is generic; add

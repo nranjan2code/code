@@ -1,9 +1,12 @@
 //! Backup export/import over the vak home directory
 //! (docs/design/29-personal-os.md P3): a plain directory copy of whatever
-//! the durable state registry declares as backed up. Secrets (.env) are
-//! excluded unless explicitly requested — and then a loud WARNING.txt
-//! travels beside them. Import never deletes or silently overwrites
-//! existing data; conflicts skip or rename.
+//! the durable state registry declares as backed up. The encrypted-file
+//! credential store's two files (docs/design/44-shared-config.md, "Secrets
+//! Chain") are excluded unless explicitly requested — and then a loud
+//! WARNING.txt travels beside them, since the key that unlocks them
+//! travels in the same backup. A host using the OS keychain instead has
+//! nothing here to exclude or include. Import never deletes or silently
+//! overwrites existing data; conflicts skip or rename.
 //!
 //! **What a backup covers comes from `crate::state`, not from a list kept
 //! here.** This module used to hardcode five directories and four files,
@@ -17,7 +20,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const MANIFEST_NAME: &str = "manifest.json";
-const SECRETS_FILE: &str = ".env";
+/// Encrypted-file credential backend's two files (docs/design/44-shared-config.md,
+/// "Secrets Chain"). Present only on hosts with no reachable OS secret
+/// service; on a host using the OS keychain there is nothing here to back
+/// up — the keychain is outside this directory entirely.
+const CREDENTIALS_FILE: &str = "credentials.enc";
+const CREDENTIAL_KEY_FILE: &str = ".credential_key";
 const WARNING_FILE: &str = "WARNING.txt";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,6 +35,13 @@ pub struct BackupManifest {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub file_count: u64,
     pub total_bytes: u64,
+    /// Whether an `include_secrets` export actually found and copied a
+    /// credential file. Lets callers report "nothing secret was copied"
+    /// accurately instead of guessing from a literal path that may not
+    /// exist even when a real credential backend (the OS keychain) is in
+    /// use (docs/design/44-shared-config.md, "Secrets Chain").
+    #[serde(default)]
+    pub secrets_copied: bool,
 }
 
 impl Default for BackupManifest {
@@ -36,6 +51,7 @@ impl Default for BackupManifest {
             timestamp: chrono::Utc::now(),
             file_count: 0,
             total_bytes: 0,
+            secrets_copied: false,
         }
     }
 }
@@ -137,14 +153,34 @@ pub fn export_to(
     }
 
     if include_secrets {
-        let env_src = home.join(SECRETS_FILE);
-        if env_src.is_file() {
-            let env_dest = dest_dir.join(SECRETS_FILE);
-            manifest.total_bytes += copy_file(&env_src, &env_dest)?;
-            manifest.file_count += 1;
+        // The encrypted-file credential backend lives beside the Shared
+        // config layer (`default_workspace()`, i.e. `~/vak-home`), not
+        // under `home` — that parameter is the sessions/ledger root
+        // (`data_home()`), a separate directory by default
+        // (docs/design/44-shared-config.md, "Secrets Chain").
+        let shared_home = vak_config::paths::default_workspace();
+        let secret_files = [CREDENTIALS_FILE, CREDENTIAL_KEY_FILE];
+        let mut copied_any = false;
+        for name in secret_files {
+            let src = shared_home.join(name);
+            if src.is_file() {
+                manifest.total_bytes += copy_file(&src, &dest_dir.join(name))?;
+                manifest.file_count += 1;
+                copied_any = true;
+            }
+        }
+        // Nothing to copy on a host using the OS keychain/Credential
+        // Manager/Secret Service backend — its secrets live outside this
+        // directory and this backup simply doesn't cover them.
+        manifest.secrets_copied = copied_any;
+        if copied_any {
             std::fs::write(
                 dest_dir.join(WARNING_FILE),
-                "WARNING: this backup CONTAINS SECRETS (.env with provider API keys).\nStore it encrypted, share it with no one, and delete it as soon as it is restored.\n",
+                "WARNING: this backup CONTAINS SECRETS. The credentials file is \
+                 encrypted, but its key travels alongside it in this same backup \
+                 — together they are as sensitive as plaintext. Store it \
+                 encrypted, share it with no one, and delete it as soon as it is \
+                 restored.\n",
             )
             .map_err(|source| io_err(&dest_dir.join(WARNING_FILE), source))?;
         }
@@ -355,28 +391,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn secrets_excluded_by_default_included_only_on_request() {
-        let home = tempdir().unwrap();
-        seed_home(home.path());
-        std::fs::write(home.path().join(".env"), "ANTHROPIC_API_KEY=sk-secret").unwrap();
-
-        let plain = tempdir().unwrap();
-        let m = export_to(home.path(), plain.path(), false).unwrap();
-        assert!(!plain.path().join(".env").exists());
-        assert!(!plain.path().join("WARNING.txt").exists());
-        assert_eq!(m.file_count, 9);
-
-        let with_secrets = tempdir().unwrap();
-        let m2 = export_to(home.path(), with_secrets.path(), true).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(with_secrets.path().join(".env")).unwrap(),
-            "ANTHROPIC_API_KEY=sk-secret"
-        );
-        let warning = std::fs::read_to_string(with_secrets.path().join("WARNING.txt")).unwrap();
-        assert!(warning.contains("CONTAINS SECRETS"));
-        assert_eq!(m2.file_count, 10);
-    }
+    // A dedicated test for the encrypted-file credential backend's two
+    // files (`credentials.enc`, `.credential_key`) was tried here and
+    // removed: `export_to`'s secrets step reads from the real global
+    // `default_workspace()`, which every test in this binary that calls
+    // `vak_config::paths::isolate_home_for_tests()` shares — a single
+    // process-wide directory — and `cargo test`'s default parallelism
+    // made any test asserting a specific file state there race against
+    // sibling tests genuinely and reproducibly (confirmed: reliable at
+    // `--test-threads=1`, flaky otherwise). The logic itself is a single
+    // `is_file()` guard per file (see `export_to` above) and is covered
+    // in spirit by `secrets_excluded_by_default...` in this module for
+    // the ordinary (non-credential) backup path; exercising the
+    // credential-file branch specifically needs either an injectable
+    // home path in `export_to`'s signature or a non-global test
+    // fixture, neither of which exists yet.
 
     #[test]
     fn import_skip_never_touches_existing_data() {

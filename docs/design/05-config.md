@@ -11,8 +11,8 @@ Vak resolves configuration from broadest to narrowest:
 
 ```text
 built-in defaults
-  → Shared layer          ~/vak-home/.vak/config.toml   + ~/vak-home/.env
-  → project layer         <cwd>/.vak/config.toml        + <cwd>/.env
+  → Shared layer          ~/vak-home/.vak/config.toml   + Shared secret scope
+  → project layer         <cwd>/.vak/config.toml        + project secret scope
   → scoped pins           workspace · session · task · bot · chat · worker
 ```
 
@@ -51,7 +51,7 @@ and resumes inheritance.
   `hooks`, `anthropic_base_url`, `mcp.servers`, and project prompt layers are
   ignored until the workspace is trusted, via `Core::new_with_trust`, CLI
   `--trust`, or a per-directory marker under `<data-home>/trusted/`. The
-  project `.env` is likewise loaded only when trusted. Restrictive keys
+  project secret scope is likewise loaded only when trusted. Restrictive keys
   (`deny`, `ask`) and project guardrails still apply from an untrusted
   project, because they can only narrow.
 - **`[ui]` keys are cosmetic-tier.** Unknown values warn and fall back
@@ -72,12 +72,17 @@ The supported surface is discoverable through `vak config dump`:
 | Concern | Shared | Project |
 |---|---|---|
 | Settings, MCP definitions, hooks | `~/vak-home/.vak/config.toml` | `<cwd>/.vak/config.toml` |
-| Secrets | `~/vak-home/.env` | `<cwd>/.env` |
+| Secrets | Shared secret scope | project secret scope |
 | Skills | `~/vak-home/.vak/skills` | `<cwd>/.vak/skills` |
 | Plugins | `~/vak-home/.vak` plugin registry | `<cwd>/.vak` plugin registry |
 
-Secrets never appear in API responses, config TOML, ledgers, or audit
-detail. MCP definitions reference `${ENV_NAME}`. Resolution is per Core and
+A secret scope is never a plaintext file — it resolves through
+`vak_config::credentials` to an OS-native secret service (macOS Keychain /
+Windows Credential Manager / Linux Secret Service) or, when none is
+reachable, an AES-256-GCM encrypted-file fallback
+(docs/design/44-shared-config.md, "Secrets Chain"). Secrets never appear in
+API responses, config TOML, ledgers, or audit detail. MCP definitions
+reference `${ENV_NAME}`. Resolution is per Core and
 ordered project secret → Shared secret → process environment. That
 per-workspace lookup is required for a multi-tenant `CorePool`: a
 process-global override cannot represent two projects using different values
@@ -132,7 +137,7 @@ logs, or responses; no literal `${…_API_KEY}` reaching a child process when
 the key is absent; and no stale running process after an enable, disable, or
 key rotation.
 
-Enable stores the key in the canonical `.env` for the selected layer, writes
+Enable stores the key in the canonical secret scope for the selected layer, writes
 the managed server definition and environment reference, enables outbound
 network for that server, and hot-applies the change. Disable removes the
 effective server and hot-applies that. The GET exposes only

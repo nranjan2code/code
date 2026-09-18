@@ -245,8 +245,8 @@ message through `/gateway/inbound` with `wait`, and answers via `sendMessage`
 other unrouted update kinds advance the offset without routing so they are
 never replayed. Transient failures back off 3s; ten consecutive failures give
 up with a clear error. `TELEGRAM_API_BASE` overrides the API host for
-self-hosted relays and tests. Tokens live in `.env` / the user `.env`, never
-in config or flags.
+self-hosted relays and tests. Tokens live in the project or user secret
+scope, never in config or flags.
 
 ### Document attachments
 
@@ -305,7 +305,7 @@ Lessons from OpenClaw's incident history, inverted:
 4. Unattended turns auto-deny escalations; no silent yes.
 5. Bindings file lives under `<sessions_home>` next to tasks.json — same
    trust domain as session ledgers, no secrets inside (channel tokens belong
-   in `.env` at the adapter layer, never here).
+   in the credential store at the adapter layer, never here).
 6. Binding route overrides contain identifiers only, never credentials; model
    catalogues still come from live provider discovery.
 

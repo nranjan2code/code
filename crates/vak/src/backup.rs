@@ -50,8 +50,11 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     }
     if include_secrets {
         eprintln!();
-        eprintln!("!! WARNING: --include-secrets will copy the user .env");
-        eprintln!("!! containing provider API keys into the destination.");
+        eprintln!("!! WARNING: --include-secrets will copy the local encrypted");
+        eprintln!("!! credential store (if this host uses one) into the destination,");
+        eprintln!("!! including the key that decrypts it. A host using the OS");
+        eprintln!("!! keychain has nothing to copy here — that store is never backed");
+        eprintln!("!! up by this command.");
         eprintln!("!! Store that directory encrypted and share it with no one.");
         eprintln!();
     }
@@ -64,8 +67,10 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
                 dir.display()
             );
             println!("manifest: {}", dir.join("manifest.json").display());
-            if include_secrets && !home.join(".env").is_file() {
-                println!("note: no user .env present; nothing secret was copied");
+            if include_secrets && !manifest.secrets_copied {
+                println!(
+                    "note: nothing secret was copied (either none stored, or this host uses the OS keychain, which this command cannot back up)"
+                );
             }
             0
         }

@@ -2,8 +2,9 @@
 //!
 //! Units are rendered from [`SERVICES`] and diffed onto disk by
 //! [`services_sync`]; nothing here is hand-edited. Templates embed zero
-//! credentials: the binary self-sources the canonical user `.env` at
-//! `~/vak-home/.env` (`vak_config::user_env_path`), so regenerating
+//! credentials: the binary self-sources the canonical Shared secret scope
+//! named by `vak_config::user_env_path` (`vak_config::credentials` —
+//! OS keychain, or an encrypted-file fallback), so regenerating
 //! units can never strand auth. Logs stay at the platform `logs_dir()` and
 //! user data remains under the canonical platform data home.
 //! Headless units always run from [`vak_config::paths::default_workspace`],
@@ -46,7 +47,8 @@ pub struct ServiceSpec {
     pub args: Vec<String>,
     /// Stable log destination under the canonical platform logs directory.
     pub log_path: PathBuf,
-    /// Workspace the service must load for config and project-local `.env`.
+    /// Workspace the service must load for config and its project-local
+    /// secret scope.
     pub working_dir: PathBuf,
     /// User home required by platform path resolution in the sanitized
     /// service-manager environment. This is operational state, not a secret.
@@ -80,9 +82,9 @@ pub struct ServiceDef {
     /// `Restart=always`).
     pub keep_alive: bool,
     /// Whether the unit must be pinned to Vak's canonical default workspace.
-    /// Headless servers load that workspace's config and project `.env`; a
-    /// GUI app that picks its own project in-app instead runs from the account
-    /// home and must not be silently bound to one directory.
+    /// Headless servers load that workspace's config and project secret
+    /// scope; a GUI app that picks its own project in-app instead runs from
+    /// the account home and must not be silently bound to one directory.
     pub workspace_scoped: bool,
     /// The binary ships only when the build produced it (see `COMPONENTS`
     /// in the installer). A unit exec'ing a path that does not exist is
@@ -383,7 +385,8 @@ pub fn uninstall_bot_units(paths: &Paths, runner: &dyn CommandRunner) {
     prune_stale_bot_units(&[], paths, runner);
 }
 
-/// Bounce one bot's already-installed unit so its process re-reads `.env`.
+/// Bounce one bot's already-installed unit so its process re-reads the
+/// credential store.
 /// A token rotate or removal changes no unit *content* — the token itself
 /// is never embedded in the plist/unit, only its env var name is, and that
 /// name doesn't change — so [`sync_bots`]'s identity diff would see

@@ -65,9 +65,9 @@ fn prepared_chunks(body: serde_json::Value, surface: &str) -> Result<Vec<String>
 /// effect instead of on the data.
 ///
 /// So the bridge watches its own credential. Revocation and rotation
-/// become facts about `.env` that the bridge notices within one poll
-/// cycle, on every platform, with nothing else involved — and no handler
-/// touches the service manager at all.
+/// become facts about the credential store that the bridge notices within
+/// one poll cycle, on every platform, with nothing else involved — and no
+/// handler touches the service manager at all.
 pub struct CredentialWatch {
     env_var: String,
     seen: String,
@@ -95,12 +95,13 @@ impl CredentialWatch {
         }
     }
 
-    /// Re-read the credential from the canonical user `.env`.
+    /// Re-read the credential from the canonical Shared secret scope.
     ///
-    /// Reads the file rather than the process environment cache: the whole
-    /// point is to see a change written by another process after this one
-    /// started. A real environment variable still wins, matching the
-    /// precedence every other secret lookup uses (invariant 8).
+    /// Resolves through the credential store rather than the process
+    /// environment cache: the whole point is to see a change written by
+    /// another process after this one started. A real environment
+    /// variable still wins, matching the precedence every other secret
+    /// lookup uses (invariant 8).
     pub fn check(&self) -> CredentialState {
         let current = std::env::var(&self.env_var).ok().or_else(|| {
             vak_config::user_env_path()

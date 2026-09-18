@@ -1,7 +1,7 @@
 //! Workspace trust: one marker store, read the same way everywhere.
 //!
-//! A project's `.vak/config.toml` and `.env` can grant execution power
-//! (permission mode, allow rules, hooks, MCP servers, base-URL
+//! A project's `.vak/config.toml` and secret scope can grant execution
+//! power (permission mode, allow rules, hooks, MCP servers, base-URL
 //! redirection), so they stay demoted until the operator says otherwise
 //! (`docs/design/05-config.md`). The decision is per canonical directory
 //! and remembered under `<data_home>/trusted/`.
@@ -80,7 +80,8 @@ pub fn mark_trusted(cwd: &Path) -> std::io::Result<()> {
 /// is what lets onboarding stay silent for an ordinary directory and
 /// speak up only for one that actually requests power.
 pub fn requests_privilege(cwd: &Path) -> bool {
-    vak_config::project_path(cwd).is_file() || cwd.join(".env").is_file()
+    vak_config::project_path(cwd).is_file()
+        || vak_config::credentials::scope_has_any(&cwd.join(".env"))
 }
 
 /// Which privileged sections a workspace's project layer actually asks
@@ -92,8 +93,8 @@ pub fn requests_privilege(cwd: &Path) -> bool {
 /// thing being asked about (doc 46, Step 2).
 pub fn requested_privileges(cwd: &Path) -> Vec<&'static str> {
     let mut found = Vec::new();
-    if cwd.join(".env").is_file() {
-        found.push("secrets in a project .env");
+    if vak_config::credentials::scope_has_any(&cwd.join(".env")) {
+        found.push("secrets in this project's secret scope");
     }
     let Ok(text) = std::fs::read_to_string(vak_config::project_path(cwd)) else {
         return found;
@@ -190,7 +191,7 @@ mod tests {
         assert!(requests_privilege(dir.path()));
 
         let other = tempfile::tempdir().unwrap();
-        std::fs::write(other.path().join(".env"), "K=v").unwrap();
+        vak_config::upsert_env_file(&other.path().join(".env"), "K", "v").unwrap();
         assert!(requests_privilege(other.path()));
     }
 

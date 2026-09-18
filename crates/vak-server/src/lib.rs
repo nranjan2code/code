@@ -3305,16 +3305,17 @@ pub async fn serve_with(
     eprintln!("Vak server listening on http://{actual_addr}");
     // Same source the real token-selection logic above (auth_token, in
     // AppState::new) already checks: `vak_config::get_var` also sees a
-    // value that only reached the process through a loaded `.env` file
+    // value that only reached the process through the credential store
     // (never a real `std::env` var), so a plain `std::env::var` check
     // here — which is all this ever did — reported "generated" for
     // every service-managed deployment, since none of them export
     // VAK_GATEWAY_TOKEN into the actual process environment; they rely
-    // on the user `.env` main() already loads unconditionally at
+    // on the Shared secret scope main() already loads unconditionally at
     // startup. The token itself was always correctly pinned; only this
     // log line was wrong, in exactly the deployment shape (a durable
-    // service reading `.env`) where getting it right matters most for
-    // debugging a stale-cookie/token mismatch after a restart.
+    // service reading from the credential store) where getting it right
+    // matters most for debugging a stale-cookie/token mismatch after a
+    // restart.
     if vak_config::get_var("VAK_GATEWAY_TOKEN").is_some_and(|t| !t.trim().is_empty()) {
         eprintln!("auth token: (pinned via VAK_GATEWAY_TOKEN)");
     } else if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
@@ -3635,8 +3636,8 @@ pub(crate) async fn require_bearer(
     // A token in a query string is a real (if bounded) exposure -- it can
     // reach access logs and `Referer` headers -- but this server is
     // loopback-only with a token that is either ephemeral per boot or
-    // pinned into a 0600 `.env`, and no other channel exists for the one
-    // client that needs it.
+    // pinned into the credential store, and no other channel exists for
+    // the one client that needs it.
     //
     // Loopback ONLY. A token in a query string can reach access logs,
     // `Referer` headers, and browser history; on a loopback server with an
@@ -4068,8 +4069,8 @@ async fn attach_session(
                 // `resolve_at` failing here is not a trust decision — an
                 // unconditional `true` would let a workspace whose trust
                 // prompt an operator declined have its hooks/MCP
-                // servers/`.env` applied anyway. Recompute trust the same
-                // way `resolve_at` does rather than assuming it.
+                // servers/secret scope applied anyway. Recompute trust the
+                // same way `resolve_at` does rather than assuming it.
                 vak_core::Core::new_with_trust(
                     session_cwd.clone(),
                     vak_core::trust::is_trusted(&session_cwd),
@@ -10256,7 +10257,7 @@ struct ProviderKeyBody {
     scope: Option<ConfigScope>,
 }
 
-/// Persists a credential to the Shared `~/vak-home/.env` secret store and makes it
+/// Persists a credential to the Shared secret scope and makes it
 /// effective immediately. The key is accepted once and never echoed back.
 async fn put_provider_key(
     State(state): State<AppState>,
@@ -10298,11 +10299,11 @@ async fn put_provider_key(
 #[derive(serde::Deserialize)]
 struct BusConfigBody {
     nats_url: Option<String>,
-    /// NATS credentials JWT. Stored in the workspace .env file and read
+    /// NATS credentials JWT. Stored in the workspace secret scope and read
     /// on next server start. Never returned by GET.
     #[serde(default)]
     nats_credentials_jwt: Option<String>,
-    /// NATS nkey seed. Stored in the workspace .env file and read
+    /// NATS nkey seed. Stored in the workspace secret scope and read
     /// on next server start. Never returned by GET.
     #[serde(default)]
     nats_nkey_seed: Option<String>,
@@ -10323,7 +10324,7 @@ async fn get_bus_config(State(state): State<AppState>) -> axum::response::Respon
     .into_response()
 }
 
-/// PUT /config/bus — store NATS credentials in the workspace .env file.
+/// PUT /config/bus — store NATS credentials in the workspace secret scope.
 /// Takes effect on the next server restart (the ServerBus is initialized
 /// at startup; runtime reconnection is a future enhancement).
 /// Credentials are never returned by GET /config/bus once set.
@@ -10443,7 +10444,7 @@ struct TelegramTokenBody {
 fn bot_env_var(id: &str) -> String {
     // A dedicated env var per bot id, distinct from the legacy per-surface
     // slots (`TELEGRAM_BOT_TOKEN` etc.) so a second bot never overwrites
-    // the first one's token in the shared `.env` file.
+    // the first one's token in the shared secret scope.
     format!("BOT_TOKEN__{}", id.to_uppercase().replace('-', "_"))
 }
 

@@ -27,8 +27,8 @@ no plists pointing into build trees, no spot-fixing deploys.
    `vak_config::paths::default_workspace()`,
    unloads stale units, loads the new ones. Sync is idempotent: identical
    content + healthy process ⇒ no-op. The working directory is part of the
-   service contract so gateway config and project `.env` are not replaced by
-   the service manager's `/` default. Generated units also carry the invoking
+   service contract so gateway config and the project secret scope are not
+   replaced by the service manager's `/` default. Generated units also carry the invoking
    user's non-secret `HOME`; without it, canonical path resolution can mistake
    the working directory for the user home and migrate `.vak` out of the
    project. The shared path resolver independently falls back to the operating
@@ -219,7 +219,7 @@ legacy migration only.
 | **Data home** | `~/Library/Application Support/vak` |
 | **Cache** | `~/Library/Caches/vak` |
 | **Logs** | `~/Library/Logs/vak` |
-| **User secrets** | `<data_home>/.env` |
+| **User secrets** | Shared secret scope (macOS Keychain, or the encrypted-file fallback under `<data_home>` when Keychain is unreachable) |
 | **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
 | **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
 | **Binary bundle** | `/Applications/vak.app/Contents/MacOS/` |
@@ -231,7 +231,7 @@ legacy migration only.
 | **Data home** | `~/.local/share/vak` |
 | **Cache** | `~/.cache/vak` |
 | **Logs** | `~/.local/state/vak/logs` |
-| **User secrets** | `<data_home>/.env` |
+| **User secrets** | Shared secret scope (Linux Secret Service, or the encrypted-file fallback under `<data_home>` on headless hosts with no D-Bus session) |
 | **Installed binaries** | `~/.local/share/vak/bin/` |
 
 ### VAK_HOME override
@@ -245,11 +245,12 @@ self-contained sandboxes (tests, portable installs).
 Releases and updates must never lose data or credentials:
 
 - **No secrets in units.** Templates embed zero credentials. The binary
-  self-sources from the canonical user `.env` at `~/vak-home/.env`
-  (`user_env_path()`) (gateway token,
-  bot tokens, provider keys) — `secured_router_with` falls back to `.env`
-  when the process env is empty. Regenerating units on a new machine
-  therefore cannot strand auth.
+  self-sources from the canonical Shared secret scope named by
+  `user_env_path()` — resolved through `vak_config::credentials`, never a
+  plaintext file (docs/design/44-shared-config.md, "Secrets Chain") —
+  covering gateway token, bot tokens, and provider keys;
+  `secured_router_with` falls back to that scope when the process env is
+  empty. Regenerating units on a new machine therefore cannot strand auth.
 - **Logs live at stable paths** under `logs_dir()`, independent of
   install location; upgrades append, never truncate.
 - **User data is out of scope for every lifecycle command.** Sessions,
@@ -271,8 +272,8 @@ There is no migration step. A fresh install writes state to the canonical
 platform locations on first use: `data_home()` for sessions, config, and
     gateway state; `cache_home()` for the rebuildable store index; and
 `logs_dir()` for service logs. `default_workspace()` (`~/vak-home`) is the
-sole workspace root, carrying its `.vak/` shared layer and `.env` secret
-store. With no prior user base to upgrade, the pre-0.8 `~/.vak` dotdir is
+sole workspace root, carrying its `.vak/` shared layer and Shared secret
+scope. With no prior user base to upgrade, the pre-0.8 `~/.vak` dotdir is
 not migrated — operators who need retained data restore from a `vak backup`
 export.
 

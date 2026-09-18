@@ -340,8 +340,17 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     // ---- secrets ----
+    // The encrypted-file credential backend (docs/design/44-shared-config.md,
+    // "Secrets Chain") — used only when no OS-native secret service is
+    // reachable, beside the Shared config layer (`default_workspace()`,
+    // i.e. `~/vak-home` — the "configuration and secret home" of Part VI in
+    // docs/design/46). It holds every scope (Shared, project, agent) in one
+    // file, not one file per scope the way `.env` used to be laid out; a
+    // host using the OS keychain instead has neither file. On a host that
+    // does have them, both must be purged or backed up together — the key
+    // alone or the data alone is not a usable secret.
     StateEntry {
-        path: ".env",
+        path: "credentials.enc",
         root: Root::Shared,
         owner: "vak-config",
         schema: None,
@@ -350,6 +359,16 @@ pub const REGISTRY: &[StateEntry] = &[
         on_update: OnUpdate::Untouched,
         on_purge: OnPurge::Remove,
         // Only with `--include-secrets`, and then with a warning beside it.
+        in_backup: false,
+    },
+    StateEntry {
+        path: ".credential_key",
+        root: Root::Shared,
+        owner: "vak-config",
+        schema: None,
+        kind: Kind::Secret,
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
         in_backup: false,
     },
     // ---- the Shared layer ----

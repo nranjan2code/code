@@ -400,8 +400,9 @@ Nothing here is inferred where it could be read.
 - **MCP network and environment** are on `McpServerConfig` (`network`,
   `env`), both editable from the console (register/edit form). `env` values
   round-trip verbatim through `GET`/`PUT /config/mcp` — usually a `${VAR}`
-  reference resolved from `.env` at process launch rather than a literal
-  secret, since that is how config.toml already stores them, and the value
+  reference resolved from the credential store at process launch rather
+  than a literal secret, since that is how config.toml already stores them,
+  and the value
   is exactly what a filesystem-reading operator could already see.
 - `GET /config/mcp` and `GET /config/hooks` report the *project's own*
   `.vak/config.toml` only, never the merged effective set (`state.core`'s

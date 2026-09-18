@@ -79,7 +79,7 @@ pub(crate) enum Command {
         /// criterion as a shell command; others are judged from evidence.
         #[arg(long, value_delimiter = ',')]
         criteria: Vec<String>,
-        /// Trust this workspace's project config and .env
+        /// Trust this workspace's project config and secret scope
         #[arg(long)]
         trust: bool,
     },
@@ -129,7 +129,7 @@ pub(crate) enum Command {
         /// Run in an isolated git worktree off HEAD
         #[arg(long)]
         worktree: bool,
-        /// Trust this workspace's project config and .env
+        /// Trust this workspace's project config and secret scope
         #[arg(long)]
         trust: bool,
     },
@@ -160,7 +160,7 @@ pub(crate) enum Command {
         /// (docs/design/22-gateway.md)
         #[arg(long)]
         gateway: bool,
-        /// Trust this workspace's project config and .env
+        /// Trust this workspace's project config and secret scope
         #[arg(long)]
         trust: bool,
     },
@@ -328,7 +328,7 @@ pub(crate) enum Command {
     },
     /// Diagnose provider auth, config warnings, and extensions
     Doctor {
-        /// Trust this workspace's project config and .env
+        /// Trust this workspace's project config and secret scope
         #[arg(long)]
         trust: bool,
         /// Act on failing checks that have a known fix, then re-check
@@ -620,7 +620,9 @@ pub(crate) enum BackupAction {
     Export {
         /// Destination directory (must not be the vak home itself)
         dir: PathBuf,
-        /// Include ~/.vak/.env secrets (a WARNING.txt travels beside them)
+        /// Include the encrypted credential store, when this host uses one
+        /// (a WARNING.txt travels beside it; a host using the OS keychain
+        /// has nothing here to include)
         #[arg(long)]
         include_secrets: bool,
     },
@@ -849,7 +851,7 @@ pub(crate) enum FlowAction {
         provider: Option<String>,
         #[arg(long)]
         model: Option<String>,
-        /// Trust this workspace's project config and .env
+        /// Trust this workspace's project config and secret scope
         #[arg(long)]
         trust: bool,
     },

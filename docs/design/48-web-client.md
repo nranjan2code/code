@@ -423,7 +423,7 @@ grants nothing.
 ### 5.1 Trust in a browser
 
 Trust (46 Step 2) is the decision that a folder's `.vak/config.toml` and
-`.env` may be honoured. It is the highest-consequence click in the
+secret scope may be honoured. It is the highest-consequence click in the
 product and it must not become a habit.
 
 - The review is server-side and already exists
@@ -618,7 +618,8 @@ hurt:
 
 1. The proxy **must** set `X-Forwarded-Proto` and pass `Host`.
 2. The bearer token is the only credential. It is a password. It lives in
-   a 0600 `.env` and it is long.
+   the credential store (OS keychain, or an encrypted-file fallback) and it
+   is long.
 3. `session_ttl_hours` should be short. A 7-day cookie on a public
    hostname is a 7-day shell.
 4. Provider keys, the ledger, and the workspace are all on that box. A

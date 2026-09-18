@@ -282,15 +282,8 @@ fn notify(title: &str, body: &str) {
 }
 
 fn pinned_gateway_token() -> Option<String> {
-    std::fs::read_to_string(vak_config::user_env_path()?)
-        .ok()?
-        .lines()
-        .find_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            (key.trim() == "VAK_GATEWAY_TOKEN")
-                .then(|| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
+    vak_config::read_env_file_var(&vak_config::user_env_path()?, "VAK_GATEWAY_TOKEN")
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// Open one of the gateway's web surfaces in a browser.
@@ -561,10 +554,10 @@ fn save_project(cwd: &str) {
     }
 }
 
-/// Load the Shared `.env`, and the project's own only when the workspace
-/// is trusted.
+/// Load the Shared secret scope, and the project's own only when the
+/// workspace is trusted.
 ///
-/// A project `.env` can inject `VAK_*_BASE_URL` and other privileged
+/// A project secret scope can inject `VAK_*_BASE_URL` and other privileged
 /// values, so loading it is part of the trust decision — not a consequence
 /// of having opened a folder (doc 46 security invariant 2).
 fn load_workspace_env(cwd: &std::path::Path, trusted: bool) {
@@ -960,8 +953,8 @@ fn main() {
             }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Same secret-loading contract as the CLI: user-level
-                // .env always; the picked workspace's own .env too (the
+                // Same secret-loading contract as the CLI: the Shared
+                // secret scope always; the picked workspace's own too (the
                 // folder was explicitly chosen, so it is trusted).
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
                 let explicit_project = launch_project;
