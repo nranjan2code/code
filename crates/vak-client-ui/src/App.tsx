@@ -88,6 +88,7 @@ import {
   canvasMode,
   type ReplyTarget,
 } from "./store";
+import { recordAgentOpened } from "./agentRecents";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
 import Sidebar from "./components/Sidebar";
@@ -124,6 +125,8 @@ import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
+import AgentCreateWizard from "./components/AgentCreateWizard";
+import OnboardingWelcome from "./components/OnboardingWelcome";
 
 const streams = new Map<string, EventSource>();
 const presentationStreams = new Map<string, EventSource>();
@@ -491,6 +494,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
   try {
     const res = await api.openAgent(agentId);
     if (source !== api.backendUrl() || cwd !== backend().cwd) return null;
+    recordAgentOpened(agentId);
     setActiveAgent(res.agent);
     setSessions((current) => [...current.filter((s) => s.session_id !== res.session_id), {session_id: res.session_id, cwd: res.cwd, agent: res.agent}]);
     closeSplit();
@@ -1303,10 +1307,13 @@ export default function App() {
                 aria-label={`Task details: ${dockLabel(tab())}`}
               >
                 <div class="dock-tabs">
+                  {/* Only general-purpose views are pinned — pinning a
+                      dev-only tool (Changes/Terminal) here would show up as
+                      permanent chrome in every conversation, undoing the
+                      general/developer split made in the header's menu. */}
                   <For each={[
                     ["workbench", "Files", "preview"],
-                    ["diff", "Changes", "diff"],
-                    ["terminal", "Terminal", "terminal"],
+                    ["preview", "Live preview", "preview"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -1326,9 +1333,16 @@ export default function App() {
                     <summary class="dock-tab" aria-label="More workspace views"><Icon name="tune" /><span>More</span></summary>
                     <div class="dock-more-menu">
                       <For each={[
-                        ["preview", "Live preview", "preview"], ["editor", "Files", "file"],
-                        ["pr", "Pull request", "git"], ["agents", "Parallel work", "grid"],
-                        ["feeds", "Sources", "bell"], ["commitments", "Open promises", "shield"],
+                        ["agents", "Parallel work", "grid"],
+                        ["feeds", "Sources", "bell"],
+                        ["commitments", "Open promises", "shield"],
+                      ] as const}>
+                        {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                      </For>
+                      <div class="menu-group-label">Developer</div>
+                      <For each={[
+                        ["diff", "Changes", "diff"], ["terminal", "Terminal", "terminal"],
+                        ["editor", "Editor", "file"], ["pr", "Pull request", "git"],
                       ] as const}>
                         {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
@@ -1410,6 +1424,8 @@ export default function App() {
           <SearchModal />
           <FeedsModal />
           <AgentPickerModal />
+          <AgentCreateWizard />
+          <OnboardingWelcome />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>

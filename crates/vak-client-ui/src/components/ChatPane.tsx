@@ -352,7 +352,14 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     grep: "Search files",
     glob: "Find files",
     mcp: "Use connected tool",
-  } as Record<string, string>)[props.item.name] ?? props.item.name.replaceAll("_", " ");
+  } as Record<string, string>)[props.item.name] ?? (() => {
+    // Unmapped/MCP-namespaced tool names (e.g. "mcp__browser__navigate")
+    // shouldn't leak their internal identifier verbatim — take the last
+    // segment and present it in plain title case.
+    const parts = props.item.name.split("__").filter(Boolean);
+    const last = parts[parts.length - 1] || props.item.name;
+    return last.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  })();
   const summary = createMemo(() => {
     const a = args();
     if (!a) return null;
@@ -469,6 +476,9 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       return "Review the requested operation before allowing it.";
     }
   });
+  const argsPretty = createMemo(() => {
+    try { return JSON.stringify(JSON.parse(props.item.argsJson), null, 2); } catch { return props.item.argsJson; }
+  });
   return (
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
     <div class="ap-head">Vak wants to use {props.item.tool}</div>
@@ -484,7 +494,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     <div class="ap-summary">{summary()}</div>
     <details class="ap-details">
       <summary>View request details</summary>
-      <pre class="ap-args">{props.item.argsJson}</pre>
+      <pre class="ap-args">{argsPretty()}</pre>
     </details>
     <Show
       when={!props.item.resolved}

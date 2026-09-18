@@ -18,36 +18,49 @@ import {
   sessions,
   backend,
   activeAgentId,
+  activeAgent,
+  setAgentPickerOpen,
+  setAgentPickerTab,
   type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
 import { relTime } from "../time";
-import { loadHealth, refreshSessions } from "../App";
+import { loadHealth, refreshSessions, openAgentChat } from "../App";
+import { sortByRecent } from "../agentRecents";
+import { capabilityHue, capabilityInitial } from "../capabilityIcon";
 import Icon, { type IconName } from "./Icon";
 import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
-import AgentsPanel from "./AgentsPanel";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
 type Page = "general" | "appearance" | "agent" | "prompts" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
 
-const pages: { id: Page; label: string; icon: IconName; hint: string; group: string }[] = [
-  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions", group: "Experience" },
-  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion", group: "Experience" },
-  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns workers", group: "Agent & access" },
-  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "Agent & access" },
-  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals", group: "Agent & access" },
-  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Agent & access" },
-  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills", group: "Connections & automation" },
-  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background", group: "Connections & automation" },
-  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote", group: "Connections & automation" },
-  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration", group: "Advanced" },
-  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history", group: "Advanced" },
+// Two top-level buckets, not four cosmetic ones: everything in "App" is pure
+// local/global preference (no agent, no scope toggle needed); everything in
+// "Agent" reads or writes config for whichever agent is selected below and is
+// where the Platform-Defaults/This-Workspace scope toggle actually applies.
+const SETTINGS_SECTIONS = { app: "App Settings", agent: "Agent Settings" } as const;
+type SettingsSection = keyof typeof SETTINGS_SECTIONS;
+
+const pages: { id: Page; label: string; icon: IconName; hint: string; group: string; section: SettingsSection }[] = [
+  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions", group: "Experience", section: "app" },
+  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion", group: "Experience", section: "app" },
+  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background", group: "Experience", section: "app" },
+  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration", group: "Experience", section: "app" },
+  { id: "agent", label: "Model & Provider", icon: "spark", hint: "provider model turns workers", group: "This agent", section: "agent" },
+  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "This agent", section: "agent" },
+  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals", group: "This agent", section: "agent" },
+  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "This agent", section: "agent" },
+  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills", group: "This agent", section: "agent" },
+  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote", group: "This agent", section: "agent" },
+  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history", group: "Experience", section: "app" },
 ];
+
+const pageSection = (id: Page): SettingsSection => pages.find((p) => p.id === id)?.section ?? "app";
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
   { id: "identity", label: "Identity", help: "Who the agent is. The narrowest layer that sets this wins." },
@@ -59,7 +72,7 @@ const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
 const PROMPT_LAYER_LABELS: Record<api.PromptLayerDescriptor["layer"], string> = {
   seed: "shipped default",
   shared: "Shared",
-  workspace: "This workspace",
+  workspace: "This agent",
   surface: "surface",
   bot: "bot",
   chat: "chat",
@@ -76,6 +89,10 @@ function Row(props: { title: string; description: string; children: JSX.Element;
 
 function Group(props: { title?: string; children: JSX.Element }) {
   return <section class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+}
+
+function CapabilityIcon(props: { name: string }) {
+  return <span class="capability-icon" style={{ "--capability-hue": `oklch(62% 0.14 ${capabilityHue(props.name)})` }}>{capabilityInitial(props.name)}</span>;
 }
 
 function fmt(value: number): string {
@@ -265,7 +282,7 @@ export default function Settings() {
       await refetchPresentations();
       setNotice({
         kind: "info",
-        text: `All presentation packs activated for ${presentationScope() === "user" ? "Shared" : "This workspace"}`,
+        text: `All presentation packs activated for ${presentationScope() === "user" ? "Shared" : "This agent"}`,
       });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not activate all presentations: ${e instanceof Error ? e.message : String(e)}` });
@@ -281,7 +298,7 @@ export default function Settings() {
       await refetchPresentations();
       setNotice({
         kind: "info",
-        text: `All presentation packs deactivated for ${presentationScope() === "user" ? "Shared" : "This workspace"}`,
+        text: `All presentation packs deactivated for ${presentationScope() === "user" ? "Shared" : "This agent"}`,
       });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not deactivate presentations: ${e instanceof Error ? e.message : String(e)}` });
@@ -463,7 +480,7 @@ export default function Settings() {
       setNoteTag("");
       setAddingNote(false);
       await refreshLearning();
-      setNotice({ kind: "info", text: tier() === "profile" ? "Profile note saved — recalled in every workspace." : "Workspace note saved." });
+      setNotice({ kind: "info", text: tier() === "profile" ? "Profile note saved — recalled by every agent." : "Note saved for this agent." });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not append note: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -856,6 +873,21 @@ export default function Settings() {
     for (const item of visiblePages()) groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
     return [...groups.entries()];
   });
+
+  // Lets you jump between agents from inside an agent-scoped settings page
+  // instead of closing Settings, switching in the sidebar, and reopening.
+  const [settingsAgents, setSettingsAgents] = createSignal<api.Agent[]>([]);
+  createEffect(() => {
+    void api.listAgents().then((r) => setSettingsAgents(r.agents)).catch(() => setSettingsAgents([]));
+  });
+  const settingsAgentOptions = createMemo(() =>
+    sortByRecent(settingsAgents().filter((a) => (a.lifecycle ?? "active") === "active"))
+  );
+  const switchSettingsAgent = async (id: string) => {
+    setLoading(true);
+    await openAgentChat(id);
+    await load();
+  };
   const showArchivedPage = createMemo(() => {
     const needle = query().trim().toLowerCase();
     return !needle || "archived tasks restore delete history".includes(needle);
@@ -1080,15 +1112,21 @@ export default function Settings() {
       <aside class="settings-nav">
         <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
-        <div class="settings-nav-label">Settings scope</div>
-        <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
-          <button type="button" aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Platform Defaults</button>
-          <button type="button" aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>This Workspace</button>
-        </div>
-        <p class="settings-scope-copy">{scope() === "user" ? "Platform defaults apply across all workspaces." : `Workspace overrides apply to ${backend().cwd ? (backend().cwd as string).split("/").pop() || "this folder" : "this folder"}.`}</p>
         <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
           {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
         </For>
+        {/* Editing a specific agent is the default and needs no toggle at
+            all; switching to the shared platform default is the deliberate,
+            secondary action, so it's a quiet link rather than a persistent
+            control every user has to parse first. */}
+        <Show when={pageSection(page()) === "agent"}>
+          <Show
+            when={scope() === "user"}
+            fallback={<button type="button" class="settings-scope-link" onClick={() => setSettingsScope("user")}>Change the platform default instead</button>}
+          >
+            <button type="button" class="settings-scope-link" onClick={() => setSettingsScope("workspace")}>← Back to editing {activeAgent()?.name ?? "your agent"}</button>
+          </Show>
+        </Show>
         <Show when={showArchivedPage()}>
           <div class="settings-nav-label archived-nav-label">Archived</div>
           <nav>
@@ -1109,15 +1147,30 @@ export default function Settings() {
             </div>
           </Show>
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
-            <div class="settings-callout scope-callout" role="status">
-              <Icon name={scope() === "user" ? "layers" : "folder"} />
-              <div>
-                <strong>{scope() === "user" ? "Editing Shared defaults" : "Editing this workspace"}</strong>
-                <span>{scope() === "user" ? "Inherited by every workspace unless it overrides the value." : (config()?.paths.cwd ?? backend().cwd ?? "Current workspace")}</span>
+            <Show when={pageSection(page()) === "agent"}>
+              <Show when={scope() === "workspace"}>
+                <div class="settings-agent-switcher">
+                  <span class="settings-nav-label" style="margin: 0;">Editing agent</span>
+                  <select
+                    aria-label="Agent to edit"
+                    value={activeAgentId()}
+                    onChange={(e) => void switchSettingsAgent(e.currentTarget.value)}
+                  >
+                    <option value="vak">Vak</option>
+                    <For each={settingsAgentOptions()}>{(a) => <option value={a.id}>{a.name}</option>}</For>
+                  </select>
+                </div>
+              </Show>
+              <div class="settings-callout scope-callout" role="status">
+                <Icon name={scope() === "user" ? "layers" : "folder"} />
+                <div>
+                  <strong>{scope() === "user" ? "Editing Platform Defaults" : `Editing ${activeAgent()?.name ?? "this agent"}`}</strong>
+                  <span>{scope() === "user" ? "Inherited by every agent unless it overrides the value." : (config()?.paths.cwd ?? backend().cwd ?? "Current agent")}</span>
+                </div>
               </div>
-            </div>
+            </Show>
             <Show when={page() === "general"}>
-              <header><h1>{scope() === "user" ? "User settings" : "Workspace settings"}</h1><p>{scope() === "user" ? "Shared defaults and capabilities inherited by your workspaces." : "Overrides for this folder. Unchanged settings inherit your user defaults."}</p></header>
+              <header><h1>General</h1><p>Notifications, sounds, and other app-wide preferences.</p></header>
               <Group title="Experience">
                 <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
                 <Row title="Quiet hours" description="Suppress background completion and update notifications overnight. Approval requests remain interruptive because work is paused until you decide."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
@@ -1138,7 +1191,7 @@ export default function Settings() {
                         <button type="button" class="settings-button subtle" disabled={presentationBusy() !== null || activePresentationCount() === 0} onClick={() => void deactivateAllPresentations()}>Deactivate all</button>
                       </div>
                     </div>
-                    <div class="presentation-scope-note"><Icon name={presentationScope() === "user" ? "layers" : "folder"} /><span>Managing <strong>{presentationScope() === "user" ? "Shared" : "This workspace"}</strong>. These activations are selected before broader workspace fallbacks.</span></div>
+                    <div class="presentation-scope-note"><Icon name={presentationScope() === "user" ? "layers" : "folder"} /><span>Managing <strong>{presentationScope() === "user" ? "Shared" : "This agent"}</strong>. These activations are selected before broader fallbacks.</span></div>
                     <Show when={presentationGroups().length > 0} fallback={<div class="presentation-empty">No presentation packs match this filter.</div>}>
                       <div class="presentation-groups">
                         <For each={presentationGroups()}>{(group, index) => {
@@ -1199,9 +1252,8 @@ export default function Settings() {
                   <Row title="Persona" description="Optional style directive for how narration sounds."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
               </Group>
-              <Group title={scope() === "user" ? "Desktop" : "Workspace"}>
-                <Row title={scope() === "user" ? "Inheritance" : "Current workspace"} description={scope() === "user" ? "Workspaces inherit this scope unless their own settings override a value." : (config()?.paths.cwd ?? "")}><span class="settings-value">{scope() === "user" ? "Shared" : "Local"}</span></Row>
-                <Show when={scope() === "workspace"}><Row title="Workspace configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open config</button></Row></Show>
+              <Group title="Desktop">
+                <Row title="Working directory" description={config()?.paths.cwd ?? backend().cwd ?? ""}><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open config</button></Row>
               </Group>
             </Show>
 
@@ -1233,9 +1285,9 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "agent"}>
-              <header><h1>Agent</h1><p>Configure the model used when starting new tasks.</p></header>
-              <AgentsPanel />
-              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved workspace defaults</strong><span>Applied changes are persisted to this workspace and take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
+              <header><h1>Model & Provider</h1><p>Configure the model used when starting new tasks.</p></header>
+              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vak"}</strong><span>Every page under "This agent" applies to whichever agent is currently active. To manage agents themselves — create, rename, or switch — use Fleet Roster.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open Fleet Roster</button></div>
+              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved to this agent</strong><span>Applied changes take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>
                   <select
@@ -1350,7 +1402,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "permissions"}>
-              <header><h1>Permissions</h1><p>Set the trust boundary for tool calls in this workspace.</p></header>
+              <header><h1>Permissions</h1><p>Set the trust boundary for this agent's tool calls.</p></header>
               <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
                 <p class="settings-group-copy">
@@ -1497,7 +1549,7 @@ export default function Settings() {
               </nav>
               <Group title={tier() === "profile" ? "Profile memories (USER.md)" : "Workspace memories (MEMORY.md)"}>
                 <Show when={tier() === "profile"}>
-                  <p class="settings-hint memory-hint">Global tier — these notes are recalled in every workspace.</p>
+                  <p class="settings-hint memory-hint">Global tier — these notes are recalled by every agent.</p>
                 </Show>
                 <Show
                   when={!addingNote()}
@@ -1507,7 +1559,7 @@ export default function Settings() {
                         <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
                         <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
                       </div>
-                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every workspace…" : "Something that should hold in this workspace…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every agent…" : "Something that should hold for this agent…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
                       <div class="task-add-row">
                         <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addMemoryNote()}>Append note</button>
                         <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
@@ -1519,7 +1571,7 @@ export default function Settings() {
                 </Show>
                 <Show
                   when={tierNotes().length > 0}
-                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vak/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
+                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every agent benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vak/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
                 >
                   <div class="archived-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
@@ -1565,8 +1617,8 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every workspace. A workspace may add its own capability or override a same-named MCP server." : "Edit only this folder’s capabilities. Shared capabilities remain available unless this workspace deliberately replaces a same-named MCP server."}</p></header>
-              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this workspace only."}</strong><span>{scope() === "user" ? "Workspace-specific changes never rewrite these shared settings." : "Use Shared above to change your defaults for every workspace."}</span></div></div>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every agent. An agent may add its own capability or override a same-named MCP server." : "Edit only this agent’s capabilities. Shared capabilities remain available unless this agent deliberately replaces a same-named MCP server."}</p></header>
+              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this agent only."}</strong><span>{scope() === "user" ? "Per-agent changes never rewrite these shared settings." : "Use Shared above to change your defaults for every agent."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{totalMcpCount()}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
@@ -1576,9 +1628,9 @@ export default function Settings() {
               <Show when={capabilityTab() === "mcp"}>
                 <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
                   <div class="mcp-editor">
-                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><Icon name="plug" /><strong>{scope() === "user" ? "No shared MCP servers connected" : (Object.keys(inheritedMcpServers()).length > 0 ? "No project-specific MCP overrides" : "No MCP servers connected")}</strong><span>{scope() === "user" ? "Add a shared server to make it available across all your projects." : (Object.keys(inheritedMcpServers()).length > 0 ? "This project is using the shared MCP servers listed below. Add a server here to create a project-specific override or tool." : "Add a local server to give the agent tools such as search, browser, or data access.")}</span></div>}>
+                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon mcp"><Icon name="plug" /></span><strong>{scope() === "user" ? "No shared MCP servers connected" : (Object.keys(inheritedMcpServers()).length > 0 ? "No project-specific MCP overrides" : "No MCP servers connected")}</strong><span>{scope() === "user" ? "Add a shared server to make it available across all your projects." : (Object.keys(inheritedMcpServers()).length > 0 ? "This project is using the shared MCP servers listed below. Add a server here to create a project-specific override or tool." : "Add a local server to give the agent tools such as search, browser, or data access.")}</span></div>}>
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
-                        <div class="mcp-row-head"><div><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
+                        <div class="mcp-row-head"><div><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
                         <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><span class="settings-hint">Health check runs automatically when this server is first used in a task.</span></div>
                       </div>}</For>
@@ -1592,7 +1644,7 @@ export default function Settings() {
                           <Icon name="layers" />
                           <div>
                             <strong>Shared MCP servers ({Object.keys(inheritedMcpServers()).length})</strong>
-                            <span>Inherited from your global settings. Available in every task in this workspace unless replaced by a same-named server above.</span>
+                            <span>Inherited from your global settings. Available in every task for this agent unless replaced by a same-named server above.</span>
                           </div>
                         </div>
                         <div class="capability-list">
@@ -1601,10 +1653,13 @@ export default function Settings() {
                             return (
                               <div class="capability-item" classList={{ "capability-item-overridden": isOverridden() }}>
                                 <div class="inherited-row">
-                                  <div class="inherited-info">
-                                    <strong>{name}</strong>
-                                    <code>{def.command} {def.args.join(" ")}</code>
-                                    <small>{def.network ? "Network allowed" : "Local only"}</small>
+                                  <div class="inherited-info" style="display: flex; align-items: flex-start; gap: 10px;">
+                                    <CapabilityIcon name={name} />
+                                    <div>
+                                      <strong>{name}</strong>
+                                      <code>{def.command} {def.args.join(" ")}</code>
+                                      <small>{def.network ? "Network allowed" : "Local only"}</small>
+                                    </div>
                                   </div>
                                   <div class="inherited-actions">
                                     <Show when={isOverridden()} fallback={
@@ -1630,11 +1685,11 @@ export default function Settings() {
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>
-                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>{scope() === "user" ? "No shared hooks configured" : (inheritedHooks().length > 0 ? "No project-specific hooks" : "No hooks configured")}</strong><span>{scope() === "user" ? "Add a hook to run a safe, repeatable action at session or tool lifecycle events across all projects." : (inheritedHooks().length > 0 ? "This project is using the shared hooks listed below. Add a hook here to run project-specific actions." : "Add a hook to run a safe, repeatable action at session or tool lifecycle events.")}</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" aria-label={`Remove hook ${index() + 1}`} onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
+                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon hooks"><Icon name="tune" /></span><strong>{scope() === "user" ? "No shared hooks configured" : (inheritedHooks().length > 0 ? "No project-specific hooks" : "No hooks configured")}</strong><span>{scope() === "user" ? "Add a hook to run a safe, repeatable action at session or tool lifecycle events across all projects." : (inheritedHooks().length > 0 ? "This project is using the shared hooks listed below. Add a hook here to run project-specific actions." : "Add a hook to run a safe, repeatable action at session or tool lifecycle events.")}</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" aria-label={`Remove hook ${index() + 1}`} onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
                 <Show when={scope() === "workspace" && inheritedHooks().length > 0}>
                   <div class="inherited-capabilities-group">
                     <div class="inherited-capabilities-head">
@@ -1676,9 +1731,19 @@ export default function Settings() {
                   <div class="mcp-fields"><label>Catalog directory<input class="mono" placeholder="/path/to/catalog" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="settings-button" disabled={!sourcePath().trim() || pluginBusy()} onClick={() => void registerPluginSource()}>Register catalog source</button></div></div>
                   <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
                   <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Source action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button type="button" class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Key action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
-                  <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div><Show when={marketplaceEntries().length > 0}><div class="capability-list"><For each={marketplaceEntries()}>{(entry) => <div class="capability-item"><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small><p>{entry.description || "No description"}</p><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 16)}</code><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div></Show>
-                  <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
-                    <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="mcp-controls"><Show when={!plugin.network_denied} fallback={<span class="capability-state muted">Blocked by plugins.network_deny</span>}><label class="mcp-network"><Switch checked={plugin.network_allowed} label={`Allow network for ${plugin.name}`} onChange={(v) => void togglePluginNetwork(plugin.name, v)} /><span title="Deny entries (plugins.network_deny) always win; the allowlist grants egress otherwise. Privileged: set at the trusted (user) level for an untrusted workspace.">{plugin.network_allowed ? "Network allowed from sandbox" : "Local only"}</span></label></Show></div><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
+                  <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div>
+                  <Show when={marketplaceEntries().length > 0} fallback={<Show when={marketplaceQuery().trim()}><div class="capability-empty"><span class="capability-empty-icon plugins"><Icon name="grid" /></span><strong>No matching entries</strong><span>Try a different search term, or register a catalog source above.</span></div></Show>}>
+                    <div class="marketplace-grid"><For each={marketplaceEntries()}>{(entry) => (
+                      <div class="marketplace-card">
+                        <div class="marketplace-card-head"><CapabilityIcon name={entry.name} /><div><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></div></div>
+                        <p>{entry.description || "No description"}</p>
+                        <code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 16)}</code>
+                        <small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small>
+                      </div>
+                    )}</For></div>
+                  </Show>
+                  <Show when={plugins().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon plugins"><Icon name="grid" /></span><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
+                    <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><CapabilityIcon name={plugin.name} /><span class="capability-title"><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="mcp-controls"><Show when={!plugin.network_denied} fallback={<span class="capability-state muted">Blocked by plugins.network_deny</span>}><label class="mcp-network"><Switch checked={plugin.network_allowed} label={`Allow network for ${plugin.name}`} onChange={(v) => void togglePluginNetwork(plugin.name, v)} /><span title="Deny entries (plugins.network_deny) always win; the allowlist grants egress otherwise. Privileged: set at the trusted (user) level for an untrusted workspace.">{plugin.network_allowed ? "Network allowed from sandbox" : "Local only"}</span></label></Show></div><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
                   </Show>
                   <Show when={scope() === "workspace" && inheritedPlugins().length > 0}>
                     <div class="inherited-capabilities-group">
@@ -1716,7 +1781,7 @@ export default function Settings() {
             <Show when={page() === "prompts"}>
               <div class="prompt-page">
               <header><h1>Prompts</h1><p>Shape the agent’s voice and working rules without changing what it is allowed to do.</p></header>
-              <div class="prompt-scope-note"><Icon name="layers" /><div><strong>{scope() === "user" ? "Shared prompt layer" : "Project prompt layer"}</strong><span>{scope() === "user" ? "Used as the default across your projects. A project can override individual blocks." : "Applies only in this project. Unchanged blocks continue to inherit from Shared."}</span><Show when={promptLayerPath()}><code>{promptLayerPath()}</code></Show></div></div>
+              <div class="prompt-scope-note"><Icon name="layers" /><div><strong>{scope() === "user" ? "Shared prompt layer" : "Agent prompt layer"}</strong><span>{scope() === "user" ? "Used as the default across your agents. An agent can override individual blocks." : "Applies only to this agent. Unchanged blocks continue to inherit from Shared."}</span><Show when={promptLayerPath()}><code>{promptLayerPath()}</code></Show></div></div>
               <Group title="Editable blocks">
                 <For each={PROMPT_BLOCKS}>{(block) => {
                   const own = () => promptBlockText(block.id);

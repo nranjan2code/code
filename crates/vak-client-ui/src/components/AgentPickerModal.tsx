@@ -2,41 +2,33 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { trapFocus } from "../focusTrap";
 import {
   activeAgentId,
+  activeId,
   agentPickerOpen,
   agentPickerTab,
   backend,
+  sessions,
   setActiveId,
+  setAgentCreateOpen,
   setAgentPickerOpen,
   setAgentPickerTab,
   workspaceSwitching,
 } from "../store";
 import { openAgentChat, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import * as api from "../api";
+import { agentGlyph } from "../agentGlyph";
+import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
 
+type LifecycleFilter = "active" | "all" | "paused" | "archived";
+
 export default function AgentPickerModal() {
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
-  const [templates, setTemplates] = createSignal<api.AgentTemplate[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [switching, setSwitching] = createSignal(false);
   const [error, setError] = createSignal("");
-
-  // Create form state
-  const [newId, setNewId] = createSignal("");
-  const [newName, setNewName] = createSignal("");
-  const [newCharacter, setNewCharacter] = createSignal<"orb" | "leaf" | "sun" | "wave" | "spark">("spark");
-  const [newPersonality, setNewPersonality] = createSignal("Sharp, methodical, and proactive.");
-  const [newInstructions, setNewInstructions] = createSignal("");
-  const [creating, setCreating] = createSignal(false);
-
-  const glyphMap: Record<string, string> = {
-    orb: "◌",
-    leaf: "◒",
-    sun: "☼",
-    wave: "〰",
-    spark: "✦",
-  };
+  const [lifecycleFilter, setLifecycleFilter] = createSignal<LifecycleFilter>("active");
+  const [lifecycleBusy, setLifecycleBusy] = createSignal<string | null>(null);
 
   const [searchQuery, setSearchQuery] = createSignal("");
 
@@ -59,28 +51,58 @@ export default function AgentPickerModal() {
     return [defaultAgent, ...list];
   });
 
+  // Mirrors vak_config::paths::agent_workspace() (crates/vak-config/src/paths.rs):
+  // the built-in "vak" agent uses the base workspace directly; every other
+  // agent gets an isolated subdirectory nested under that same base, so two
+  // agents never share a working directory.
+  const resolveAgentWorkspace = (base: string, agentId: string) =>
+    agentId === "vak" ? base : `${base}/.vak/agents/${agentId}/workspace`;
+
+  // The session for the currently open chat already carries a server-resolved
+  // cwd (see api.openAgent); fall back to computing it client-side when no
+  // session has been opened yet for the agent selected in the Fleet Roster.
+  const activeWorkspace = createMemo(() => {
+    const live = sessions().find((s) => s.session_id === activeId())?.cwd;
+    if (live) return live;
+    const base = backend().cwd;
+    return base ? resolveAgentWorkspace(base, activeAgentId()) : "";
+  });
+
   const filteredAgents = createMemo(() => {
     const q = searchQuery().trim().toLowerCase();
-    const list = allAgents();
-    if (!q) return list;
-    return list.filter(
-      (a) =>
-        a.name.toLowerCase().includes(q) ||
-        a.id.toLowerCase().includes(q) ||
-        (a.personality && a.personality.toLowerCase().includes(q))
-    );
+    const filter = lifecycleFilter();
+    let list = allAgents().filter((a) => filter === "all" || (a.lifecycle ?? "active") === filter);
+    if (q) {
+      list = list.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          a.id.toLowerCase().includes(q) ||
+          (a.personality && a.personality.toLowerCase().includes(q))
+      );
+    }
+    return sortByRecent(list);
   });
+
+  const setLifecycle = async (agent: api.Agent, lifecycle: api.Agent["lifecycle"]) => {
+    setLifecycleBusy(agent.id);
+    setError("");
+    try {
+      const next = agents().map((a) => (a.id === agent.id ? { ...a, lifecycle } : a));
+      await api.saveAgents(next, "user");
+      setAgents(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update agent.");
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
     setError("");
     try {
-      const [agentsRes, templatesRes] = await Promise.all([
-        api.listAgents(),
-        api.listAgentTemplates().catch(() => ({ templates: [] })),
-      ]);
+      const agentsRes = await api.listAgents();
       setAgents(agentsRes.agents);
-      setTemplates(templatesRes.templates);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -108,46 +130,6 @@ export default function AgentPickerModal() {
       setError(e instanceof Error ? e.message : "Failed to open agent.");
     } finally {
       setSwitching(false);
-    }
-  };
-
-  const handleApplyTemplate = (tmpl: api.AgentTemplate) => {
-    const slug = tmpl.template_id.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    setNewId(slug);
-    setNewName(tmpl.name);
-    setNewCharacter(tmpl.character);
-    setNewPersonality(tmpl.personality);
-    setNewInstructions(tmpl.instructions);
-  };
-
-  const handleCreateAgent = async (e: Event) => {
-    e.preventDefault();
-    const id = newId().trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
-    if (!id || !newName().trim()) {
-      setError("ID and Name are required.");
-      return;
-    }
-    setCreating(true);
-    setError("");
-    try {
-      const agent: api.Agent = {
-        id,
-        revision: 1,
-        lifecycle: "active",
-        name: newName().trim(),
-        character: newCharacter(),
-        personality: newPersonality().trim(),
-        behaviour: "Deliver high-quality outcomes with clear reasoning.",
-        responsibilities: "",
-        instructions: newInstructions().trim(),
-        animation: "subtle",
-        voice: "default",
-      };
-      await api.saveAgents([...agents(), agent], "user");
-      await handleSelectAgent(id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create agent.");
-      setCreating(false);
     }
   };
 
@@ -198,16 +180,6 @@ export default function AgentPickerModal() {
             <button
               type="button"
               class="tab-button"
-              classList={{ active: agentPickerTab() === "create" }}
-              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm);"
-              onClick={() => setAgentPickerTab("create")}
-            >
-              <Icon name="tune" size={14} />
-              <span>Create Specialist</span>
-            </button>
-            <button
-              type="button"
-              class="tab-button"
               classList={{ active: agentPickerTab() === "target" }}
               style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm);"
               onClick={() => setAgentPickerTab("target")}
@@ -225,14 +197,38 @@ export default function AgentPickerModal() {
 
           {/* TAB 1: FLEET ROSTER */}
           <Show when={agentPickerTab() === "fleet"}>
-            <div style="margin-bottom: 8px;">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
               <input
                 type="search"
                 placeholder="Find agent by name, id, or specialty…"
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12.5px;"
+                style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12.5px;"
               />
+              <button
+                type="button"
+                class="button primary"
+                style="white-space: nowrap;"
+                onClick={() => { setAgentPickerOpen(false); setAgentCreateOpen(true); }}
+              >
+                <Icon name="add" size={14} /> New agent
+              </button>
+            </div>
+            <div role="group" aria-label="Filter by status" style="display: flex; gap: 4px; margin-bottom: 8px;">
+              <For each={[{ id: "active", label: "Active" }, { id: "paused", label: "Paused" }, { id: "archived", label: "Archived" }, { id: "all", label: "All" }] as const}>
+                {(f) => (
+                  <button
+                    type="button"
+                    class="button subtle"
+                    classList={{ active: lifecycleFilter() === f.id }}
+                    style="font-size: 11.5px; padding: 3px 9px;"
+                    aria-pressed={lifecycleFilter() === f.id}
+                    onClick={() => setLifecycleFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                )}
+              </For>
             </div>
             <div style="max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
               <Show when={loading()}>
@@ -249,7 +245,7 @@ export default function AgentPickerModal() {
               <For each={filteredAgents()}>
                 {(agent) => {
                   const isActive = createMemo(() => activeAgentId() === agent.id);
-                  const glyph = glyphMap[agent.character] || "✦";
+                  const glyph = agentGlyph(agent.character);
                   return (
                     <div
                       style="display: flex; align-items: center; justify-content: space-between; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s, transform 0.15s; cursor: pointer;"
@@ -271,6 +267,16 @@ export default function AgentPickerModal() {
                                 CURRENT
                               </span>
                             </Show>
+                            <Show when={agent.lifecycle === "paused"}>
+                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                PAUSED
+                              </span>
+                            </Show>
+                            <Show when={agent.lifecycle === "archived"}>
+                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                ARCHIVED
+                              </span>
+                            </Show>
                           </div>
                           <p style="margin: 3px 0 0; font-size: 12px; color: var(--muted); line-height: 1.3;">
                             {agent.personality || "Persistent autonomous specialist."}
@@ -278,7 +284,55 @@ export default function AgentPickerModal() {
                         </div>
                       </div>
 
-                      <div>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <Show when={agent.id !== "vak"}>
+                          <Show when={agent.lifecycle === "active" || !agent.lifecycle}>
+                            <button
+                              type="button"
+                              class="icon-button subtle has-tooltip"
+                              data-tooltip="Pause — hide from the everyday switcher without deleting it"
+                              aria-label={`Pause ${agent.name}`}
+                              disabled={lifecycleBusy() === agent.id}
+                              onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "paused"); }}
+                            >
+                              <Icon name="timer" size={14} />
+                            </button>
+                          </Show>
+                          <Show when={agent.lifecycle === "paused"}>
+                            <button
+                              type="button"
+                              class="button subtle"
+                              style="font-size: 11.5px; padding: 3px 8px;"
+                              disabled={lifecycleBusy() === agent.id}
+                              onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "active"); }}
+                            >
+                              Resume
+                            </button>
+                          </Show>
+                          <Show when={agent.lifecycle !== "archived"}>
+                            <button
+                              type="button"
+                              class="icon-button subtle has-tooltip"
+                              data-tooltip="Archive"
+                              aria-label={`Archive ${agent.name}`}
+                              disabled={lifecycleBusy() === agent.id}
+                              onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "archived"); }}
+                            >
+                              <Icon name="archive" size={14} />
+                            </button>
+                          </Show>
+                          <Show when={agent.lifecycle === "archived"}>
+                            <button
+                              type="button"
+                              class="button subtle"
+                              style="font-size: 11.5px; padding: 3px 8px;"
+                              disabled={lifecycleBusy() === agent.id}
+                              onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "active"); }}
+                            >
+                              Restore
+                            </button>
+                          </Show>
+                        </Show>
                         <button
                           type="button"
                           class="button"
@@ -295,104 +349,20 @@ export default function AgentPickerModal() {
             </div>
           </Show>
 
-          {/* TAB 2: CREATE SPECIALIST */}
-          <Show when={agentPickerTab() === "create"}>
-            <div style="max-height: 420px; overflow-y: auto; padding-right: 4px;">
-              <Show when={templates().length > 0}>
-                <div style="margin-bottom: 14px;">
-                  <span style="font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;">
-                    Templates
-                  </span>
-                  <div style="display: flex; gap: 8px; overflow-x: auto; padding: 6px 0;">
-                    <For each={templates()}>
-                      {(tmpl) => (
-                        <button
-                          type="button"
-                          style="padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-raised); font-size: 12px; white-space: nowrap; cursor: pointer; text-align: left;"
-                          onClick={() => handleApplyTemplate(tmpl)}
-                        >
-                          <span style="font-weight: 500;">{tmpl.name}</span>
-                          <span style="display: block; font-size: 10.5px; color: var(--muted);">{tmpl.domain}</span>
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              </Show>
-
-              <form onSubmit={handleCreateAgent} style="display: flex; flex-direction: column; gap: 10px;">
-                <div>
-                  <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">
-                    Agent Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Security Reviewer"
-                    value={newName()}
-                    onInput={(e) => setNewName(e.currentTarget.value)}
-                    style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text);"
-                  />
-                </div>
-
-                <div>
-                  <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">
-                    Personality & Demeanor
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Rigorous, cautious, and detail-obsessed."
-                    value={newPersonality()}
-                    onInput={(e) => setNewPersonality(e.currentTarget.value)}
-                    style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text);"
-                  />
-                </div>
-
-                <div>
-                  <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">
-                    Core Instructions / System Prompt
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Instructions that govern this agent's reasoning, tool use, and tone."
-                    value={newInstructions()}
-                    onInput={(e) => setNewInstructions(e.currentTarget.value)}
-                    style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--sans); font-size: 12.5px; resize: vertical;"
-                  />
-                </div>
-
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px;">
-                  <button
-                    type="button"
-                    class="button subtle"
-                    onClick={() => setAgentPickerTab("fleet")}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    class="button primary"
-                    disabled={creating() || !newName().trim()}
-                  >
-                    {creating() ? "Creating…" : "Create & Launch"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </Show>
-
-          {/* TAB 3: TARGET WORKING DIRECTORY */}
+          {/* TAB 2: TARGET WORKING DIRECTORY */}
           <Show when={agentPickerTab() === "target"}>
             <div>
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
                 <span style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block;">
-                  Current Working Directory
+                  {activeAgentId() === "vak" ? "Current Working Directory" : "Isolated Working Directory"}
                 </span>
-                <strong style="font-family: var(--mono); font-size: 13px; color: var(--text);">
-                  {backend().cwd || "Default workspace"}
+                <strong style="font-family: var(--mono); font-size: 13px; color: var(--text); word-break: break-all;">
+                  {activeWorkspace() || "Default workspace"}
                 </strong>
                 <p style="margin: 4px 0 0; font-size: 11.5px; color: var(--muted);">
-                  The active agent will run tools, inspect files, and execute commands within this directory.
+                  {activeAgentId() === "vak"
+                    ? "The active agent will run tools, inspect files, and execute commands within this directory."
+                    : "Nested under the project workspace so this agent never sees another agent's files. Change the project workspace below to move it."}
                 </p>
               </div>
 

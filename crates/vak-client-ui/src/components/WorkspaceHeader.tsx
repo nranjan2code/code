@@ -29,6 +29,7 @@ import {
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
+import { agentGlyph } from "../agentGlyph";
 import Icon, { type IconName } from "./Icon";
 
 const INBOX_POLL_MS = 20_000;
@@ -36,18 +37,25 @@ const INBOX_POLL_MS = 20_000;
 /** Badge counters stay one glyph wide: 100+ collapses to 99+. */
 const countLabel = (n: number) => (n > 99 ? "99+" : String(n));
 
-const tools: { id: "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
+// Split so the menu doesn't present dev-only tools (diff/terminal/editor/PR)
+// with the same weight as general ones in a non-coding conversation — every
+// chat gets Workbench/Preview up front; the rest sit under their own label.
+const generalTools: { id: "workbench" | "preview"; label: string; icon: IconName }[] = [
   { id: "workbench", label: "Workbench", icon: "terminal" },
   { id: "preview", label: "Preview", icon: "preview" },
+];
+const devTools: { id: "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
   { id: "diff", label: "Changes", icon: "diff" },
   { id: "terminal", label: "Terminal", icon: "code" },
   { id: "editor", label: "Editor", icon: "file" },
   { id: "pr", label: "Pull request", icon: "git" },
 ];
+const tools = [...generalTools, ...devTools];
 
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => agentForSession(activeId()).name);
+  const titleGlyph = createMemo(() => agentForSession(activeId()).character);
   // Each Agent now has its own workspace (server-resolved per agent id), so
   // the pill must reflect the active session's cwd, not the process-global
   // one — otherwise every agent shows the same directory regardless of which
@@ -129,7 +137,7 @@ export default function WorkspaceHeader() {
               title="Switch Agent Specialist"
             >
               <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                <span style="font-size: 14px; opacity: 0.85;">✦</span>
+                <span class={`agent-glyph ${titleGlyph() ?? "orb"}`} classList={{ running: isRunning(activeId()) }} style="width: 20px; height: 20px; font-size: 12px;">{agentGlyph(titleGlyph())}</span>
                 <span>{title()}</span>
                 <span style="font-size: 11px; opacity: 0.6;">▾</span>
               </h1>
@@ -178,15 +186,19 @@ export default function WorkspaceHeader() {
           <summary class="icon-button has-tooltip" data-tooltip="More options" aria-label="More options"><Icon name="more" size={16} /></summary>
           <div class="workspace-more-menu" role="menu">
             <Show when={activeId()}>
-              <For each={tools}>
+              <For each={generalTools}>
+                {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
+              </For>
+              <div class="menu-group-label">Developer</div>
+              <For each={devTools}>
                 {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
               </For>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Dispatch forensics</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Managed work</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity receipts</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>
           </div>

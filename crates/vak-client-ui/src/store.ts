@@ -60,13 +60,13 @@ export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
-export type AgentSummary = { id: string; name: string; revision?: number };
+export type AgentSummary = { id: string; name: string; revision?: number; character?: string };
 export const [activeAgent, setActiveAgent] = createSignal<AgentSummary | null>(null);
 export function agentForSession(id: string | null) {
   const found = sessions().find((session) => session.session_id === id)?.agent;
   if (found) return found;
   if (id && id === activeId() && activeAgent()) return activeAgent()!;
-  return {id: "vak", name: "Vak", revision: 1};
+  return {id: "vak", name: "Vak", revision: 1, character: "spark"};
 }
 export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);
@@ -545,11 +545,15 @@ export function goalAppliesTo(id: string | null): ArmedGoal | null {
 }
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
-export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "create" | "target">("fleet");
+export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "target">("fleet");
+export const [agentCreateOpen, setAgentCreateOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
-export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspace">("user");
+// Defaults to "workspace" (edit the active agent) — that's what someone
+// opening Settings almost always wants; editing the shared platform default
+// is the deliberate, secondary action.
+export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspace">("workspace");
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
 /** Viewport narrow enough that the sidebar and dock are overlays rather
  *  than columns (docs/design/48-web-client.md §7.2). Kept as a signal, not

@@ -425,6 +425,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .workspace-more-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border-radius: 6px; color: var(--text-soft); text-align: left; font-size: 12px; }
 .workspace-more-menu button:hover { background: var(--surface-hover); color: var(--text); }
 .workspace-more-menu button:disabled { opacity: .45; }
+.menu-group-label { margin: 5px 9px 2px; padding-top: 5px; border-top: 1px solid var(--border-soft); color: var(--faint, var(--muted)); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .menu-letter { width: 14px; text-align: center; font-weight: 700; }
 .workspace-actions::-webkit-scrollbar { display: none; }
 .workspace-action-group { display: flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 9px; }
@@ -473,7 +474,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .plan-change { display: flex; align-items: center; gap: 8px; padding: 0 16px 8px; border-bottom: 1px solid var(--border); }
 .plan-change input { flex: 1; min-width: 120px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 6px 9px; }
 .plan-change span { color: var(--text-soft); font-size: 12px; }
-.chat { height: 100%; overflow-y: auto; padding: 30px 32px 36px; scroll-behavior: auto; }
+.chat { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 30px 32px 36px; scroll-behavior: auto; }
 .scroll-latest { position: absolute; z-index: 5; left: 50%; bottom: 12px; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-soft); background: rgba(42,42,38,.94); box-shadow: 0 7px 22px rgba(0,0,0,.3); font-size: 10.5px; transform: translateX(-50%); backdrop-filter: blur(8px); }
 .scroll-latest:hover { color: var(--text); background: var(--surface-active); }
 .scroll-latest .icon { transform: rotate(90deg); }
@@ -790,7 +791,10 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .rich-link-card span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .rich-link-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rich-link-card small { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.rich-metric { display: inline-flex; min-width: 150px; margin: 8px 8px 8px 0; padding: 10px 12px; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+/* Chrome (border/background/radius/shadow) comes from .canvas-card, shared
+   with the metric-grid variant below so a single-value metric and a
+   multi-field one never look like they're from different apps. */
+.rich-metric { display: inline-flex; min-width: 150px; margin: 12px 12px 12px 0; padding: 10px 12px; flex-direction: column; }
 .rich-metric small { color: var(--muted); }
 .rich-metric strong { margin-top: 2px; color: var(--text); font-size: 18px; }
 .metric-grid-card {
@@ -879,7 +883,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .rich-media { margin: 12px 0; }
 .rich-media img { display: block; max-width: min(100%, 720px); max-height: 480px; border-radius: var(--radius); object-fit: contain; }
 .rich-media figcaption { margin-top: 4px; color: var(--muted); font-size: 11px; }
-.rich-chart { max-width: 720px; margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.rich-chart { max-width: 720px; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .rich-chart figcaption { margin-bottom: 8px; color: var(--text); font-weight: 600; }
 .rich-chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
 .rich-chart-axis { stroke: var(--border); stroke-width: 1; }
@@ -887,9 +891,15 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .rich-chart-point { fill: var(--surface); stroke: var(--accent-bright); stroke-width: 2; }
 .rich-chart small { display: block; margin-top: 8px; color: var(--muted); }
 .rich-video { display: block; max-width: min(100%, 720px); max-height: 480px; margin: 12px 0; border-radius: var(--radius); background: #000; }
-.rich-media-link, .rich-unsupported { display: inline-flex; gap: 7px; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--accent-bright); background: var(--surface); }
+.rich-media-link, .rich-unsupported { display: inline-flex; gap: 7px; margin: 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--accent-bright); background: var(--surface); }
 .rich-unsupported { flex-direction: column; color: var(--muted); font-family: var(--mono); font-size: 11px; }
-.adaptive-timeline { margin: 10px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+/* Timeline is one of the most common structured card types (plans,
+   checklists, schedules, itineraries) — it needs the same glass/shadow/radius
+   chrome every other presentation card uses (.canvas-card), not its own flat
+   look, or it visually clashes when it appears next to a chart/table/recipe
+   card in the same reply. */
+.adaptive-timeline { margin: 12px 0; padding: 14px 16px; background: var(--canvas-bg); border: 1px solid var(--canvas-border); border-radius: 16px; box-shadow: var(--canvas-shadow); }
+.adaptive-timeline:hover { border-color: var(--canvas-hover-border); box-shadow: var(--canvas-hover-shadow); }
 .adaptive-timeline-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border-soft); padding-bottom: 9px; }
 .adaptive-timeline-kicker { color: var(--accent); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .adaptive-timeline h3 { margin: 0; color: var(--text); font-size: 15px; font-weight: 620; }
@@ -2009,11 +2019,10 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-search input { width: 100%; height: 36px; outline: 0; border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px 6px 34px; color: var(--text); background: var(--surface-raised); }
 .settings-search input:focus { border-color: var(--border-strong); }
 .settings-nav-label { padding: 0 12px 6px; color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
-.settings-scope-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 9px 7px; padding: 3px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-raised); }
-.settings-scope-toggle button { min-height: 27px; border-radius: 5px; color: var(--muted); font-size: 11.5px; font-weight: 580; }
-.settings-scope-toggle button:hover { color: var(--text-soft); background: var(--surface-hover); }
-.settings-scope-toggle button.active { color: var(--text); background: var(--accent-wash); box-shadow: inset 0 0 0 1px rgba(223,121,95,.28); }
-.settings-scope-copy { margin: 0 12px 14px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.settings-scope-link { display: block; margin: 0 9px 12px; padding: 0; color: var(--muted); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
+.settings-scope-link:hover { color: var(--text-soft); }
+.settings-agent-switcher { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.settings-agent-switcher select { padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12.5px; }
 .settings-nav-label.archived-nav-label { margin-top: 20px; }
 .settings-nav nav { display: flex; flex-direction: column; gap: 2px; }
 .settings-nav nav button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 7px 11px; border-radius: 8px; color: var(--muted); text-align: left; }
@@ -2187,8 +2196,12 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .capability-state.muted { color: var(--faint); }
 .mcp-fields label, .hook-row label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 10.5px; }
 .mcp-fields label input, .hook-row label input, .hook-row label select { width: 100%; box-sizing: border-box; }
-.capability-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 28px 20px; color: var(--muted); }
-.capability-empty .icon { color: var(--accent-bright); }
+.capability-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 28px 20px; color: var(--muted); }
+.capability-empty-icon { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; background: color-mix(in srgb, var(--capability-hue, var(--accent)) 18%, var(--surface)); color: var(--capability-hue, var(--accent-bright)); }
+.capability-empty-icon.mcp { --capability-hue: oklch(62% 0.14 250); }
+.capability-empty-icon.skills { --capability-hue: oklch(62% 0.16 320); }
+.capability-empty-icon.hooks { --capability-hue: oklch(70% 0.16 80); }
+.capability-empty-icon.plugins { --capability-hue: oklch(62% 0.14 150); }
 .capability-empty strong { color: var(--text-soft); font-size: 13px; }
 .capability-empty span { max-width: 520px; line-height: 1.45; }
 .capability-list { display: flex; flex-direction: column; }
@@ -2197,12 +2210,30 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .capability-item summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 17px; cursor: pointer; list-style: none; }
 .capability-item summary::-webkit-details-marker { display: none; }
 .capability-item summary:hover { background: var(--surface-hover); }
-.capability-item summary > span:first-child { display: flex; flex-direction: column; gap: 3px; }
+.capability-item summary > span:first-child { display: flex; align-items: center; gap: 10px; }
+.capability-item summary .capability-title { display: flex; flex-direction: column; gap: 3px; }
 .capability-item summary strong { color: var(--text-soft); font-size: 12.5px; }
 .capability-item summary small, .label-hint { color: var(--faint); font-size: 10px; }
-.capability-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 0 17px 15px 33px; }
+.capability-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 0 17px 15px 43px; }
 .capability-detail p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
 .capability-detail code { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+
+/* Per-item identity chip (MCP server / skill / hook / plugin) — a deterministic
+   colored initial so a list of names reads as distinct things at a glance,
+   the same idea as the per-agent glyph used elsewhere in the app. */
+.capability-icon { display: inline-grid; flex: none; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--capability-hue, var(--accent)) 22%, var(--surface)); color: var(--capability-hue, var(--accent-bright)); font-size: 11px; font-weight: 700; }
+.mcp-row-head .capability-icon { margin-right: 2px; }
+
+/* Marketplace browsing gets its own card grid, distinct from the flat
+   installed-item list, so "discover" reads differently from "manage". */
+.marketplace-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+.marketplace-card { display: flex; flex-direction: column; gap: 8px; padding: 13px 14px; border: 1px solid var(--canvas-border); border-radius: 14px; background: var(--canvas-bg); box-shadow: var(--canvas-shadow); }
+.marketplace-card:hover { border-color: var(--canvas-hover-border); box-shadow: var(--canvas-hover-shadow); }
+.marketplace-card-head { display: flex; align-items: center; gap: 10px; }
+.marketplace-card strong { color: var(--text-soft); font-size: 12.5px; }
+.marketplace-card small { color: var(--faint); font-size: 10px; }
+.marketplace-card p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.marketplace-card code { color: var(--faint); font-family: var(--mono); font-size: 9.5px; }
 .hook-editor { display: flex; flex-direction: column; gap: 10px; }
 .hook-row { display: grid; grid-template-columns: 1fr 1fr 110px; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .hook-row-head { grid-column: 1 / -1; justify-content: flex-end; }
@@ -2436,7 +2467,6 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .settings-nav-foot { display: none; }
   .settings-back { margin-bottom: 8px; }
   .settings-search { margin-bottom: 14px; }
-  .settings-scope-copy { margin-bottom: 10px; }
   .settings-nav-label.archived-nav-label { margin-top: 12px; }
   .settings-main { flex: 1; min-height: 0; }
   .settings-content { width: calc(100% - 28px); padding: 28px 0 56px; }
@@ -2964,11 +2994,16 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 0 12px 10px;
 }
+.sb-agent-skeleton { display: flex; flex-direction: column; gap: 4px; }
+.sb-agent-skeleton span { height: 34px; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--surface-raised) 25%, var(--surface-hover) 50%, var(--surface-raised) 75%); background-size: 200% 100%; animation: sb-skeleton-shimmer 1.4s ease-in-out infinite; }
+@keyframes sb-skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .sb-agent-skeleton span { animation: none; } }
 .sb-agent-item {
   display: flex;
   align-items: center;
@@ -2989,7 +3024,7 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   background: var(--surface-raised);
   color: var(--text);
 }
-.sb-agent-item .agent-glyph { flex: 0 0 auto; }
+.sb-agent-item .agent-glyph { flex: 0 0 auto; width: 22px; height: 22px; font-size: 13px; }
 .sb-agent-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-agent-item:disabled { cursor: wait; opacity: 0.6; }
 .sb-agent-history { margin: 12px; overflow: auto; }
@@ -3835,13 +3870,27 @@ body.is-resizing .split-divider {
 .agent-profile-chip, .agent-character-choice { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 999px; cursor: pointer; }
 .agent-profile-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px 7px 7px; font-weight: 600; }
 .agent-profile-chip.active, .agent-character-choice.active { border-color: var(--accent); background: var(--accent-wash); }
-.agent-glyph { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 22%, var(--surface)); color: var(--accent-bright); font-size: 17px; }
+.agent-glyph { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--agent-hue, var(--accent)) 22%, var(--surface)); color: var(--agent-hue, var(--accent-bright)); font-size: 17px; animation: agent-idle-bob 5.5s ease-in-out infinite; transform-origin: 50% 65%; }
+/* Each character gets its own hue so an agent is recognizable by color alone,
+   not just by which conversation you happen to be in. */
+.agent-glyph.orb, .agent-avatar.orb { --agent-hue: oklch(62% 0.14 250); }
+.agent-glyph.leaf, .agent-avatar.leaf { --agent-hue: oklch(62% 0.14 150); }
+.agent-glyph.sun, .agent-avatar.sun { --agent-hue: oklch(70% 0.16 80); }
+.agent-glyph.wave, .agent-avatar.wave { --agent-hue: oklch(62% 0.12 210); }
+.agent-glyph.spark, .agent-avatar.spark { --agent-hue: oklch(62% 0.16 320); }
+/* Every glyph gets a small idle liveliness so it never reads as a static
+   icon; a running agent switches to a livelier, faster bounce so presence is
+   visible wherever its glyph appears — sidebar, header, fleet roster. */
+@keyframes agent-idle-bob { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-1.5px) rotate(-3deg); } }
+@keyframes agent-running-bounce { 0%, 100% { transform: translateY(0) scale(1); } 30% { transform: translateY(-3px) scale(1.08); } 55% { transform: translateY(0.5px) scale(0.97); } }
+.agent-glyph.running { animation: agent-running-bounce 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .agent-glyph, .agent-glyph.running { animation: none; } }
 .agent-profiles-empty { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 14px; border-radius: var(--radius); background: var(--surface); color: var(--text-soft); }
 .agent-profiles-empty p, .agent-profile-summary p { margin: 4px 0; color: var(--muted); }
 .agent-empty-glyph { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; color: var(--accent-bright); background: var(--accent-wash); font-size: 22px; }
 .agent-profile-summary { margin-top: 18px; padding: 14px; border-radius: var(--radius); background: var(--surface); }
 .agent-profile-summary > div { flex: 1; min-width: 0; }
-.agent-avatar { display: grid; place-items: center; flex: none; width: 54px; height: 54px; border-radius: 18px; color: var(--accent-bright); background: radial-gradient(circle at 35% 25%, color-mix(in srgb, var(--accent-bright) 40%, transparent), color-mix(in srgb, var(--accent) 16%, var(--surface))); font-size: 30px; }
+.agent-avatar { display: grid; place-items: center; flex: none; width: 54px; height: 54px; border-radius: 18px; color: var(--agent-hue, var(--accent-bright)); background: radial-gradient(circle at 35% 25%, color-mix(in srgb, var(--agent-hue, var(--accent-bright)) 40%, transparent), color-mix(in srgb, var(--agent-hue, var(--accent)) 16%, var(--surface))); font-size: 30px; }
 .agent-avatar.expressive { animation: agent-breathe 2.8s ease-in-out infinite; }
 .agent-avatar.subtle { animation: agent-breathe 4.8s ease-in-out infinite; }
 @keyframes agent-breathe { 50% { transform: translateY(-2px) scale(1.03); } }

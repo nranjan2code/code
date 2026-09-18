@@ -562,14 +562,14 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
                       part.type === "card" ? (
                         <StructuredView output={part.output} fallback={part.source} />
                       ) : (
-                        <div class="semantic-limited"><span>Limited rendering</span><pre>{part.text}</pre><small>{block.reason}</small></div>
+                        <div class="semantic-limited" title={block.reason}><pre>{part.text}</pre></div>
                       )
                     }
                   </For>
                 );
               }
             }
-            return <div class="semantic-limited"><span>Limited rendering</span><pre>{block.markdown}</pre><small>{block.reason}</small></div>;
+            return <div class="semantic-limited" title={block.reason}><pre>{block.markdown}</pre></div>;
           }
         }
       }}
@@ -698,6 +698,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
   if (props.item.content.type !== "approval") return null;
   const content = props.item.content;
   const pending = () => props.item.status === "pending";
+  const argsPretty = () => { try { return JSON.stringify(JSON.parse(content.args_json), null, 2); } catch { return content.args_json; } };
   return (
     <section
       class="approval semantic-approval"
@@ -708,7 +709,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
     >
       <div class="ap-head">Vak wants to use {content.tool}</div>
       <div class="ap-reason">This needs your approval before it can continue.</div>
-      <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{content.args_json}</pre></details>
+      <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{argsPretty()}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
         <div class="ap-actions">
           <button type="button" class="btn primary" onClick={() => void approve(content.request_id, true, props.sessionId)}>Allow once</button>
@@ -1138,6 +1139,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // 4. Data Grids, Tables & Comparisons
   "data.grid": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Data Grid")} />,
   "table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Table")} />,
+  "dataframe": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Table")} />,
   "dataset": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Dataset")} />,
   "comparison": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison")} />,
   "comparison_table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison Table")} />,
@@ -1199,13 +1201,17 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "decision": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Decision Analysis")} kicker="Decision" />,
 
   // 9. Visualizations & Charts
-  "chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
-  "telemetry.chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
-  "trend": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
-  "timeseries": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
-  "metric_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
-  "bar_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={{ ...data, chart_type: "bar" }} /> : <></>,
-  "comparison_chart": ({ data }) => Array.isArray(data?.series) ? <UniversalChart data={data} /> : <></>,
+  // UniversalChart already renders a clean "No data points supplied." message
+  // when its series list is empty — so malformed/missing series should fall
+  // into that same path, not vanish into an empty fragment with no trace a
+  // chart was ever supposed to be here.
+  "chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "telemetry.chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "trend": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "timeseries": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "metric_chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "bar_chart": ({ data }) => <UniversalChart data={{ ...data, chart_type: "bar", series: Array.isArray(data?.series) ? data.series : [] }} />,
+  "comparison_chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
 
   // 10. Media & Links
   "link.preview": ({ data }) => (
@@ -1236,7 +1242,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "metric": ({ data }) => {
     if (typeof data?.label === "string" || typeof data?.value === "string" || typeof data?.value === "number") {
       return (
-        <div class="rich-metric">
+        <div class="canvas-card rich-metric">
           <small>{String(data.label ?? "Metric")}</small>
           <strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong>
         </div>
