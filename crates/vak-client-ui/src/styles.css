@@ -395,6 +395,20 @@ code, pre, kbd { font-family: var(--mono); }
   border-top: 1px solid var(--border-soft);
   flex-shrink: 0;
 }
+.sidebar-settings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: left;
+}
 .sidebar-settings:hover { color: var(--text); background: var(--surface-hover); }
 .sidebar-settings span { flex: 1; }
 .sidebar-settings kbd { color: var(--faint); background: transparent; border: 0; }
@@ -488,7 +502,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 @keyframes shimmer { to { background-position-x: -200%; } }
 
 /* Transcript */
-.msg, .tool, .worker, .thinking, .approval, .sysnote { max-width: 820px; margin-inline: auto; }
+.msg, .tool, .worker, .thinking, .thinking-row, .approval, .sysnote { max-width: 820px; margin-inline: auto; }
 .msg { margin-bottom: 18px; }
 .msg.user { display: flex; justify-content: flex-end; }
 .msg-bubble-wrap { display: flex; flex-direction: column; align-items: flex-end; max-width: min(78%, 650px); }
@@ -2877,7 +2891,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .workspace-head { min-width: 0; padding-inline: 18px; }
 .workspace-actions { flex-shrink: 0; }
 .chat { padding: 26px clamp(20px, 4vw, 48px) 20px; }
-.msg, .tool, .worker, .thinking, .approval, .sysnote,
+.msg, .tool, .worker, .thinking, .thinking-row, .approval, .sysnote,
 .transcript-skeleton, .composer-box, .composer-note { max-width: 860px; }
 .composer-wrap { padding-inline: clamp(16px, 5vw, 56px); }
 .composer-box { border-radius: 16px; box-shadow: 0 10px 32px rgba(0,0,0,.16); }

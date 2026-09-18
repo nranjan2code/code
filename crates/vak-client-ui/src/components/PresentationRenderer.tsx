@@ -1131,9 +1131,25 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     }
     return <div class="semantic-source">{cleanFallback}</div>;
   };
+  const visible = createMemo(() => ordered().map((item) => ({ item, node: OrderedItem(item) })).filter((entry) => entry.node !== null));
   return (
     <section class="semantic-turn" data-turn={props.id}>
-      <For each={ordered()}>{(item) => OrderedItem(item)}</For>
+      <Show
+        when={visible().length > 0}
+        fallback={
+          <Show when={props.items.length > 0}>
+            <section class="semantic-recovery" role="status">
+              <Icon name="warning" size={15} />
+              <div>
+                <strong>No result</strong>
+                <p>This task finished without producing a visible result. Check task details for what happened.</p>
+              </div>
+            </section>
+          </Show>
+        }
+      >
+        <For each={visible()}>{(entry) => entry.node}</For>
+      </Show>
     </section>
   );
 }
@@ -1192,8 +1208,10 @@ function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; 
         );
       case "keyvalue":
         return <div class="adaptive-node adaptive-keyvalue">{label && <span class="adaptive-kv-label">{label}</span>}{text && <span class="adaptive-kv-value">{text}</span>}{node.children.map(render)}</div>;
-      case "metric":
-        return <div class="adaptive-node adaptive-metric">{label && <small>{label}</small>}<strong>{text || String(node.props.value ?? "—")}</strong></div>;
+      case "metric": {
+        const value = text || (node.props.value != null ? String(node.props.value) : "");
+        return value ? <div class="adaptive-node adaptive-metric">{label && <small>{label}</small>}<strong>{value}</strong></div> : null;
+      }
       case "progress":
         return <div class="adaptive-node adaptive-progress"><progress value={Number(node.props.value ?? 0)} max={Number(node.props.max ?? 100)} />{label && <span>{label}</span>}</div>;
       case "badge":
@@ -1214,10 +1232,12 @@ function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; 
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
       {render(props.tree.root)}
-      <details class="adaptive-fallback-toggle">
-        <summary>Show original</summary>
-        <p>{props.fallback}</p>
-      </details>
+      <Show when={showOperatorChrome()}>
+        <details class="adaptive-fallback-toggle">
+          <summary>Show original</summary>
+          <p>{props.fallback}</p>
+        </details>
+      </Show>
     </section>
   );
 }
