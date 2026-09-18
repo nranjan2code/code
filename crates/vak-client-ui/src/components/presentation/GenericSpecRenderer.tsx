@@ -156,7 +156,7 @@ function renderMetric(node: AdaptiveRenderNode, surface: RenderSurface) {
     );
   }
   return (
-    <div class="rich-metric">
+    <div class="canvas-card rich-metric">
       <small>{label}</small>
       <strong>{displayValue}{unit ? ` ${unit}` : ""}</strong>
     </div>
