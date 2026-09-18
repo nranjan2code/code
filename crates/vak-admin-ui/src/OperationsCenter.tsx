@@ -531,7 +531,9 @@ export function OperationsCenter(props: { section?: Section }) {
     const value = snapshot();
     return value ? scopeOperations(value, workspace(), timeWindow()) : undefined;
   });
-  const timer = window.setInterval(() => refetch(), 8000);
+  const timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") refetch();
+  }, 8000);
   onCleanup(() => window.clearInterval(timer));
   const act = async (service: "gateway" | "bridges", action: "start" | "stop" | "restart") => {
     setActing(service);

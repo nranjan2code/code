@@ -1492,7 +1492,9 @@ export function SessionForensics(props: { sessionId: string }) {
   // Workers polling
   createEffect(() => {
     void props.sessionId;
-    const timer = window.setInterval(() => refetchWorkers(), 3000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refetchWorkers();
+    }, 3000);
     onCleanup(() => window.clearInterval(timer));
   });
 

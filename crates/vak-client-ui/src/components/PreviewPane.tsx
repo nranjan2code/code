@@ -173,7 +173,7 @@ export default function PreviewPane() {
   return (
     <div class="prevpane">
       {/* Header with View Selector & Controls */}
-      <div class="dock-head" style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+      <div class="dock-head">
         <div style="display: flex; align-items: center; gap: 6px;">
           <button
             type="button"
@@ -303,7 +303,7 @@ export default function PreviewPane() {
               </Show>
 
               <Show when={!componentLoading() && !componentError()}>
-                <div class="prev-frame-wrap" style="flex: 1; min-height: 0; background: #0f1117;">
+                <div class="prev-frame-wrap">
                   <iframe
                     class="prev-frame"
                     srcdoc={componentHtml()}

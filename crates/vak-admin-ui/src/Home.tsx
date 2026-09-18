@@ -17,7 +17,7 @@
 /// `unknown` and says so; it is never folded into the healthy count, and an
 /// empty attention queue states which probes produced the emptiness rather
 /// than rendering a decorative green tick.
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
 import {
   EVENT_LABELS, PageHeader, PathCell, SETUP_STEPS, modeLabel, providerLabel, secKindLabel,
@@ -452,25 +452,25 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
       <Show when={!props.error} fallback={<div class="error-state"><strong>Control plane unreadable</strong><p>The operations snapshot did not load, so nothing here can be reported.</p></div>}>
         <Show when={runs().length > 0} fallback={<div class="empty">No run is in flight. The agent is idle, not stuck.</div>}>
           <ul class="home-run-list">
-            <For each={runs()}>
+            <Index each={runs()}>
               {(run) => (
                 <li>
-                  <button onClick={() => navigate(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`)}>
-                    <span class={`run-pip run-pip-${run.state === "running" ? "live" : "held"}`} />
-                    <span class="mono">{shortId(run.session_id)}</span>
-                    <Show when={run.agent_name || run.agent_id}>
+                  <button onClick={() => navigate(`#/operations/work/runs/${encodeURIComponent(run().session_id)}`)}>
+                    <span class={`run-pip run-pip-${run().state === "running" ? "live" : "held"}`} />
+                    <span class="mono">{shortId(run().session_id)}</span>
+                    <Show when={run().agent_name || run().agent_id}>
                       <span class="chip chip-tone-info" style={{ "font-size": "10.5px", padding: "1px 6px" }}>
-                        ✦ {run.agent_name || run.agent_id}
+                        ✦ {run().agent_name || run().agent_id}
                       </span>
                     </Show>
-                    <span class={`home-run-state tone-${run.state === "running" ? "ok" : "warn"}`}>
-                      {run.state === "waiting_approval" ? "held at a gate" : run.state}
+                    <span class={`home-run-state tone-${run().state === "running" ? "ok" : "warn"}`}>
+                      {run().state === "waiting_approval" ? "held at a gate" : run().state}
                     </span>
-                    <span class="dim"><PathCell path={run.workspace} budget={22} /></span>
+                    <span class="dim"><PathCell path={run().workspace} budget={22} /></span>
                   </button>
                 </li>
               )}
-            </For>
+            </Index>
           </ul>
         </Show>
         <dl class="home-now-grid">
@@ -797,8 +797,12 @@ export function Home() {
   );
   const [inbox, inboxActions] = createResource(statsVersion, () => api.inbox(true, 20));
 
-  const opsTimer = window.setInterval(() => opsActions.refetch(), 10_000);
-  const finopsTimer = window.setInterval(() => finopsActions.refetch(), 30_000);
+  const opsTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void opsActions.refetch();
+  }, 10_000);
+  const finopsTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void finopsActions.refetch();
+  }, 30_000);
   onCleanup(() => {
     window.clearInterval(opsTimer);
     window.clearInterval(finopsTimer);

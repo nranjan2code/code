@@ -7394,7 +7394,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void | Promise<v
   };
 
   return (
-    <div class="panel" style={{ "margin-bottom": "12px", background: "var(--panel-alt, rgba(255,255,255,0.03))" }}>
+    <div class="panel" style={{ "margin-bottom": "12px", background: "var(--surface-raised)" }}>
       <div class="form-row">
         <label>Name</label>
         <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Funding rounds" />

@@ -192,7 +192,7 @@ export default function AgentCreateWizard() {
                   style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 12.5px;"
                 />
                 <Show when={idInUse()}>
-                  <p style="margin: 4px 0 0; font-size: 11px; color: var(--danger, #d33);">That ID is already taken — pick another.</p>
+                  <p style="margin: 4px 0 0; font-size: 11px; color: var(--red);">That ID is already taken — pick another.</p>
                 </Show>
               </div>
 

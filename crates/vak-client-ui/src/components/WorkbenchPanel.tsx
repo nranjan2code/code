@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   workbenchLoadError,
@@ -137,9 +137,13 @@ export default function WorkbenchPanel() {
 
   // A quiet interval is still meaningful feedback while the provider or a
   // tool is between events. It also makes the status accessible to screen
-  // readers without duplicating the transcript.
-  const pulseTimer = window.setInterval(() => setPulse((value) => value + 1), 1000);
-  onCleanup(() => window.clearInterval(pulseTimer));
+  // readers without duplicating the transcript. Only run it while something
+  // is actually running so idle panels don't force re-renders forever.
+  createEffect(() => {
+    if (!isAnyRunning()) return;
+    const pulseTimer = window.setInterval(() => setPulse((value) => value + 1), 1000);
+    onCleanup(() => window.clearInterval(pulseTimer));
+  });
   onCleanup(() => {
     artifactRequest += 1;
     const url = artifactDataUrl();
@@ -442,50 +446,50 @@ export default function WorkbenchPanel() {
           <div id="workbench-panel-execution" role="tabpanel" aria-labelledby="workbench-tab-execution" class="workbench-body">
             {/* Left list of runs */}
             <div class="workbench-runs-sidebar">
-              <For each={executions()}>
+              <Index each={executions()}>
                 {(item) => {
-                  const isSelected = () => (currentExec()?.id ?? "") === item.id;
+                  const isSelected = () => (currentExec()?.id ?? "") === item().id;
                   return (
                     <button
                       class="workbench-run-item"
                       aria-pressed={isSelected()}
-                      aria-label={`Execution ${item.timestamp}, ${item.status}${item.exitCode !== undefined ? `, exit code ${item.exitCode}` : ""}`}
+                      aria-label={`Execution ${item().timestamp}, ${item().status}${item().exitCode !== undefined ? `, exit code ${item().exitCode}` : ""}`}
                       classList={{
                         selected: isSelected(),
-                        failed: item.status === "failed",
-                        running: item.status === "running",
+                        failed: item().status === "failed",
+                        running: item().status === "running",
                       }}
-                      onClick={() => setActiveExecutionId(item.id)}
+                      onClick={() => setActiveExecutionId(item().id)}
                     >
                       <div class="run-item-header">
                         <span
                           class="status-indicator"
                           classList={{
-                            running: item.status === "running",
-                            success: item.status === "completed" && item.exitCode === 0,
+                            running: item().status === "running",
+                            success: item().status === "completed" && item().exitCode === 0,
                             failed:
-                              item.status === "failed" ||
-                              (item.exitCode !== undefined && item.exitCode !== 0),
+                              item().status === "failed" ||
+                              (item().exitCode !== undefined && item().exitCode !== 0),
                           }}
                         >
-                          {item.status === "running" ? "●" : item.exitCode === 0 ? "✓" : "✗"}
+                          {item().status === "running" ? "●" : item().exitCode === 0 ? "✓" : "✗"}
                         </span>
-                        <span class="run-time">{item.timestamp}</span>
-                        <Show when={item.durationMs !== undefined}>
+                        <span class="run-time">{item().timestamp}</span>
+                        <Show when={item().durationMs !== undefined}>
                           <span class="run-duration">
-                            {item.durationMs! < 1000
-                              ? `${item.durationMs!}ms`
-                              : `${(item.durationMs! / 1000).toFixed(1)}s`}
+                            {item().durationMs! < 1000
+                              ? `${item().durationMs!}ms`
+                              : `${(item().durationMs! / 1000).toFixed(1)}s`}
                           </span>
                         </Show>
                       </div>
-                      <div class="run-cmd-snippet" title={item.command}>
-                        {item.command}
+                      <div class="run-cmd-snippet" title={item().command}>
+                        {item().command}
                       </div>
                     </button>
                   );
                 }}
-              </For>
+              </Index>
             </div>
 
             {/* Execution Detail View */}
