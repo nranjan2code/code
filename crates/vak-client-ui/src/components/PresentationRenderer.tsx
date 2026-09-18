@@ -595,6 +595,15 @@ export function PresentationDocumentView(props: { document: PresentationDocument
           }
         </For>
       </Show>
+      <Show when={props.document.blocks.length === 0 && !props.document.source_markdown}>
+        <section class="semantic-recovery" role="status">
+          <Icon name="warning" size={15} />
+          <div>
+            <strong>No result</strong>
+            <p>This task finished without producing a visible result. Check task details for what happened.</p>
+          </div>
+        </section>
+      </Show>
       <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <Show when={showOperatorChrome()}>
         <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>

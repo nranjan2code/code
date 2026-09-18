@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.3 — 2026-09-18
+
+- Found the actual cause of the blank-transcript bug 3.4.1 only partly addressed: `PresentationDocumentView` rendered a completely empty `<div class="semantic-document">` whenever a turn's document had zero `blocks` *and* an empty `source_markdown` — the raw-markdown fallback in that component only fires when `source_markdown` is non-empty, so an empty document produced no visible output at all, with no error and no "no result" notice, because the item itself was present (just empty), so the 3.4.1 `Turn`-level fallback never triggered. `PresentationDocumentView` now shows the same "no result" notice for this case. The server's turn diagnostic logging added in 3.4.2 (`log_turns_with_no_visible_answer`) had the identical blind spot — any `Document` content counted as a real answer regardless of whether it actually held anything — and now checks `document_has_content` (non-empty blocks or non-empty `source_markdown`) instead.
+
 ## 3.4.2 — 2026-09-18
 
 - Added per-turn diagnostic logging to `vak-server`'s projection layer (`log_turns_with_no_visible_answer`): whenever a turn has items but none of them qualify as a real answer under the same rule the client's `Turn` filter uses (document/structured/adaptive content, or an outcome carrying a document), the gateway now logs the turn id, session id, and the kind/status of every non-progress item it produced. Previously this class of failure (a turn ending with only a tool error, a bare document-less outcome, etc. — the exact case the 3.4.1 blank-transcript fix backstops) was invisible in `~/Library/Logs/vak/gateway.log`, which only ever logged process startup; there was no way to tell after the fact whether a turn actually produced a result that got filtered, or never produced one at all.

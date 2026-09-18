@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, HashMap};
 use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
-    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationPlanner,
-    ResultOutcome, SignalContext, built_in_adapters, compile_markdown, link_previews_from_text,
-    signals_from_context, structured_markdown, structured_outputs_from_text,
-    structured_outputs_from_tool_result_with,
+    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationDocument,
+    PresentationPlanner, ResultOutcome, SignalContext, built_in_adapters, compile_markdown,
+    link_previews_from_text, signals_from_context, structured_markdown,
+    structured_outputs_from_text, structured_outputs_from_tool_result_with,
 };
 
 fn status_for_completion(completion: Option<&str>) -> OutputStatus {
@@ -936,6 +936,15 @@ fn snapshot_inner(
 /// but that's a fallback, not an explanation). Log it here so *why* is
 /// inspectable from this process's log instead of only guessable from the
 /// UI after the fact.
+/// A `PresentationDocument` with no blocks and no source markdown renders
+/// as a literal empty `<div>` client-side (see `PresentationDocumentView`
+/// in vak-client-ui's PresentationRenderer.tsx) — the client now shows a
+/// "no result" notice for that case too, but it still counts as "nothing"
+/// for diagnostic purposes here.
+fn document_has_content(document: &PresentationDocument) -> bool {
+    !document.blocks.is_empty() || !document.source_markdown.trim().is_empty()
+}
+
 fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline) {
     let mut turns: BTreeMap<&str, Vec<&OutputItem>> = BTreeMap::new();
     for item in &timeline.items {
@@ -943,10 +952,11 @@ fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline)
     }
     for (turn_id, items) in turns {
         let has_real_answer = items.iter().any(|item| match &item.content {
-            OutputContent::Document { .. }
-            | OutputContent::Structured { .. }
-            | OutputContent::Adaptive { .. } => true,
-            OutputContent::Outcome { document, .. } => document.is_some(),
+            OutputContent::Document { document } => document_has_content(document),
+            OutputContent::Structured { .. } | OutputContent::Adaptive { .. } => true,
+            OutputContent::Outcome { document, .. } => {
+                document.as_ref().is_some_and(document_has_content)
+            }
             _ => false,
         });
         if has_real_answer {
