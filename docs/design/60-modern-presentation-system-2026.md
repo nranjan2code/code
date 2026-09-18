@@ -1,6 +1,12 @@
 # 60 — Modern Presentation System 2026
 
-Status: **superseded by the adaptive assistant experience in design 61**
+Status: **superseded by the adaptive assistant experience in design 61.** The
+visual and interaction goals below were reached and still hold. The component
+architecture in §3E did NOT survive: the per-type component suite it names has
+since been replaced by a single generic renderer. §3E now carries a reality
+note; the rest of this document is kept as the design record of that iteration.
+For the current architecture see `docs/design/57-adaptive-presentation-runtime.md`,
+and for how to change it `docs/design/67-presentation-renderer-guide.md`.
 
 ## 1. Overview & Vision
 
@@ -96,7 +102,24 @@ All high-fidelity design mockups created during this design iteration are embedd
 - Guarantees seamless switching across **Dark (Obsidian)**, **Quiet Sage**, **Soft Paper**, **High Contrast**, and **Warm Light**.
 
 ### E. Outcome Card Architecture & Registry Consistency
-- **Single Registry Invariant**: All outcome components resolve through `STRUCTURED_RENDERERS` in `PresentationRenderer.tsx`. Duplicate fallback routing blocks and special-cased components have been completely eliminated.
+
+> **Reality note — superseded.** This section describes the per-type component
+> suite as it existed when this document was written. Every component named
+> below has since been deleted and replaced by ONE generic, surface-aware
+> renderer, `presentation/GenericSpecRenderer.tsx`, driven by declarative
+> primitive nodes. The *behaviors* listed (servings scaler, step timers,
+> citation popovers, pass-rate ring, chart crosshair and CSV export, column
+> sort/search, exit-code pills, sandboxed preview and dock) were all ported and
+> are still shipping — they are now `renderRecipe()`, `renderResearch()`,
+> `renderTestMatrix()`, `renderChart()`, `renderTable()`, `renderTerminal()`
+> and `renderUiPreview()` inside that one file. Only the Single Registry
+> Invariant and Zero Heuristics bullets are still architecturally current.
+> `DiffInspector.tsx` and `MermaidViewer.tsx` survive as standalone files for
+> their remaining non-registry call sites. Read the component list below as
+> history, not as a map of the codebase; see
+> `docs/design/67-presentation-renderer-guide.md`.
+
+- **Single Registry Invariant**: All outcome components resolve through `STRUCTURED_RENDERERS` in `PresentationRenderer.tsx`. Duplicate fallback routing blocks and special-cased components have been completely eliminated. (Still true, and now stronger: the registry's ~105 keys resolve to a `buildXSpec`/`GenericSpecRenderer` pair rather than to distinct components.)
 - **Zero Heuristics**: Outcome renderers consume strictly typed `props: { data: T }` without guessing or text-scraping regex parsers. The former ad-hoc heuristic scrapers and special-cased weather cards have been removed in favor of standard validated primitives (e.g. `metric`).
 - **First-Class Outcome Suite**:
   - `DiffInspector.tsx`: Side-by-side or unified diffs with file navigation sidebar and copy actions.

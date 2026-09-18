@@ -542,14 +542,23 @@ shipped behaviour rather than a proposal.
   never mounted. Presentation snapshot/SSE endpoints are reconnectable
   projections over the ledger and live events; legacy transcript, `AgentEvent`,
   webhook, and channel text paths remain compatibility surfaces.
-  Outcome cards follow a uniform contract: each specialized renderer consumes typed
-  `props: { data: T }` through the single `STRUCTURED_RENDERERS` registry without
-  duplicate fallback blocks or bespoke regex-scraping heuristics. Recipes,
-  research citations, charts, diffs, maps, calendars, boards, entities,
-  evidence, documents, graphs, forms, transactions, alerts, conversations,
-  and sandboxed previews are first-class outcome components backed by real
-  validated payloads. Universal semantic shapes compose across domains; they
-  are not a coding-only card taxonomy.
+  Outcome cards follow a uniform contract and there are no per-type card
+  components. Every `semantic_type` key in the single `STRUCTURED_RENDERERS`
+  registry (`vak-client-ui/src/components/PresentationRenderer.tsx`) routes
+  through ONE declarative, surface-aware renderer,
+  `vak-client-ui/src/components/presentation/GenericSpecRenderer.tsx`, as a
+  `buildXSpec(payload) -> AdaptiveRenderNode` adapter plus a `renderX()`
+  primitive renderer. The node shape is the same `primitive`/`props`/
+  `children` tree the host emits (`vak_presentation::RenderNode`), so a
+  registry entry is a routing decision, never a new component. Adding a
+  `semantic_type` that reuses an existing primitive is a one-line registry
+  entry; only a genuinely new PRIMITIVE is a code change across host and
+  client. Recipes, research citations, charts, diffs, maps, calendars,
+  boards, entities, evidence, documents, graphs, forms, transactions, alerts,
+  conversations, and sandboxed previews are first-class primitives backed by
+  real validated payloads. Universal semantic shapes compose across domains;
+  they are not a coding-only card taxonomy. The step-by-step contributor
+  guide is `docs/design/67-presentation-renderer-guide.md`.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing
@@ -670,6 +679,17 @@ crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
                      isolated renderer worker, and append-only retry outbox
                      (docs/design/30-output-engineering.md)
+crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
+                     lib.rs) plus the bounded declarative spec, JSON-path
+                     binding validator, deterministic compiler, content
+                     digest, coverage accounting, and explicit fallback.
+                     PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
+                     LibraryScope) are runtime-pluggable and compose existing
+                     primitives with ZERO code change; seeds.rs is the worked
+                     example (75 disabled starter definitions). Adding a
+                     primitive is the only part that needs a code change
+                     (docs/design/57-adaptive-presentation-runtime.md,
+                     docs/design/67-presentation-renderer-guide.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
                      behind Tool trait, versioned broker-worker protocol,
                      bounded subprocess environment, resource claims,

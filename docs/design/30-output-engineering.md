@@ -4,8 +4,9 @@ Status: schema-v2 semantic timeline with result-scoped outcome/evidence metadata
 and projected collaborative goal state, deterministic CommonMark compiler,
 universal recipe catalog (research, coding diffs/tests, telemetry charts,
 spreadsheet grids, terminal sessions, culinary recipes, UI previews) and tool-provenance signal
-engine, desktop native presentation suite (ResearchCards, DiffInspector,
-TestMatrix, UniversalChart, DataGrid, TerminalConsole, RecipeCard, UIPreviewCard),
+engine, one generic native presentation renderer over the closed primitive
+vocabulary (research, diff, test_matrix, chart, table/comparison, terminal,
+recipe, ui_preview, timeline, metric, metric_grid, media, universal_card),
 snapshot/SSE projection with merged planner, isolated worker, trusted templates,
 plugin-extensible skill registry, structured fence projection on all markup
 surfaces, engagement posture integration, Telegram/Slack/Discord projections,
@@ -222,32 +223,41 @@ turn settles, hydration replaces it with the ledger-derived AST. Unknown nodes
 fall back visibly, links are scheme-checked, raw HTML is inert, and artifact
 and approval actions route through existing desktop commands.
 
-The desktop client provides a universal presentation suite embedded in the
-continuous chat canvas:
-- **`ResearchCards`**: Key takeaway rows with numbered badges, superscript
+The client provides a universal presentation surface embedded in the continuous
+chat canvas. It is ONE component —
+`vak-client-ui/src/components/presentation/GenericSpecRenderer.tsx` — holding a
+`renderX()` function per primitive, not a suite of per-type cards. Each
+`semantic_type` in `STRUCTURED_RENDERERS` maps to a `buildXSpec()` adapter that
+lowers the raw payload into the same `primitive`/`props`/`children` node shape
+the host's `vak_presentation::compile()` emits. The behaviors are unchanged:
+- **`research`**: Key takeaway rows with numbered badges, superscript
   citation tags (`[1]`, `[2]`), hover popovers displaying quoted snippets and
   source badges, and verified source link tiles with domain favicons.
-- **`DiffInspector`**: Zed/Cursor-grade diff viewer with file drawer, delta
+- **`diff`**: Zed/Cursor-grade diff viewer with file drawer, delta
   counters (`+` / `-`), unified vs. side-by-side mode toggle, gutter line
-  numbering, and one-click `openInEditor` host integration.
-- **`TestMatrix`**: Test suite dashboard featuring an SVG circular pass-rate
+  numbering, and one-click `openInEditor` host integration. The standalone
+  `DiffInspector.tsx` remains for its non-registry call sites.
+- **`test_matrix`**: Test suite dashboard featuring an SVG circular pass-rate
   progress ring, filter chips (`All` vs `Failed Only`), and collapsible
   assertion traceback drawers.
-- **`UniversalChart`**: Telemetry and benchmark stage with KPI pods,
+- **`chart`**: Telemetry and benchmark stage with KPI pods,
   multi-series SVG curves with gradient area fills, live mouse-tracking
   crosshair line with floating glass data bubble, and one-click CSV export.
-- **`DataGrid`**: Interactive tabular grid with numeric-aware column sorting,
-  real-time client-side search filtering, tabular alignment, and CSV export.
-  Standard markdown tables with $\ge 3$ rows automatically promote to this
-  grid.
-- **`TerminalConsole`**: Authentic dark terminal container with prompt line,
+- **`table` / `comparison`**: Interactive tabular grid with numeric-aware column
+  sorting, real-time client-side search filtering, tabular alignment, and CSV
+  export. Standard markdown tables with $\ge 3$ rows automatically promote to
+  this grid.
+- **`terminal`**: Authentic dark terminal container with prompt line,
   exit code status pill (`Exit 0`), execution duration, and formatted output.
-- **`RecipeCard`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
+- **`recipe`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
   ingredient weights and measurements, paired with live countdown step timers.
-- **`UIPreviewCard`**: Live interactive sandboxed iframe card for React and web UI
+- **`ui_preview`**: Live interactive sandboxed iframe for React and web UI
   previews, featuring viewport mode selector (Mobile 375px, Tablet 768px, Desktop 1024px,
   Full 100%), reload button, external window launcher, and one-click dock-to-preview
   integration opening the Right Bar Preview pane.
+
+Adding or changing one of these is documented step by step in
+`docs/design/67-presentation-renderer-guide.md`.
 
 ## Channel-specific markup projections
 
@@ -395,11 +405,13 @@ Markdown remains the export and emergency fallback for every projection.
 4. Semantic webhook envelope plus `text` fallback: complete.
 5. Stable semantic packet returned to sidecars and available to native clients:
    complete.
-6. Desktop universal presentation suite embedded in continuous chat canvas
-   (ResearchCards with citation popovers, Zed-grade DiffInspector, TestMatrix with
-   pass-rate ring, UniversalChart with mouse crosshair tracking and KPI pods, DataGrid
-   with column sorting and search, TerminalConsole with exit codes, RecipeCard with
-   scaling and timers, UIPreviewCard with viewport modes and preview dock integration): complete.
+6. Universal presentation surface embedded in continuous chat canvas
+   (`research` with citation popovers, Zed-grade `diff`, `test_matrix` with
+   pass-rate ring, `chart` with mouse crosshair tracking and KPI pods, `table`
+   with column sorting and search, `terminal` with exit codes, `recipe` with
+   scaling and timers, `ui_preview` with viewport modes and preview dock
+   integration): complete, and since consolidated into the single
+   `GenericSpecRenderer` with no per-type components remaining.
 7. TUI projector: planned.
 8. Golden fixtures cover parser losslessness, nested structures, tables, code,
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
