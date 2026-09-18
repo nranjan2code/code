@@ -750,6 +750,14 @@ impl Agent {
             .as_ref()
             .map(|p| p.max_blocks)
             .unwrap_or(0);
+        // Names of retrieval-shaped tools that succeeded on the immediately
+        // preceding turn (see `tool_call_looks_like_retrieval`), cleared and
+        // recomputed every time a tool-call batch runs. Consulted the very
+        // next time the model produces a final text-only answer, to catch
+        // the case where a search/fetch tool call succeeded and the model's
+        // very next turn ignored the result instead of grounding on it.
+        let mut pending_grounding_check: Option<Vec<String>> = None;
+        let mut grounding_repair_attempted = false;
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1244,6 +1252,46 @@ impl Agent {
                 .collect::<Vec<_>>();
 
             if calls.is_empty() {
+                // Grounding enforcement: the previous turn ran one or more
+                // retrieval-shaped tool calls, but this final answer neither
+                // emitted a structured (cited) card nor admitted it has no
+                // data. Give the model exactly one bounded repair turn
+                // instead of letting an ungrounded answer reach the user —
+                // this is the runtime-enforcement half of the fix; the
+                // system prompt's own wording is the other half, since a
+                // small/local model can't be trusted to self-police this
+                // from prompt text alone.
+                if !grounding_repair_attempted
+                    && let Some(tool_names) = pending_grounding_check.take()
+                    && !tool_names.is_empty()
+                {
+                    let text = response.text_content();
+                    let admits_no_data = {
+                        let lower = text.to_ascii_lowercase();
+                        ["don't have", "do not have", "no access to", "couldn't find", "could not find"]
+                            .iter()
+                            .any(|phrase| lower.contains(phrase))
+                    };
+                    if !text.contains("\"semantic_type\"") && !admits_no_data {
+                        grounding_repair_attempted = true;
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
+                        let tool_list = tool_names.join(", ");
+                        let _ = self.session.lock().await.append_message(MessageRecord {
+                            message: Message::user_text(format!(
+                                "[grounding-check]: Your last answer didn't cite the results from {tool_list}, which you just called. \
+                                 Either synthesize those results into a structured card that cites them (e.g. a \
+                                 `research.synthesis` vak-fence with real sources/URLs from the tool output), or, if the \
+                                 results genuinely don't answer the question, say so explicitly instead of writing a vague \
+                                 unsourced summary. Please redo your answer now."
+                            )),
+                            meta: None,
+                        });
+                        turn += 1;
+                        continue;
+                    }
+                }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
                         .session
@@ -1408,6 +1456,14 @@ impl Agent {
                 .iter()
                 .map(|c| (c.id.clone(), c.name.clone()))
                 .collect();
+            // The order the model actually issued these calls in, captured
+            // before `execute_batch` (which may run calls concurrently and
+            // return `results` in completion order, not issue order).
+            // `verification_stale` below needs issue order specifically:
+            // "ran bash after editing code" and "edited code after running
+            // bash" are different situations even if both calls land in the
+            // same batch and finish in the opposite order.
+            let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
             self.record_worker_work(&task_assignments, &results).await;
             // Classify unresolved correctable tool failures this turn for the
@@ -1432,32 +1488,88 @@ impl Agent {
                     _ => None,
                 })
                 .collect();
+            // Recomputed every batch (not accumulated) so the grounding
+            // check below only ever looks at the IMMEDIATELY preceding
+            // turn's retrieval calls, matching the observed bug shape
+            // (search succeeds, the very next answer ignores it).
+            let retrieval_tool_names: Vec<String> = results
+                .iter()
+                .filter_map(|(id, out)| match out {
+                    ToolRunOutput::Ok(content) => {
+                        let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
+                        tool_call_looks_like_retrieval(name, content).then(|| name.to_string())
+                    }
+                    ToolRunOutput::Err(_) => None,
+                })
+                .collect();
+            pending_grounding_check = if retrieval_tool_names.is_empty() {
+                None
+            } else {
+                Some(retrieval_tool_names)
+            };
             for (id, out) in &results {
-                let call_name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
                 match out {
                     ToolRunOutput::Ok(_) => {
                         receipts.successful_tool_calls += 1;
-                        receipts.unresolved_error = None;
-                        if bash_pairs.iter().any(|(bash_id, _)| bash_id == id) {
-                            verification_stale = false;
-                        } else if code_mutation_ids
-                            .iter()
-                            .any(|mutation_id| mutation_id == id)
-                        {
-                            verification_stale = true;
-                        }
                         if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
                             && !self.obligations.iter().any(|o| o == cmd)
                         {
                             self.obligations.push(cmd.clone());
                         }
                     }
-                    ToolRunOutput::Err(err) => {
+                    ToolRunOutput::Err(_) => {
                         receipts.failed_tool_calls += 1;
-                        receipts.unresolved_error = Some((call_name.to_string(), err.clone()));
                     }
                 }
             }
+            // `verification_stale` used to be flipped inline in the loop
+            // above, which made it depend on `results`' iteration order —
+            // the order tools finished, not the order the model issued
+            // them in (this agent does run tool calls within a batch
+            // concurrently when `config.parallel_tools` is set, so this was
+            // reachable, not just theoretical). See
+            // `resolve_verification_stale` for the order-correct logic,
+            // tested in isolation below.
+            let succeeded: std::collections::HashSet<&str> = results
+                .iter()
+                .filter(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
+                .map(|(id, _)| id.as_str())
+                .collect();
+            let bash_ids: Vec<&str> = bash_pairs.iter().map(|(id, _)| id.as_str()).collect();
+            let mutation_ids: Vec<&str> = code_mutation_ids.iter().map(|id| id.as_str()).collect();
+            verification_stale = resolve_verification_stale(
+                &call_issue_order,
+                &bash_ids,
+                &mutation_ids,
+                &succeeded,
+                verification_stale,
+            );
+            // `unresolved_error` used to be set/cleared per-result inside the
+            // loop above, which meant a later call in the SAME batch that
+            // happened to succeed would silently erase an earlier call's
+            // failure (order-dependent on `results`, not on whether the
+            // failure was actually resolved). A model that fails one call
+            // and succeeds at an unrelated trailing call in the same turn
+            // could then claim total success next turn with `stop_gate`
+            // never seeing the failure at all. Decide this once, after the
+            // whole batch, from the batch's own outcome: any error in this
+            // batch wins (first one, in issued order) over any success in
+            // the same batch; only a batch with NO errors clears a
+            // previous batch's still-unresolved failure.
+            let batch_error = results.iter().find_map(|(id, out)| match out {
+                ToolRunOutput::Err(err) => Some((
+                    call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
+                    err.clone(),
+                )),
+                ToolRunOutput::Ok(_) => None,
+            });
+            receipts.unresolved_error = batch_error.or_else(|| {
+                if results.iter().all(|(_, out)| matches!(out, ToolRunOutput::Ok(_))) {
+                    None
+                } else {
+                    receipts.unresolved_error.clone()
+                }
+            });
             let blocks = results
                 .into_iter()
                 .map(|(id, out)| match out {
@@ -3298,6 +3410,121 @@ impl Agent {
                 });
             }
         }
+    }
+}
+
+/// First-party tools that search/read the user's OWN local data (session
+/// history, notes, the filesystem) rather than external sources. Their
+/// results are the user's own material, not something that needs a citation
+/// — and several of them (`session_search`, `search` as an internal
+/// session/note search) would otherwise collide with the generic "search"
+/// keyword below. This list mirrors the existing `read_or_inspected`
+/// classification a few lines up (`"read" | "read_file" | "glob" | "grep" |
+/// "inspect" | "browse" | "webfetch" | "session_search" | "search" |
+/// "session_list"`), but deliberately keeps `browse`/`webfetch`/`search`
+/// OUT of the exclusion: those already fetch external content today and
+/// should still be grounded on. Only the unambiguously local/internal ones
+/// are excluded here.
+const LOCAL_DATA_TOOLS: &[&str] = &["read", "read_file", "glob", "grep", "inspect", "session_search", "session_list"];
+
+/// Whether a succeeded tool call looks like it retrieved external
+/// information that a subsequent prose answer ought to cite/ground on.
+///
+/// Deliberately NOT a hardcoded allowlist of known providers (Tavily, Exa,
+/// Firecrawl, ...). Today it's a handful of curated MCP search integrations;
+/// tomorrow it could be any of a hundred different MCP servers a user wires
+/// up themselves, and this must keep working without a code change per
+/// integration. So it keys off two provider-agnostic signals instead:
+///   1. the tool's own name reads as retrieval ("search", "fetch", "crawl",
+///      "lookup", "query", "retrieve", "find") — covers most search/browse
+///      MCP tools by naming convention alone, and
+///   2. the raw result text is shaped like retrieved web content (multiple
+///      URLs) — catches a tool whose name gives no hint at all.
+/// Either signal alone is enough; this is intentionally permissive (a false
+/// positive just means one extra grounding nudge, not a broken turn) —
+/// EXCEPT for `LOCAL_DATA_TOOLS`, which are excluded outright regardless of
+/// name/result shape, since their output is the user's own data.
+fn tool_call_looks_like_retrieval(tool_name: &str, result_text: &str) -> bool {
+    const NAME_KEYWORDS: &[&str] = &[
+        "search", "fetch", "crawl", "browse", "lookup", "query", "retriev", "find",
+    ];
+    let lower_name = tool_name.to_ascii_lowercase();
+    if LOCAL_DATA_TOOLS.contains(&lower_name.as_str()) {
+        return false;
+    }
+    if NAME_KEYWORDS.iter().any(|kw| lower_name.contains(kw)) {
+        return true;
+    }
+    result_text.matches("http://").count() + result_text.matches("https://").count() >= 2
+}
+
+/// Decides `verification_stale` from the model's actual call-issue order,
+/// not from whatever order the tool results happened to come back in.
+/// `code_mutation_ids` codepaths turn the flag on (an edit to a code path
+/// just landed and hasn't been re-verified); `bash_ids` turn it off (a
+/// bash run just re-verified, or is at least the most recent evidence).
+/// Only the LAST succeeded call, in issue order, that matches either list
+/// decides the outcome — everything else in the batch is irrelevant to it.
+/// A call that never succeeded doesn't count as either kind of evidence.
+fn resolve_verification_stale(
+    call_issue_order: &[String],
+    bash_ids: &[&str],
+    code_mutation_ids: &[&str],
+    succeeded: &std::collections::HashSet<&str>,
+    current: bool,
+) -> bool {
+    let mut stale = current;
+    for id in call_issue_order {
+        if !succeeded.contains(id.as_str()) {
+            continue;
+        }
+        if bash_ids.contains(&id.as_str()) {
+            stale = false;
+        } else if code_mutation_ids.contains(&id.as_str()) {
+            stale = true;
+        }
+    }
+    stale
+}
+
+#[cfg(test)]
+mod verification_stale_tests {
+    use super::resolve_verification_stale;
+    use std::collections::HashSet;
+
+    #[test]
+    fn edit_issued_after_bash_stays_stale_regardless_of_result_order() {
+        // Model issues bash first, then edits a code file — the bash
+        // verification is now stale, no matter which result comes back
+        // first from a concurrent batch.
+        let order = vec!["b1".to_string(), "e1".to_string()];
+        let succeeded: HashSet<&str> = ["b1", "e1"].into_iter().collect();
+        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+    }
+
+    #[test]
+    fn bash_issued_after_edit_clears_stale_regardless_of_result_order() {
+        // Model edits a code file, then runs bash to verify it — no
+        // longer stale, no matter which result comes back first.
+        let order = vec!["e1".to_string(), "b1".to_string()];
+        let succeeded: HashSet<&str> = ["b1", "e1"].into_iter().collect();
+        assert!(!resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+    }
+
+    #[test]
+    fn a_failed_call_is_not_evidence_either_way() {
+        // Bash issued after the edit, but the bash call FAILED — the edit
+        // is still unverified, so staleness must not clear.
+        let order = vec!["e1".to_string(), "b1".to_string()];
+        let succeeded: HashSet<&str> = ["e1"].into_iter().collect(); // b1 not in succeeded
+        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+    }
+
+    #[test]
+    fn irrelevant_calls_in_the_batch_do_not_affect_the_flag() {
+        let order = vec!["e1".to_string(), "r1".to_string()];
+        let succeeded: HashSet<&str> = ["e1", "r1"].into_iter().collect();
+        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
     }
 }
 
