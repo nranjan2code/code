@@ -54,7 +54,15 @@ Capability contract:
     ```
   - `decision` for trade-off analyses, option evaluations, and recommendations:
     ```vak
-    {"semantic_type":"decision","payload":{"title":"Architecture Selection","recommendation":"PostgreSQL Managed","options":[{"name":"PostgreSQL Managed","score":9.2,"pros":["ACID compliant","Team familiarity"],"cons":["Vertical scaling limits"]},{"name":"DynamoDB","score":7.5,"pros":["Serverless scale"],"cons":["Query rigidity"]}]}}
+    {"semantic_type":"decision","payload":{"title":"Architecture Selection","choices":[{"name":"PostgreSQL Managed","reason":"ACID compliant; team already fluent","status":"Recommended"},{"name":"DynamoDB","reason":"Serverless scale, but rigid query shapes","status":"Considered"}]}}
+    ```
+  - `recipe.card` for recipes and any ingredient-plus-steps preparation:
+    ```vak
+    {"semantic_type":"recipe.card","payload":{"title":"Lemon Garlic Pasta","servings":4,"cook_time_minutes":25,"ingredients":[{"name":"Spaghetti","amount":400,"unit":"g"},{"name":"Garlic","amount":3,"unit":"cloves"}],"steps":[{"text":"Boil the spaghetti until al dente.","timer_seconds":540},{"text":"Toss with the garlic, lemon zest, and oil."}]}}
+    ```
+  - `ui.preview` for an HTML/UI artifact you wrote to the workspace or `.vak/scratch/`:
+    ```vak
+    {"semantic_type":"ui.preview","payload":{"title":"Pricing Page Prototype","artifact_path":".vak/scratch/pricing_page.html"}}
     ```
   - Vak is universal, not code-specific. Use `map` for places/routes,
     `calendar` for real time grids and availability, `board` for column-based
