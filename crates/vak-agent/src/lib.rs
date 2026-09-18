@@ -758,6 +758,7 @@ impl Agent {
         // very next turn ignored the result instead of grounding on it.
         let mut pending_grounding_check: Option<Vec<String>> = None;
         let mut grounding_repair_attempted = false;
+        let mut malformed_fence_repair_attempted = false;
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1285,6 +1286,34 @@ impl Agent {
                                  `research.synthesis` vak-fence with real sources/URLs from the tool output), or, if the \
                                  results genuinely don't answer the question, say so explicitly instead of writing a vague \
                                  unsourced summary. Please redo your answer now."
+                            )),
+                            meta: None,
+                        });
+                        turn += 1;
+                        continue;
+                    }
+                }
+                // Malformed-fence enforcement: the model emitted an explicit
+                // vak-tagged card fence, but its JSON body doesn't parse
+                // (mismatched brackets, an unquoted key, etc.) — a real,
+                // observed failure mode from small/local models. Rather
+                // than letting a broken card reach the user (where it
+                // degrades to a "could not be rendered" notice at best),
+                // give the model one bounded repair turn naming the exact
+                // parse error, mirroring the grounding-check pattern above.
+                if !malformed_fence_repair_attempted {
+                    let text = response.text_content();
+                    if let Some(parse_error) = find_malformed_vak_fence(&text) {
+                        malformed_fence_repair_attempted = true;
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
+                        let _ = self.session.lock().await.append_message(MessageRecord {
+                            message: Message::user_text(format!(
+                                "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse \
+                                 ({parse_error}). Resend the same answer with a syntactically valid JSON body this time — \
+                                 double-check every object/array is closed and every key is quoted. If you can't produce \
+                                 valid JSON for it, drop the fence and answer in plain prose instead."
                             )),
                             meta: None,
                         });
@@ -3427,6 +3456,38 @@ impl Agent {
 /// are excluded here.
 const LOCAL_DATA_TOOLS: &[&str] = &["read", "read_file", "glob", "grep", "inspect", "session_search", "session_list"];
 
+/// Scans an assistant's final text for an explicit `vak`-tagged fence whose
+/// JSON body doesn't parse, and returns the parse error if one is found.
+///
+/// This is the runtime-enforcement counterpart to the client's malformed-
+/// fence fallback (structured.ts / PresentationRenderer.tsx's Blocks case):
+/// the client makes a broken fence visible instead of silent, but visible
+/// still means the user gets "This response could not be rendered" instead
+/// of an actual answer. A weak/small local model produces syntactically
+/// invalid JSON often enough (mismatched brackets, an unquoted key) that
+/// it's worth one bounded repair turn here, symmetric with
+/// `pending_grounding_check`, so the malformed card never reaches the user
+/// at all when it's repairable.
+fn find_malformed_vak_fence(text: &str) -> Option<String> {
+    let mut search_from = 0usize;
+    while let Some(rel_open) = text[search_from..].find("```vak") {
+        let open = search_from + rel_open;
+        let body_start = open + text[open..].find('\n')? + 1;
+        let Some(rel_close) = text[body_start..].find("```") else {
+            return None; // Unclosed fence: streaming/truncated, not our concern here.
+        };
+        let body = text[body_start..body_start + rel_close].trim();
+        search_from = body_start + rel_close + 3;
+        if !body.contains("\"semantic_type\"") {
+            continue;
+        }
+        if let Err(err) = serde_json::from_str::<serde_json::Value>(body) {
+            return Some(err.to_string());
+        }
+    }
+    None
+}
+
 /// Whether a succeeded tool call looks like it retrieved external
 /// information that a subsequent prose answer ought to cite/ground on.
 ///
@@ -3435,11 +3496,13 @@ const LOCAL_DATA_TOOLS: &[&str] = &["read", "read_file", "glob", "grep", "inspec
 /// tomorrow it could be any of a hundred different MCP servers a user wires
 /// up themselves, and this must keep working without a code change per
 /// integration. So it keys off two provider-agnostic signals instead:
+///
 ///   1. the tool's own name reads as retrieval ("search", "fetch", "crawl",
 ///      "lookup", "query", "retrieve", "find") — covers most search/browse
 ///      MCP tools by naming convention alone, and
 ///   2. the raw result text is shaped like retrieved web content (multiple
 ///      URLs) — catches a tool whose name gives no hint at all.
+///
 /// Either signal alone is enough; this is intentionally permissive (a false
 /// positive just means one extra grounding nudge, not a broken turn) —
 /// EXCEPT for `LOCAL_DATA_TOOLS`, which are excluded outright regardless of

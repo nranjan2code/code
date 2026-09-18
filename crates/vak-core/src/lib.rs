@@ -24,6 +24,7 @@ pub mod learning;
 pub mod memory;
 pub mod misread;
 pub mod onboarding;
+pub mod presentation_tools;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
@@ -5311,6 +5312,9 @@ impl Core {
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
         tools.push(Arc::new(doc_reader::DocReaderTool));
+        for emit_tool in presentation_tools::EmitCardTool::all() {
+            tools.push(Arc::new(emit_tool));
+        }
         if self.effective_memory_skill_proposals() {
             tools.push(Arc::new(learning::ProposeSkillTool {
                 sessions_home: self.sessions_home(),
