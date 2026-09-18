@@ -27,21 +27,13 @@ import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "../safeUrl";
 import * as api from "../api";
 import { highlight, languageForFence } from "../highlight";
-import ResearchCards, { type ResearchData } from "./presentation/ResearchCards";
 import DiffInspector from "./presentation/DiffInspector";
-import TestMatrix from "./presentation/TestMatrix";
-import UniversalChart from "./presentation/UniversalChart";
-import DataGrid, { type DataGridData, type DataGridColumn } from "./presentation/DataGrid";
 import { downloadCsv } from "./presentation/data";
-import TerminalConsole from "./presentation/TerminalConsole";
-import RecipeCard, { type RecipeData } from "./presentation/RecipeCard";
 import MermaidViewer from "./presentation/MermaidViewer";
-import UIPreviewCard from "./presentation/UIPreviewCard";
-import UniversalCard, { PresentationValue } from "./presentation/UniversalCard";
 
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
-import TimelineCard, { type TimelineData } from "./presentation/TimelineCard";
+import GenericSpecRenderer, { buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
 import { assistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 
 /** Wraps settled assistant content with the same Vak avatar + name header
@@ -851,427 +843,153 @@ export function StructuredView(props: { output: import("../types").StructuredOut
 
 type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
 
-function normalizeTimeline(data: any, defaultTitle = "Plan"): TimelineData {
-  if (!data || typeof data !== "object") {
-    return { title: defaultTitle, items: [] };
-  }
-  const title = String(data.title ?? data.label ?? data.name ?? defaultTitle);
-  let rawItems: any[] = [];
-  if (Array.isArray(data.items)) rawItems = data.items;
-  else if (Array.isArray(data.steps)) rawItems = data.steps;
-  else if (Array.isArray(data.milestones)) rawItems = data.milestones;
-  else if (Array.isArray(data.slots)) rawItems = data.slots;
-  else if (Array.isArray(data.agenda)) rawItems = data.agenda;
-  else if (Array.isArray(data.tasks)) rawItems = data.tasks;
-  else if (Array.isArray(data.choices)) rawItems = data.choices;
-  else if (Array.isArray(data.questions)) rawItems = data.questions;
-  else if (Array.isArray(data.qa)) rawItems = data.qa;
-  else if (Array.isArray(data.entries)) rawItems = data.entries;
-  else if (Array.isArray(data)) rawItems = data;
-  else {
-    const entries = Object.entries(data).filter(([k]) => !["title", "semantic_type", "label", "summary"].includes(k));
-    if (entries.length > 0) {
-      rawItems = entries.map(([k, v]) => ({
-        label: k.replace(/_/g, " "),
-        detail: typeof v === "object" ? JSON.stringify(v) : String(v ?? ""),
-      }));
-    }
-  }
-
-  const items = rawItems.map((it: any) => {
-    if (typeof it === "string" || typeof it === "number") {
-      return { label: String(it) };
-    }
-    if (it && typeof it === "object") {
-      const label = String(it.label ?? it.title ?? it.name ?? it.question ?? it.task ?? it.text ?? it.choice ?? it.activity ?? "Item");
-      const detail = it.detail ?? it.description ?? it.answer ?? it.notes ?? it.time ?? it.snippet ?? (it.reason ? String(it.reason) : undefined);
-      const status = it.status ?? (typeof it.done === "boolean" ? (it.done ? "complete" : "pending") : undefined);
-      return {
-        label,
-        detail: detail != null ? String(detail) : undefined,
-        status: status != null ? String(status) : undefined,
-      };
-    }
-    return { label: "Item" };
-  });
-
-  return { title, items };
-}
-
-function normalizeDataGrid(data: any, defaultTitle = "Dataset"): DataGridData {
-  if (!data || typeof data !== "object") {
-    return { title: defaultTitle, columns: [], rows: [] };
-  }
-  const title = String(data.title ?? data.label ?? data.name ?? defaultTitle);
-  
-  if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
-    const columns: DataGridColumn[] = data.columns.map((c: any) => ({
-      key: String(c.key ?? c.name ?? c.label),
-      label: String(c.label ?? c.name ?? c.key),
-      isNumeric: Boolean(c.isNumeric || c.is_numeric),
-    }));
-    return { title, columns, rows: data.rows };
-  }
-
-  if (Array.isArray(data.pros) || Array.isArray(data.cons)) {
-    const rows = [
-      ...(data.pros || []).map((p: any) => ({ type: "Pro", point: typeof p === "string" ? p : (p.text ?? p.point ?? JSON.stringify(p)) })),
-      ...(data.cons || []).map((c: any) => ({ type: "Con", point: typeof c === "string" ? c : (c.text ?? c.point ?? JSON.stringify(c)) })),
-    ];
-    return {
-      title,
-      columns: [
-        { key: "type", label: "Type" },
-        { key: "point", label: "Point" },
-      ],
-      rows,
-    };
-  }
-
-  if (data.left != null || data.right != null) {
-    const leftLabel = String(data.left_label ?? data.option_a ?? "Option A");
-    const rightLabel = String(data.right_label ?? data.option_b ?? "Option B");
-    const rows: Record<string, any>[] = [];
-    if (typeof data.left === "object" && typeof data.right === "object") {
-      const keys = Array.from(new Set([...Object.keys(data.left || {}), ...Object.keys(data.right || {})]));
-      for (const k of keys) {
-        rows.push({
-          aspect: k.replace(/_/g, " "),
-          left: typeof data.left[k] === "object" ? JSON.stringify(data.left[k]) : String(data.left[k] ?? "—"),
-          right: typeof data.right[k] === "object" ? JSON.stringify(data.right[k]) : String(data.right[k] ?? "—"),
-        });
-      }
-    } else {
-      rows.push({ aspect: "Value", left: String(data.left ?? "—"), right: String(data.right ?? "—") });
-    }
-    return {
-      title,
-      columns: [
-        { key: "aspect", label: "Aspect" },
-        { key: "left", label: leftLabel },
-        { key: "right", label: rightLabel },
-      ],
-      rows,
-    };
-  }
-
-  const rawRows: any[] = Array.isArray(data.rows) ? data.rows : Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
-  if (rawRows.length > 0 && typeof rawRows[0] === "object") {
-    const keys = Array.from(new Set(rawRows.flatMap((r) => Object.keys(r || {}))));
-    const columns: DataGridColumn[] = keys.map((k) => ({
-      key: k,
-      label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-      isNumeric: rawRows.some((r) => typeof r[k] === "number"),
-    }));
-    return { title, columns, rows: rawRows };
-  }
-
-  const entries = Object.entries(data).filter(([k]) => !["title", "semantic_type", "label"].includes(k));
-  if (entries.length > 0) {
-    const rows = entries.map(([k, v]) => ({
-      metric: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-      value: typeof v === "object" ? JSON.stringify(v) : v,
-    }));
-    return {
-      title,
-      columns: [
-        { key: "metric", label: "Metric / Item" },
-        { key: "value", label: "Value", isNumeric: entries.some(([, v]) => typeof v === "number") },
-      ],
-      rows,
-    };
-  }
-
-  return { title, columns: [], rows: [] };
-}
-
-function normalizeResearch(data: any): ResearchData {
-  if (!data || typeof data !== "object") {
-    return { takeaways: [], sources: [] };
-  }
-  const title = data.title != null ? String(data.title) : undefined;
-  const rawSources = Array.isArray(data.sources)
-    ? data.sources
-    : Array.isArray(data.references)
-    ? data.references
-    : Array.isArray(data.citations)
-    ? data.citations
-    : [];
-  const sources = rawSources.map((s: any) => {
-    if (typeof s === "string") return { title: s, url: s };
-    return {
-      title: String(s?.title ?? s?.name ?? s?.url ?? "Source"),
-      url: String(s?.url ?? ""),
-      snippet: s?.snippet != null ? String(s.snippet) : undefined,
-      source_name: s?.source_name != null ? String(s.source_name) : undefined,
-      published_at: s?.published_at != null ? String(s.published_at) : undefined,
-    };
-  });
-
-  const rawTakeaways = Array.isArray(data.takeaways)
-    ? data.takeaways
-    : Array.isArray(data.findings)
-    ? data.findings
-    : Array.isArray(data.points)
-    ? data.points
-    : Array.isArray(data.items)
-    ? data.items
-    : [];
-  const takeaways = rawTakeaways.map((t: any) => {
-    if (typeof t === "string") return t;
-    if (t && typeof t === "object") {
-      return {
-        text: String(t.text ?? t.point ?? t.claim ?? t.label ?? ""),
-        citation_indices: Array.isArray(t.citation_indices) ? t.citation_indices : undefined,
-      };
-    }
-    return String(t);
-  });
-
-  return { title, sources, takeaways };
-}
-
-function normalizeRecipe(data: any): RecipeData {
-  if (!data || typeof data !== "object") {
-    return { title: "Recipe", ingredients: [], steps: [] };
-  }
-  const rawIngredients = Array.isArray(data.ingredients)
-    ? data.ingredients
-    : Array.isArray(data.items)
-    ? data.items
-    : [];
-  const ingredients = rawIngredients.map((item: any) => {
-    if (typeof item === "string") return item;
-    if (item && typeof item === "object") {
-      const name = String(item.name ?? item.item ?? item.ingredient ?? item.label ?? "");
-      const amount = typeof item.amount === "number" ? item.amount : typeof item.quantity === "number" ? item.quantity : undefined;
-      const unit = item.unit ?? item.measurement ?? (typeof item.quantity === "string" ? item.quantity : undefined);
-      return { name, amount, unit: unit != null ? String(unit) : undefined };
-    }
-    return String(item);
-  });
-
-  const rawSteps = Array.isArray(data.steps)
-    ? data.steps
-    : Array.isArray(data.instructions)
-    ? data.instructions
-    : Array.isArray(data.directions)
-    ? data.directions
-    : Array.isArray(data.method)
-    ? data.method
-    : [];
-  const steps = rawSteps.map((step: any) => {
-    if (typeof step === "string") return step;
-    if (step && typeof step === "object") {
-      const text = String(step.text ?? step.step ?? step.instruction ?? step.description ?? step.action ?? "");
-      let timer_seconds = typeof step.timer_seconds === "number" ? step.timer_seconds : undefined;
-      if (timer_seconds === undefined && typeof step.timer_minutes === "number") {
-        timer_seconds = step.timer_minutes * 60;
-      }
-      if (timer_seconds === undefined && typeof step.duration_minutes === "number") {
-        timer_seconds = step.duration_minutes * 60;
-      }
-      return { text, timer_seconds };
-    }
-    return String(step);
-  });
-
-  return {
-    title: String(data.title ?? data.name ?? "Recipe"),
-    servings: typeof data.servings === "number" ? data.servings : (typeof data.yield === "number" ? data.yield : undefined),
-    prep_time_minutes: typeof data.prep_time_minutes === "number" ? data.prep_time_minutes : (typeof data.prep_time === "number" ? data.prep_time : undefined),
-    cook_time_minutes: typeof data.cook_time_minutes === "number" ? data.cook_time_minutes : (typeof data.cook_time === "number" ? data.cook_time : undefined),
-    ingredients,
-    steps,
-  };
-}
-
 // Every named semantic type resolves through this single registry. Tests derive
 // their coverage from this registry so newly registered types cannot bypass the
 // completed-turn rendering contract.
 const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // Universal semantic shapes share a safe, lossless baseline renderer until
   // a richer domain-neutral interaction is available.
-  "map": ({ data }) => <UniversalCard data={data} kind="Map" />,
-  "route_map": ({ data }) => <UniversalCard data={data} kind="Route map" />,
-  "calendar": ({ data }) => <UniversalCard data={data} kind="Calendar" />,
-  "availability": ({ data }) => <UniversalCard data={data} kind="Availability" />,
-  "board": ({ data }) => <UniversalCard data={data} kind="Board" />,
-  "entity": ({ data }) => <UniversalCard data={data} kind="Entity" />,
-  "search_results": ({ data }) => <UniversalCard data={data} kind="Search results" />,
-  "evidence": ({ data }) => <UniversalCard data={data} kind="Evidence" />,
-  "decision_analysis": ({ data }) => <UniversalCard data={data} kind="Decision" />,
-  "document": ({ data }) => <UniversalCard data={data} kind="Document" />,
-  "graph": ({ data }) => <UniversalCard data={data} kind="Graph" />,
-  "form": ({ data }) => <UniversalCard data={data} kind="Form" />,
-  "action": ({ data }) => <UniversalCard data={data} kind="Action" />,
-  "transaction": ({ data }) => <UniversalCard data={data} kind="Transaction" />,
-  "alert": ({ data }) => <UniversalCard data={data} kind="Alert" />,
-  "conversation": ({ data }) => <UniversalCard data={data} kind="Conversation" />,
-  "progress_dashboard": ({ data }) => <UniversalCard data={data} kind="Progress dashboard" />,
-  "simulation": ({ data }) => <UniversalCard data={data} kind="Simulation" />,
+  "map": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Map")} />,
+  "route_map": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Route map")} />,
+  "calendar": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Calendar")} />,
+  "availability": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Availability")} />,
+  "board": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Board")} />,
+  "entity": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Entity")} />,
+  "search_results": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Search results")} />,
+  "evidence": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Evidence")} />,
+  "decision_analysis": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Decision")} />,
+  "document": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Document")} />,
+  "graph": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Graph")} />,
+  "form": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Form")} />,
+  "action": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Action")} />,
+  "transaction": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Transaction")} />,
+  "alert": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Alert")} />,
+  "conversation": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Conversation")} />,
+  "progress_dashboard": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Progress dashboard")} />,
+  "simulation": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Simulation")} />,
   // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
-  "research.synthesis": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
-  "research_brief": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
-  "research": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
-  "news": ({ data }) => <ResearchCards data={normalizeResearch(data)} />,
+  "research.synthesis": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "research": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "news": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
 
   // 2. Code, Tests & Terminal (coding.diff, test.report, terminal.view, etc.)
-  "coding.diff": ({ data }) => <DiffInspector data={data} />,
-  "diff": ({ data }) => <DiffInspector data={data} />,
-  "test.report": ({ data }) => <TestMatrix data={data} />,
-  "test": ({ data }) => <TestMatrix data={data} />,
-  "ci.test_matrix": ({ data }) => <TestMatrix data={data} />,
-  "test_matrix": ({ data }) => <TestMatrix data={data} />,
-  "terminal.view": ({ data }) => <TerminalConsole data={data} />,
-  "terminal": ({ data }) => <TerminalConsole data={data} />,
-  "terminal.session": ({ data }) => <TerminalConsole data={data} />,
+  "coding.diff": ({ data }) => <GenericSpecRenderer node={buildDiffSpec(data)} />,
+  "diff": ({ data }) => <GenericSpecRenderer node={buildDiffSpec(data)} />,
+  "test.report": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
+  "test": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
+  "ci.test_matrix": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
+  "test_matrix": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
+  "terminal.view": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
+  "terminal": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
+  "terminal.session": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
 
   // 3. Coding Specific Flows
-  "coding.benchmark": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Benchmark Results")} />,
-  "coding.dependencies": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Dependencies")} />,
-  "coding.deployment": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Deployment")} kicker="Deployment" />,
-  "coding.incident": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Incident Summary")} kicker="Incident" />,
-  "coding.architecture": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Architecture Decisions")} kicker="Architecture" />,
-  "coding.release": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Release Notes")} kicker="Release" />,
-  "coding.search": ({ data }) => (Array.isArray(data?.results) || Array.isArray(data?.rows)) ? <DataGrid data={normalizeDataGrid(data, "Search Results")} /> : <ResearchCards data={normalizeResearch(data)} />,
+  "coding.benchmark": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Benchmark Results")} />,
+  "coding.dependencies": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Dependencies")} />,
+  "coding.deployment": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Deployment", "Deployment")} />,
+  "coding.incident": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Incident Summary", "Incident")} />,
+  "coding.architecture": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Architecture Decisions", "Architecture")} />,
+  "coding.release": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Release Notes", "Release")} />,
+  "coding.search": ({ data }) => (Array.isArray(data?.results) || Array.isArray(data?.rows)) ? <GenericSpecRenderer node={buildTableSpec(data, "Search Results")} /> : <GenericSpecRenderer node={buildResearchSpec(data)} />,
 
   // 4. Data Grids, Tables & Comparisons
-  "data.grid": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Data Grid")} />,
-  "table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Table")} />,
-  "dataframe": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Table")} />,
-  "dataset": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Dataset")} />,
-  "comparison": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison")} />,
-  "comparison_table": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Comparison Table")} />,
-  "pros_cons": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Pros & Cons")} />,
-  "inventory": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Inventory")} />,
-  "scorecard": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Scorecard")} />,
-  "decision_matrix": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Decision Matrix")} />,
-  "criteria_matrix": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Criteria Matrix")} />,
-  "tradeoff_analysis": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Tradeoff Analysis")} />,
+  "data.grid": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Data Grid")} />,
+  "table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
+  "dataframe": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
+  "dataset": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Dataset")} />,
+  "comparison": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison")} />,
+  "comparison_table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison Table")} />,
+  "pros_cons": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Pros & Cons")} />,
+  "inventory": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Inventory")} />,
+  "scorecard": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Scorecard")} />,
+  "decision_matrix": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Decision Matrix")} />,
+  "criteria_matrix": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Criteria Matrix")} />,
+  "tradeoff_analysis": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Tradeoff Analysis")} />,
 
   // 5. Financial Summaries & Budgets
-  "budget": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Budget Breakdown")} />,
-  "finance_summary": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Financial Summary")} />,
-  "invoice_summary": ({ data }) => <DataGrid data={normalizeDataGrid(data, "Invoice Summary")} />,
+  "budget": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Budget Breakdown")} />,
+  "finance_summary": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Financial Summary")} />,
+  "invoice_summary": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Invoice Summary")} />,
 
   // 6. Culinary & Lifestyle
-  "recipe.card": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
-  "recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
-  "lifestyle.recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
-  "lifestyle.culinary_recipe": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
-  "recipe_summary": ({ data }) => <RecipeCard data={normalizeRecipe(data)} />,
-  "meal_plan": ({ data }) => Array.isArray(data?.steps) || Array.isArray(data?.ingredients) ? <RecipeCard data={normalizeRecipe(data)} /> : <TimelineCard data={normalizeTimeline(data, "Meal Plan")} kicker="Meal Plan" />,
+  "recipe.card": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
+  "recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
+  "lifestyle.recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
+  "lifestyle.culinary_recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
+  "recipe_summary": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
+  "meal_plan": ({ data }) => Array.isArray(data?.steps) || Array.isArray(data?.ingredients) ? <GenericSpecRenderer node={buildRecipeSpec(data)} /> : <GenericSpecRenderer node={buildTimelineSpec(data, "Meal Plan", "Meal Plan")} />,
 
   // 7. Interactive Previews
-  "ui.preview": ({ data }) => <UIPreviewCard data={data} />,
-  "preview": ({ data }) => <UIPreviewCard data={data} />,
+  "ui.preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
+  "preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
 
   // 8. Timelines, Plans, Checklists, Schedules & Notes
-  "plan.timeline": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Plan Timeline")} kicker="Plan" />,
-  "timeline": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Timeline")} kicker="Timeline" />,
-  "itinerary": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Itinerary")} kicker="Itinerary" />,
-  "checklist": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Checklist")} kicker="Checklist" />,
-  "schedule": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Schedule")} kicker="Schedule" />,
-  "agenda": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Agenda")} kicker="Agenda" />,
-  "milestones": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Milestones")} kicker="Milestones" />,
-  "progress": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Progress Tracking")} kicker="Progress" />,
-  "status": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Status")} kicker="Status" />,
-  "steps": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Steps")} kicker="Steps" />,
-  "overview": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Overview")} kicker="Overview" />,
-  "summary": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Summary")} kicker="Summary" />,
-  "detail": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Details")} kicker="Detail" />,
-  "notes": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Notes")} kicker="Notes" />,
-  "follow_up": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Follow-Up Items")} kicker="Follow-Up" />,
-  "reminder": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Reminders")} kicker="Reminder" />,
-  "shopping_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Shopping List")} kicker="Shopping List" />,
-  "lesson": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Lesson Plan")} kicker="Lesson" />,
-  "reading_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Reading List")} kicker="Reading List" />,
-  "habit_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Habit Plan")} kicker="Habit" />,
-  "project_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Project Plan")} kicker="Project" />,
-  "meeting_notes": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Meeting Notes")} kicker="Meeting" />,
-  "contact_log": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Contact Log")} kicker="Contact" />,
-  "travel_options": ({ data }) => (Array.isArray(data?.rows) || Array.isArray(data?.columns)) ? <DataGrid data={normalizeDataGrid(data, "Travel Options")} /> : <TimelineCard data={normalizeTimeline(data, "Travel Options")} kicker="Travel" />,
-  "home_project": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Home Project")} kicker="Project" />,
-  "care_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Care Plan")} kicker="Care Plan" />,
-  "event_plan": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Event Plan")} kicker="Event" />,
-  "media_list": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Media List")} kicker="Media" />,
-  "collection": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Collection")} kicker="Collection" />,
-  "faq": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Frequently Asked Questions")} kicker="FAQ" />,
-  "decision": ({ data }) => <TimelineCard data={normalizeTimeline(data, "Decision Analysis")} kicker="Decision" />,
+  "plan.timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Plan Timeline", "Plan")} />,
+  // Every timeline-shaped key below routes through the generic declarative
+  // renderer (see presentation/GenericSpecRenderer.tsx): `buildTimelineSpec`
+  // builds a node client-side from the same raw payload shapes the legacy
+  // `normalizeTimeline` handled, and the `timeline` primitive produces the
+  // exact same "adaptive-timeline" DOM/CSS TimelineCard did (including the
+  // per-key `kicker`). No registry key calls TimelineCard directly anymore.
+  "timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Timeline", "Timeline")} />,
+  "itinerary": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Itinerary", "Itinerary")} />,
+  "checklist": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Checklist", "Checklist")} />,
+  "schedule": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Schedule", "Schedule")} />,
+  "agenda": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Agenda", "Agenda")} />,
+  "milestones": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Milestones", "Milestones")} />,
+  "progress": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Progress Tracking", "Progress")} />,
+  "status": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Status", "Status")} />,
+  "steps": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Steps", "Steps")} />,
+  "overview": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Overview", "Overview")} />,
+  "summary": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Summary", "Summary")} />,
+  "detail": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Details", "Detail")} />,
+  "notes": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Notes", "Notes")} />,
+  "follow_up": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Follow-Up Items", "Follow-Up")} />,
+  "reminder": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Reminders", "Reminder")} />,
+  "shopping_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Shopping List", "Shopping List")} />,
+  "lesson": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Lesson Plan", "Lesson")} />,
+  "reading_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Reading List", "Reading List")} />,
+  "habit_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Habit Plan", "Habit")} />,
+  "project_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Project Plan", "Project")} />,
+  "meeting_notes": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Meeting Notes", "Meeting")} />,
+  "contact_log": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Contact Log", "Contact")} />,
+  "travel_options": ({ data }) => (Array.isArray(data?.rows) || Array.isArray(data?.columns)) ? <GenericSpecRenderer node={buildTableSpec(data, "Travel Options")} /> : <GenericSpecRenderer node={buildTimelineSpec(data, "Travel Options", "Travel")} />,
+  "home_project": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Home Project", "Project")} />,
+  "care_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Care Plan", "Care Plan")} />,
+  "event_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Event Plan", "Event")} />,
+  "media_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Media List", "Media")} />,
+  "collection": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Collection", "Collection")} />,
+  "faq": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Frequently Asked Questions", "FAQ")} />,
+  "decision": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Decision Analysis", "Decision")} />,
 
   // 9. Visualizations & Charts
-  // UniversalChart already renders a clean "No data points supplied." message
-  // when its series list is empty — so malformed/missing series should fall
-  // into that same path, not vanish into an empty fragment with no trace a
-  // chart was ever supposed to be here.
-  "chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "telemetry.chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "trend": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "timeseries": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "metric_chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "bar_chart": ({ data }) => <UniversalChart data={{ ...data, chart_type: "bar", series: Array.isArray(data?.series) ? data.series : [] }} />,
-  "comparison_chart": ({ data }) => <UniversalChart data={{ ...data, series: Array.isArray(data?.series) ? data.series : [] }} />,
+  // Malformed/missing `series` no longer renders blank: buildChartSpec
+  // normalizes it to an empty series list and the chart primitive shows its
+  // "No data points supplied." placeholder instead.
+  "chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
+  "telemetry.chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
+  "trend": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
+  "timeseries": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
+  "metric_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
+  "bar_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data, "bar")} />,
+  "comparison_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
 
   // 10. Media & Links
-  "link.preview": ({ data }) => (
-    <a class="rich-link-card" href={safeUrl(data.url) ? data.url : undefined} target="_blank" rel="noreferrer noopener">
-      <Show when={uiPreferences.externalMedia && typeof data.image_url === "string" && safeUrl(data.image_url, true)}><img src={data.image_url as string} alt="" loading="lazy" /></Show>
-      <span><strong>{String(data.title ?? data.url)}</strong><small>{String(data.description ?? data.site_name ?? data.url)}</small></span>
-    </a>
-  ),
-  "media.image": ({ data }) => (
-    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
-      <figure class="rich-media"><img src={data.source} alt={String(data.alt ?? "")} /><Show when={data.alt}><figcaption>{String(data.alt)}</figcaption></Show></figure>
-    </Show>
-  ),
-  "media.video": ({ data }) => (
-    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
-      <video class="rich-video" src={data.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(data.alt ?? "Video")} />
-    </Show>
-  ),
-  "media.audio": ({ data }) => (
-    <Show when={uiPreferences.externalMedia && typeof data?.source === "string" && safeUrl(data.source, true)}>
-      <audio class="rich-audio" src={data.source} controls preload="metadata" aria-label={String(data.alt ?? "Audio")} />
-    </Show>
-  ),
+  "link.preview": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "link")} />,
+  "media.image": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "image")} />,
+  "media.video": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "video")} />,
+  "media.audio": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "audio")} />,
 
   // 11. Metrics & Weather
   "weather": (props) => STRUCTURED_RENDERERS.metric(props),
   "telemetry.metric": (props) => STRUCTURED_RENDERERS.metric(props),
-  "metric": ({ data }) => {
-    if (typeof data?.label === "string" || typeof data?.value === "string" || typeof data?.value === "number") {
-      return (
-        <div class="canvas-card rich-metric">
-          <small>{String(data.label ?? "Metric")}</small>
-          <strong>{String(data.value ?? "—")}{data.unit ? ` ${String(data.unit)}` : ""}</strong>
-        </div>
-      );
-    }
-    const entries = Object.entries(data || {}).filter(([k]) => k !== "title" && k !== "semantic_type");
-    if (entries.length > 0) {
-      return (
-        <div class="canvas-card metric-grid-card">
-          <Show when={data.location || data.title || data.label}>
-            <div class="metric-grid-header">
-              {String(data.location ?? data.title ?? data.label)}
-            </div>
-          </Show>
-          <div class="metric-grid-container">
-            <For each={entries}>
-              {([key, val]) => (
-                <div class="metric-grid-item">
-                  <small class="metric-grid-label">{key.replace(/_/g, " ")}</small>
-                  <strong class="metric-grid-value"><PresentationValue value={val} /></strong>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      );
-    }
-    return <div class="rich-metric"><small>{String(data?.label ?? "Metric")}</small><strong>{String(data?.value ?? "—")}{data?.unit ? ` ${String(data.unit)}` : ""}</strong></div>;
-  },
+  // Validated alongside "timeline" as the generic declarative renderer's
+  // second proving case (see presentation/GenericSpecRenderer.tsx). The
+  // "canvas-card" wrapper class (added independently on main) is preserved
+  // in GenericSpecRenderer's renderMetric so this migration didn't regress
+  // that chrome fix.
+  "metric": ({ data }) => <GenericSpecRenderer node={buildMetricSpec(data)} />,
 };
 
 export const structuredRendererTypes = Object.freeze(Object.keys(STRUCTURED_RENDERERS));

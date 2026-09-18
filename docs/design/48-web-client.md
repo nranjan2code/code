@@ -542,8 +542,12 @@ about a round trip that may not have happened.
 `styles.css` contains a second, cold palette — indigo `#818cf8`, emerald
 `#34d399`, rose `#fb7185`, amber `#f59e0b`, sky `#38bdf8`, slate
 `#94a3b8`, on near-black grounds `#090b10` / `#080a0f` — across the
-presentation components (`DataGrid`, `DiffInspector`, `TerminalConsole`,
-`TestMatrix`, `UniversalChart`, the badge set, the diff rows). The
+presentation layer (the `table`, `diff`, `terminal`, `test_matrix` and
+`chart` primitive renderers — at the time of this audit these were
+separate `DataGrid`/`DiffInspector`/`TerminalConsole`/`TestMatrix`/
+`UniversalChart` components; they are now `renderX()` functions inside
+`presentation/GenericSpecRenderer.tsx`, which is where the palette debt
+now lives — plus the badge set and the diff rows). The
 integrated terminal ships a hardcoded Tokyo Night theme. DESIGN.md's
 "Don't" list names both of these specifically.
 
@@ -809,7 +813,8 @@ progress (a delta, a tool call, an end)". Nothing does that.
 ### 11.3 Seven CSS custom properties are used and never defined
 
 `--dim`, `--line`, `--border-focus`, `--cyan`, `--text-dim`,
-`--font-mono`, and (in `UniversalChart`) the pair above. Consequences are
+`--font-mono`, and (in the `chart` primitive renderer, formerly
+`UniversalChart`) the pair above. Consequences are
 not cosmetic:
 
 - `.prompt-editor:focus { outline: none; border-color: var(--border-focus) }`

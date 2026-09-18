@@ -42,10 +42,12 @@ Paper, alongside the existing technical palettes. They are host-owned token
 sets: renderer behavior, permissions, voice, and presentation data remain
 unchanged when a theme changes.
 
-The host exposes a declarative built-in starter pack of 52 disabled definitions:
-41 everyday layouts and 10 coding-flow layouts. They use only the bounded
-primitive vocabulary and the same fallback/compiler path as installed packs;
-they are seed content, not renderer-specific branches.
+The host exposes a declarative built-in starter pack of 75 disabled definitions:
+45 everyday layouts, 10 coding-flow layouts, and 20 universal interaction
+shapes (`EVERYDAY`/`CODING`/`UNIVERSAL` in `crates/vak-presentation/src/seeds.rs`;
+the count is pinned by `seed_pack_is_rich_disabled_and_validated_by_host_types`).
+They use only the bounded primitive vocabulary and the same fallback/compiler
+path as installed packs; they are seed content, not renderer-specific branches.
 
 `vak-presentation::propose_revision` now validates user-guided candidates,
 preserves identity, assigns the next immutable revision, computes its digest,
@@ -392,23 +394,43 @@ network-free.
 
 ### Primitive vocabulary
 
-The first stable vocabulary must cover both general and technical work:
+The vocabulary must cover both general and technical work. It is the
+`Primitive` enum in `crates/vak-presentation/src/lib.rs` — this table tracks
+that enum and nothing else; `vak-delivery/src/adaptive.rs` matches it
+exhaustively, so a variant added here without a lowering arm fails the build.
 
 | Group | Primitives |
 |---|---|
-| Structure | `stack`, `row`, `group`, `section`, `divider`, `tabs` |
+| Structure | `stack`, `row`, `group`, `section`, `divider` |
 | Content | `title`, `text`, `rich_text`, `label`, `badge`, `callout`, `quote` |
 | Collections | `list`, `checklist`, `timeline`, `steps`, `key_value`, `table` |
 | Data | `metric`, `progress`, `chart`, `data_grid`, `comparison` |
 | Media | `image`, `audio`, `video`, `file`, `link_preview`, `gallery` |
 | Work | `diff`, `test_matrix`, `terminal`, `artifact`, `citation_list` |
 | Interaction | `disclosure`, `filter`, `sort`, `search`, `stepper`, `timer` |
-| Host actions | `open_file`, `open_url`, `copy`, `download`, `review`, `request_action` |
 | State | `loading`, `empty`, `partial`, `error`, `unavailable`, `stale` |
+| Universal | `map`, `calendar`, `board`, `graph`, `entity`, `evidence`, `form`, `transaction`, `alert`, `conversation`, `simulation` |
+| Domain | `recipe`, `research`, `ui_preview` |
 
-Existing specialized components become trusted primitive implementations or
-compound built-in specs. Their behavior is retained. Compound definitions may
-compose primitives but may not introduce a second execution mechanism.
+`tabs` was in the first draft of this table and is not in the enum; a tabbed
+layout composes from `section` plus `disclosure`. Host actions
+(`open_file`, `open_url`, `copy`, `download`, `review`, `request_action`) are
+typed action descriptors carried in node props, not primitives.
+
+The bar for a new primitive is that no composition of existing primitives can
+express it, and the enum records that reasoning in a doc-comment on each
+variant — see `Recipe`/`Research`/`UiPreview` in `lib.rs` and the block comment
+immediately after the enum explaining why `MetricGrid`, `Media` and
+`UniversalCard` were deliberately NOT added (they are `Row`/`Section` of
+`Metric`; `Image`/`Audio`/`Video`/`File`/`Gallery`; and `Entity` or `Section`
+plus `KeyValue` respectively). A client-side rendering shortcut is not a
+reason for a host primitive.
+
+Specialized components are not part of this design: the client has one generic
+renderer over this vocabulary. Compound definitions may compose primitives but
+may not introduce a second execution mechanism. The contributor walkthrough for
+both paths — new semantic type over an existing primitive, and new primitive —
+is `docs/design/67-presentation-renderer-guide.md`.
 
 ### Styling
 
@@ -771,8 +793,12 @@ Integrations:
   exact fallback, and delivery worker integration;
 - `vak-server`: APIs, SSE, workspace checks, merged capability epoch, proposal
   orchestration, persistence, and audit;
-- `vak-client-ui`: generic primitive renderer, guided editor, mode projections,
-  and adapters retaining existing specialized components;
+- `vak-client-ui`: the generic primitive renderer
+  (`src/components/presentation/GenericSpecRenderer.tsx` — one `renderX()` per
+  primitive, plus `buildXSpec()` adapters that lower today's raw
+  `semantic_type` payloads into the same node shape `compile()` emits), guided
+  editor, and mode projections. P2 is done: there are no specialized per-type
+  card components left to retain;
 - `vak-plugin`: inventories specs/schemas/recipes/fixtures as presentation
   components and exposes their immutable generation;
 - `vak-session`: additive presentation events and selection references;
@@ -812,7 +838,12 @@ Exit: later phases can prove that no current renderer or fallback regressed.
 Exit: fixtures compile deterministically; invalid input cannot panic, execute,
 escape limits, or lose uncovered data.
 
-### P2 — Migrate existing renderers
+### P2 — Migrate existing renderers — **landed**
+
+The nine hand-written per-type components (`DataGrid`, `RecipeCard`,
+`ResearchCards`, `TerminalConsole`, `TestMatrix`, `TimelineCard`,
+`UIPreviewCard`, `UniversalCard`, `UniversalChart`) are deleted. All
+`STRUCTURED_RENDERERS` keys route through `GenericSpecRenderer`.
 
 - Wrap or lower all current structured renderers through trusted primitive or
   compound definitions.

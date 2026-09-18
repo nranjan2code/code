@@ -628,10 +628,6 @@ fn router_with_state(state: AppState) -> Router {
             get(list_presentations).post(register_presentations),
         )
         .route(
-            "/presentations/primitives",
-            get(list_presentation_primitives),
-        )
-        .route(
             "/presentations/specs/{id}/{revision}",
             get(get_presentation_spec),
         )
@@ -8355,36 +8351,6 @@ async fn import_presentations(
         )
             .into_response(),
     }
-}
-
-async fn list_presentation_primitives() -> Json<Vec<vak_presentation::Primitive>> {
-    Json(vec![
-        vak_presentation::Primitive::Stack,
-        vak_presentation::Primitive::Row,
-        vak_presentation::Primitive::Section,
-        vak_presentation::Primitive::Text,
-        vak_presentation::Primitive::Title,
-        vak_presentation::Primitive::Badge,
-        vak_presentation::Primitive::List,
-        vak_presentation::Primitive::Table,
-        vak_presentation::Primitive::KeyValue,
-        vak_presentation::Primitive::Progress,
-        vak_presentation::Primitive::LinkPreview,
-        vak_presentation::Primitive::Image,
-        vak_presentation::Primitive::Divider,
-        vak_presentation::Primitive::Artifact,
-        vak_presentation::Primitive::Map,
-        vak_presentation::Primitive::Calendar,
-        vak_presentation::Primitive::Board,
-        vak_presentation::Primitive::Graph,
-        vak_presentation::Primitive::Entity,
-        vak_presentation::Primitive::Evidence,
-        vak_presentation::Primitive::Form,
-        vak_presentation::Primitive::Transaction,
-        vak_presentation::Primitive::Alert,
-        vak_presentation::Primitive::Conversation,
-        vak_presentation::Primitive::Simulation,
-    ])
 }
 
 async fn get_presentation_spec(
@@ -16523,8 +16489,8 @@ mod sandbox_promotion_tests {
                 activated += 1;
             }
         }
-        assert_eq!(activated, 72);
-        assert_eq!(library.activations().len(), 72);
+        assert_eq!(activated, 75);
+        assert_eq!(library.activations().len(), 75);
 
         // Verify deactivate all
         let spec_ids: Vec<String> = library

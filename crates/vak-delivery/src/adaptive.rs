@@ -23,6 +23,7 @@ pub fn markdown(compiled: &CompiledPresentation) -> String {
 fn render_node(node: &RenderNode, depth: usize) -> String {
     let indent = "  ".repeat(depth.min(8));
     let text = |key: &str| node.props.get(key).and_then(|v| v.as_str()).unwrap_or("");
+    let entries = |key: &str| entry_lines(node, key);
     let mut out = String::new();
     match node.primitive {
         Primitive::Title => out.push_str(&format!("{}# {}\n", indent, text("text"))),
@@ -98,11 +99,111 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
                 out.push_str(&format!("{}{}\n", indent, value));
             }
         }
+        Primitive::Recipe => {
+            let title = text("title");
+            if !title.is_empty() {
+                out.push_str(&format!("{}## {}\n", indent, title));
+            }
+            for (label, key) in [("Serves", "servings"), ("Time", "total_time")] {
+                let value = text(key);
+                if !value.is_empty() {
+                    out.push_str(&format!("{}**{}:** {}\n", indent, label, value));
+                }
+            }
+            let ingredients = entries("ingredients");
+            if !ingredients.is_empty() {
+                out.push_str(&format!("{}**Ingredients:**\n", indent));
+                for ingredient in ingredients {
+                    out.push_str(&format!("{}- {}\n", indent, ingredient));
+                }
+            }
+            let steps = entries("steps");
+            if !steps.is_empty() {
+                out.push_str(&format!("{}**Steps:**\n", indent));
+                for (index, step) in steps.iter().enumerate() {
+                    out.push_str(&format!(
+                        "{}{}. {}\n",
+                        indent,
+                        index.saturating_add(1),
+                        step
+                    ));
+                }
+            }
+        }
+        Primitive::Research => {
+            let title = text("title");
+            if !title.is_empty() {
+                out.push_str(&format!("{}## {}\n", indent, title));
+            }
+            let question = text("question");
+            if !question.is_empty() {
+                out.push_str(&format!("{}**Question:** {}\n", indent, question));
+            }
+            for (label, key) in [("Takeaways", "takeaways"), ("Sources", "sources")] {
+                let values = entries(key);
+                if !values.is_empty() {
+                    out.push_str(&format!("{}**{}:**\n", indent, label));
+                    for value in values {
+                        out.push_str(&format!("{}- {}\n", indent, value));
+                    }
+                }
+            }
+        }
+        Primitive::UiPreview => {
+            // The previewed document is untrusted authored markup; plain-text
+            // surfaces describe it rather than inlining it.
+            let title = text("title");
+            if !title.is_empty() {
+                out.push_str(&format!("{}## {}\n", indent, title));
+            }
+            let caption = text("caption");
+            if !caption.is_empty() {
+                out.push_str(&format!("{}{}\n", indent, caption));
+            }
+            out.push_str(&format!(
+                "{}_(interactive preview omitted on this surface)_\n",
+                indent
+            ));
+        }
     }
     for child in &node.children {
         out.push_str(&render_node(child, depth.saturating_add(1)));
     }
     out
+}
+
+/// Lower a list-shaped prop to plain lines. Stays structural: a string item is
+/// used as-is, an object item is reduced through the same generic label/value
+/// keys the rest of this lowering uses, never through domain field names.
+fn entry_lines(node: &RenderNode, key: &str) -> Vec<String> {
+    let Some(items) = node.props.get(key).and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Value::String(value) => Some(value.clone()),
+            Value::Object(fields) => {
+                let pick = |name: &str| fields.get(name).and_then(|v| v.as_str()).unwrap_or("");
+                let label = [pick("label"), pick("name"), pick("title")]
+                    .into_iter()
+                    .find(|value| !value.is_empty())
+                    .unwrap_or_default();
+                let value = [pick("text"), pick("value"), pick("detail")]
+                    .into_iter()
+                    .find(|value| !value.is_empty())
+                    .unwrap_or_default();
+                match (label.is_empty(), value.is_empty()) {
+                    (true, true) => None,
+                    (true, false) => Some(value.to_owned()),
+                    (false, true) => Some(label.to_owned()),
+                    (false, false) => Some(format!("{label}: {value}")),
+                }
+            }
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 pub fn project(

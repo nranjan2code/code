@@ -10,6 +10,15 @@ This document specifies the rendering architecture for vak's output. Result
 eligibility, evidence state, and collaborative goal state come from the shared
 outcome-directed runtime; this document owns only semantic projection and
 surface rendering.
+
+Scope boundary: everything below is ledger → projection → delivery, ending at
+the `DeliveryPacket` / `OutputTimeline` the surface receives. What the native
+(desktop/web) client does with a `Structured` or `Adaptive` item after that is
+`docs/design/57-adaptive-presentation-runtime.md` — the closed primitive
+vocabulary and runtime-pluggable packs — and the contributor walkthrough for
+adding or changing a renderer is
+`docs/design/67-presentation-renderer-guide.md`. There are no per-semantic-type
+client components; one generic renderer consumes the primitive tree.
 delivery system. It is the design contract that the implementation follows,
 replacing the ad-hoc wiring that left `project_structured_fences` as dead code
 and `DeliveryPacket.presentation` as inert data.

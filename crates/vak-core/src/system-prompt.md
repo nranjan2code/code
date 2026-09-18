@@ -52,9 +52,33 @@ Capability contract:
     ```vak
     {"semantic_type":"table","payload":{"title":"Quarterly Performance","columns":["Quarter","Revenue","Growth","Margin"],"rows":[["Q1 2026","$4.2M","+18%","24%"],["Q2 2026","$4.9M","+22%","26%"]]}}
     ```
+  - `chart` (or `trend`, `timeseries`, `bar_chart`) for numeric series over time or across categories; each series carries a `points` array of `{x,y}`:
+    ```vak
+    {"semantic_type":"chart","payload":{"title":"Monthly Active Users","chart_type":"line","x_label":"Month","y_label":"Users","accessible_summary":"MAU rises from 12,400 in January to 18,900 in April.","series":[{"name":"MAU","points":[{"x":"Jan","y":12400},{"x":"Feb","y":14100},{"x":"Mar","y":16300},{"x":"Apr","y":18900}]}]}}
+    ```
   - `decision` for trade-off analyses, option evaluations, and recommendations:
     ```vak
-    {"semantic_type":"decision","payload":{"title":"Architecture Selection","recommendation":"PostgreSQL Managed","options":[{"name":"PostgreSQL Managed","score":9.2,"pros":["ACID compliant","Team familiarity"],"cons":["Vertical scaling limits"]},{"name":"DynamoDB","score":7.5,"pros":["Serverless scale"],"cons":["Query rigidity"]}]}}
+    {"semantic_type":"decision","payload":{"title":"Architecture Selection","choices":[{"name":"PostgreSQL Managed","reason":"ACID compliant; team already fluent","status":"Recommended"},{"name":"DynamoDB","reason":"Serverless scale, but rigid query shapes","status":"Considered"}]}}
+    ```
+  - `recipe.card` for recipes and any ingredient-plus-steps preparation:
+    ```vak
+    {"semantic_type":"recipe.card","payload":{"title":"Lemon Garlic Pasta","servings":4,"cook_time_minutes":25,"ingredients":[{"name":"Spaghetti","amount":400,"unit":"g"},{"name":"Garlic","amount":3,"unit":"cloves"}],"steps":[{"text":"Boil the spaghetti until al dente.","timer_seconds":540},{"text":"Toss with the garlic, lemon zest, and oil."}]}}
+    ```
+  - `terminal.view` for a command you actually ran and its real captured output:
+    ```vak
+    {"semantic_type":"terminal.view","payload":{"command":"cargo test -p vak-core","output":"running 12 tests\n....\ntest result: ok. 12 passed; 0 failed","exit_code":0,"duration_ms":4320}}
+    ```
+  - `coding.diff` for code changes you made; either a `files` array or a single raw `diff` patch string:
+    ```vak
+    {"semantic_type":"coding.diff","payload":{"files":[{"filename":"src/config.rs","additions":2,"deletions":1,"hunks":"@@ -10,7 +10,8 @@\n-    timeout: 30,\n+    timeout: 60,\n+    retries: 3,"}]}}
+    ```
+  - `ui.preview` for an HTML/UI artifact you wrote to the workspace or `.vak/scratch/`:
+    ```vak
+    {"semantic_type":"ui.preview","payload":{"title":"Pricing Page Prototype","artifact_path":".vak/scratch/pricing_page.html"}}
+    ```
+  - `link.preview` for a single web page worth surfacing as a card (sibling types `media.image`, `media.video`, and `media.audio` take `source` plus `alt` instead, and only render when the user has allowed external media):
+    ```vak
+    {"semantic_type":"link.preview","payload":{"url":"https://example.com/post","title":"Post Title","description":"One-line summary of the page.","site_name":"Example"}}
     ```
   - Vak is universal, not code-specific. Use `map` for places/routes,
     `calendar` for real time grids and availability, `board` for column-based

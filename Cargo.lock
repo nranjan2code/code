@@ -7187,6 +7187,7 @@ dependencies = [
  "vak-agent",
  "vak-commit",
  "vak-config",
+ "vak-delivery",
  "vak-flow",
  "vak-hooks",
  "vak-intent",

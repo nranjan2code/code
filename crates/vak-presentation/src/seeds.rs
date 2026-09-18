@@ -51,6 +51,9 @@ const EVERYDAY: &[(&str, &str)] = &[
     ("faq", "faq"),
     ("timeline", "timeline"),
     ("metric", "metric"),
+    ("recipe", "recipe"),
+    ("news", "news"),
+    ("ui-preview", "ui.preview"),
 ];
 
 const CODING: &[(&str, &str)] = &[
@@ -123,6 +126,9 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
         "progress" | "status" => Primitive::Progress,
         "metric" | "benchmark" => Primitive::Metric,
+        "recipe" | "recipe_summary" | "lifestyle.recipe" => Primitive::Recipe,
+        "research_brief" | "news" => Primitive::Research,
+        "preview" | "ui.preview" => Primitive::UiPreview,
         "coding.diff" => Primitive::Diff,
         "test.report" => Primitive::TestMatrix,
         "terminal.view" => Primitive::Terminal,
@@ -216,7 +222,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 72);
+        assert_eq!(pack.len(), 75);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()
@@ -230,6 +236,71 @@ mod tests {
             }
         }
         assert!(primitives.len() >= 6);
+    }
+
+    #[test]
+    fn seeds_reach_the_newly_added_primitives() {
+        let pack = built_in_seed_pack();
+        for expected in [Primitive::Recipe, Primitive::Research, Primitive::UiPreview] {
+            assert!(
+                pack.iter()
+                    .any(|record| record.spec.root.primitive == expected),
+                "no seed reaches {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_primitives_compile_rich_with_their_own_payloads() {
+        // The enum additions are reachable end to end, not decorative: each
+        // compiles through the same generic pipeline as every other seed.
+        let cases = [
+            (
+                "recipe",
+                serde_json::json!({
+                    "title": "Weeknight dal",
+                    "summary": "A fast lentil dal",
+                    "items": ["Rinse lentils", "Simmer 20 minutes"],
+                }),
+            ),
+            (
+                "news",
+                serde_json::json!({
+                    "title": "Grid storage in 2026",
+                    "summary": "Three takeaways with sources",
+                    "items": ["Costs fell", "Deployment doubled"],
+                }),
+            ),
+            (
+                "ui.preview",
+                serde_json::json!({
+                    "title": "Settings panel",
+                    "summary": "Sandboxed preview of the authored markup",
+                    "items": ["Light", "Dark"],
+                }),
+            ),
+        ];
+        let pack = built_in_seed_pack();
+        for (semantic_type, payload) in cases {
+            let found = pack
+                .iter()
+                .find(|record| record.spec.accepts == [semantic_type.to_owned()]);
+            assert!(found.is_some(), "no seed accepts {semantic_type}");
+            let Some(record) = found else { continue };
+            let result = compile(
+                &record.spec,
+                &CompileInput {
+                    semantic_type: semantic_type.into(),
+                    payload,
+                    fallback_text: "Example result".into(),
+                },
+            );
+            assert!(
+                matches!(&result, CompiledPresentation::Rich(tree)
+                    if tree.root.primitive == record.spec.root.primitive),
+                "{semantic_type} did not compile rich through its own primitive: {result:?}"
+            );
+        }
     }
 
     #[test]
