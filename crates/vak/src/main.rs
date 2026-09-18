@@ -2320,10 +2320,7 @@ fn bridge_bot_token(env_var: &str) -> Option<String> {
     match vak_config::get_var(env_var) {
         Some(t) if !t.trim().is_empty() => Some(t),
         _ => {
-            eprintln!(
-                "error: {env_var} is not set — set it via {}",
-                env_hint()
-            );
+            eprintln!("error: {env_var} is not set — set it via {}", env_hint());
             None
         }
     }

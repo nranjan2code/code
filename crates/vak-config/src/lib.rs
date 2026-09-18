@@ -1719,7 +1719,10 @@ pub fn project_path(cwd: &Path) -> PathBuf {
 /// "Liveness").
 pub fn config_fingerprint(cwd: &Path) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for path in [global_path(), Some(project_path(cwd))].into_iter().flatten() {
+    for path in [global_path(), Some(project_path(cwd))]
+        .into_iter()
+        .flatten()
+    {
         let (mtime_nanos, len) = std::fs::metadata(&path)
             .and_then(|m| m.modified().map(|t| (t, m.len())))
             .map(|(t, len)| {
@@ -4377,7 +4380,10 @@ pub fn load_env_file(path: &std::path::Path) {
 pub fn replace_env_files(paths: &[&std::path::Path]) {
     // Same ordering requirement as `load_env_file` above: resolve every
     // scope's entries before touching the `dotenv_extra` lock.
-    let entries: Vec<_> = paths.iter().flat_map(|path| credentials::list(path)).collect();
+    let entries: Vec<_> = paths
+        .iter()
+        .flat_map(|path| credentials::list(path))
+        .collect();
     let mut extra = dotenv_extra();
     extra.clear();
     for (key, value) in entries {

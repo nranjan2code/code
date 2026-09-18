@@ -162,7 +162,9 @@ pub fn list(scope_hint: &Path) -> Vec<(String, String)> {
 pub fn scope_has_any(scope_hint: &Path) -> bool {
     let scope = scope_key_for(scope_hint);
     let prefix = format!("{scope}\0");
-    index_entries().iter().any(|entry| entry.starts_with(&prefix))
+    index_entries()
+        .iter()
+        .any(|entry| entry.starts_with(&prefix))
 }
 
 fn index_path() -> PathBuf {
@@ -436,21 +438,25 @@ impl CredentialStore for EncryptedFileStore {
 }
 
 fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, ring::error::Unspecified> {
-    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
     let rng = ring::rand::SystemRandom::new();
     let mut nonce_bytes = [0u8; NONCE_LEN];
     ring::rand::SecureRandom::fill(&rng, &mut nonce_bytes)?;
     let unbound = UnboundKey::new(&AES_256_GCM, key)?;
     let sealing_key = LessSafeKey::new(unbound);
     let mut in_out = plaintext.to_vec();
-    sealing_key.seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce_bytes), Aad::empty(), &mut in_out)?;
+    sealing_key.seal_in_place_append_tag(
+        Nonce::assume_unique_for_key(nonce_bytes),
+        Aad::empty(),
+        &mut in_out,
+    )?;
     let mut out = nonce_bytes.to_vec();
     out.extend_from_slice(&in_out);
     Ok(out)
 }
 
 fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
-    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
     if ciphertext.len() < NONCE_LEN {
         return None;
     }
@@ -506,10 +512,7 @@ mod tests {
             store.get("credentials-rs-test-scope-b", "ANTHROPIC_API_KEY"),
             Some("key-b".to_string())
         );
-        assert_eq!(
-            store.get("credentials-rs-test-scope-a", "OTHER_KEY"),
-            None
-        );
+        assert_eq!(store.get("credentials-rs-test-scope-a", "OTHER_KEY"), None);
 
         store
             .remove("credentials-rs-test-scope-a", "ANTHROPIC_API_KEY")
