@@ -568,7 +568,13 @@ shipped behaviour rather than a proposal.
   conversations, and sandboxed previews are first-class primitives backed by
   real validated payloads. Universal semantic shapes compose across domains;
   they are not a coding-only card taxonomy. The step-by-step contributor
-  guide is `docs/design/67-presentation-renderer-guide.md`.
+  guide is `docs/design/67-presentation-renderer-guide.md`. A model emits a
+  card preferentially by calling one of the twelve `emit_*_card` tools
+  (`vak-core/src/presentation_tools.rs`, one per payload shape, not per
+  `semantic_type`) rather than writing an inline ` ```vak ` fence — measured
+  far more reliable against the small local models this app targets (see
+  `docs/design/07-prompt.md` v3.4.5, `docs/design/30-render-architecture.md`
+  §30.1). The fence path is the fallback when no matching tool is present.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

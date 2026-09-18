@@ -84,6 +84,25 @@ line: *"Adding a seed never adds a renderer branch."*
 
 This is the common case and the cheap one.
 
+**Step 0 — confirm the type is actually server-registered.** A client
+`STRUCTURED_RENDERERS` key that the server never validates is dead code: any
+answer using it is rejected by `SkillRegistry::validate()`
+(`vak-delivery/src/skills.rs`) before it reaches the client, "unknown type."
+Check `vak_delivery::skills::built_in_semantic_types()` directly for the
+exact accepted set — do not assume a name is live just because a renderer
+or a `system-prompt.md` example mentions it.
+`crates/vak-core/src/presentation_tools.rs`'s
+`every_registered_semantic_type_across_all_shapes_renders` test exercises
+every one of those types end-to-end and will fail loudly if a shape's tool
+claims a type the registry doesn't accept, but it doesn't enumerate them for
+you — call `built_in_semantic_types()` for that. As of 3.4.5 the
+registry holds 87 types; `decision_matrix`, `criteria_matrix`,
+`tradeoff_analysis`, `metric_chart`, `comparison_chart`, `telemetry.chart`,
+`telemetry.metric`, `weather`, `lifestyle.recipe`, and
+`lifestyle.culinary_recipe` are registered client-side in
+`STRUCTURED_RENDERERS` but **not** in the server registry, so they're
+currently unreachable — a known, unfixed drift, not a template to copy.
+
 **Step 1 — add the registry entry.** `STRUCTURED_RENDERERS` in
 `crates/vak-client-ui/src/components/PresentationRenderer.tsx` is the single
 registry; its header comment states the invariant: *"Every named semantic type
@@ -95,13 +114,17 @@ resolves through this single registry."* Point your key at an existing
 ```
 
 Several keys sharing one builder is the intended pattern, not duplication.
-`recipe.card`, `recipe`, `lifestyle.recipe`, `lifestyle.culinary_recipe` and
-`recipe_summary` are five registry lines that all resolve to the same
-`buildRecipeSpec` / `renderRecipe` pair. Likewise `trend`, `timeseries`,
-`metric_chart` and `comparison_chart` all resolve to `buildChartSpec`, with
-`bar_chart` differing only by the forced `"bar"` override argument, and
-`decision_matrix` / `criteria_matrix` / `tradeoff_analysis` all resolving to
-`buildTableSpec` with different default titles.
+`recipe.card`, `recipe`, and `recipe_summary` are three registry lines that
+all resolve to the same `buildRecipeSpec` / `renderRecipe` pair —
+`lifestyle.recipe` and `lifestyle.culinary_recipe` are wired to the same
+builder too, but are part of the Step 0 drift above and currently
+unreachable. Likewise `trend` and `timeseries`
+(both server-registered) resolve to `buildChartSpec`, with `bar_chart`
+differing only by the forced `"bar"` override argument — `metric_chart` and
+`comparison_chart` are also wired to `buildChartSpec` but are part of the
+Step 0 drift above and currently unreachable. Same for `decision_matrix` /
+`criteria_matrix` / `tradeoff_analysis`, wired to `buildTableSpec` with
+different default titles but likewise not server-registered.
 
 Conditional routing is allowed where the payload genuinely decides the shape —
 `meal_plan` picks `buildRecipeSpec` when `steps` or `ingredients` are present

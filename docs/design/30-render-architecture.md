@@ -176,6 +176,24 @@ The envelope is recognized in three input forms:
 one level to get text, then look for our envelope within that text. The
 envelope format is identical regardless of provider.
 
+**Preferred emission path: `emit_*_card` tool calls.** The "Tool declared"
+row above is how `vak-core/src/presentation_tools.rs`'s twelve
+`emit_*_card` tools reach this pipeline — one tool per payload *shape*
+(not per `semantic_type`; siblings that share a shape, e.g. every
+timeline-flavored type, share one tool), each with a JSON Schema precise
+enough to satisfy `SkillRegistry::validate()`. `execute()` echoes the
+model's schema-validated arguments back as a bare envelope string, which
+`structured_outputs_from_tool_result_with()` already scanned any tool's
+result for — no new pipeline. This is now the *preferred* path over
+writing a ```vak fence directly (`system-prompt.md`,
+`docs/design/07-prompt.md` v3.4.5): measured against the real local model
+this app ships (gemma4:e2b-mlx via Ollama), a free-text fence in prose
+parsed as valid JSON only ~20% of the time, against 100% for a tool call
+constrained by a precise schema — the schema is enforced as the model
+constructs the call, so a malformed card never reaches this layer at all.
+The fence path remains the fallback for a turn where no matching
+`emit_*_card` tool is present.
+
 ### 30.2 The Semantic Compiler
 
 `compile_markdown()` in `presentation.rs` uses `pulldown-cmark` with

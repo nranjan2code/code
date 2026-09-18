@@ -106,6 +106,23 @@ retained.
   against earlier turns; and prohibits using demands for manual input or clarification
   as an exception-handling escape hatch to avoid taking action or using available tools.
 
+- v3.4.5: presentation cards are now preferentially emitted via per-shape
+  `emit_*_card` tool calls (`vak-core/src/presentation_tools.rs`) rather than
+  a hand-written `vak` fence, and the `capability_contract` block's card
+  guidance was reworded to say so — measured against the real local model
+  this app ships (gemma4:e2b-mlx via Ollama): a free-text fence in prose
+  parsed as valid JSON only ~20% of the time, against 100% for a tool call
+  constrained by a precise per-shape JSON Schema. The fence path stays as a
+  fallback for a turn where no matching `emit_*_card` tool is present. Also
+  added an explicit instruction not to restate a card just emitted via tool
+  as a trailing fence — observed live producing a duplicate card, since
+  `vak-server`'s tool-result projection and the client's own fence-parsing
+  are independent paths with no cross-source dedup; `vak-agent`'s turn loop
+  now also enforces this with one bounded repair turn
+  (`find_duplicate_card_fence`, mirroring the existing malformed-fence and
+  grounding-check repairs) since a small local model can't be trusted to
+  self-police it from prompt wording alone.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus
