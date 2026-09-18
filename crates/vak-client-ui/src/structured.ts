@@ -97,10 +97,17 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
       // If it's an explicit vak/semantic transport fence:
       // While streaming and not closed, suppress it so raw incomplete JSON doesn't flicker on screen.
       // If completed, attempt a relaxed parse; never dump raw control fence JSON into user chat prose.
+      // But a fence that never parses (e.g. malformed/truncated JSON from the
+      // model) must still leave a trace — silently appending nothing here
+      // produced a turn with a real response that rendered as a blank div,
+      // no error, no explanation. Appending a plain note keeps the "no raw
+      // JSON in chat" rule while ending the total silence.
       if (!streaming) {
         const recovered = parseVakFence(match[2]);
         if (recovered) {
           appendCard(recovered, match[2]);
+        } else {
+          appendText("This response could not be rendered — the result was malformed.");
         }
       }
     } else {

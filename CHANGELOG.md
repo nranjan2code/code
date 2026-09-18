@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.4 — 2026-09-18
+
+- Found the actual mechanism behind the still-blank "top news" turn after 3.4.3: the model's `research.synthesis` fence contained malformed JSON (a missing comma/key near the end of its `takeaways` array — the local `gemma4:e2b-mlx` model produced invalid output). `assistantParts` in `structured.ts` deliberately appends *nothing* when an explicit `vak`-tagged fence fails to parse even on its relaxed retry — by design, to avoid dumping raw control JSON into chat, but with no fallback for the failure case, so a genuinely malformed response rendered as total silence with the document's `source_markdown` non-empty (holding the raw broken fence), which meant the 3.4.3 empty-document fallback never triggered either — that fallback only fires when `source_markdown` is *also* empty. `assistantParts` now appends a short "could not be rendered" note instead of nothing when a fence never parses.
+
 ## 3.4.3 — 2026-09-18
 
 - Found the actual cause of the blank-transcript bug 3.4.1 only partly addressed: `PresentationDocumentView` rendered a completely empty `<div class="semantic-document">` whenever a turn's document had zero `blocks` *and* an empty `source_markdown` — the raw-markdown fallback in that component only fires when `source_markdown` is non-empty, so an empty document produced no visible output at all, with no error and no "no result" notice, because the item itself was present (just empty), so the 3.4.1 `Turn`-level fallback never triggered. `PresentationDocumentView` now shows the same "no result" notice for this case. The server's turn diagnostic logging added in 3.4.2 (`log_turns_with_no_visible_answer`) had the identical blind spot — any `Document` content counted as a real answer regardless of whether it actually held anything — and now checks `document_has_content` (non-empty blocks or non-empty `source_markdown`) instead.
