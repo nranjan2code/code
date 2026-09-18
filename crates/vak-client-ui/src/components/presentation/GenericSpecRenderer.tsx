@@ -8,7 +8,10 @@ import * as api from "../../api";
 import Icon from "../Icon";
 
 /**
- * Proof-of-concept generic, declarative renderer for presentation packs.
+ * The generic, declarative renderer for presentation packs. Every key in
+ * STRUCTURED_RENDERERS (PresentationRenderer.tsx) routes through this one
+ * component via a `buildXSpec`/`renderX` pair per primitive — there are no
+ * more per-semantic_type bespoke components.
  *
  * This intentionally reuses the exact node shape the Rust `vak-presentation`
  * crate already emits on the wire as `OutputContent::Adaptive` — see
@@ -21,17 +24,16 @@ import Icon from "../Icon";
  * and nothing activates them by default, so `semantic_type` payloads never
  * arrive as `{ type: "adaptive" }` in practice — they arrive as raw
  * `{ type: "structured", output: { payload } }` and are matched against the
- * legacy STRUCTURED_RENDERERS registry.
+ * STRUCTURED_RENDERERS registry.
  *
  * Rather than inventing a second, parallel schema, this component consumes
  * the SAME `AdaptiveRenderNode` shape. The `buildXSpec` adapters below turn
  * today's raw, ad-hoc payloads into that shape client-side (the job a
- * server-side `compile()` call would otherwise do), so this renderer proves
- * the declarative-schema design end-to-end without requiring a backend
- * change. When vak-server starts activating built-in seeds by default (see
- * follow-up notes), the real `{ type: "adaptive" }` items it produces can be
- * fed into this exact component with no changes — only the adapters become
- * unnecessary.
+ * server-side `compile()` call would otherwise do). When vak-server starts
+ * activating built-in seeds by default (see docs/design/67-presentation-
+ * renderer-guide.md), the real `{ type: "adaptive" }` items it produces can
+ * be fed into this exact component with no changes — only the adapters
+ * become unnecessary.
  *
  * `surface` is the one thing that varies per rendering context (main chat
  * timeline vs. a denser panel/compact view). It is deliberately NOT part of
@@ -54,11 +56,13 @@ function str(props: Record<string, unknown>, key: string): string | undefined {
 }
 
 /**
- * Render one primitive node. Only "timeline" and "metric" get bespoke,
- * surface-aware treatment here (the 2 validated cases); every other
- * primitive degrades through the same safe generic fallback the existing
- * `AdaptiveTreeView` (PresentationRenderer.tsx) already uses, so an
- * unrecognized or malformed node never renders blank and never throws.
+ * Render one primitive node. Every registered primitive (timeline, metric,
+ * metric_grid, table, comparison, recipe, research, diff, terminal,
+ * test_matrix, chart, ui_preview, media, universal_card) gets bespoke,
+ * surface-aware treatment here; anything unrecognized or malformed degrades
+ * through the same safe generic fallback the existing `AdaptiveTreeView`
+ * (PresentationRenderer.tsx) already uses, so it never renders blank and
+ * never throws.
  */
 function renderNode(node: AdaptiveRenderNode | null | undefined, surface: RenderSurface): ReturnType<typeof renderTimeline> {
   if (!node || typeof node !== "object" || typeof node.primitive !== "string") {
