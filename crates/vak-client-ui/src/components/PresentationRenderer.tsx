@@ -537,9 +537,20 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
                   const recovered = parseVakFence(match[0]);
                   if (recovered) return <StructuredView output={recovered} fallback={block.content} />;
                 }
-                if (!showOperatorChrome()) {
-                  return null;
-                }
+                // A genuinely malformed vak/semantic-type fence (the model
+                // emitted invalid JSON, e.g. mismatched brackets) used to
+                // `return null` here whenever operator chrome was off —
+                // which it always is (`showOperatorChrome` is hardcoded
+                // `false`). That produced a real answer that rendered as
+                // total silence: no card, no error, no raw JSON, nothing.
+                // Same fallback contract as assistantParts()'s equivalent
+                // fix (structured.ts) — never leave a parse failure with no
+                // trace at all.
+                return (
+                  <p class="semantic-paragraph" style={{ opacity: 0.7, "font-style": "italic" }}>
+                    This response could not be rendered — the result was malformed.
+                  </p>
+                );
               }
             }
             if (block.language === "mermaid") {
