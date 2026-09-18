@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.5 — 2026-09-18
+
+- Fixed the 3.4.2 per-turn diagnostic logging (`log_turns_with_no_visible_answer`) firing repeatedly for a turn that was simply still running: it excluded `Progress`/`Retry`/`Information` items but not a bare `Outcome` item whose own status was still `Pending`/`Running`, so it logged a mid-flight turn as a failure on every client poll — caught from the live gateway log, where one in-flight turn produced ~20 consecutive log lines. Now skips a turn whose only non-progress item hasn't settled yet.
+
 ## 3.4.4 — 2026-09-18
 
 - Found the actual mechanism behind the still-blank "top news" turn after 3.4.3: the model's `research.synthesis` fence contained malformed JSON (a missing comma/key near the end of its `takeaways` array — the local `gemma4:e2b-mlx` model produced invalid output). `assistantParts` in `structured.ts` deliberately appends *nothing* when an explicit `vak`-tagged fence fails to parse even on its relaxed retry — by design, to avoid dumping raw control JSON into chat, but with no fallback for the failure case, so a genuinely malformed response rendered as total silence with the document's `source_markdown` non-empty (holding the raw broken fence), which meant the 3.4.3 empty-document fallback never triggered either — that fallback only fires when `source_markdown` is *also* empty. `assistantParts` now appends a short "could not be rendered" note instead of nothing when a fence never parses.
