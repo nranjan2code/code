@@ -1,6 +1,37 @@
 import type { StructuredOutput } from "./types";
 
 export type AssistantPart = { type: "text"; text: string } | { type: "card"; output: StructuredOutput; source: string };
+export type CardPart = Extract<AssistantPart, { type: "card" }>;
+
+/** A rendering unit built from `AssistantPart[]`: either prose, or one or
+ * more cards the model emitted back-to-back with no prose between them. */
+export type RenderGroup = { type: "text"; text: string } | { type: "card_group"; cards: CardPart[] };
+
+/**
+ * Groups consecutive `{type:"card"}` parts (no text part between them) into
+ * a single `card_group` unit, so a multi-fence answer — e.g. a research
+ * synthesis alongside a supporting chart and a comparison table — renders
+ * as one connected, laid-out unit instead of unrelated full-width blocks
+ * that happen to be adjacent in the DOM. A lone card between prose is still
+ * a `card_group` of length 1, so callers only need to handle two cases
+ * (text vs. card_group), not three.
+ */
+export function groupAssistantParts(parts: AssistantPart[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      groups.push(part);
+      continue;
+    }
+    const last = groups[groups.length - 1];
+    if (last && last.type === "card_group") {
+      last.cards.push(part);
+    } else {
+      groups.push({ type: "card_group", cards: [part] });
+    }
+  }
+  return groups;
+}
 
 /** Decode explicit transport fences without guessing a result from prose.
  * Unfinished vak fences wait for completion; invalid completed data remains inspectable. */

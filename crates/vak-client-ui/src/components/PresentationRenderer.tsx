@@ -34,7 +34,38 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
 import GenericSpecRenderer, { buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
-import { assistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
+import type { AssistantPart } from "../structured";
+
+/** Renders a run of `AssistantPart`s (text + cards) with adjacent cards
+ * grouped into a connected layout instead of independent stacked blocks —
+ * shared by every render site that replays `assistantParts()` output
+ * (streamed paragraphs, raw_markdown fallbacks, and whole-document view). */
+function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: string) => JSX.Element }) {
+  const groups = createMemo(() => groupAssistantParts(props.parts));
+  const wrapText = (text: string) => (props.textWrap ? props.textWrap(text) : <p class="semantic-paragraph">{text}</p>);
+  return (
+    <For each={groups()}>
+      {(group) =>
+        group.type === "text" ? (
+          wrapText(group.text)
+        ) : group.cards.length === 1 ? (
+          <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} />
+        ) : (
+          <div class="card-group" style={{ "--card-group-count": group.cards.length }}>
+            <For each={group.cards}>
+              {(card) => (
+                <div class="card-group-item">
+                  <StructuredView output={card.output} fallback={card.source} />
+                </div>
+              )}
+            </For>
+          </div>
+        )
+      }
+    </For>
+  );
+}
 
 /** Wraps settled assistant content with the same Vak avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -475,17 +506,7 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             if (raw.includes('"semantic_type"')) {
               const parts = assistantParts(raw);
               if (parts.some((p) => p.type === "card")) {
-                return (
-                  <For each={parts}>
-                    {(part) =>
-                      part.type === "card" ? (
-                        <StructuredView output={part.output} fallback={part.source} />
-                      ) : (
-                        <p class="semantic-paragraph">{part.text}</p>
-                      )
-                    }
-                  </For>
-                );
+                return <AssistantPartsView parts={parts} />;
               }
             }
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
@@ -549,15 +570,10 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
               const parts = assistantParts(block.markdown);
               if (parts.some((p) => p.type === "card")) {
                 return (
-                  <For each={parts}>
-                    {(part) =>
-                      part.type === "card" ? (
-                        <StructuredView output={part.output} fallback={part.source} />
-                      ) : (
-                        <div class="semantic-limited" title={block.reason}><pre>{part.text}</pre></div>
-                      )
-                    }
-                  </For>
+                  <AssistantPartsView
+                    parts={parts}
+                    textWrap={(text) => <div class="semantic-limited" title={block.reason}><pre>{text}</pre></div>}
+                  />
                 );
               }
             }
@@ -585,15 +601,10 @@ export function PresentationDocumentView(props: { document: PresentationDocument
     <div class="semantic-document">
       <Show when={showOperatorChrome() && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}>
-        <For each={assistantParts(props.document.source_markdown)}>
-          {(part) =>
-            part.type === "card" ? (
-              <StructuredView output={part.output} fallback={part.source} />
-            ) : (
-              <div class="semantic-source">{part.text}</div>
-            )
-          }
-        </For>
+        <AssistantPartsView
+          parts={assistantParts(props.document.source_markdown)}
+          textWrap={(text) => <div class="semantic-source">{text}</div>}
+        />
       </Show>
       <Show when={props.document.blocks.length === 0 && !props.document.source_markdown}>
         <section class="semantic-recovery" role="status">

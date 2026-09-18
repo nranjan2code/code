@@ -2789,6 +2789,29 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   margin: 12px 0;
   padding: 15px 16px;
 }
+/* A single answer that emits multiple `vak` fences back-to-back (e.g. a
+ * research synthesis alongside a supporting chart and a comparison table)
+ * renders as one connected group here, not as unrelated full-width blocks
+ * that just happen to be adjacent. Two cards sit side by side when there's
+ * room; three or more wrap into a responsive grid; on narrow viewports
+ * (or a genuinely tall single card) it collapses to a single column. */
+.card-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+  align-items: start;
+}
+.card-group-item > * {
+  max-width: none;
+  margin: 0;
+  height: 100%;
+}
+@media (max-width: 640px) {
+  .card-group {
+    grid-template-columns: 1fr;
+  }
+}
 .rich-structured-header {
   display: flex;
   align-items: baseline;

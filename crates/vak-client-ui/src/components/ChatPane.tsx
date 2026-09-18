@@ -9,7 +9,7 @@ import MessageActions from "./MessageActions";
 import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
 import * as api from "../api";
 import "../focusTrap";
-import { assistantParts, cleanAssistantText, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, cleanAssistantText, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -608,6 +608,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     const [content, setContent] = createStore<{ parts: ReturnType<typeof assistantParts> }>({ parts: [] });
     createEffect(() => setContent("parts", reconcile(assistantParts(props.item.text, props.item.streaming), { key: null })));
     const parts = () => content.parts;
+    const groups = createMemo(() => groupAssistantParts(parts()));
     const displayText = () => parts().filter((part) => part.type === "text").map((part) => part.text).join("\n\n");
 
     const turnDeliverables = createMemo(() => {
@@ -692,9 +693,25 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
           </Show>
         </div>
         <div class="assistant-turn-body">
-          <For each={parts()}>{(part) => part.type === "text"
-            ? <Markdown text={part.text} streaming={props.item.streaming} />
-            : <StructuredView output={part.output} fallback={part.source} sessionId={props.sessionId ?? undefined} />}</For>
+          <For each={groups()}>
+            {(group) =>
+              group.type === "text" ? (
+                <Markdown text={group.text} streaming={props.item.streaming} />
+              ) : group.cards.length === 1 ? (
+                <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} sessionId={props.sessionId ?? undefined} />
+              ) : (
+                <div class="card-group" style={{ "--card-group-count": group.cards.length }}>
+                  <For each={group.cards}>
+                    {(card) => (
+                      <div class="card-group-item">
+                        <StructuredView output={card.output} fallback={card.source} sessionId={props.sessionId ?? undefined} />
+                      </div>
+                    )}
+                  </For>
+                </div>
+              )
+            }
+          </For>
           <Show when={!props.item.streaming && turnDeliverables().length > 0}>
             <div class="turn-artifacts-container">
               <For each={turnDeliverables()}>
