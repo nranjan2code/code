@@ -3360,9 +3360,16 @@ impl Core {
         }
         if self.effective_memory_write_enabled() {
             names.push("remember".into());
+            names.push("entity_record".into());
         }
         if self.effective_memory_skill_proposals() {
             names.push("propose_skill".into());
+        }
+        names.push("entity_query".into());
+        names.push("data_query".into());
+        names.push("doc_read".into());
+        for shape_tool in presentation_tools::EmitCardTool::all() {
+            names.push(vak_tools::Tool::name(&shape_tool).to_string());
         }
 
         for tool in self.built_in_runtime_plugin_tools() {
