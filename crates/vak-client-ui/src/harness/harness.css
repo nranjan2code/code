@@ -1,0 +1,74 @@
+/* The app shell's own styles.css pins html/body/#root to height:100% with
+   overflow:hidden (it's a fixed-viewport SPA whose panes scroll internally).
+   The harness is a plain long page, so give the viewport back its scroll. */
+html, body, #root {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.harness-root {
+  padding: 24px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.harness-header h1 {
+  margin-bottom: 8px;
+}
+.harness-header input {
+  margin-top: 8px;
+  padding: 8px 10px;
+  width: 320px;
+  max-width: 100%;
+}
+.harness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin: 16px 0 40px;
+}
+.harness-grid-wide {
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+}
+.harness-cell {
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 10px;
+  overflow: auto;
+  max-height: 480px;
+}
+.harness-cell-failed {
+  border-color: #d33;
+  box-shadow: 0 0 0 2px rgba(221, 51, 51, 0.3);
+}
+.harness-cell-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 6px;
+}
+.harness-variant {
+  white-space: nowrap;
+}
+.harness-error {
+  color: #d33;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 0;
+}
+.harness-section-note {
+  font-size: 13px;
+  opacity: 0.75;
+  max-width: 900px;
+  margin: 4px 0 12px;
+}
+.harness-note {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 4px 0 8px;
+}
+.harness-text-part {
+  white-space: pre-wrap;
+  font-size: 13px;
+}
