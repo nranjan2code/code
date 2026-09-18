@@ -8384,6 +8384,9 @@ async fn list_presentation_primitives() -> Json<Vec<vak_presentation::Primitive>
         vak_presentation::Primitive::Alert,
         vak_presentation::Primitive::Conversation,
         vak_presentation::Primitive::Simulation,
+        vak_presentation::Primitive::Recipe,
+        vak_presentation::Primitive::Research,
+        vak_presentation::Primitive::UiPreview,
     ])
 }
 
@@ -16523,8 +16526,8 @@ mod sandbox_promotion_tests {
                 activated += 1;
             }
         }
-        assert_eq!(activated, 72);
-        assert_eq!(library.activations().len(), 72);
+        assert_eq!(activated, 75);
+        assert_eq!(library.activations().len(), 75);
 
         // Verify deactivate all
         let spec_ids: Vec<String> = library

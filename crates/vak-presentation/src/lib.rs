@@ -167,7 +167,29 @@ pub enum Primitive {
     Alert,
     Conversation,
     Simulation,
+    /// Ingredients, timed steps, yields and equipment. Table/KeyValue cannot
+    /// express the ingredient/step/timer triple without the surface guessing
+    /// which column means what, so this is a distinct concept, not a shortcut.
+    Recipe,
+    /// A question with takeaways, sources and citations bound together. The
+    /// citation-to-takeaway relationship is lost if this is flattened into a
+    /// Section plus a CitationList.
+    Research,
+    /// A sandboxed preview of authored UI. The isolation contract (no ambient
+    /// privileges for the previewed document) is part of the primitive, which
+    /// no composition of existing primitives carries.
+    UiPreview,
 }
+
+// Deliberately absent: `MetricGrid`, `Media` and `UniversalCard`. Each is a
+// composition of primitives that already exist, and `SpecNode` lets any
+// primitive nest any other, so they are expressible today without growing the
+// vocabulary:
+//   metric_grid    = `Row`/`Section` whose children (or `each`/`item`) are `Metric`
+//   media          = `Image` / `Audio` / `Video` / `File` / `Gallery`
+//   universal_card = `Entity` or `Section` containing `KeyValue` rows
+// A client-side rendering shortcut is not a reason for a host primitive; only a
+// concept that no composition can express is (see `Recipe`/`Research`/`UiPreview`).
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderTree {
@@ -950,6 +972,83 @@ fn value_as_text(value: Value) -> Option<String> {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// A pack registered at runtime may compose the existing primitive
+    /// vocabulary in new ways with no code change: `metric_grid`, `media` and
+    /// `universal_card` are specs, not primitives. This deserializes such a
+    /// pack from JSON exactly as a plugin would register it.
+    #[test]
+    fn runtime_registered_pack_composes_existing_primitives() {
+        for (semantic_type, root) in [
+            (
+                "metrics.grid",
+                serde_json::json!({
+                    "primitive": "row",
+                    "each": { "path": "$.metrics" },
+                    "item": {
+                        "primitive": "metric",
+                        "props": {
+                            "label": { "kind": "binding", "path": "$.label" },
+                            "value": { "kind": "binding", "path": "$.value" }
+                        }
+                    }
+                }),
+            ),
+            (
+                "media.gallery",
+                serde_json::json!({
+                    "primitive": "gallery",
+                    "children": [
+                        { "primitive": "image", "props": { "src": { "kind": "binding", "path": "$.src" } } },
+                        { "primitive": "video", "props": { "src": { "kind": "binding", "path": "$.clip" } } }
+                    ]
+                }),
+            ),
+            (
+                "card.universal",
+                serde_json::json!({
+                    "primitive": "entity",
+                    "props": { "title": { "kind": "binding", "path": "$.title" } },
+                    "children": [{
+                        "primitive": "key_value",
+                        "props": {
+                            "label": { "kind": "binding", "path": "$.label" },
+                            "value": { "kind": "binding", "path": "$.value" }
+                        }
+                    }]
+                }),
+            ),
+        ] {
+            let spec: PresentationSpec = serde_json::from_value(serde_json::json!({
+                "schema_version": SPEC_SCHEMA_VERSION,
+                "id": format!("plugin.{semantic_type}"),
+                "revision": 1,
+                "accepts": [semantic_type],
+                "root": root,
+            }))
+            .expect("runtime pack parses");
+            validate_spec(&spec).expect("runtime pack validates");
+            let result = compile(
+                &spec,
+                &CompileInput {
+                    semantic_type: semantic_type.into(),
+                    payload: serde_json::json!({
+                        "title": "Card",
+                        "label": "Latency",
+                        "value": "12ms",
+                        "src": "a.png",
+                        "clip": "a.mp4",
+                        "metrics": [{"label":"p50","value":"9ms"},{"label":"p99","value":"40ms"}],
+                    }),
+                    fallback_text: "Fallback".into(),
+                },
+            );
+            assert!(
+                matches!(result, CompiledPresentation::Rich(_)),
+                "{semantic_type} should compile without any code change: {result:?}"
+            );
+        }
+    }
 
     fn spec() -> PresentationSpec {
         PresentationSpec {
