@@ -616,6 +616,20 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "link.preview",
             "metric",
             "chart",
+            // Synonyms the system prompt teaches as valid `chart` aliases
+            // (system-prompt.md: "`chart` (or `trend`, `timeseries`,
+            // `bar_chart`)") but which this list previously omitted, so
+            // `SkillRegistry::validate()` silently rejected them and a
+            // legitimately-emitted chart card degraded to plain markdown
+            // fallback text instead of rendering. The client already has
+            // renderers for all three (PresentationRenderer.tsx). Keep this
+            // list and the prompt's promised aliases in sync — see the
+            // `presentation_catalogue_lists_only_untaught_semantic_types`
+            // test in vak-core/src/prompts.rs for the existing half of this
+            // contract (registry-accepts-but-prompt-silent direction).
+            "trend",
+            "timeseries",
+            "bar_chart",
             "media.image",
             "media.video",
             "media.audio",
