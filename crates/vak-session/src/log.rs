@@ -7,7 +7,7 @@ use vak_llm::Message;
 
 use crate::types::{
     CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, SessionError, SessionHeader,
-    WorkEvent,
+    TranscriptMessage, WorkEvent,
 };
 
 pub struct SessionLog {
@@ -752,6 +752,7 @@ impl SessionLog {
         for entry in self.chain_to_root() {
             if let EntryPayload::Message(record) = &entry.payload {
                 if record.message.role == vak_llm::Role::User
+                    && record.control_kind().is_none()
                     && record
                         .message
                         .content
@@ -964,7 +965,14 @@ impl SessionLog {
         for entry in self.chain_to_root() {
             match &entry.payload {
                 EntryPayload::Message(record) => {
-                    out.push((entry.id.clone(), record.message.clone(), false, false));
+                    // A persisted nudge is runtime guidance for the turn in
+                    // flight, not conversation to summarise into a packet.
+                    out.push((
+                        entry.id.clone(),
+                        record.message.clone(),
+                        false,
+                        record.control_kind().is_some(),
+                    ));
                 }
                 EntryPayload::Compaction(c) => {
                     if c.reset_all {
@@ -1061,6 +1069,7 @@ impl SessionLog {
             for entry in self.chain_to_root() {
                 if let EntryPayload::Message(record) = &entry.payload
                     && record.message.role == vak_llm::Role::User
+                    && record.control_kind().is_none()
                 {
                     let text = record.message.text_content();
                     let trimmed = text.trim();
@@ -1200,6 +1209,44 @@ impl SessionLog {
             selected_entry_ids: selected,
             dropped_entry_ids: dropped,
         }
+    }
+
+    /// The model-visible messages with their ledger identity and class, for
+    /// consumers that must tell conversation from runtime traffic and pair a
+    /// message with the projection built from the same entry.
+    pub fn derive_transcript(&self) -> Vec<TranscriptMessage> {
+        let controls: HashMap<String, vak_intent::control::ControlKind> = self
+            .chain_to_root()
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Message(record) => {
+                    record.control_kind().map(|kind| (entry.id.clone(), kind))
+                }
+                _ => None,
+            })
+            .collect();
+        self.derive_keyed_tagged()
+            .into_iter()
+            .map(
+                |(entry_id, message, is_summary, is_context)| TranscriptMessage {
+                    control: controls.get(&entry_id).copied(),
+                    context: is_summary || is_context,
+                    entry_id,
+                    message,
+                },
+            )
+            .collect()
+    }
+
+    /// The conversation as a person would read it: the model-visible messages
+    /// minus the runtime-authored nudges. For exports and other human-facing
+    /// views; the model itself is fed `derive_messages`, which is unchanged.
+    pub fn derive_conversation(&self) -> Vec<Message> {
+        self.derive_transcript()
+            .into_iter()
+            .filter(|item| item.control.is_none())
+            .map(|item| item.message)
+            .collect()
     }
 
     pub fn derive_messages(&self) -> Vec<Message> {

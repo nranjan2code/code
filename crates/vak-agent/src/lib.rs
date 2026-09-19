@@ -1310,16 +1310,13 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let tool_list = tool_names.join(", ");
-                        let _ = self.session.lock().await.append_message(MessageRecord {
-                            message: Message::user_text(format!(
+                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
                                 "[grounding-check]: Your last answer didn't cite the results from {tool_list}, which you just called. \
                                  Either synthesize those results into a structured card that cites them (e.g. a \
                                  `research.synthesis` vak-fence with real sources/URLs from the tool output), or, if the \
                                  results genuinely don't answer the question, say so explicitly instead of writing a vague \
                                  unsourced summary. Please redo your answer now."
-                            )),
-                            meta: None,
-                        });
+                            )));
                         turn += 1;
                         continue;
                     }
@@ -1339,15 +1336,12 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        let _ = self.session.lock().await.append_message(MessageRecord {
-                            message: Message::user_text(format!(
+                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
                                 "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse \
                                  ({parse_error}). Resend the same answer with a syntactically valid JSON body this time — \
                                  double-check every object/array is closed and every key is quoted. If you can't produce \
                                  valid JSON for it, drop the fence and answer in plain prose instead."
-                            )),
-                            meta: None,
-                        });
+                            )));
                         turn += 1;
                         continue;
                     }
@@ -1370,15 +1364,12 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        let _ = self.session.lock().await.append_message(MessageRecord {
-                            message: Message::user_text(format!(
+                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
                                 "[duplicate-card-check]: You already emitted a `{dup_type}` card via the matching \
                                  emit_*_card tool call above, and the user already sees it. Resend your answer \
                                  WITHOUT the ```vak fence that repeats it — just the short narration around the \
                                  card is needed, no restated JSON."
-                            )),
-                            meta: None,
-                        });
+                            )));
                         turn += 1;
                         continue;
                     }
@@ -1405,10 +1396,14 @@ impl Agent {
                             if turn + 1 >= self.config.max_turns {
                                 return TurnOutcome::MaxTurnsReached;
                             }
-                            let _ = self.session.lock().await.append_message(MessageRecord {
-                                message: Message::user_text(nudge),
-                                meta: None,
-                            });
+                            let _ =
+                                self.session
+                                    .lock()
+                                    .await
+                                    .append_message(MessageRecord::control(
+                                        vak_intent::control::ControlKind::PresentationCheck,
+                                        nudge,
+                                    ));
                             turn += 1;
                             continue;
                         }
@@ -1452,12 +1447,14 @@ impl Agent {
                                 reason: reason.clone(),
                             })
                             .await;
-                        let _ = self.session.lock().await.append_message(MessageRecord {
-                            message: Message::user_text(format!(
-                                "[stop-hook]: {reason}\nPlease continue."
-                            )),
-                            meta: None,
-                        });
+                        let _ = self
+                            .session
+                            .lock()
+                            .await
+                            .append_message(MessageRecord::control(
+                                vak_intent::control::ControlKind::StopHook,
+                                format!("[stop-hook]: {reason}\nPlease continue."),
+                            ));
                         turn += 1;
                         continue;
                     }
@@ -2702,10 +2699,14 @@ impl Agent {
                 reason: reason.clone(),
             })
             .await;
-        let _ = self.session.lock().await.append_message(MessageRecord {
-            message: Message::user_text(format!("[stop-guard]: {reason}\nPlease continue.")),
-            meta: None,
-        });
+        let _ = self
+            .session
+            .lock()
+            .await
+            .append_message(MessageRecord::control(
+                vak_intent::control::ControlKind::StopGuard,
+                format!("[stop-guard]: {reason}\nPlease continue."),
+            ));
         true
     }
 
@@ -2732,6 +2733,7 @@ impl Agent {
                 model: Some(response.model.clone()),
                 stop_reason: Some(format!("{:?}", response.stop_reason).to_lowercase()),
                 usage: Some(response.usage.clone()),
+                control: None,
             }),
         });
     }

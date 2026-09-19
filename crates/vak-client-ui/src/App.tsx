@@ -213,7 +213,7 @@ async function hydrate(id: string) {
       api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
     ]);
     if (!isRunning(id)) {
-      hydrateFromTranscript(id, t.messages);
+      hydrateFromTranscript(id, t.messages, t.entries);
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
     }

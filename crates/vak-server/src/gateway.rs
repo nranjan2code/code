@@ -2940,7 +2940,7 @@ async fn execute_turn_chain(
         let (reply_text, is_error, ledger) = match outcome {
             Ok((o, log)) => {
                 let err = outcome_is_error(&o);
-                let text = outcome_text(&o);
+                let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
                 (text, err, Some(log))
             }
             Err(e) => {

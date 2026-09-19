@@ -586,6 +586,27 @@ shipped behaviour rather than a proposal.
   bounded `[presentation-check]` nudge (`AgentConfig::presentation_check`,
   supplied by `Core` from `RecipeCatalog::intended_outputs`); like the other
   repair nudges it is scaffolding and never shown as a user message.
+  Runtime-authored traffic is **typed, never sniffed**: every user-role
+  message the agent loop appends (repair nudges, stop guards) is created with
+  `MessageRecord::control(kind, body)`, which sets `MessageMeta::control` to a
+  `vak_intent::control::ControlKind`, and that tag is the only way any layer
+  recognises one. `vak_intent::control` is the single vocabulary (the kinds,
+  the inline hints, the derived context-block tags) and the single
+  implementation of `clean_scaffolding`, shared by `vak-server`, `vak-delivery`
+  and every channel. The tag drives the projection, the transcript API, session
+  search, exports, compaction accounting, reflection, and the per-turn state
+  the runtime resets on a user message; none of them count a nudge as a user
+  turn. Clients receive only what a person can see (`/transcript` omits nudges,
+  context blocks and the frozen contract), each message with its ledger
+  `entry_id`, and the chat pairs a turn with the projection by that id, never
+  by position. An answer the runtime sent back for a redo is an internal draft
+  and is not projected. A channel, webhook, inbox or routine summary gets the
+  turn's cards (their deterministic text form) ahead of the narration, via
+  `projection::text_with_run_cards`, because a card emitted through a tool is
+  not in the model's final text. The two lists the desktop client keeps
+  (`INLINE_HINT_MARKERS`, `CONTEXT_BLOCK_TAGS` in `structured.ts`) are checked
+  for exact equality with the Rust vocabulary by
+  `vak-server/tests/control_vocabulary_sync.rs`.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

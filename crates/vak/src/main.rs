@@ -44,7 +44,7 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
             return 1;
         }
     };
-    let msgs = log.derive_messages();
+    let msgs = log.derive_conversation();
     let md = vak_core::transcript_md::render_markdown(&msgs);
     let content = if html {
         vak_presentation::transcode_to_html(&format!("Session {session_id}"), &md)

@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
+pub(crate) use vak_intent::control::{clean_scaffolding, is_scaffolding_line};
+
 use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
@@ -70,6 +72,51 @@ use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 /// whether the result was an error. Named because the inline tuple was wide
 /// enough that a reader had to count commas to find the error flag.
 type TurnTool = (String, String, serde_json::Value, Option<String>, bool);
+
+/// The text a surface that cannot render cards natively — a chat channel, a
+/// webhook, the inbox, a scheduled routine's summary — gets for a finished run.
+///
+/// A card emitted through an `emit_*_card` call is not in the model's final
+/// text (that is only a line of narration), so delivering just that text drops
+/// the card entirely. This takes the cards of the latest turn from the same
+/// projection the desktop renders (so retries are superseded and nothing is
+/// counted twice) and puts their deterministic text form ahead of the
+/// narration.
+pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> String {
+    let session_id = session
+        .header()
+        .map(|header| header.session_id.clone())
+        .unwrap_or_default();
+    let timeline = snapshot(&session_id, session);
+    let Some(turn) = timeline
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.role == OutputRole::User)
+        .map(|item| item.turn_id.clone())
+    else {
+        return narration;
+    };
+    let cards: Vec<&str> = timeline
+        .items
+        .iter()
+        .filter(|item| {
+            item.turn_id == turn
+                && item.kind == OutputKind::Card
+                && matches!(item.content, OutputContent::Structured { .. })
+        })
+        .map(|item| item.fallback_text.trim())
+        .filter(|text| !text.is_empty())
+        .collect();
+    if cards.is_empty() {
+        return narration;
+    }
+    let cards = cards.join("\n\n");
+    match narration.trim() {
+        "" | "(no text)" => cards,
+        _ => format!("{cards}\n\n{narration}"),
+    }
+}
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let builtin = PresentationPlanner {
@@ -250,7 +297,12 @@ fn snapshot_inner(
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
+                // What the user wrote versus what the runtime authored is a
+                // typed fact on the record (`vak_intent::control`), not
+                // something to re-derive from the text.
+                let control = record.control_kind();
                 if record.message.role == Role::User
+                    && control.is_none()
                     && record.message.content.iter().any(|block| match block {
                         ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
                         _ => false,
@@ -261,17 +313,7 @@ fn snapshot_inner(
                     card_group_by_type.clear();
                     repair_armed = false;
                 }
-                if record.message.role == Role::User
-                    && record.message.content.iter().any(|block| match block {
-                        ContentBlock::Text { text } => {
-                            text.contains("[fence-check]")
-                                || text.contains("[duplicate-card-check]")
-                                || text.contains("[grounding-check]")
-                                || text.contains("[presentation-check]")
-                        }
-                        _ => false,
-                    })
-                {
+                if control.is_some_and(|kind| kind.retries_answer()) {
                     repair_armed = true;
                 }
                 for block in &record.message.content {
@@ -401,10 +443,30 @@ fn snapshot_inner(
     let mut timeline = OutputTimeline::empty(session_id);
     timeline.goal = session.goal_state();
     let mut turn = 0usize;
+    // An answer the runtime sent back for a redo (a `retries_answer` nudge
+    // followed it) is an internal draft, not something to show: the user sees
+    // the redone answer, never both. `last_assistant_entry` is the answer the
+    // next such nudge would be rejecting.
+    let mut last_assistant_entry: Option<String> = None;
+    let mut rejected_drafts: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
+                let control = record.control_kind();
+                if control.is_some_and(|kind| kind.retries_answer())
+                    && let Some(draft) = last_assistant_entry.take()
+                {
+                    rejected_drafts.insert(draft);
+                }
+                if record.message.role == Role::Assistant
+                    && record.message.content.iter().any(|block| {
+                        matches!(block, ContentBlock::Text { text } if !text.trim().is_empty())
+                    })
+                {
+                    last_assistant_entry = Some(entry.id.clone());
+                }
                 if record.message.role == Role::User
+                    && control.is_none()
                     && record.message.content.iter().any(|block| match block {
                         ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
                         _ => false,
@@ -416,6 +478,9 @@ fn snapshot_inner(
                 for (index, block) in record.message.content.iter().enumerate() {
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
+                            if control.is_some() {
+                                continue;
+                            }
                             let assistant = record.message.role == Role::Assistant;
                             // A short presentation envelope is ledger metadata, not prose.
                             // Projecting it creates a duplicate, empty-looking Answer card.
@@ -975,6 +1040,16 @@ fn snapshot_inner(
             deduplicated.push(item);
         }
     }
+    if !rejected_drafts.is_empty() {
+        deduplicated.retain(|item| {
+            !(item.role == OutputRole::Assistant
+                && item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.entry_id.as_ref())
+                    .is_some_and(|entry| rejected_drafts.contains(entry)))
+        });
+    }
     if !ids_to_remove.is_empty() {
         deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
@@ -1095,113 +1170,6 @@ fn media_type_for_path(path: &str) -> Option<String> {
         }
         .into(),
     )
-}
-
-pub(crate) fn is_scaffolding_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with("Surface:")
-        || trimmed.starts_with("Outcome:")
-        || trimmed.starts_with("primary deliverable:")
-        || trimmed.eq_ignore_ascii_case("completed")
-        || trimmed.starts_with("contract_id:")
-        || trimmed.eq_ignore_ascii_case("vak")
-        || trimmed.starts_with("[stop-guard]")
-        || trimmed.starts_with("[stop-hook]")
-        || trimmed.starts_with("[repair directive]")
-        || trimmed.starts_with("[recovery]")
-        || trimmed.starts_with("[grounding-check]")
-        || trimmed.starts_with("[presentation-check]")
-        || trimmed.starts_with("[fence-check]")
-        || trimmed.starts_with("[duplicate-card-check]")
-        || trimmed.starts_with("[post-tool-use hook]")
-        || trimmed.starts_with("I will write and execute this within the sandbox")
-}
-
-pub(crate) fn strip_control_blocks(text: &str) -> String {
-    let mut out = text.to_string();
-    let tags = [
-        "conversation_thread",
-        "context_summary",
-        "intent",
-        "work_contract",
-        "managed_work",
-        "context_packet",
-        "system_reminder",
-        "runtime_guidance",
-        "scratchpad",
-    ];
-    for tag in tags {
-        let open_pattern = format!("<{tag}");
-        let close_pattern = format!("</{tag}>");
-        while let Some(start) = out.find(&open_pattern) {
-            if let Some(end_offset) = out[start..].find(&close_pattern) {
-                let end = start + end_offset + close_pattern.len();
-                out.replace_range(start..end, "");
-            } else {
-                out.truncate(start);
-                break;
-            }
-        }
-    }
-
-    for prefix in [
-        "[stop-guard]:",
-        "[stop-hook]:",
-        "[repair directive]",
-        "[recovery]",
-        "[post-tool-use hook]:",
-    ] {
-        while let Some(start) = out.find(prefix) {
-            let remainder = &out[start..];
-            if prefix == "[repair directive]" || prefix == "[recovery]" {
-                out.truncate(start);
-                break;
-            }
-            if let Some(end_offset) = remainder.find("Please continue.") {
-                let end = start + end_offset + "Please continue.".len();
-                out.replace_range(start..end, "");
-            } else if let Some(end_offset) = remainder.find("Please continue") {
-                let end = start + end_offset + "Please continue".len();
-                out.replace_range(start..end, "");
-            } else if let Some(newline_offset) = remainder.find('\n') {
-                let end = start + newline_offset + 1;
-                out.replace_range(start..end, "");
-            } else {
-                out.truncate(start);
-                break;
-            }
-        }
-    }
-
-    out
-}
-
-pub(crate) fn clean_scaffolding(text: &str) -> String {
-    let had_trailing_newline = text.ends_with('\n');
-    let stripped = strip_control_blocks(text);
-    let mut lines = stripped
-        .lines()
-        .filter(|line| !is_scaffolding_line(line))
-        .collect::<Vec<_>>();
-    while let Some(first) = lines.first() {
-        if first.trim().is_empty() {
-            lines.remove(0);
-        } else {
-            break;
-        }
-    }
-    while let Some(last) = lines.last() {
-        if last.trim().is_empty() {
-            lines.pop();
-        } else {
-            break;
-        }
-    }
-    let mut out = lines.join("\n");
-    if had_trailing_newline && !out.is_empty() {
-        out.push('\n');
-    }
-    out
 }
 
 fn is_presentation_envelope(text: &str) -> bool {
@@ -2368,19 +2336,15 @@ mod tests {
     }
 
     #[test]
-    fn clean_scaffolding_strips_stop_hooks_and_scaffolding() {
-        let text =
-            "[stop-hook]: continue required by hook\nPlease continue.\nHere is the real answer.";
-        let cleaned = super::clean_scaffolding(text);
-        assert_eq!(cleaned, "Here is the real answer.");
+    fn clean_scaffolding_strips_inline_hints_and_scaffolding() {
+        let text = "Answer body.\n[recovery] retry the failing call";
+        assert_eq!(super::clean_scaffolding(text), "Answer body.");
 
-        let text2 = "[stop-guard]: goal not met\nPlease continue.\nSurface: desktop app\nDone.";
-        let cleaned2 = super::clean_scaffolding(text2);
-        assert_eq!(cleaned2, "Done.");
+        let text2 = "Surface: desktop app\nDone.";
+        assert_eq!(super::clean_scaffolding(text2), "Done.");
 
         let text3 = "<intent>select</intent><context_packet>data</context_packet>Final result.";
-        let cleaned3 = super::clean_scaffolding(text3);
-        assert_eq!(cleaned3, "Final result.");
+        assert_eq!(super::clean_scaffolding(text3), "Final result.");
     }
 
     #[test]
@@ -2434,7 +2398,10 @@ mod tests {
         // Synthetic stop-hook nudge (should NOT increment turn count)
         log.append_message(MessageRecord {
             message: Message::user_text("[stop-hook]: hook said continue\nPlease continue."),
-            meta: None,
+            meta: Some(vak_session::MessageMeta {
+                control: Some(vak_intent::control::ControlKind::StopHook),
+                ..Default::default()
+            }),
         })
         .expect("append stop-hook message");
 
@@ -2451,8 +2418,11 @@ mod tests {
 
         // Synthetic repair directive nudge (should NOT increment turn count)
         log.append_message(MessageRecord {
-            message: Message::user_text("[repair directive] The run is stuck on correctable tool failures...\nAdmitted tools: read"),
-            meta: None,
+            message: Message::user_text("The run is stuck on correctable tool failures..."),
+            meta: Some(vak_session::MessageMeta {
+                control: Some(vak_intent::control::ControlKind::StopGuard),
+                ..Default::default()
+            }),
         })
         .expect("append repair directive message");
 
@@ -2569,7 +2539,10 @@ mod tests {
             message: Message::user_text(
                 "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse. Resend it.",
             ),
-            meta: None,
+            meta: Some(vak_session::MessageMeta {
+                control: Some(vak_intent::control::ControlKind::FenceCheck),
+                ..Default::default()
+            }),
         })
         .expect("append fence-check nudge");
 
@@ -2803,14 +2776,136 @@ mod tests {
     }
 
     #[test]
-    fn repair_nudges_are_never_projected_as_user_messages() {
-        for nudge in [
-            "[grounding-check]: Your last answer didn't cite the results. Please redo your answer now.",
-            "[fence-check]: The vak-fence in your last answer has invalid JSON.",
-            "[duplicate-card-check]: You already emitted a `chart` card.",
-            "[presentation-check]: Your answer reads as `data.spreadsheet_grid`.",
-        ] {
-            assert_eq!(super::clean_scaffolding(nudge), "", "{nudge}");
+    fn a_runtime_nudge_is_never_projected_as_a_user_message_whatever_its_text() {
+        use vak_intent::control::ControlKind;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("nudge.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "nudge".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create");
+        log.append_message(MessageRecord {
+            message: Message::user_text("what is the weather"),
+            meta: None,
+        })
+        .expect("user");
+        for kind in ControlKind::ALL {
+            // No marker in the text at all: only the tag says it is runtime-authored.
+            log.append_message(MessageRecord::control(kind, "please redo that answer"))
+                .expect("nudge");
+        }
+        // Text that merely LOOKS like a marker, from the user, stays the user's.
+        log.append_message(MessageRecord {
+            message: Message::user_text("[fence-check]: my own note"),
+            meta: None,
+        })
+        .expect("look-alike");
+        let timeline = snapshot("nudge", &log);
+        let users: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::User)
+            .collect();
+        assert_eq!(
+            users.len(),
+            2,
+            "the real question and the user's look-alike, no nudges: {:?}",
+            users.iter().map(|i| &i.fallback_text).collect::<Vec<_>>()
+        );
+        let turns: std::collections::BTreeSet<_> =
+            users.iter().map(|i| i.turn_id.clone()).collect();
+        assert_eq!(
+            turns.len(),
+            2,
+            "nudges must not start turns; the look-alike does"
+        );
+    }
+
+    /// The projection's user items carry the ledger entry id, which is what
+    /// the client pairs a chat turn with instead of counting turns.
+    #[test]
+    fn a_user_item_carries_the_ledger_entry_id_of_its_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("ident.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "ident".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create");
+        log.append_message(MessageRecord {
+            message: Message::user_text("first"),
+            meta: None,
+        })
+        .expect("u1");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::GroundingCheck,
+            "redo",
+        ))
+        .expect("n");
+        log.append_message(MessageRecord {
+            message: Message::user_text("second"),
+            meta: None,
+        })
+        .expect("u2");
+        let transcript = log.derive_transcript();
+        let real: Vec<_> = transcript.iter().filter(|t| t.control.is_none()).collect();
+        let timeline = snapshot("ident", &log);
+        for item in &real {
+            let text = item.message.text_content();
+            let user_item = timeline
+                .items
+                .iter()
+                .find(|i| i.role == vak_delivery::OutputRole::User && i.fallback_text == text)
+                .expect("projected");
+            assert_eq!(
+                user_item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.entry_id.as_deref()),
+                Some(item.entry_id.as_str()),
+                "pairing key must be the transcript's entry id for {text:?}"
+            );
         }
     }
 
@@ -2919,6 +3014,283 @@ mod tests {
             "{} failures:\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+
+    fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
+        SessionLog::create(
+            dir.path().join(format!("{name}.jsonl")),
+            SessionHeader {
+                agent: None,
+                session_id: name.into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create")
+    }
+
+    fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: id.into(),
+                name: "emit_chart_card".into(),
+                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}}),
+            }]),
+            meta: None,
+        })
+        .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: id.into(),
+                    content: "Card displayed to the user (chart).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+    }
+
+    /// The bug this guards: a card emitted through a tool is not in the
+    /// model's final text, so a channel that delivered only that text sent
+    /// "the chart is shown above" with nothing above it.
+    #[test]
+    fn a_channel_gets_the_cards_of_the_run_ahead_of_the_narration() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "ch1");
+        log.append_message(MessageRecord {
+            message: Message::user_text("chart it"),
+            meta: None,
+        })
+        .expect("u");
+        append_card_call(&mut log, "c1", "sales rise steadily");
+        let text = super::text_with_run_cards(&log, "The chart is shown above.".into());
+        assert!(
+            text.contains("sales rise steadily"),
+            "card content must reach the channel: {text}"
+        );
+        assert!(
+            text.ends_with("The chart is shown above."),
+            "narration follows the card: {text}"
+        );
+    }
+
+    #[test]
+    fn a_run_with_no_cards_is_delivered_unchanged() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "ch2");
+        log.append_message(MessageRecord {
+            message: Message::user_text("hi"),
+            meta: None,
+        })
+        .expect("u");
+        assert_eq!(super::text_with_run_cards(&log, "hello".into()), "hello");
+    }
+
+    #[test]
+    fn only_the_latest_turns_cards_are_delivered() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "ch3");
+        log.append_message(MessageRecord {
+            message: Message::user_text("first"),
+            meta: None,
+        })
+        .expect("u1");
+        append_card_call(&mut log, "c1", "OLD-TURN-CARD");
+        log.append_message(MessageRecord {
+            message: Message::user_text("second"),
+            meta: None,
+        })
+        .expect("u2");
+        append_card_call(&mut log, "c2", "NEW-TURN-CARD");
+        let text = super::text_with_run_cards(&log, "done".into());
+        assert!(
+            text.contains("NEW-TURN-CARD") && !text.contains("OLD-TURN-CARD"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_retried_card_is_delivered_once_and_a_nudge_is_not_a_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "ch4");
+        log.append_message(MessageRecord {
+            message: Message::user_text("chart it"),
+            meta: None,
+        })
+        .expect("u");
+        append_card_call(&mut log, "c1", "FIRST-ATTEMPT");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::FenceCheck,
+            "[fence-check]: resend",
+        ))
+        .expect("nudge");
+        append_card_call(&mut log, "c2", "RETRY");
+        let text = super::text_with_run_cards(&log, "(no text)".into());
+        assert!(
+            text.contains("RETRY") && !text.contains("FIRST-ATTEMPT"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("(no text)"),
+            "a card-only run has no placeholder: {text}"
+        );
+    }
+
+    /// A draft the runtime sent back for a redo is internal: the user sees the
+    /// redone answer, never the rejected attempt as well.
+    #[test]
+    fn a_rejected_draft_is_never_projected_but_the_redo_is() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "draft");
+        log.append_message(MessageRecord {
+            message: Message::user_text("weather in delhi"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "DRAFT-PROSE answer with a broken fence",
+            )]),
+            meta: None,
+        })
+        .expect("draft");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::PresentationCheck,
+            "[presentation-check]: use a card",
+        ))
+        .expect("nudge");
+        append_card_call(&mut log, "c1", "29C and sunny");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("FINAL-NARRATION")]),
+            meta: None,
+        })
+        .expect("final");
+        let timeline = snapshot("draft", &log);
+        let assistant_text: Vec<String> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::Assistant)
+            .map(|i| i.fallback_text.clone())
+            .collect();
+        assert!(
+            !assistant_text.iter().any(|t| t.contains("DRAFT-PROSE")),
+            "{assistant_text:?}"
+        );
+        assert!(
+            assistant_text.iter().any(|t| t.contains("FINAL-NARRATION")),
+            "{assistant_text:?}"
+        );
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|i| matches!(i.content, OutputContent::Structured { .. }))
+        );
+    }
+
+    /// Only a redo-nudge rejects a draft. A stop hook or guard asks the model
+    /// to keep working, so the text before it is real interim narration.
+    #[test]
+    fn a_continue_nudge_does_not_reject_the_text_before_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "cont");
+        log.append_message(MessageRecord {
+            message: Message::user_text("do the thing"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("INTERIM-PROGRESS-NOTE")]),
+            meta: None,
+        })
+        .expect("interim");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::StopGuard,
+            "[stop-guard]: not done yet\nPlease continue.",
+        ))
+        .expect("guard");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("ALL-DONE")]),
+            meta: None,
+        })
+        .expect("final");
+        let timeline = snapshot("cont", &log);
+        let texts: Vec<String> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::Assistant)
+            .map(|i| i.fallback_text.clone())
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("INTERIM-PROGRESS-NOTE")),
+            "{texts:?}"
+        );
+        assert!(texts.iter().any(|t| t.contains("ALL-DONE")), "{texts:?}");
+    }
+
+    /// The transcript sent to clients carries only what a person can see:
+    /// nudges and derived context blocks are not sent, and every message
+    /// arrives with the ledger entry id the chat pairs turns by.
+    #[test]
+    fn the_client_transcript_omits_runtime_traffic_and_carries_entry_ids() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "wire");
+        log.append_message(MessageRecord {
+            message: Message::user_text("what is the weather"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("sunny")]),
+            meta: None,
+        })
+        .expect("a");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::GroundingCheck,
+            "[grounding-check]: cite it",
+        ))
+        .expect("nudge");
+        let json = crate::transcript_json(&log);
+        let messages = json["messages"].as_array().expect("messages");
+        let entries = json["entries"].as_array().expect("entries");
+        assert_eq!(messages.len(), 2, "no nudge on the wire: {messages:?}");
+        assert_eq!(
+            entries.len(),
+            messages.len(),
+            "entries run parallel to messages"
+        );
+        assert!(
+            entries
+                .iter()
+                .all(|e| e["entry_id"].as_str().is_some_and(|id| !id.is_empty()))
+        );
+        assert!(
+            json.get("contract").is_none(),
+            "the frozen system prompt is not sent to the client"
+        );
+        assert!(
+            json["count"].as_u64().expect("count") >= 3,
+            "count stays the model-visible total, nudge included"
         );
     }
 }

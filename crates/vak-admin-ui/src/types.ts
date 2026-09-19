@@ -107,6 +107,8 @@ export interface TranscriptEntry {
   tool_name: string | null;
   is_error: boolean;
   content: string;
+  /** Set when the runtime, not the user, authored this row (a repair nudge). */
+  control?: string | null;
 }
 
 export interface SearchHit {

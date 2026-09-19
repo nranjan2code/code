@@ -7,6 +7,7 @@ import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
+import { serverTurnFor } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
@@ -851,7 +852,9 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const projectedTurn = (index: number) => {
     const timeline = presentationOf(sid());
     if (!timeline) return null;
-    const items = timeline.items.filter((item) => item.turn_id === `turn-${index}`);
+    const serverTurn = serverTurnFor(turns()[index]?.find((item) => item.kind === "user")?.entryId, timeline.items);
+    if (!serverTurn) return null;
+    const items = timeline.items.filter((item) => item.turn_id === serverTurn);
     // Live frames have separate IDs. A durable turn replaces its transcript
     // only when its assistant output is available, never at RunFinished alone.
     if (!items.some((item) => item.role === "assistant" && ["document", "structured", "adaptive"].includes(item.content.type))) return null;

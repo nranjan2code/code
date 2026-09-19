@@ -58,6 +58,7 @@
 
 pub mod authority;
 pub mod axes;
+pub mod control;
 pub mod engage;
 pub mod goal;
 pub mod limits;

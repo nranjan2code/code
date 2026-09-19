@@ -4242,7 +4242,10 @@ fn summarize_jsonl(
                             agent = h.agent;
                         }
                         vak_session::EntryPayload::Message(rec) => {
-                            if title.is_none() && rec.message.role == vak_llm::Role::User {
+                            if title.is_none()
+                                && rec.message.role == vak_llm::Role::User
+                                && rec.control_kind().is_none()
+                            {
                                 let text = rec.message.text_content();
                                 let text = text.trim();
                                 if !text.is_empty() {
@@ -6755,42 +6758,49 @@ async fn transcript(
         let Some(s) = guard.as_ref() else {
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
-        let msgs = s.derive_messages();
-        let contract = s.header().map(|header| header.contract.clone());
-        return Json(serde_json::json!({
-            "count": msgs.len(),
-            "usage": s.total_usage(),
-            "contract": contract,
-            // Per-turn routing: every turn resolves provider/model from the
-            // live effective_route(), so the header's initial contract snapshot
-            // is no longer a mismatch indicator. Field kept for API compat.
-            "configuration_mismatch": false,
-            "messages": msgs,
-        }))
-        .into_response();
+        return Json(transcript_json(s)).into_response();
     }
     match open_historical_session(&state, &id) {
-        Some(s) => {
-            let msgs = s.derive_messages();
-            let contract = s.header().map(|header| header.contract.clone());
-            Json(serde_json::json!({
-                "count": msgs.len(),
-                "usage": s.total_usage(),
-                "contract": contract,
-                // Per-turn routing: every turn resolves provider/model from the
-                // live effective_route(), so the header's initial contract snapshot
-                // is no longer a mismatch indicator. Field kept for API compat.
-                "configuration_mismatch": false,
-                "messages": msgs,
-            }))
-            .into_response()
-        }
+        Some(s) => Json(transcript_json(&s)).into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
         )
             .into_response(),
     }
+}
+
+/// The JSON transcript, built once for the live and the historical path.
+///
+/// It carries what a person can see and nothing else. The model-visible
+/// projection also holds runtime-authored nudges and derived context blocks
+/// (`<context_summary>`, `<intent>`, …); those are not output, so they are not
+/// sent — the client used to receive them only to strip them again. Likewise
+/// the frozen contract (system prompt and prompt layers), which no client of
+/// this endpoint reads.
+///
+/// `count` is still the model-visible total (`derive_messages().len()`); the
+/// multi-turn continuity layer legitimately makes it exceed `messages`.
+/// `entries` runs parallel to `messages` and gives each one's ledger entry id,
+/// the stable identity the client pairs with the projection's
+/// `provenance.entry_id` instead of counting turns.
+pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
+    let transcript = s.derive_transcript();
+    let visible: Vec<&vak_session::TranscriptMessage> = transcript
+        .iter()
+        .filter(|item| item.control.is_none() && !item.context)
+        .collect();
+    let entries: Vec<serde_json::Value> = visible
+        .iter()
+        .map(|item| serde_json::json!({ "entry_id": item.entry_id }))
+        .collect();
+    let messages: Vec<&vak_llm::Message> = visible.iter().map(|item| &item.message).collect();
+    serde_json::json!({
+        "count": transcript.len(),
+        "usage": s.total_usage(),
+        "messages": messages,
+        "entries": entries,
+    })
 }
 
 /// Markdown export over the same projection the JSON transcript serves.
@@ -6813,11 +6823,11 @@ async fn transcript_markdown(
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
         Some(vak_core::transcript_md::render_markdown(
-            &s.derive_messages(),
+            &s.derive_conversation(),
         ))
     } else {
         open_historical_session(&state, &id)
-            .map(|s| vak_core::transcript_md::render_markdown(&s.derive_messages()))
+            .map(|s| vak_core::transcript_md::render_markdown(&s.derive_conversation()))
     };
 
     match md_opt {
@@ -13803,17 +13813,23 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let log = guard.as_ref()?;
-    let text = log
+    let narration = log
         .derive_messages()
         .into_iter()
         .rev()
         .find(|m| m.role == vak_llm::Role::Assistant)
-        .map(|m| m.text_content())?;
-    let cleaned = crate::projection::clean_scaffolding(&text);
-    if cleaned.trim().is_empty() {
+        .map(|m| m.text_content())
+        .unwrap_or_default();
+    // A run whose answer was a card has little or no narration; the cards are
+    // still the answer.
+    let text = crate::projection::text_with_run_cards(
+        log,
+        crate::projection::clean_scaffolding(&narration),
+    );
+    if text.trim().is_empty() {
         None
     } else {
-        Some(cleaned)
+        Some(text)
     }
 }
 

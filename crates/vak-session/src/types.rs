@@ -213,6 +213,40 @@ pub struct MessageRecord {
     pub meta: Option<MessageMeta>,
 }
 
+/// One model-visible message with its ledger identity and class.
+#[derive(Debug, Clone)]
+pub struct TranscriptMessage {
+    /// The ledger entry this message came from (stable, unique).
+    pub entry_id: String,
+    pub message: Message,
+    /// Set when the runtime authored this user-role message (a nudge).
+    pub control: Option<vak_intent::control::ControlKind>,
+    /// Set when the runtime derived this message into the model's input
+    /// (compaction summary, intent note, work contract, conversation thread).
+    pub context: bool,
+}
+
+impl MessageRecord {
+    /// A user-role message the runtime authored. The body still begins with
+    /// the kind's marker (the model reads it); the tag is what every other
+    /// layer reads instead of guessing from the text.
+    pub fn control(kind: vak_intent::control::ControlKind, body: impl Into<String>) -> Self {
+        Self {
+            message: Message::user_text(body),
+            meta: Some(MessageMeta {
+                control: Some(kind),
+                ..MessageMeta::default()
+            }),
+        }
+    }
+
+    /// Whether the runtime, not the user, authored this message: the
+    /// structural tag, and nothing else. Text is never sniffed.
+    pub fn control_kind(&self) -> Option<vak_intent::control::ControlKind> {
+        self.meta.as_ref().and_then(|meta| meta.control)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MessageMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +255,10 @@ pub struct MessageMeta {
     pub stop_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// Set on a user-role message the runtime authored (a repair nudge, a
+    /// stop guard) rather than the user. See `vak_intent::control`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<vak_intent::control::ControlKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

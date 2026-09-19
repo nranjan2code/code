@@ -129,6 +129,11 @@ fn scan(path: &Path) -> Result<Vec<CachedMessage>, SearchError> {
         let EntryPayload::Message(record) = entry.payload else {
             continue;
         };
+        // A runtime nudge is not something the user said or the model
+        // answered; leaving it out keeps it from surfacing in session search.
+        if record.control_kind().is_some() {
+            continue;
+        }
         let role = match record.message.role {
             Role::User => "user",
             Role::Assistant => "assistant",

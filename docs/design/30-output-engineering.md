@@ -423,3 +423,47 @@ Markdown remains the export and emergency fallback for every projection.
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
    unsupported capabilities; channel-specific accessibility and visual checks
    remain part of each surface release gate.
+
+## Runtime-authored traffic
+
+Text the runtime itself writes into a session (as opposed to what the user or
+the model wrote) is a typed fact, defined once in `vak_intent::control`:
+
+| Class | Type | Lifetime | Recognised by |
+|---|---|---|---|
+| Repair nudge, stop guard | `ControlKind` | persisted user-role message | `MessageMeta::control`, set at creation by `MessageRecord::control` |
+| Compaction summary, intent note, work contract, conversation thread | `CONTEXT_BLOCK_TAGS` | derived into model input, never persisted | `TranscriptMessage::context` |
+| Hint inside a tool result | `InlineHint` | a line inside other text | `is_control_line` / `strip_control_blocks` |
+
+Nothing recognises a control message from its text: before this, five layers
+(server projection, delivery, the desktop client, the admin console, the stop
+policy) each kept a hand-copied prefix list, and they drifted. A nudge the
+server hid was shown by the client as a user message, the client's turn count
+then disagreed with the server's, and because the chat paired client turn N
+with server `turn-N`, every later turn was displaced (the question repeated,
+the card missing from the second copy).
+
+Consequences, all enforced by tests:
+
+- **Consumers read the tag.** Projection turn counting and repair-arming,
+  the transcript API, the admin transcript rows, the search index (role
+  `control`), markdown export, compaction accounting, reflection, session
+  titles, and the runtime's per-turn evidence state all ask
+  `MessageRecord::control_kind()`. A nudge is never a user turn.
+- **Clients get only output.** `/sessions/{id}/transcript` omits nudges,
+  derived context blocks and the frozen contract; each message carries its
+  ledger `entry_id`. The chat pairs a turn with its projection by that id
+  (`provenance.entry_id`), never by position.
+- **Rejected drafts are internal.** An assistant answer followed by a
+  `retries_answer` nudge (grounding, fence, duplicate-card, presentation
+  check) is not projected; the user sees the redo. A stop hook or guard asks
+  the model to keep working, so the text before it stays.
+- **Channels get cards.** A card emitted through an `emit_*_card` call is not
+  in the model's final text, so a channel, webhook, inbox entry or routine
+  summary would otherwise say "the chart is shown above" with nothing above.
+  `projection::text_with_run_cards` puts the latest turn's cards (their
+  deterministic text form, from the same projection the desktop renders, so
+  retries are superseded) ahead of the narration.
+- **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
+  and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
+  fails the build unless they equal the Rust lists exactly.

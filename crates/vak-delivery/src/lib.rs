@@ -5,6 +5,8 @@
 //! separate process. The source Markdown remains part of every packet so a
 //! renderer can never become the system of record.
 
+pub use vak_intent::control::clean_scaffolding;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -919,109 +921,6 @@ fn format_kind(kind: DeliveryKind) -> &'static str {
         DeliveryKind::Steering => "steering",
         DeliveryKind::Internal => "internal",
     }
-}
-
-fn is_scaffolding_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with("Surface:")
-        || trimmed.starts_with("Outcome:")
-        || trimmed.starts_with("primary deliverable:")
-        || trimmed.eq_ignore_ascii_case("completed")
-        || trimmed.starts_with("contract_id:")
-        || trimmed.eq_ignore_ascii_case("vak")
-        || trimmed.starts_with("[stop-guard]")
-        || trimmed.starts_with("[stop-hook]")
-        || trimmed.starts_with("[repair directive]")
-        || trimmed.starts_with("[recovery]")
-        || trimmed.starts_with("[post-tool-use hook]")
-        || trimmed.starts_with("I will write and execute this within the sandbox")
-}
-
-fn strip_control_blocks(text: &str) -> String {
-    let mut out = text.to_string();
-    let tags = [
-        "conversation_thread",
-        "context_summary",
-        "intent",
-        "work_contract",
-        "managed_work",
-        "context_packet",
-        "system_reminder",
-        "runtime_guidance",
-        "scratchpad",
-    ];
-    for tag in tags {
-        let open_pattern = format!("<{tag}");
-        let close_pattern = format!("</{tag}>");
-        while let Some(start) = out.find(&open_pattern) {
-            if let Some(end_offset) = out[start..].find(&close_pattern) {
-                let end = start + end_offset + close_pattern.len();
-                out.replace_range(start..end, "");
-            } else {
-                out.truncate(start);
-                break;
-            }
-        }
-    }
-
-    for prefix in [
-        "[stop-guard]:",
-        "[stop-hook]:",
-        "[repair directive]",
-        "[recovery]",
-        "[post-tool-use hook]:",
-    ] {
-        while let Some(start) = out.find(prefix) {
-            let remainder = &out[start..];
-            if prefix == "[repair directive]" || prefix == "[recovery]" {
-                out.truncate(start);
-                break;
-            }
-            if let Some(end_offset) = remainder.find("Please continue.") {
-                let end = start + end_offset + "Please continue.".len();
-                out.replace_range(start..end, "");
-            } else if let Some(end_offset) = remainder.find("Please continue") {
-                let end = start + end_offset + "Please continue".len();
-                out.replace_range(start..end, "");
-            } else if let Some(newline_offset) = remainder.find('\n') {
-                let end = start + newline_offset + 1;
-                out.replace_range(start..end, "");
-            } else {
-                out.truncate(start);
-                break;
-            }
-        }
-    }
-
-    out
-}
-
-pub fn clean_scaffolding(text: &str) -> String {
-    let had_trailing_newline = text.ends_with('\n');
-    let stripped = strip_control_blocks(text);
-    let mut lines = stripped
-        .lines()
-        .filter(|line| !is_scaffolding_line(line))
-        .collect::<Vec<_>>();
-    while let Some(first) = lines.first() {
-        if first.trim().is_empty() {
-            lines.remove(0);
-        } else {
-            break;
-        }
-    }
-    while let Some(last) = lines.last() {
-        if last.trim().is_empty() {
-            lines.pop();
-        } else {
-            break;
-        }
-    }
-    let mut out = lines.join("\n");
-    if had_trailing_newline && !out.is_empty() {
-        out.push('\n');
-    }
-    out
 }
 
 fn render_answer(

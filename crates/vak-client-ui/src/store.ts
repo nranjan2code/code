@@ -11,6 +11,7 @@ import type {
   Health,
   Message,
   SessionSummary,
+  TranscriptEntryMeta,
   Usage,
   OutputTimeline,
   PresentationStreamEvent,
@@ -19,7 +20,7 @@ import type {
 export type Density = "outcome" | "balanced" | "audit";
 
 export type Item =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; entryId?: string }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -952,11 +953,16 @@ function blocksToItems(blocks: ContentBlock[], keyBase: string): Item[] {
  * Rebuild chat items from a persisted ledger without writing any store
  * state. Shared by live hydration and the read-only transcript viewer.
  */
-export function transcriptToItems(id: string, messages: Message[]): Item[] {
+export function transcriptToItems(
+  id: string,
+  messages: Message[],
+  entries?: TranscriptEntryMeta[],
+): Item[] {
   const next: Item[] = [];
   let assistantSeq = 0;
 
-  for (const m of messages) {
+  for (const [index, m] of messages.entries()) {
+    const meta = entries?.[index];
     if (m.role === "User" || m.role === "user" || (typeof m.role === "string" && m.role.toLowerCase() === "user")) {
       const texts = m.content
         .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
@@ -976,7 +982,7 @@ export function transcriptToItems(id: string, messages: Message[]): Item[] {
         }
       }
       const joined = stripControlScaffolding(texts.join("\n"));
-      if (joined) next.push({ kind: "user", text: joined });
+      if (joined) next.push({ kind: "user", text: joined, entryId: meta?.entry_id });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(
@@ -1011,9 +1017,9 @@ export function transcriptToItems(id: string, messages: Message[]): Item[] {
 }
 
 /** Rebuild a session view from the persisted ledger. */
-export function hydrateFromTranscript(id: string, messages: Message[]) {
+export function hydrateFromTranscript(id: string, messages: Message[], entries?: TranscriptEntryMeta[]) {
   const current: Item[] = itemsBySession[id] ?? [];
-  const incoming = transcriptToItems(id, messages);
+  const incoming = transcriptToItems(id, messages, entries);
 
   if (current.length === 0) {
     setItemsBySession(id, incoming);

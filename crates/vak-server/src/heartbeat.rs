@@ -222,8 +222,8 @@ async fn run_heartbeat_turn(
     drop(events_rx);
 
     match outcome {
-        Some(Ok((outcome, _log))) => {
-            let text = outcome_text(&outcome);
+        Some(Ok((outcome, log))) => {
+            let text = crate::projection::text_with_run_cards(&log, outcome_text(&outcome));
             record_reply(state, cfg, &text).await;
             Ok(())
         }

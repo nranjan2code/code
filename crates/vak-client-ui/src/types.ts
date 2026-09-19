@@ -148,6 +148,16 @@ export interface OutputProvenance {
   source?: string | null;
 }
 
+/**
+ * One entry per transcript message, same order and length: the ledger entry it
+ * came from. The chat pairs a turn with the projection by this id, never by
+ * position. (The server sends only what a person can see; runtime-authored
+ * nudges and derived context blocks are never sent.)
+ */
+export interface TranscriptEntryMeta {
+  entry_id: string;
+}
+
 export interface OutputItem {
   id: string;
   timestamp: string;

@@ -274,11 +274,13 @@ export function receiptSettlement(r: WorkReceipt): string {
 export function isRealUserPrompt(entry: TranscriptEntry): boolean {
   if (entry.kind !== "message") return false;
   if (entry.role !== "user" && entry.role !== null) return false;
+  // A row the runtime authored (a repair nudge, a stop guard) is tagged by the
+  // server from the ledger; it is never a user prompt.
+  if (entry.control) return false;
   const c = entry.content.trim();
   if (!c) return false;
   if (
     c.startsWith("[result]") ||
-    c.startsWith("[stop-guard]") ||
     c.startsWith("[recovery]") ||
     c.startsWith("[repair directive]") ||
     c.startsWith("[tool:") ||

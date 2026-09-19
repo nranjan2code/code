@@ -151,28 +151,41 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
 }
 
 /**
- * Strips prompt-scaffolding control blocks injected into the model-visible
- * context (e.g. <conversation_thread>, <context_summary>, <intent>,
- * <work_contract>, <managed_work>, <context_packet>) so they never leak into user or assistant views.
+ * The inline runtime hints and context-block tags this file strips. These two
+ * lists mirror `vak_intent::control::{inline_markers, CONTEXT_BLOCK_TAGS}`
+ * exactly; `control_vocabulary_sync` in vak-server fails the build if they
+ * differ. (Whole runtime-authored messages — nudges, stop guards — are tagged
+ * structurally by the server and never reach the client at all.)
+ */
+export const INLINE_HINT_MARKERS = ["[repair directive]", "[recovery]", "[post-tool-use hook]"] as const;
+export const CONTEXT_BLOCK_TAGS = [
+  "conversation_thread",
+  "context_summary",
+  "intent",
+  "work_contract",
+  "managed_work",
+  "context_packet",
+  "system_reminder",
+  "runtime_guidance",
+  "scratchpad",
+] as const;
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const INLINE_HINT_PATTERNS = INLINE_HINT_MARKERS.map((marker) => new RegExp(`${escapeRegExp(marker)}[\\s\\S]*$`, "gi"));
+const CONTEXT_BLOCK_PATTERNS = CONTEXT_BLOCK_TAGS.map(
+  (tag) => new RegExp(`<${tag}[\\s\\S]*?(?:</${tag}>|$)`, "gi"),
+);
+
+/**
+ * Removes inline runtime hints and context blocks from text before it is
+ * shown, so they never leak into user or assistant views.
  */
 export function stripControlScaffolding(text: string): string {
   if (!text) return "";
-  return text
-    // Stop-policy and repair directives are model-visible control traffic,
-    // not user or assistant messages.
-    .replace(/\[stop-(?:guard|hook)[^\]]*\]:[\s\S]*?(?:Please continue\.?|$)/gi, "")
-    .replace(/\[repair directive\][\s\S]*$/gi, "")
-    .replace(/\[(?:recovery|post-tool-use hook)\][\s\S]*$/gi, "")
-    .replace(/<conversation_thread[\s\S]*?(?:<\/conversation_thread>|$)/gi, "")
-    .replace(/<context_summary[\s\S]*?(?:<\/context_summary>|$)/gi, "")
-    .replace(/<intent[\s\S]*?(?:<\/intent>|$)/gi, "")
-    .replace(/<work_contract[\s\S]*?(?:<\/work_contract>|$)/gi, "")
-    .replace(/<managed_work[\s\S]*?(?:<\/managed_work>|$)/gi, "")
-    .replace(/<context_packet[\s\S]*?(?:<\/context_packet>|$)/gi, "")
-    .replace(/<system_reminder[\s\S]*?(?:<\/system_reminder>|$)/gi, "")
-    .replace(/<runtime_guidance[\s\S]*?(?:<\/runtime_guidance>|$)/gi, "")
-    .replace(/<scratchpad[\s\S]*?(?:<\/scratchpad>|$)/gi, "")
-    .trim();
+  let out = text;
+  for (const pattern of INLINE_HINT_PATTERNS) out = out.replace(pattern, "");
+  for (const pattern of CONTEXT_BLOCK_PATTERNS) out = out.replace(pattern, "");
+  return out.trim();
 }
 
 /**

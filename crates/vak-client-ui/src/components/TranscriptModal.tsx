@@ -31,7 +31,7 @@ export default function TranscriptModal() {
       try {
         const t = await api.transcript(id);
         if (transcriptViewId() !== id) return; // a newer open won
-        setItems(transcriptToItems(id, t.messages));
+        setItems(transcriptToItems(id, t.messages, t.entries));
         setCount(t.count);
         // Transcripts read like chats: land pinned to the latest turn once
         // the rows exist to measure.

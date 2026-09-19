@@ -5,6 +5,7 @@ import type {
   DiffResponse,
   Health,
   Message,
+  TranscriptEntryMeta,
   SessionSummary,
   ConfigSnapshot,
   WorkReceipt,
@@ -489,6 +490,7 @@ export function transcript(id: string): Promise<{
   count: number;
   usage: Record<string, number>;
   messages: Message[];
+  entries?: TranscriptEntryMeta[];
 }> {
   return req(`/sessions/${id}/transcript`);
 }

@@ -266,7 +266,10 @@ impl Store {
 
         match &entry.payload {
             EntryPayload::Message(record) => {
+                // A runtime-authored nudge is indexed under its own role so
+                // it is never returned as something the user said.
                 let role = match record.message.role {
+                    _ if record.control_kind().is_some() => "control",
                     vak_llm::Role::User => "user",
                     vak_llm::Role::Assistant => "assistant",
                 };

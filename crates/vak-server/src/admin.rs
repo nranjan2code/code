@@ -197,6 +197,33 @@ fn truncate_chars(s: &str, max_bytes: usize) -> String {
     format!("{}…", &s[..end])
 }
 
+/// Which ledger entries of a session are runtime-authored control messages,
+/// by entry id (empty when the session cannot be read).
+fn control_kinds_by_entry(
+    state: &AppState,
+    session_id: &str,
+) -> std::collections::HashMap<String, vak_intent::control::ControlKind> {
+    let from = |session: &vak_session::SessionLog| {
+        session
+            .derive_transcript()
+            .into_iter()
+            .filter_map(|item| item.control.map(|kind| (item.entry_id, kind)))
+            .collect()
+    };
+    if let Some(handle) = state.get(session_id)
+        && let Some(session) = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+    {
+        return from(session);
+    }
+    crate::open_historical_session(state, session_id)
+        .map(|session| from(&session))
+        .unwrap_or_default()
+}
+
 pub(crate) async fn session_transcript_admin(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -220,6 +247,9 @@ pub(crate) async fn session_transcript_admin(
     match store.query_page(&filter, limit, offset, true) {
         Ok((entries, total)) => {
             let has_more = offset.saturating_add(entries.len()) < total;
+            // The search index stores text only, so it cannot say which user
+            // rows the runtime authored. The ledger can: tag each row from it.
+            let controls = control_kinds_by_entry(&state, &session_id);
             let page: Vec<serde_json::Value> = entries
                 .iter()
                 .map(|e| {
@@ -231,6 +261,7 @@ pub(crate) async fn session_transcript_admin(
                         "tool_name": e.tool_name,
                         "is_error": e.is_error,
                         "content": truncate_chars(&e.content_text, 16000),
+                        "control": controls.get(&e.entry_id),
                     })
                 })
                 .collect();

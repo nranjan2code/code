@@ -362,7 +362,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_research_card",
-        description: "Emit a research/news synthesis card with cited sources and takeaways. Use whenever you searched the web or another source and are reporting findings — every takeaway should be traceable to a source.",
+        description: "Emit a research/news synthesis card: several distinct findings drawn from multiple cited sources, each takeaway traceable to a source. Choose it by the shape of the answer, not because you searched: a single measurement or fact (a temperature, a price, a score) belongs on the metric card and a comparison on the table card, with the source named in your sentence.",
         semantic_types: &["research.synthesis", "research_brief", "news"],
         payload_schema: research_payload_schema,
     },
@@ -491,7 +491,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_metric_card",
-        description: "Emit a metric card: a single measurement (weather, a KPI, a benchmark number) or a small grid of several.",
+        description: "Emit a metric card: a single current measurement or a small grid of them (weather, a price, a KPI, a benchmark number). Prefer it whenever the answer is one value, even if you searched the web to get it.",
         semantic_types: &["metric", "telemetry.metric", "weather"],
         payload_schema: metric_payload_schema,
     },

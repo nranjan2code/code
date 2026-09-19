@@ -5710,6 +5710,7 @@ impl Core {
                         &entry.payload,
                         vak_session::types::EntryPayload::Message(record)
                             if record.message.role == vak_llm::Role::User
+                                && record.control_kind().is_none()
                                 && record.message.content.iter().any(|block| {
                                     matches!(block, vak_llm::ContentBlock::Text { .. })
                                 })
@@ -5731,6 +5732,7 @@ impl Core {
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
                     if record.message.role == vak_llm::Role::User
+                        && record.control_kind().is_none()
                         && record
                             .message
                             .content
@@ -7175,8 +7177,20 @@ impl Core {
             };
         };
 
+        // Reflection distils what the user and model said. A runtime nudge
+        // is neither, and rendered as `user: …` it would be memorised as a
+        // user statement.
+        let control_entries: std::collections::HashSet<String> = session
+            .derive_transcript()
+            .into_iter()
+            .filter(|item| item.control.is_some())
+            .map(|item| item.entry_id)
+            .collect();
         let mut tail = String::new();
-        for (_, m) in session.message_chain() {
+        for (entry_id, m) in session.message_chain() {
+            if control_entries.contains(&entry_id) {
+                continue;
+            }
             tail.push_str(&reflection::render_message(m.role, &m.content));
         }
         if !final_text.is_empty() {

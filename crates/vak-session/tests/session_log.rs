@@ -165,6 +165,7 @@ fn append_and_derive_roundtrip() {
                 output_tokens: 5,
                 ..Default::default()
             }),
+            ..Default::default()
         }),
     })
     .unwrap();
