@@ -84,6 +84,7 @@ fn text(t: &str) -> AssistantMessage {
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -97,6 +98,7 @@ fn bash_script(command: String) -> AssistantMessage {
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -148,6 +150,7 @@ fn task_call(id: &str, paths: &[&str], tag: &str) -> AssistantMessage {
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -161,6 +164,7 @@ fn multi_task_msg(calls: Vec<AssistantMessage>) -> AssistantMessage {
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 

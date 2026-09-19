@@ -49,6 +49,7 @@ fn text(t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -62,6 +63,7 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
         stop_reason: vak_llm::types::StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 

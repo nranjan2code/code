@@ -55,6 +55,7 @@ impl Provider for Scripted {
                 ..Default::default()
             },
             model: "scripted-model".into(),
+            response_id: None,
         };
         sink.push(stream::StreamEvent::Start {
             partial: done.clone(),

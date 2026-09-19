@@ -30,6 +30,7 @@ fn text_msg(t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "fallback-model".into(),
+        response_id: None,
     }
 }
 

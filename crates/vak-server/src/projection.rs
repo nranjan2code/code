@@ -518,6 +518,7 @@ fn snapshot_inner(
                                 tool_input,
                                 tool_output,
                                 is_error,
+                                domains: &[],
                             };
                             let signals = signals_from_context(&ctx);
                             let plan = planner.plan(&signals, "desktop", &[], &candidates);

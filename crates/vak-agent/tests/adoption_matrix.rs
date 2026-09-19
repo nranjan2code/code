@@ -32,6 +32,7 @@ fn text_msg(model: &str, t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: model.into(),
+        response_id: None,
     }
 }
 

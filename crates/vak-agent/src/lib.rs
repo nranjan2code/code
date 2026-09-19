@@ -1169,6 +1169,8 @@ impl Agent {
                     tools: self.tool_definitions(),
                     max_tokens: self.config.context_policy.max_output as u32,
                     temperature: None,
+                    cache: None,
+                    previous_response_id: None,
                 }
             };
             let request = base_request.clone();
@@ -1193,6 +1195,7 @@ impl Agent {
                                 .lock()
                                 .await
                                 .append_receipt(ledger.take_receipt());
+                            let partial = partial.map(|boxed| *boxed);
                             if let Some(p) = &partial {
                                 self.append_assistant(p).await;
                             }
@@ -1884,6 +1887,8 @@ impl Agent {
             tools: Vec::new(),
             max_tokens: self.config.context_policy.max_output.min(8_000) as u32,
             temperature: None,
+            cache: None,
+            previous_response_id: None,
         };
         let mut ledger = StepLedger::new(
             WorkPurpose::Plan,
@@ -4275,6 +4280,7 @@ To continue, either correct the inputs above and              re-run, or widen t
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
         model: agent.config.model.clone(),
+        response_id: None,
     };
     TurnOutcome::Completed { response }
 }

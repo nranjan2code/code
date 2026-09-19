@@ -251,6 +251,8 @@ async fn complete_text(
         tools: Vec::new(),
         max_tokens: 4096,
         temperature: None,
+        cache: None,
+        previous_response_id: None,
     };
     let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
     for attempt in 1..=PLANNER_CALL_ATTEMPTS {

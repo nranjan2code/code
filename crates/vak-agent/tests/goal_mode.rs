@@ -31,6 +31,7 @@ fn text_msg(t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "judge-model".into(),
+        response_id: None,
     }
 }
 
@@ -44,6 +45,7 @@ fn tool_msg() -> AssistantMessage {
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 

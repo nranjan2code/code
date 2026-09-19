@@ -51,6 +51,7 @@ impl ScriptedTurn {
                 stop_reason: StopReason::EndTurn,
                 usage,
                 model: "eval-model".into(),
+                response_id: None,
             },
             ScriptedTurn::ToolCalls(calls) => AssistantMessage {
                 content: calls
@@ -64,6 +65,7 @@ impl ScriptedTurn {
                 stop_reason: StopReason::ToolUse,
                 usage,
                 model: "eval-model".into(),
+                response_id: None,
             },
         }
     }

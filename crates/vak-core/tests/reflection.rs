@@ -58,6 +58,7 @@ fn scripted(json_reply: &str) -> Arc<dyn vak_llm::Provider> {
                 stop_reason: vak_llm::types::StopReason::EndTurn,
                 usage: vak_llm::types::Usage::default(),
                 model: "m".into(),
+                response_id: None,
             })
             .await;
             Ok(rx)

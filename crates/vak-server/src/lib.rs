@@ -1641,6 +1641,8 @@ async fn voice_transcribe(
         let config = vak_llm::openai::OpenAiConfig {
             api_key,
             base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+            cache_key: false,
+            openrouter: false,
         };
         vak_llm::openai::transcribe(&config, &audio, &body.mime, &model, &cancel).await
     } else {
@@ -1876,6 +1878,8 @@ async fn voice_speak(
         let config = vak_llm::openai::OpenAiConfig {
             api_key,
             base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+            cache_key: false,
+            openrouter: false,
         };
         let result = vak_llm::openai::speak(
             &config,

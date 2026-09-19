@@ -109,6 +109,8 @@ mod tests {
             output_tokens: 100_000,
             cache_creation_input_tokens: Some(500_000),
             cache_read_input_tokens: Some(2_000_000),
+            prefill_ms: None,
+            load_ms: None,
         };
         let usd =
             estimate_cost_usd("claude-sonnet-4", &usage, &Default::default()).expect("priced");

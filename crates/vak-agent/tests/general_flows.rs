@@ -70,6 +70,7 @@ fn text_msg(t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 

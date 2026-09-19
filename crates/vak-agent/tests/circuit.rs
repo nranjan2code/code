@@ -123,6 +123,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 

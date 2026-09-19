@@ -950,6 +950,8 @@ async fn drive_voice(
                                 let cfg = vak_llm::openai::OpenAiConfig {
                                     api_key: key,
                                     base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
+                                    cache_key: false,
+                                    openrouter: false,
                                 };
                                 vak_llm::openai::transcribe(
                                     &cfg,

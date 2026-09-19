@@ -44,6 +44,7 @@ impl Provider for Counting {
                 ..Default::default()
             },
             model: "counted-model".into(),
+            response_id: None,
         };
         sink.push(stream::StreamEvent::Start {
             partial: done.clone(),

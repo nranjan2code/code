@@ -70,6 +70,7 @@ fn assistant_text(text: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMes
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -604,6 +606,7 @@ async fn parallel_tools_preserve_source_order() {
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     };
     let h = harness(
         vec![
@@ -647,7 +650,7 @@ async fn parallel_tools_preserve_source_order() {
 async fn abort_mid_stream_returns_partial_and_persists_it() {
     let h = harness(
         vec![ScriptedResponse::Error(LlmError::Aborted {
-            partial: Some(assistant_text("partial work")),
+            partial: Some(Box::new(assistant_text("partial work"))),
         })],
         vec![],
     );

@@ -32,6 +32,7 @@ fn text_msg(t: &str) -> AssistantMessage {
             ..Default::default()
         },
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -105,7 +106,7 @@ impl Provider for AbortMidStream {
     ) -> Result<EventStream, LlmError> {
         let (mut sink, rx) = stream::channel(64);
         sink.close_error(LlmError::Aborted {
-            partial: Some(text_msg("partial answer")),
+            partial: Some(Box::new(text_msg("partial answer"))),
         })
         .await;
         Ok(rx)

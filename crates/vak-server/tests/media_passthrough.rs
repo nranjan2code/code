@@ -35,6 +35,7 @@ impl Provider for Recording {
                 stop_reason: vak_llm::types::StopReason::EndTurn,
                 usage: Usage::default(),
                 model: "test-model".into(),
+                response_id: None,
             },
         });
         sink.close_message(AssistantMessage {
@@ -42,6 +43,7 @@ impl Provider for Recording {
             stop_reason: vak_llm::types::StopReason::EndTurn,
             usage: Usage::default(),
             model: "test-model".into(),
+            response_id: None,
         })
         .await;
         Ok(rx)

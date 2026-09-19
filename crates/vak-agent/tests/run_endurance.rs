@@ -46,6 +46,7 @@ impl Provider for FlakyThenGood {
                 stop_reason: StopReason::EndTurn,
                 usage: Usage::default(),
                 model: "test-model".into(),
+                response_id: None,
             };
             sink.push(stream::StreamEvent::Start {
                 partial: msg.clone(),

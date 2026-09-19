@@ -36,6 +36,7 @@ impl Provider for NoCred {
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
             model: "test-model".into(),
+            response_id: None,
         };
         sink.close_message(m).await;
         Ok(rx)

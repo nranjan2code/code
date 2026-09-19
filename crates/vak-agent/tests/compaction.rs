@@ -71,6 +71,7 @@ fn text(t: &str) -> AssistantMessage {
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
@@ -325,6 +326,7 @@ mod pair_boundary_and_reuse {
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
             model: "m".into(),
+            response_id: None,
         }
     }
 

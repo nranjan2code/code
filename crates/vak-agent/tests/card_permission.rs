@@ -85,6 +85,7 @@ fn msg(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage 
             ..Default::default()
         },
         model: "test-model".into(),
+        response_id: None,
     }
 }
 
