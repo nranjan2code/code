@@ -87,17 +87,52 @@ fn text(t: &str) -> AssistantMessage {
     }
 }
 
-fn bash_sleep() -> AssistantMessage {
+fn bash_script(command: String) -> AssistantMessage {
     AssistantMessage {
         content: vec![ContentBlock::ToolUse {
             id: format!("s{}", uuid_like()),
             name: "bash".into(),
-            input: serde_json::json!({"command": "sleep 0.5"}),
+            input: serde_json::json!({ "command": command }),
         }],
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
         model: "test-model".into(),
     }
+}
+
+/// What a worker's shell does. The test proves ordering with marker files, not
+/// with a stopwatch: elapsed time is a proxy that fails whenever the machine
+/// is busy, and the claim is about who ran alongside whom.
+///
+/// * `Rendezvous` — announce start, then wait (bounded) for the peer's start
+///   marker. It can only succeed if the two workers really ran at the same
+///   time; if the scheduler had serialized them the wait times out.
+/// * `AfterWave` — record whether both wave-1 workers had already finished when
+///   this one began.
+///
+/// Every script ends in `true`: recording an observation must never make the
+/// command itself fail, or the stop gate would add a turn and the test would
+/// be measuring that instead.
+enum Worker<'a> {
+    Rendezvous { me: &'a str, peer: &'a str },
+    AfterWave { me: &'a str },
+}
+
+fn worker_script(dir: &std::path::Path, worker: Worker<'_>) -> String {
+    let d = dir.display();
+    let body = match worker {
+        Worker::Rendezvous { me, peer } => format!(
+            "touch {d}/{me}.start; \
+             for i in $(seq 1 400); do [ -f {d}/{peer}.start ] && break; sleep 0.05; done; \
+             [ -f {d}/{peer}.start ] && touch {d}/{me}.saw_peer; \
+             sleep 0.3; touch {d}/{me}.end; true"
+        ),
+        Worker::AfterWave { me } => format!(
+            "touch {d}/{me}.start; \
+             [ -f {d}/a.end ] && [ -f {d}/b.end ] && touch {d}/{me}.saw_wave_done; true"
+        ),
+    };
+    format!("sh -c '{body}'")
 }
 
 fn task_call(id: &str, paths: &[&str], tag: &str) -> AssistantMessage {
@@ -135,8 +170,8 @@ fn uuid_like() -> String {
     format!("u{}", C.fetch_add(1, Ordering::Relaxed))
 }
 
-fn child_script() -> VecDeque<AssistantMessage> {
-    VecDeque::from(vec![bash_sleep(), text("child done")])
+fn child_script(command: String) -> VecDeque<AssistantMessage> {
+    VecDeque::from(vec![bash_script(command), text("child done")])
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -184,9 +219,25 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
             text("all done"),
         ]),
     );
-    routes.insert("do the thing for A".into(), child_script());
-    routes.insert("do the thing for B".into(), child_script());
-    routes.insert("do the thing for C".into(), child_script());
+    let work = dir.path().to_path_buf();
+    routes.insert(
+        "do the thing for A".into(),
+        child_script(worker_script(
+            &work,
+            Worker::Rendezvous { me: "a", peer: "b" },
+        )),
+    );
+    routes.insert(
+        "do the thing for B".into(),
+        child_script(worker_script(
+            &work,
+            Worker::Rendezvous { me: "b", peer: "a" },
+        )),
+    );
+    routes.insert(
+        "do the thing for C".into(),
+        child_script(worker_script(&work, Worker::AfterWave { me: "c" })),
+    );
 
     let provider = Arc::new(TaggedScripted {
         routes: Mutex::new(routes),
@@ -234,7 +285,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         registry: Some(Arc::new(WorkerRegistry::new())),
     }))];
     cfg.permission = Some(Arc::new(
-        PermissionEngine::from_rule_strings(&["+task".to_string(), "+Bash(sleep *)".to_string()])
+        PermissionEngine::from_rule_strings(&["+task".to_string(), "+Bash(sh *)".to_string()])
             .unwrap(),
     ));
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
@@ -244,7 +295,6 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     let (ev_tx, mut ev_rx) = mpsc::channel(4096);
     let drainer = tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });
 
-    let start = Instant::now();
     let outcome = agent
         .run(
             "fan out",
@@ -253,24 +303,24 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
             ev_tx,
         )
         .await;
-    let elapsed = start.elapsed();
     drop(drainer);
 
-    eprintln!("elapsed {elapsed:?}");
     assert!(
         matches!(outcome, TurnOutcome::Completed { .. }),
         "got {outcome:?}"
     );
 
-    // Wave 1 (A+B concurrent, ~0.5s) then wave 2 (C, ~0.5s) => ~1.0s.
-    // Fully serial would be ~1.5s.
+    // Wave 1: A and B have disjoint paths, so they must have run at the same
+    // time — each saw the other's start marker while it was still running.
     assert!(
-        elapsed < std::time::Duration::from_millis(1350),
-        "expected wave parallelism (~1.0s), took {elapsed:?}"
+        work.join("a.saw_peer").exists() && work.join("b.saw_peer").exists(),
+        "disjoint writers A and B must run in parallel (each should have seen the other start)"
     );
+    // Wave 2: C's paths conflict with A's, so it must wait for the wave to
+    // finish — both wave-1 workers were already done when C began.
     assert!(
-        elapsed >= std::time::Duration::from_millis(900),
-        "conflicting writer must serialize after its wave, took {elapsed:?}"
+        work.join("c.saw_wave_done").exists(),
+        "the conflicting writer C must start only after wave 1 (A and B) has finished"
     );
 
     let session = agent.session.lock().await;
