@@ -792,6 +792,21 @@ pub enum EntryPayload {
     /// A validated presentation (docs/design/68-context-engine.md §10).
     /// Never model-visible raw: `derive_messages` skips it like `Receipt`.
     Presentation(PresentationRecord),
+    /// A turn's closing card (docs/design/68-context-engine.md §10), written
+    /// once when the turn closes and never rewritten. Never model-visible
+    /// raw: a follow-up turn sees it through `TurnCard::line` in the
+    /// `<turns>` tail block or, promoted, through `Turn::full_record`, never
+    /// through this entry directly.
+    TurnCard(TurnCardRecord),
+}
+
+/// The closing record for one turn (docs/design/68-context-engine.md §10).
+/// `turn_id` is the directive entry id the card answers — the same id
+/// `TurnIndex` uses to key turns and `recall({ turn })` resolves against.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnCardRecord {
+    pub turn_id: String,
+    pub card: crate::turns::TurnCard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

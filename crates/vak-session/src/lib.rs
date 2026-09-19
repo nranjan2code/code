@@ -8,6 +8,7 @@
 mod index;
 pub mod log;
 pub mod search;
+pub mod turns;
 pub mod types;
 pub mod work;
 
@@ -16,11 +17,15 @@ pub use search::{
     DEFAULT_LIMIT, ExternalDoc, MEMORY_BONUS, ProjectHit, SearchError, SessionHit, search,
     search_all, search_all_extended, search_extended,
 };
+pub use turns::{
+    Answer, Evidence, Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard,
+    TurnIndex, evidence_digest, evidence_shape,
+};
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, CapabilityDescriptor, CapabilityInvocation,
     CapabilityKind, CompactionEntry, ConversationContext, ConversationOrigin, Entry, EntryPayload,
     FrozenContract, MessageMeta, MessageRecord, PromptLayerDescriptor, SessionError, SessionHeader,
-    TranscriptMessage, TurnCapabilitiesBound,
+    TranscriptMessage, TurnCapabilitiesBound, TurnCardRecord,
 };
 pub use work::{
     WorkError, WorkProjection, project_work, validate_contract, validate_contract_for_admission,

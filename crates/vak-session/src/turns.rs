@@ -1,0 +1,1157 @@
+//! `TurnIndex`: the ledger reorganized into turns (docs/design/68-context-
+//! engine.md principle 3, §2, §10).
+//!
+//! A turn is one user directive plus every assistant step and tool exchange
+//! until the final answer; it is the unit the request assembler works with
+//! instead of individual messages. `TurnIndex::from_log` walks the ledger's
+//! active chain once and never splits a turn. Everything here is rebuilt
+//! from the ledger on demand — nothing here is itself persisted except
+//! `TurnCard`, which is written once at turn close (`EntryPayload::TurnCard`)
+//! and read back by a later `TurnIndex::from_log` rather than recomputed.
+
+use std::collections::{HashMap, HashSet};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use vak_llm::{ContentBlock, Message, Role};
+
+use crate::log::SessionLog;
+use crate::types::{EntryPayload, PresentationRecord, PresentationSource};
+
+/// One assistant step within a turn: the assistant message (text and/or
+/// `ToolUse` blocks) and the tool results that answered it, in arrival order.
+#[derive(Debug, Clone)]
+pub struct Step {
+    pub assistant: Message,
+    /// `(tool_use_id, content, is_error)`.
+    pub results: Vec<(String, String, bool)>,
+}
+
+/// One user directive plus every assistant step and tool exchange until the
+/// final answer (principle 3: "the turn is the unit; a turn is never
+/// split").
+#[derive(Debug, Clone)]
+pub struct Turn {
+    /// The directive entry id — stable identity for `recall({ turn })` and
+    /// `PresentationRecord::turn_id`.
+    pub id: String,
+    pub directive: Message,
+    pub steps: Vec<Step>,
+    /// The turn's final text-only assistant message, once it has one.
+    pub final_answer: Option<Message>,
+    /// Every tool_use_id with a recorded result in this turn, in the order
+    /// results arrived. Includes presentation-tool acks; `TurnCard::did`
+    /// filters those out via `presentation_records`.
+    pub evidence: Vec<String>,
+    /// Presentation ledger-entry ids answered by this turn, in emit order.
+    pub presentations: Vec<String>,
+    /// The turn's closing card, once written (`EntryPayload::TurnCard`).
+    pub card: Option<TurnCard>,
+    /// `false` only for the last turn when the chain ends without a final
+    /// assistant text after the directive.
+    pub closed: bool,
+    /// Full presentation records parallel to `presentations`, kept alongside
+    /// the id list so `full_record`/`build_card` never re-walk the ledger.
+    presentation_records: Vec<PresentationRecord>,
+    /// The turn's resolved intent reading, when an `Intent` entry exists.
+    reading: Option<ReadingKey>,
+}
+
+/// A compaction summary over a range of turns (docs/design/68 §2: "Compaction
+/// packets become `TurnIndex.packets`").
+#[derive(Debug, Clone)]
+pub struct Packet {
+    pub first_kept_entry_id: String,
+    pub summary: String,
+}
+
+/// The ledger reorganized into turns, built once per request.
+#[derive(Debug, Clone, Default)]
+pub struct TurnIndex {
+    pub turns: Vec<Turn>,
+    pub packets: Vec<Packet>,
+}
+
+impl TurnIndex {
+    /// Walks `log.chain_to_root()` once, in order. Control messages (nudges,
+    /// intent notes — `MessageRecord::control_kind().is_some()`) are not
+    /// turns and not steps: they never start a turn and never become a step.
+    pub fn from_log(log: &SessionLog) -> TurnIndex {
+        let chain = log.chain_to_root();
+        let mut turns: Vec<Turn> = Vec::new();
+        let mut packets: Vec<Packet> = Vec::new();
+
+        for entry in &chain {
+            match &entry.payload {
+                EntryPayload::Message(record) => {
+                    if record.control_kind().is_some() {
+                        continue;
+                    }
+                    let msg = &record.message;
+                    match msg.role {
+                        Role::User => {
+                            let has_text = msg
+                                .content
+                                .iter()
+                                .any(|b| matches!(b, ContentBlock::Text { .. }));
+                            let has_tool_result = msg
+                                .content
+                                .iter()
+                                .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+                            if has_text && !has_tool_result {
+                                turns.push(Turn {
+                                    id: entry.id.clone(),
+                                    directive: msg.clone(),
+                                    steps: Vec::new(),
+                                    final_answer: None,
+                                    evidence: Vec::new(),
+                                    presentations: Vec::new(),
+                                    card: None,
+                                    closed: true,
+                                    presentation_records: Vec::new(),
+                                    reading: None,
+                                });
+                            } else if has_tool_result
+                                && let Some(turn) = turns.last_mut()
+                                && let Some(step) = turn.steps.last_mut()
+                            {
+                                for block in &msg.content {
+                                    if let ContentBlock::ToolResult {
+                                        tool_use_id,
+                                        content,
+                                        is_error,
+                                    } = block
+                                    {
+                                        step.results.push((
+                                            tool_use_id.clone(),
+                                            content.clone(),
+                                            *is_error,
+                                        ));
+                                        turn.evidence.push(tool_use_id.clone());
+                                    }
+                                }
+                            }
+                        }
+                        Role::Assistant => {
+                            let has_tool_use = msg
+                                .content
+                                .iter()
+                                .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+                            if let Some(turn) = turns.last_mut() {
+                                if has_tool_use {
+                                    turn.steps.push(Step {
+                                        assistant: msg.clone(),
+                                        results: Vec::new(),
+                                    });
+                                } else {
+                                    turn.final_answer = Some(msg.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                EntryPayload::Intent(record) => {
+                    if let Some(turn) = turns.last_mut() {
+                        turn.reading = Some(ReadingKey::from_reading(&record.reading));
+                    }
+                }
+                EntryPayload::Compaction(c) => {
+                    packets.push(Packet {
+                        first_kept_entry_id: c.first_kept_entry_id.clone(),
+                        summary: c.summary.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Only the last turn can be open: every earlier turn already saw a
+        // later directive, which cannot happen unless the run ended it one
+        // way or another. The last turn is open exactly when it never
+        // produced a final text-only answer.
+        if let Some(last) = turns.last_mut() {
+            last.closed = last.final_answer.is_some();
+        }
+
+        let by_id: HashMap<String, usize> = turns
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.clone(), i))
+            .collect();
+        for (id, record) in log.presentations() {
+            if let Some(&idx) = by_id.get(&record.turn_id) {
+                turns[idx].presentations.push(id);
+                turns[idx].presentation_records.push(record.clone());
+            }
+        }
+        for (turn_id, card) in log.turn_cards() {
+            if let Some(&idx) = by_id.get(&turn_id) {
+                turns[idx].card = Some(card);
+            }
+        }
+
+        TurnIndex { turns, packets }
+    }
+
+    /// 1-based, chronological — the numbering `TurnCard::line` and
+    /// `recall({ turn })` share.
+    pub fn turn_by_number(&self, n: usize) -> Option<&Turn> {
+        n.checked_sub(1).and_then(|i| self.turns.get(i))
+    }
+
+    pub fn turn_by_id(&self, id: &str) -> Option<&Turn> {
+        self.turns.iter().find(|t| t.id == id)
+    }
+
+    /// In-memory BM25 over each closed turn's card index text
+    /// (docs/design/68 §10). A turn with no card yet (never closed, or
+    /// closed before this workstream landed) never matches. Highest score
+    /// first; ties break by turn id for determinism.
+    pub fn search(&self, query: &str) -> Vec<(String, f64)> {
+        let terms = crate::search::tokenize_impl(query);
+        let phrase = crate::search::normalize_impl(query);
+        if terms.is_empty() || phrase.is_empty() {
+            return Vec::new();
+        }
+        let mut scored: Vec<(String, f64)> = self
+            .turns
+            .iter()
+            .filter_map(|turn| {
+                let card = turn.card.as_ref()?;
+                let text = card.index_text();
+                let normalized = crate::search::normalize_impl(&text);
+                let entities = crate::search::extract_entities(&text);
+                let score =
+                    crate::search::score_normalized(&normalized, &terms, &phrase, &entities);
+                (score > 0.0).then(|| (turn.id.clone(), score as f64))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        scored
+    }
+}
+
+impl Turn {
+    fn tool_use(&self, id: &str) -> Option<(&str, &Value)> {
+        self.steps
+            .iter()
+            .flat_map(|step| step.assistant.content.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolUse {
+                    id: call_id,
+                    name,
+                    input,
+                } if call_id == id => Some((name.as_str(), input)),
+                _ => None,
+            })
+    }
+
+    fn tool_result(&self, id: &str) -> Option<(&str, bool)> {
+        self.steps
+            .iter()
+            .flat_map(|step| step.results.iter())
+            .find_map(|(result_id, content, is_error)| {
+                (result_id == id).then_some((content.as_str(), *is_error))
+            })
+    }
+
+    /// The resolved evidence for one of this turn's tool_use_ids, or `None`
+    /// if the id belongs to a different turn or has no result yet.
+    pub fn evidence_for(&self, id: &str) -> Option<Evidence> {
+        let (tool, input) = self.tool_use(id)?;
+        let (content, is_error) = self.tool_result(id)?;
+        Some(Evidence {
+            tool: tool.to_string(),
+            input: input.clone(),
+            content: content.to_string(),
+            is_error,
+        })
+    }
+
+    fn presentation_tool_use_ids(&self) -> HashSet<&str> {
+        self.presentation_records
+            .iter()
+            .filter_map(|record| match &record.source {
+                PresentationSource::ToolCall { tool_use_id } => Some(tool_use_id.as_str()),
+                PresentationSource::Fence { .. } => None,
+            })
+            .collect()
+    }
+
+    /// One `TraceLine` per non-presentation tool call, in call order
+    /// (docs/design/68 §10's "did").
+    fn trace_lines(&self) -> Vec<TraceLine> {
+        let card_ids = self.presentation_tool_use_ids();
+        self.evidence
+            .iter()
+            .filter(|id| !card_ids.contains(id.as_str()))
+            .filter_map(|id| {
+                let evidence = self.evidence_for(id)?;
+                Some(TraceLine {
+                    tool: evidence.tool.clone(),
+                    args_digest: args_digest(&evidence.tool, &evidence.input),
+                    evidence_id: id.clone(),
+                    shape: evidence_shape(&evidence),
+                })
+            })
+            .collect()
+    }
+
+    /// The two-message follow-up projection (docs/design/68 §10): the
+    /// directive verbatim, then one trace line per evidence call, then each
+    /// presentation's canonical payload, then the narration. No
+    /// `tool_use`/`tool_result` blocks — API-valid on every provider without
+    /// pair-boundary logic, and byte-stable once the turn is closed.
+    pub fn full_record(&self) -> Vec<Message> {
+        let mut assistant_text = String::new();
+        for line in self.trace_lines() {
+            assistant_text.push_str(&format!(
+                "\u{25b8} {} {} \u{2192} ev:{} ({})\n",
+                line.tool, line.args_digest, line.evidence_id, line.shape
+            ));
+        }
+        for (id, record) in self
+            .presentations
+            .iter()
+            .zip(self.presentation_records.iter())
+        {
+            assistant_text.push_str(&format!(
+                "[card {} pres:{}] {}\n",
+                record.semantic_type, id, record.payload
+            ));
+        }
+        let narration = self
+            .final_answer
+            .as_ref()
+            .map(Message::text_content)
+            .unwrap_or_default();
+        if !narration.trim().is_empty() {
+            assistant_text.push_str(narration.trim());
+        }
+        vec![
+            self.directive.clone(),
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::text(assistant_text.trim_end().to_string())],
+            },
+        ]
+    }
+
+    /// The open turn exactly as recorded: directive, then each step's
+    /// assistant message and its tool-result message, then the final answer
+    /// if one has landed. Used for the still-open turn, which stays verbatim
+    /// because it is still being worked from within this run.
+    pub fn current_verbatim(&self) -> Vec<Message> {
+        let mut out = vec![self.directive.clone()];
+        for step in &self.steps {
+            out.push(step.assistant.clone());
+            if !step.results.is_empty() {
+                let content = step
+                    .results
+                    .iter()
+                    .map(|(id, content, is_error)| {
+                        if *is_error {
+                            ContentBlock::tool_error(id.clone(), content.clone())
+                        } else {
+                            ContentBlock::tool_result(id.clone(), content.clone())
+                        }
+                    })
+                    .collect();
+                out.push(Message {
+                    role: Role::User,
+                    content,
+                });
+            }
+        }
+        if let Some(final_answer) = &self.final_answer {
+            out.push(final_answer.clone());
+        }
+        out
+    }
+
+    /// Builds this turn's closing `TurnCard`. `narration` is the caller's
+    /// already-resolved narration (verbatim when short, or a side-call gist
+    /// when long — docs/design/68 §10); `outcome` is the turn's terminal
+    /// state; `estimate_tokens` measures a rendered text (the host's
+    /// `CapacityProfile::estimate_tokens`, or chars/4 with no profile).
+    pub fn build_card(
+        &self,
+        outcome: impl Into<String>,
+        narration: String,
+        estimate_tokens: &dyn Fn(&str) -> u64,
+    ) -> TurnCard {
+        let reading = self.reading.clone().unwrap_or_default();
+        let asked = first_sentence_by_words(&self.directive.text_content(), 60);
+        let did = self.trace_lines();
+        let presentations: Vec<PresentationRef> = self
+            .presentations
+            .iter()
+            .zip(self.presentation_records.iter())
+            .map(|(id, record)| PresentationRef {
+                id: id.clone(),
+                semantic_type: record.semantic_type.clone(),
+                title: record.title.clone(),
+                digest: record.identity_digest.clone(),
+                derived_from: record.derived_from.clone(),
+            })
+            .collect();
+        let answered = Answer {
+            presentations,
+            narration,
+        };
+        let full_text: String = self
+            .full_record()
+            .iter()
+            .map(Message::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tokens_full = estimate_tokens(&full_text);
+        let mut card = TurnCard {
+            turn_id: self.id.clone(),
+            asked,
+            did,
+            answered,
+            outcome: outcome.into(),
+            reading,
+            tokens_full,
+            tokens_card: 0,
+        };
+        let index_text = card.index_text();
+        card.tokens_card = estimate_tokens(&index_text);
+        card
+    }
+}
+
+/// What the request assembler and `recall` see of one past tool result:
+/// the tool that produced it, its call arguments, its content, and whether
+/// it failed. Resolved from the ledger by `SessionLog::evidence`.
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    pub tool: String,
+    pub input: Value,
+    pub content: String,
+    pub is_error: bool,
+}
+
+/// A content-aware summary of one result, ending with the fixed
+/// `[evidence:<id> — <n> chars; call recall to expand]` tag (docs/design/68
+/// §3). Never a character-count cut: the body is shape-driven, and only the
+/// bash/text digests select by *line* count.
+pub fn evidence_digest(id: &str, evidence: &Evidence) -> String {
+    let chars = evidence.content.chars().count();
+    let tag = format!("[evidence:{id} \u{2014} {chars} chars; call recall to expand]");
+    if evidence.is_error {
+        return format!("{}\n{tag}", evidence.content);
+    }
+    let body = if evidence.tool == "bash" {
+        bash_digest(&evidence.content)
+    } else if let Ok(value) = serde_json::from_str::<Value>(&evidence.content) {
+        json_digest(&value)
+    } else {
+        text_digest(&evidence.content)
+    };
+    format!("{body}\n{tag}")
+}
+
+/// The short parenthetical a `TraceLine` carries (`"8 results, 14.2k
+/// chars"`) — a summary, not the full digest.
+pub fn evidence_shape(evidence: &Evidence) -> String {
+    let chars = evidence.content.chars().count();
+    if evidence.is_error {
+        return "error".to_string();
+    }
+    if evidence.tool == "bash" {
+        let exit = evidence.content.lines().find_map(|line| {
+            line.to_ascii_lowercase()
+                .contains("exit code")
+                .then(|| line.trim().to_string())
+        });
+        return match exit {
+            Some(exit) => format!("{exit}, {chars} chars"),
+            None => format!("{chars} chars"),
+        };
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(&evidence.content) {
+        return match &value {
+            Value::Array(items) if !items.is_empty() && items.iter().all(is_link_like) => {
+                format!("{} results, {chars} chars", items.len())
+            }
+            Value::Array(items) => format!("array[{}], {chars} chars", items.len()),
+            Value::Object(map) => format!("{} keys, {chars} chars", map.len()),
+            _ => format!("{chars} chars"),
+        };
+    }
+    let lines = evidence.content.lines().count();
+    format!("{lines} lines, {chars} chars")
+}
+
+fn is_link_like(value: &Value) -> bool {
+    value.is_object() && (value.get("url").is_some() || value.get("title").is_some())
+}
+
+fn json_digest(value: &Value) -> String {
+    match value {
+        Value::Array(items) => array_digest(items),
+        Value::Object(map) => object_digest(map),
+        other => other.to_string(),
+    }
+}
+
+fn array_digest(items: &[Value]) -> String {
+    if !items.is_empty() && items.iter().all(is_link_like) {
+        let mut out = format!("{} results:\n", items.len());
+        for item in items {
+            let title = item.get("title").and_then(Value::as_str).unwrap_or("");
+            let url = item.get("url").and_then(Value::as_str).unwrap_or("");
+            out.push_str(&format!("- {title} ({url})\n"));
+        }
+        return out.trim_end().to_string();
+    }
+    let mut out = format!("array, {} items", items.len());
+    if let Some(first) = items.first() {
+        out.push_str(&format!(
+            "; first: {}",
+            serde_json::to_string(first).unwrap_or_default()
+        ));
+    }
+    out
+}
+
+fn object_digest(map: &serde_json::Map<String, Value>) -> String {
+    let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    let mut lines = vec![format!("object, keys: {}", keys.join(", "))];
+    for (key, value) in map {
+        if let Value::Array(items) = value {
+            if !items.is_empty() && items.iter().all(is_link_like) {
+                lines.push(format!("{key}: {}", array_digest(items)));
+            } else {
+                lines.push(format!("{key}: array[{}]", items.len()));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+fn text_digest(content: &str) -> String {
+    let headings: Vec<&str> = content
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with('#'))
+        .collect();
+    let first_paragraph = content
+        .split("\n\n")
+        .map(str::trim)
+        .find(|paragraph| !paragraph.is_empty() && !paragraph.starts_with('#'))
+        .unwrap_or("");
+    let lines = content.lines().count();
+    let bytes = content.len();
+    let mut out = String::new();
+    if !headings.is_empty() {
+        out.push_str("headings: ");
+        out.push_str(&headings.join(" | "));
+        out.push('\n');
+    }
+    if !first_paragraph.is_empty() {
+        out.push_str(first_paragraph);
+        out.push('\n');
+    }
+    out.push_str(&format!("({lines} lines, {bytes} bytes)"));
+    out
+}
+
+fn bash_digest(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = String::new();
+    if let Some(exit) = lines
+        .iter()
+        .find(|line| line.to_ascii_lowercase().contains("exit code"))
+    {
+        out.push_str(exit);
+        out.push('\n');
+    }
+    if lines.len() <= 20 {
+        out.push_str(&lines.join("\n"));
+    } else {
+        out.push_str(&lines[..10].join("\n"));
+        out.push_str("\n...\n");
+        out.push_str(&lines[lines.len() - 10..].join("\n"));
+    }
+    out
+}
+
+/// The input JSON with string values longer than one sentence replaced by
+/// their first sentence — never for `bash`/`edit`/`write`, whose inputs stay
+/// whole (docs/design/68 §10's `TraceLine.args_digest`).
+fn args_digest(tool: &str, input: &Value) -> Value {
+    if matches!(tool, "bash" | "edit" | "write") {
+        return input.clone();
+    }
+    shorten_strings(input)
+}
+
+fn shorten_strings(value: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(first_sentence(s).to_string()),
+        Value::Array(items) => Value::Array(items.iter().map(shorten_strings).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), shorten_strings(value)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// The text up to and including its first sentence-ending punctuation
+/// (`.`, `!`, `?`) followed by a space, newline, or end of string. Returns
+/// the whole trimmed text unchanged when it has none — never a character
+/// count, always a semantic boundary.
+pub(crate) fn first_sentence(text: &str) -> &str {
+    let trimmed = text.trim();
+    let bytes = trimmed.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if matches!(b, b'.' | b'!' | b'?') {
+            let after = i + 1;
+            if after >= bytes.len() || matches!(bytes[after], b' ' | b'\n') {
+                return &trimmed[..after];
+            }
+        }
+    }
+    trimmed
+}
+
+fn first_sentence_by_words(text: &str, max_words: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.split_whitespace().count() <= max_words {
+        return trimmed.to_string();
+    }
+    first_sentence(trimmed).to_string()
+}
+
+fn truncate_words(text: &str, max_words: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= max_words {
+        return text.trim().to_string();
+    }
+    format!("{}\u{2026}", words[..max_words].join(" "))
+}
+
+/// Act/domains/modalities distilled from a turn's `vak_intent::Reading` —
+/// enough to group and filter turns without carrying the full reading (which
+/// includes provenance and confidence irrelevant to a card).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadingKey {
+    pub act: String,
+    pub domains: Vec<String>,
+    pub modalities: Vec<String>,
+}
+
+impl ReadingKey {
+    pub fn from_reading(reading: &vak_intent::Reading) -> Self {
+        let mut modalities: Vec<String> = reading
+            .input_modalities
+            .iter()
+            .chain(reading.output_modalities.iter())
+            .map(|m| m.as_str().to_string())
+            .collect();
+        modalities.sort();
+        modalities.dedup();
+        ReadingKey {
+            act: reading.act.as_str().to_string(),
+            domains: reading.domains.iter().cloned().collect(),
+            modalities,
+        }
+    }
+}
+
+/// One non-presentation tool call in a turn's trace (docs/design/68 §10).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TraceLine {
+    pub tool: String,
+    pub args_digest: Value,
+    pub evidence_id: String,
+    pub shape: String,
+}
+
+/// A card emitted in this turn, as referenced from its `TurnCard`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresentationRef {
+    pub id: String,
+    pub semantic_type: String,
+    pub title: String,
+    /// Schema-driven digest (`PresentationRecord::identity_digest`).
+    pub digest: String,
+    pub derived_from: Vec<String>,
+}
+
+/// The turn's answer: the presentations it emitted (the answer itself) and
+/// the narration around them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Answer {
+    pub presentations: Vec<PresentationRef>,
+    pub narration: String,
+}
+
+/// A turn's closing card (docs/design/68-context-engine.md §10): the
+/// three-layer answer (evidence trace, presentations, narration) plus enough
+/// bookkeeping to render it as a `<turns>` line or promote it to a full
+/// record. Written once at turn close (`EntryPayload::TurnCard`) and never
+/// rewritten.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnCard {
+    pub turn_id: String,
+    pub asked: String,
+    pub did: Vec<TraceLine>,
+    pub answered: Answer,
+    pub outcome: String,
+    pub reading: ReadingKey,
+    pub tokens_full: u64,
+    pub tokens_card: u64,
+}
+
+impl TurnCard {
+    /// The text BM25 indexes this card by: `asked` + every presentation's
+    /// title/digest + narration + trace tool names and args (docs/design/68
+    /// §10).
+    pub fn index_text(&self) -> String {
+        let mut parts = vec![self.asked.clone()];
+        for presentation in &self.answered.presentations {
+            parts.push(presentation.title.clone());
+            parts.push(presentation.digest.clone());
+        }
+        parts.push(self.answered.narration.clone());
+        for trace in &self.did {
+            parts.push(trace.tool.clone());
+            parts.push(trace.args_digest.to_string());
+        }
+        parts.join(" ")
+    }
+
+    /// The one-line `<turns>` rendering: `#<n> asked: … → did: search×2 →
+    /// research.synthesis "Sensex 15 Sep" [pres:a1; ev:9f2,9f3]`.
+    pub fn line(&self, n: usize) -> String {
+        let did_summary = summarize_trace(&self.did);
+        let outcome_part = match self.answered.presentations.first() {
+            Some(presentation) => {
+                let evidence_ids: Vec<&str> = self
+                    .did
+                    .iter()
+                    .map(|trace| trace.evidence_id.as_str())
+                    .collect();
+                let evidence_part = if evidence_ids.is_empty() {
+                    String::new()
+                } else {
+                    format!("; ev:{}", evidence_ids.join(","))
+                };
+                format!(
+                    "{} \"{}\" [pres:{}{evidence_part}]",
+                    presentation.semantic_type, presentation.title, presentation.id
+                )
+            }
+            None => format!("\"{}\"", truncate_words(&self.answered.narration, 12)),
+        };
+        format!(
+            "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}",
+            self.asked
+        )
+    }
+}
+
+fn summarize_trace(did: &[TraceLine]) -> String {
+    if did.is_empty() {
+        return "nothing".to_string();
+    }
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for trace in did {
+        match counts.iter_mut().find(|(name, _)| *name == trace.tool) {
+            Some(existing) => existing.1 += 1,
+            None => counts.push((trace.tool.clone(), 1)),
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(name, n)| {
+            if n > 1 {
+                format!("{name}\u{d7}{n}")
+            } else {
+                name
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::types::{
+        ActivityKind, ActivityRecord, ActivityStatus, CompactionEntry, Entry, FrozenContract,
+        IntentRecord, MessageRecord, PresentationRecord, PresentationSource, SessionHeader,
+        TurnCardRecord,
+    };
+    use crate::{SessionLog, SessionPath};
+    use vak_llm::{ContentBlock as CB, Message as M, Role as R};
+
+    fn header(cwd: &std::path::Path) -> SessionHeader {
+        SessionHeader {
+            agent: None,
+            session_id: "s1".into(),
+            created_at: chrono::Utc::now(),
+            cwd: cwd.to_path_buf(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: FrozenContract {
+                app_version: "test".into(),
+                provider: "scripted".into(),
+                model: "m".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "workspace-write".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        }
+    }
+
+    fn open_log(dir: &std::path::Path) -> SessionLog {
+        let path = SessionPath::new_session_file(dir, dir, "s1");
+        SessionLog::create(path, header(dir)).unwrap()
+    }
+
+    fn user_text(text: &str) -> MessageRecord {
+        MessageRecord {
+            message: M::user_text(text),
+            meta: None,
+        }
+    }
+
+    fn assistant_tool_call(id: &str, name: &str, input: Value) -> MessageRecord {
+        MessageRecord {
+            message: M::assistant(vec![CB::ToolUse {
+                id: id.into(),
+                name: name.into(),
+                input,
+            }]),
+            meta: None,
+        }
+    }
+
+    fn tool_result(id: &str, content: &str) -> MessageRecord {
+        MessageRecord {
+            message: M {
+                role: R::User,
+                content: vec![CB::tool_result(id, content)],
+            },
+            meta: None,
+        }
+    }
+
+    fn assistant_text(text: &str) -> MessageRecord {
+        MessageRecord {
+            message: M::assistant(vec![CB::text(text)]),
+            meta: None,
+        }
+    }
+
+    /// Builds a fixture ledger with two closed turns (one plain, one with a
+    /// tool call and a presentation) and a third turn left open (a tool call
+    /// with no final answer yet).
+    fn two_closed_one_open(dir: &std::path::Path) -> (SessionLog, String, String, String) {
+        let mut log = open_log(dir);
+        let t1 = log.append_message(user_text("hello there")).unwrap().id;
+        log.append_message(assistant_text("hi, how can I help?"))
+            .unwrap();
+
+        let t2 = log
+            .append_message(user_text("search for rust news"))
+            .unwrap()
+            .id;
+        log.append_message(assistant_tool_call(
+            "call-1",
+            "search",
+            serde_json::json!({"query": "rust news"}),
+        ))
+        .unwrap();
+        log.append_message(tool_result(
+            "call-1",
+            r#"[{"title":"Rust 2.0","url":"https://example.com/a"}]"#,
+        ))
+        .unwrap();
+        log.append_message(assistant_tool_call(
+            "card-1",
+            "emit_research_card",
+            serde_json::json!({"semantic_type": "research.synthesis"}),
+        ))
+        .unwrap();
+        log.append_message(tool_result(
+            "card-1",
+            r#"{"presentation":"pres-1","ok":true}"#,
+        ))
+        .unwrap();
+        log.append_message(assistant_text("Here is what I found."))
+            .unwrap();
+        log.append_presentation(PresentationRecord {
+            turn_id: t2.clone(),
+            source: PresentationSource::ToolCall {
+                tool_use_id: "card-1".into(),
+            },
+            semantic_type: "research.synthesis".into(),
+            skill_id: "skill".into(),
+            skill_version: "1".into(),
+            schema_version: 1,
+            payload: serde_json::json!({"takeaways": ["Rust 2.0 shipped"]}),
+            payload_digest: "digest1".into(),
+            derived_from: vec!["call-1".into()],
+            title: "Rust news".into(),
+            identity_digest: "Rust news: Rust 2.0 shipped".into(),
+        })
+        .unwrap();
+
+        let t3 = log
+            .append_message(user_text("now check the changelog"))
+            .unwrap()
+            .id;
+        log.append_message(assistant_tool_call(
+            "call-2",
+            "webfetch",
+            serde_json::json!({"url": "https://example.com/changelog"}),
+        ))
+        .unwrap();
+        (log, t1, t2, t3)
+    }
+
+    #[test]
+    fn index_builds_turns_from_a_fixture_ledger_with_two_closed_and_one_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, t1, t2, t3) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.turns.len(), 3);
+        assert_eq!(index.turns[0].id, t1);
+        assert!(index.turns[0].closed);
+        assert_eq!(index.turns[1].id, t2);
+        assert!(index.turns[1].closed);
+        assert_eq!(index.turns[2].id, t3);
+        assert!(
+            !index.turns[2].closed,
+            "the last turn has no final answer yet"
+        );
+    }
+
+    #[test]
+    fn a_turn_is_never_split_across_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, t2, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        let turn2 = index.turn_by_id(&t2).unwrap();
+        assert_eq!(turn2.steps.len(), 2);
+        assert_eq!(
+            turn2.evidence,
+            vec!["call-1".to_string(), "card-1".to_string()]
+        );
+        assert_eq!(turn2.presentations.len(), 1);
+    }
+
+    #[test]
+    fn full_record_has_no_tool_blocks_and_includes_presentations() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, t2, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        let turn2 = index.turn_by_id(&t2).unwrap();
+        let record = turn2.full_record();
+        assert_eq!(record.len(), 2);
+        assert_eq!(record[0].role, R::User);
+        assert_eq!(record[1].role, R::Assistant);
+        for message in &record {
+            assert!(
+                !message
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, CB::ToolUse { .. } | CB::ToolResult { .. })),
+                "full record must carry no tool_use/tool_result blocks"
+            );
+        }
+        let text = record[1].text_content();
+        assert!(text.contains("ev:call-1"));
+        assert!(text.contains("[card research.synthesis pres:"));
+        assert!(text.contains("Here is what I found."));
+    }
+
+    #[test]
+    fn card_line_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, t2, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        let turn2 = index.turn_by_id(&t2).unwrap();
+        let card = turn2.build_card("completed", "Here is what I found.".to_string(), &|s| {
+            s.len() as u64 / 4
+        });
+        let line = card.line(2);
+        assert!(line.starts_with("#2 asked:"));
+        assert!(line.contains("did: search"));
+        assert!(line.contains("research.synthesis"));
+        assert!(line.contains("Rust news"));
+        assert!(line.contains("ev:call-1"));
+    }
+
+    #[test]
+    fn digest_per_shape() {
+        let search_ev = Evidence {
+            tool: "search".into(),
+            input: serde_json::json!({}),
+            content: r#"[{"title":"A","url":"https://a"},{"title":"B","url":"https://b"}]"#.into(),
+            is_error: false,
+        };
+        let digest = evidence_digest("ev1", &search_ev);
+        assert!(digest.contains("https://a"));
+        assert!(digest.contains("https://b"));
+        assert!(digest.ends_with("[evidence:ev1 \u{2014} 65 chars; call recall to expand]"));
+
+        let bash_ev = Evidence {
+            tool: "bash".into(),
+            input: serde_json::json!({"command": "echo hi"}),
+            content: "hi\nexit code: 0".into(),
+            is_error: false,
+        };
+        let bash_digest_text = evidence_digest("ev2", &bash_ev);
+        assert!(bash_digest_text.contains("exit code: 0"));
+
+        let text_ev = Evidence {
+            tool: "read".into(),
+            input: serde_json::json!({}),
+            content: "# Heading\n\nFirst paragraph text.\n\nMore.".into(),
+            is_error: false,
+        };
+        let text_digest_text = evidence_digest("ev3", &text_ev);
+        assert!(text_digest_text.contains("# Heading"));
+        assert!(text_digest_text.contains("First paragraph text."));
+
+        let err_ev = Evidence {
+            tool: "bash".into(),
+            input: serde_json::json!({}),
+            content: "boom: permission denied".into(),
+            is_error: true,
+        };
+        let err_digest = evidence_digest("ev4", &err_ev);
+        assert!(err_digest.starts_with("boom: permission denied"));
+    }
+
+    #[test]
+    fn bm25_returns_the_matching_turn_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, _, t2, _) = two_closed_one_open(dir.path());
+        let card = TurnIndex::from_log(&log)
+            .turn_by_id(&t2)
+            .unwrap()
+            .build_card("completed", "Here is what I found.".to_string(), &|s| {
+                s.len() as u64 / 4
+            });
+        log.append_turn_card(TurnCardRecord {
+            turn_id: t2.clone(),
+            card,
+        })
+        .unwrap();
+        let index = TurnIndex::from_log(&log);
+        let hits = index.search("rust news");
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].0, t2);
+    }
+
+    #[test]
+    fn control_messages_are_not_turns_or_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let t1 = log.append_message(user_text("do a thing")).unwrap().id;
+        log.append_message(assistant_tool_call(
+            "c1",
+            "bash",
+            serde_json::json!({"command": "ls"}),
+        ))
+        .unwrap();
+        log.append_message(tool_result("c1", "ok")).unwrap();
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::StopHook,
+            "[stop-hook]: keep going",
+        ))
+        .unwrap();
+        log.append_message(assistant_text("done")).unwrap();
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.turns.len(), 1);
+        let turn = index.turn_by_id(&t1).unwrap();
+        assert_eq!(turn.steps.len(), 1, "the nudge must not become a step");
+        assert!(turn.closed);
+    }
+
+    #[test]
+    fn intent_reading_attaches_to_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let t1 = log
+            .append_message(user_text("find the weather"))
+            .unwrap()
+            .id;
+        let reading = vak_intent::Reading::general();
+        log.append_intent(IntentRecord {
+            reading,
+            engagement: vak_intent::Engagement::general(),
+            provenance: vak_intent::Provenance::new(vak_intent::Tier::General, 1, Vec::new()),
+            outcome: None,
+            model_visible: None,
+            commitment_id: None,
+        })
+        .unwrap();
+        log.append_message(assistant_text("it is sunny")).unwrap();
+        let index = TurnIndex::from_log(&log);
+        let turn = index.turn_by_id(&t1).unwrap();
+        let card = turn.build_card("completed", "it is sunny".to_string(), &|s| {
+            s.len() as u64 / 4
+        });
+        assert_eq!(card.reading.act, "answer");
+    }
+
+    #[test]
+    fn every_ledger_activity_entry_is_ignored_by_turn_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        log.append_message(user_text("hi")).unwrap();
+        log.append_activity(ActivityRecord {
+            activity_id: "a1".into(),
+            turn: None,
+            kind: ActivityKind::Diagnostic,
+            status: ActivityStatus::Succeeded,
+            label: "note".into(),
+            detail: None,
+            data: Default::default(),
+        })
+        .unwrap();
+        log.append_message(assistant_text("hello")).unwrap();
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.turns.len(), 1);
+    }
+
+    #[test]
+    fn packets_collect_compaction_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let t1 = log.append_message(user_text("first")).unwrap().id;
+        log.append_message(assistant_text("first answer")).unwrap();
+        log.append(Entry::new(
+            log.tail_id().cloned(),
+            EntryPayload::Compaction(CompactionEntry {
+                summary: "summary text".into(),
+                first_kept_entry_id: t1,
+                tokens_before: 100,
+                partition: None,
+                reset_all: false,
+            }),
+        ))
+        .unwrap();
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.packets.len(), 1);
+        assert_eq!(index.packets[0].summary, "summary text");
+    }
+}
