@@ -195,19 +195,14 @@ pub enum AgentEvent {
     ContextCompacting {
         estimated_tokens: u64,
     },
-    /// Proactive retrieval surfaced N relevant older turns before compaction.
-    ContextRetrieved {
-        retrieved_count: usize,
-        cap: usize,
-    },
+    /// An incremental compaction (docs/design/68-context-engine.md §4) ran:
+    /// the plan's packet range collapsed into a new `Compaction` entry.
+    /// `after_tokens` is the re-planned budget spend once the packet is
+    /// covered.
     ContextCompacted {
         before_tokens: u64,
         after_tokens: u64,
-        summarized_messages: usize,
-        /// Packet accounting (docs/design/17-context.md): how many visible message
-        /// entries stayed verbatim vs became summary material.
-        selected_messages: usize,
-        dropped_messages: usize,
+        summarized_turns: usize,
     },
     /// Reset-with-handoff fired (Phase H): the whole projection was
     /// replaced by a structured handoff summary.
@@ -337,8 +332,23 @@ pub struct AgentConfig {
     /// `(max_retries + 1) * (run_retry_attempts + 1)`; the frozen ladder
     /// (Phase B) tightens this to `ladder + repair allowance`.
     pub dispatch_ceiling: u32,
-    /// Long-horizon context policy (window, reserve, compaction trigger).
-    pub context_policy: context::ContextPolicy,
+    /// Reserve for the completion (`max_tokens`), subtracted from the
+    /// horizon by `CapacityProfile::budget` (docs/design/68-context-engine.md
+    /// §4). Replaces the deleted `ContextPolicy::max_output`.
+    pub max_output: u64,
+    /// Provider-declared context window, used only to build a
+    /// metadata-only `CapacityProfile` (`CapacityProfile::from_metadata_only`)
+    /// when the host has not wired real capacity measurement in (e.g.
+    /// standalone agent use, or a test) — so an unmeasured window is still a
+    /// real number from configuration, never a hardcoded magic default
+    /// baked into the planning math itself.
+    pub declared_window: u64,
+    /// Each admitted tool's declared domains, mirroring
+    /// `TurnCapabilitiesBound.tool_domains` (docs/design/68-context-engine.md
+    /// §7 "model drift"): a tool call whose domains are disjoint from the
+    /// current reading's is drift evidence. Empty for a tool with no
+    /// declared domain (never treated as a mismatch by itself).
+    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
     /// Built-in premature-completion gate. None disables entirely.
     pub stop_policy: Option<StopPolicy>,
     /// Pre-dispatch budget admission (docs/design/15-reliability.md). None
@@ -468,7 +478,9 @@ impl AgentConfig {
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
             dispatch_ceiling: (3 + 1) * (6 + 1),
-            context_policy: Default::default(),
+            max_output: 8_192,
+            declared_window: 128_000,
+            tool_domains: std::collections::BTreeMap::new(),
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
             ladder: Vec::new(),
@@ -623,17 +635,57 @@ fn trips_breaker(e: &LlmError) -> bool {
 /// does on text, and images would swamp the char count relative to the
 /// tokens they actually cost.
 fn chat_request_chars(request: &ChatRequest) -> u64 {
-    let mut chars: u64 = request.system.as_deref().map(str::len).unwrap_or(0) as u64;
-    for message in &request.messages {
-        for block in &message.content {
-            chars += match block {
-                ContentBlock::Text { text } => text.len() as u64,
-                ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64,
-                ContentBlock::ToolResult { content, .. } => content.len() as u64,
-                ContentBlock::Provider { raw, .. } => raw.to_string().len() as u64,
-                ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => 0,
-            };
-        }
+    let system_chars = request.system.as_deref().map(str::len).unwrap_or(0) as u64;
+    system_chars + messages_chars(&request.messages)
+}
+
+/// Sum of text/tool_use/tool_result characters in one message — the same
+/// exclusions as `chat_request_chars` (thinking and images are never billed
+/// like text on prefill).
+fn message_chars(message: &Message) -> u64 {
+    message
+        .content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.len() as u64,
+            ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64,
+            ContentBlock::ToolResult { content, .. } => content.len() as u64,
+            ContentBlock::Provider { raw, .. } => raw.to_string().len() as u64,
+            ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => 0,
+        })
+        .sum()
+}
+
+fn messages_chars(messages: &[Message]) -> u64 {
+    messages.iter().map(message_chars).sum()
+}
+
+/// Per-leg tool inclusion (docs/design/68-context-engine.md §5): Anthropic
+/// legs get the full core+deferred set (deferred schemas withheld from the
+/// prefix there via `defer_loading`, discoverable through the server-side
+/// tool-search tool); every other provider gets core only — its adapter
+/// ignores `ToolDefinition::defer` and would otherwise send the deferred
+/// schema in full, defeating the point of deferring it.
+fn tools_for_leg(
+    tools: &[vak_llm::ToolDefinition],
+    provider_name: &str,
+) -> Vec<vak_llm::ToolDefinition> {
+    if provider_name == "anthropic" {
+        return tools.to_vec();
+    }
+    tools.iter().filter(|t| !t.defer).cloned().collect()
+}
+
+/// Character count of the stable prefix (system prompt + tool schemas),
+/// measured through `CapacityProfile::estimate_tokens` rather than a
+/// chars/4 constant (docs/design/68-context-engine.md §4/§6).
+fn prefix_chars(system: &str, tools: &[vak_llm::ToolDefinition]) -> u64 {
+    let mut chars = system.len() as u64;
+    for tool in tools {
+        chars += (tool.name.len() + tool.description.len()) as u64
+            + serde_json::to_string(&tool.parameters)
+                .map(|s| s.len() as u64)
+                .unwrap_or(0);
     }
     chars
 }
@@ -801,6 +853,10 @@ pub struct Agent {
     handoff_used: bool,
     /// Per-run bookkeeping for model-guided tool recovery (see RepairState).
     repair: RepairState,
+    /// Consecutive model-drift events this run (docs/design/68-context-
+    /// engine.md §7): reset to 0 on any non-drifting step; three in a row
+    /// end the turn with the degraded outcome.
+    drift_streak: u32,
 }
 
 impl Agent {
@@ -824,7 +880,62 @@ impl Agent {
             obligations: Vec::new(),
             handoff_used: false,
             repair: RepairState::default(),
+            drift_streak: 0,
         }
+    }
+
+    /// Builds one `WorkingSetPlan` (docs/design/68-context-engine.md §4):
+    /// reads the current chain and the current directive's resolved
+    /// reading, then delegates to `planner::plan`. Called fresh per step
+    /// (and again after an incremental compaction) so it always reflects
+    /// the latest ledger state.
+    async fn build_working_set_plan(
+        &self,
+        profile: &CapacityProfile,
+        prefix_tokens: u64,
+        tail_tokens: u64,
+    ) -> vak_session::WorkingSetPlan {
+        let session = self.session.lock().await;
+        let index = TurnIndex::from_log(&session);
+        let directive = index
+            .turns
+            .last()
+            .map(|turn| turn.directive.text_content())
+            .unwrap_or_default();
+        let current_turn_tokens = profile.estimate_tokens(
+            index
+                .turns
+                .last()
+                .map(|turn| messages_chars(&turn.current_verbatim()))
+                .unwrap_or(0),
+        );
+        let reading = session.latest_reading();
+        planner::plan(planner::PlanInput {
+            profile,
+            index: &index,
+            directive: &directive,
+            reading: reading.as_ref(),
+            prefix_tokens,
+            tail_tokens,
+            current_turn_tokens,
+        })
+    }
+
+    /// The `CapacityProfile` to plan this turn against: the host-wired one
+    /// (`Core::capacity_profile_for`) when present, or a metadata-only
+    /// profile built from `declared_window`/`max_output` — the "construct
+    /// `CapacityProfile::from_metadata_only` from the discovered window"
+    /// fallback (docs/design/68-context-engine.md §4), never a magic
+    /// number baked into the planner itself.
+    fn effective_capacity_profile(&self) -> CapacityProfile {
+        self.config.capacity.clone().unwrap_or_else(|| {
+            CapacityProfile::from_metadata_only(
+                self.config.declared_window,
+                self.config.max_output,
+                "no-capacity-wired".to_string(),
+                std::time::SystemTime::now(),
+            )
+        })
     }
 
     /// Arms goal mode for the next run: durable objective + acceptance
@@ -1190,126 +1301,79 @@ impl Agent {
             // every turn, so it always reflects the current live provider route.
             let model = self.config.model.clone();
 
-            // Long-horizon guard: estimate the projection; on overflow,
-            // summarize older turns into a compaction entry and retry
-            // the same contract. Still over afterwards, or no progress,
-            // => fail closed. The lock is taken only for short read /
-            // plan / apply phases and is NEVER held across the summarizer
-            // network call below.
-            //
-            // `retrieved_messages` holds proactive retrieval results across
-            // compaction iterations — they get prepended to the final request
-            // after compaction shrinks the projection.
-            let mut retrieved_messages: Vec<vak_llm::Message> = Vec::new();
-            enum CompactionNeed {
-                None,
-                Plan(vak_session::types::CompactionPlan, u64),
-                TooShortToCompact(u64),
-            }
-            let need = {
-                let session = self.session.lock().await;
-                let policy = &self.config.context_policy;
-                let system = self.config.system_prefix.as_str();
-                let tool_defs = self.tool_definitions();
-                let est =
-                    context::estimate_tokens(&session.derive_messages(), Some(system), &tool_defs);
-                if est <= policy.trigger_at() {
-                    CompactionNeed::None
-                } else {
-                    match session.plan_compaction(policy.keep_recent) {
-                        Some(plan) => CompactionNeed::Plan(plan, est),
-                        None => CompactionNeed::TooShortToCompact(est),
-                    }
-                }
-            };
-            match need {
-                CompactionNeed::TooShortToCompact(est_tokens) => {
-                    // Reset-with-handoff rescue (Phase H): one structured
-                    // summary replaces the entire projection.
-                    if !self.handoff_used && self.config.handoff_reset {
-                        self.handoff_used = true;
-                        if let Ok(handoff) = self
-                            .write_handoff(est_tokens, &prompt_owned, &cancel, &events)
-                            .await
-                        {
-                            let mut session = self.session.lock().await;
-                            match session.append_handoff_reset(handoff, est_tokens) {
-                                Ok(_) => {
-                                    let _ = events
-                                        .send(AgentEvent::HandoffReset {
-                                            before_tokens: est_tokens,
-                                        })
-                                        .await;
-                                    drop(session);
-                                    continue;
-                                }
-                                Err(e) => {
-                                    return TurnOutcome::Failed {
-                                        error: LlmError::Context(format!(
-                                            "context over budget and handoff write failed: {e}"
-                                        )),
-                                    };
-                                }
+            // Working-set planning (docs/design/68-context-engine.md
+            // §4/§10): build the TurnIndex and the plan fresh every step —
+            // not once per turn — so a just-closed turn's card, a mid-turn
+            // over-length replan (§5), or an incremental compaction below
+            // all see the freshest chain. The lock is taken only for short
+            // read/plan/apply phases and is NEVER held across the
+            // summarizer network call below.
+            let profile = self.effective_capacity_profile();
+            let tool_defs = self.tool_definitions();
+            let prefix_tokens =
+                profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
+            let tail_tokens = profile.estimate_tokens(turn_tail.chars().count() as u64);
+
+            let mut plan = self
+                .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                .await;
+
+            // No usable horizon at all: the open turn alone (plus prefix,
+            // tail, output reserve) already exceeds the horizon. Nothing is
+            // plannable, so the reset-with-handoff rescue is the surviving
+            // recovery (§4's "the handoff reset stays as the recovery when
+            // a profile has no usable horizon").
+            if plan.budget == 0 {
+                let est_tokens = prefix_tokens
+                    .saturating_add(tail_tokens)
+                    .saturating_add(profile.output_reserve);
+                if !self.handoff_used && self.config.handoff_reset {
+                    self.handoff_used = true;
+                    if let Ok(handoff) = self
+                        .write_handoff(est_tokens, &prompt_owned, &cancel, &events)
+                        .await
+                    {
+                        let mut session = self.session.lock().await;
+                        match session.append_handoff_reset(handoff, est_tokens) {
+                            Ok(_) => {
+                                let _ = events
+                                    .send(AgentEvent::HandoffReset {
+                                        before_tokens: est_tokens,
+                                    })
+                                    .await;
+                                drop(session);
+                                continue;
+                            }
+                            Err(e) => {
+                                return TurnOutcome::Failed {
+                                    error: LlmError::Context(format!(
+                                        "context over budget and handoff write failed: {e}"
+                                    )),
+                                };
                             }
                         }
                     }
-                    return TurnOutcome::Failed {
-                        error: LlmError::Context(
-                            "context over budget but too short to compact".into(),
-                        ),
-                    };
                 }
-                CompactionNeed::Plan(plan, tokens_before) => {
-                    // Proactive retrieval (from vakyartha simulation):
-                    // Before compaction summarizes older turns, retrieve the
-                    // most relevant ones and keep them verbatim in the
-                    // retained region. Only the non-retrieved older turns get
-                    // summarized.
-                    let history_budget = self
-                        .config
-                        .context_policy
-                        .input_budget()
-                        .saturating_sub(tokens_before);
-                    let retrieval_cap = self
-                        .config
-                        .context_policy
-                        .dynamic_retrieval_cap(history_budget);
-                    let retrieved = {
-                        let session = self.session.lock().await;
-                        session.retrieve_relevant_entries(
-                            &prompt_owned,
-                            retrieval_cap,
-                            self.config.context_policy.keep_recent,
-                        )
-                    };
-                    // Store messages for later re-insertion into the final
-                    // request after compaction.
-                    for (_, msg) in &retrieved {
-                        retrieved_messages.push(msg.clone());
-                    }
-                    if !retrieved.is_empty() {
-                        let _ = events
-                            .send(AgentEvent::ContextRetrieved {
-                                retrieved_count: retrieved.len(),
-                                cap: retrieval_cap,
-                            })
-                            .await;
-                    }
+                return TurnOutcome::Failed {
+                    error: LlmError::Context("context over budget: no usable horizon".into()),
+                };
+            }
 
-                    // Build the summary transcript EXCLUDING retrieved
-                    // entries — they will be kept verbatim after compaction.
-                    // We match by text content since plan.older carries no
-                    // entry IDs.
-                    let filtered_older: Vec<vak_llm::Message> = plan
-                        .older
-                        .iter()
-                        .filter(|m| {
-                            let text = m.text_content();
-                            !retrieved.iter().any(|(_, rm)| rm.text_content() == text)
-                        })
-                        .cloned()
-                        .collect();
-                    let transcript = context::render_transcript(&filtered_older);
+            // Incremental compaction (docs/design/68-context-engine.md §4):
+            // the plan collapsed some turns into a packet that no existing
+            // `Compaction` entry covers yet. Summarize their CARDS (never
+            // raw history) and append one, then re-plan — the packet
+            // disappears from the new plan once it is covered.
+            if let Some((_, last_turn_id)) = plan.packet_range.clone() {
+                let needs_compaction = {
+                    let session = self.session.lock().await;
+                    session.packet_needs_compaction(&last_turn_id)
+                };
+                if needs_compaction {
+                    let (transcript, tokens_before) = {
+                        let session = self.session.lock().await;
+                        session.packet_transcript(&last_turn_id)
+                    };
                     let _ = events
                         .send(AgentEvent::ContextCompacting {
                             estimated_tokens: tokens_before,
@@ -1372,78 +1436,30 @@ impl Agent {
                             error: LlmError::Network("compaction produced an empty summary".into()),
                         };
                     }
-
                     {
                         let mut session = self.session.lock().await;
-                        if let Err(e) = session.apply_compaction(&plan, summary, tokens_before) {
+                        if let Err(e) = session.append_incremental_compaction(
+                            &last_turn_id,
+                            summary,
+                            tokens_before,
+                        ) {
                             return TurnOutcome::Failed {
                                 error: LlmError::Network(format!("compaction write failed: {e}")),
                             };
                         }
                     }
-
-                    let est = {
-                        let session = self.session.lock().await;
-                        let system = self.config.system_prefix.as_str();
-                        let tool_defs = self.tool_definitions();
-                        context::estimate_tokens(
-                            &session.derive_messages(),
-                            Some(system),
-                            &tool_defs,
-                        )
-                    };
-                    if est >= tokens_before {
-                        return TurnOutcome::Failed {
-                            error: LlmError::Context(format!(
-                                "compaction made no progress (~{tokens_before} -> ~{est} tokens)"
-                            )),
-                        };
-                    }
+                    let after_plan = self
+                        .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                        .await;
                     let _ = events
                         .send(AgentEvent::ContextCompacted {
                             before_tokens: tokens_before,
-                            after_tokens: est,
-                            summarized_messages: filtered_older.len(),
-                            selected_messages: plan.partition.selected_entry_ids.len(),
-                            dropped_messages: plan.partition.dropped_entry_ids.len(),
+                            after_tokens: after_plan.spent,
+                            summarized_turns: 0,
                         })
                         .await;
-                    if est > self.config.context_policy.input_budget() {
-                        // Reset-with-handoff rescue (Phase H), once per run.
-                        if !self.handoff_used && self.config.handoff_reset {
-                            self.handoff_used = true;
-                            if let Ok(handoff) = self
-                                .write_handoff(est, &prompt_owned, &cancel, &events)
-                                .await
-                            {
-                                let mut session = self.session.lock().await;
-                                match session.append_handoff_reset(handoff, est) {
-                                    Ok(_) => {
-                                        let _ = events
-                                            .send(AgentEvent::HandoffReset { before_tokens: est })
-                                            .await;
-                                        drop(session);
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        return TurnOutcome::Failed {
-                                            error: LlmError::Context(format!(
-                                                "context still over budget and handoff write failed: {e}"
-                                            )),
-                                        };
-                                    }
-                                }
-                            }
-                        }
-                        return TurnOutcome::Failed {
-                            error: LlmError::Context(format!(
-                                "context still over budget after compaction (~{est} > {} tokens)",
-                                self.config.context_policy.input_budget()
-                            )),
-                        };
-                    }
+                    plan = after_plan;
                 }
-                CompactionNeed::None => {}
             }
 
             // One model step = connect + stream + collect, wrapped with the
@@ -1458,7 +1474,6 @@ impl Agent {
                 &model,
                 self.config.dispatch_ceiling,
             );
-            let tool_defs = self.tool_definitions();
             // Recorded on every exit path below, success or failure: the
             // digest describes what was SENT, not what came back
             // (docs/design/68-context-engine.md §6/§7).
@@ -1466,11 +1481,11 @@ impl Agent {
                 context::prefix_digest(&self.config.system_prefix, &tool_defs);
             let base_request = {
                 let session = self.session.lock().await;
-                // Proactive retrieval results: relevant older turns that were
-                // dropped during compaction are re-inserted here as verbatim
-                // context, prepended before the projected (compacted) messages.
-                let mut messages = retrieved_messages.clone();
-                messages.extend(session.derive_messages());
+                // `messages` is already the fidelity-selected projection
+                // (docs/design/68-context-engine.md §4/§10): retrieved-by-
+                // relevance turns ride at Full inside it, so there is no
+                // separate proactive-retrieval prepend step any more.
+                let mut messages = session.derive_with_plan(&plan);
                 // The tail is one final text block on the last user message
                 // (after any tool_result blocks), never a separate consecutive
                 // user message (docs/design/68-context-engine.md §6).
@@ -1491,14 +1506,14 @@ impl Agent {
                     model,
                     system: Some(self.config.system_prefix.clone()),
                     messages,
-                    tools: tool_defs,
-                    max_tokens: self.config.context_policy.max_output as u32,
+                    tools: tool_defs.clone(),
+                    max_tokens: self.config.max_output as u32,
                     temperature: None,
                     cache,
                     previous_response_id: None,
                 }
             };
-            let request = base_request.clone();
+            let mut request = base_request.clone();
 
             let response = {
                 // Run-level endurance: a sustained fault window (rate-limit
@@ -1508,6 +1523,12 @@ impl Agent {
                 // errors, and ceiling exhaustion still fail/abort immediately.
                 let mut run_attempt: u32 = 0;
                 let mut backoff_ms = self.config.run_retry_base_backoff_ms.max(1);
+                // Over-length replan (docs/design/68-context-engine.md §5):
+                // a provider context-length rejection is a CapacityProfile
+                // contradiction, not a transient fault — retried once, with
+                // the horizon lowered and the request replanned smaller. A
+                // second rejection on the retry is the turn's failure.
+                let mut context_replan_used = false;
                 loop {
                     match self
                         .complete_with_reliability(&request, &cancel, &events, true, &mut ledger)
@@ -1538,6 +1559,67 @@ impl Agent {
                                     self.config.dispatch_ceiling
                                 )),
                             };
+                        }
+                        Err(LlmError::Context(reason)) if !context_replan_used => {
+                            context_replan_used = true;
+                            let request_tokens =
+                                profile.estimate_tokens(chat_request_chars(&request));
+                            let mut lowered = profile.clone();
+                            lowered.observe_over_length(request_tokens);
+                            self.config.capacity = Some(lowered.clone());
+                            let mut data = self.capacity_activity_data(&lowered);
+                            data.insert("reason".into(), reason.clone());
+                            data.insert("request_tokens".into(), request_tokens.to_string());
+                            self.record_activity(
+                                vak_session::ActivityKind::CapacityFeedback,
+                                vak_session::ActivityStatus::Succeeded,
+                                "Capacity horizon lowered by an over-length rejection".into(),
+                                Some(reason),
+                                data,
+                            )
+                            .await;
+                            let new_prefix_tokens = lowered.estimate_tokens(prefix_chars(
+                                &self.config.system_prefix,
+                                &tool_defs,
+                            ));
+                            let new_tail_tokens =
+                                lowered.estimate_tokens(turn_tail.chars().count() as u64);
+                            plan = self
+                                .build_working_set_plan(
+                                    &lowered,
+                                    new_prefix_tokens,
+                                    new_tail_tokens,
+                                )
+                                .await;
+                            request = {
+                                let session = self.session.lock().await;
+                                let mut messages = session.derive_with_plan(&plan);
+                                if !turn_tail.is_empty()
+                                    && let Some(last) = messages.last_mut()
+                                {
+                                    last.content.push(ContentBlock::text(turn_tail.clone()));
+                                }
+                                let session_key = session
+                                    .header()
+                                    .map(|header| header.session_id.clone())
+                                    .unwrap_or_default();
+                                let cache =
+                                    (!session_key.is_empty()).then(|| vak_llm::CacheHints {
+                                        session_key,
+                                        breakpoints: cache_breakpoints(&messages),
+                                    });
+                                ChatRequest {
+                                    model: self.config.model.clone(),
+                                    system: Some(self.config.system_prefix.clone()),
+                                    messages,
+                                    tools: tool_defs.clone(),
+                                    max_tokens: self.config.max_output as u32,
+                                    temperature: None,
+                                    cache,
+                                    previous_response_id: None,
+                                }
+                            };
+                            continue;
                         }
                         Err(e)
                             if run_attempt < self.config.run_retry_attempts
@@ -1640,8 +1722,9 @@ impl Agent {
                     // request with the same digest reuses this measurement
                     // rather than re-deriving it from a cache-served step.
                     if !prefix_digest_seen(&session, &receipt.prefix_digest) {
+                        let profile = self.effective_capacity_profile();
                         let messages_tokens =
-                            context::estimate_tokens(&request.messages, None, &[]);
+                            profile.estimate_tokens(messages_chars(&request.messages));
                         receipt.prefix_tokens =
                             Some(usage.input_tokens.saturating_sub(messages_tokens));
                     }
@@ -1669,6 +1752,42 @@ impl Agent {
                 .into_iter()
                 .map(normalize_tool_call)
                 .collect::<Vec<_>>();
+
+            // Model drift (docs/design/68-context-engine.md §7): the step
+            // served a different directive than the current one. Never a
+            // cut — the steering nudge is appended and the turn continues;
+            // only three CONSECUTIVE drift events end it.
+            if let Some(drift_reason) = self.detect_model_drift(&response, &calls).await {
+                self.drift_streak += 1;
+                if self.drift_streak >= MODEL_DRIFT_EXHAUSTION_THRESHOLD {
+                    return self.degraded_drift_outcome(&drift_reason).await;
+                }
+                // A request near the horizon that also drifted is evidence
+                // the horizon itself is optimistic (§1, §6).
+                self.record_capacity_instruction_failure(response.usage.input_tokens)
+                    .await;
+                let directive_quote = first_sentence_fallback(&prompt_owned);
+                let _ = self.session.lock().await.append_message(MessageRecord::control(
+                    vak_intent::control::ControlKind::SteeringDrift,
+                    format!(
+                        "[steering-drift]: {drift_reason}. The directive you should be serving right now is: \"{directive_quote}\". Refocus your next step on it."
+                    ),
+                ));
+                if calls.is_empty() {
+                    // A drifted final answer is not accepted as the turn's
+                    // answer: redo it, same as the other repair nudges.
+                    if turn + 1 >= self.config.max_turns {
+                        return TurnOutcome::MaxTurnsReached;
+                    }
+                    turn += 1;
+                    continue;
+                }
+                // A drifted tool call still needs its result dispatched
+                // (API validity requires the pair); the nudge above steers
+                // the NEXT step instead of interrupting this one.
+            } else {
+                self.drift_streak = 0;
+            }
 
             if calls.is_empty() {
                 // Grounding enforcement: the previous turn ran one or more
@@ -2506,7 +2625,7 @@ impl Agent {
             system: Some("You author durable work contracts. Return only one strict JSON object with keys objective, constraints, assumptions, criteria, and items. Each item must have item_id, title, instructions, dependencies, owner, required, readonly, path_claims, and criterion_ids. Owner must be one of parent_agent, worker, flow, tool, or human. Criterion kind must be one of shell, file_exists, file_contains, tool_succeeded, flow_completed, external_receipt, or semantic. Do not include markdown or commentary.".into()),
             messages: vec![Message::user_text(prompt)],
             tools: Vec::new(),
-            max_tokens: self.config.context_policy.max_output.min(8_000) as u32,
+            max_tokens: self.config.max_output.min(8_000) as u32,
             temperature: None,
             cache: None,
             previous_response_id: None,
@@ -3516,6 +3635,96 @@ impl Agent {
         .await;
     }
 
+    /// Model drift (docs/design/68-context-engine.md §7): the step's own
+    /// evidence, not a guess. Checks, in order: (a) a called tool whose
+    /// declared domains are disjoint from the current reading's — only when
+    /// the reading actually HAS domains, so a general/undeclared reading
+    /// never flags every call; (b) for a final answer, an exact match
+    /// against a prior turn's card narration — a verbatim repeat of a past
+    /// answer instead of addressing the current one. Returns the drift
+    /// reason for the nudge, or `None`.
+    async fn detect_model_drift(
+        &self,
+        response: &AssistantMessage,
+        calls: &[PendingToolCall],
+    ) -> Option<String> {
+        let (reading, past_narrations) = {
+            let session = self.session.lock().await;
+            let reading = session.latest_reading();
+            let index = TurnIndex::from_log(&session);
+            let narrations: Vec<String> = index
+                .turns
+                .iter()
+                .filter_map(|turn| turn.card.as_ref())
+                .map(|card| card.answered.narration.trim().to_string())
+                .filter(|narration| !narration.is_empty())
+                .collect();
+            (reading, narrations)
+        };
+        if let Some(reading) = &reading
+            && !reading.domains.is_empty()
+        {
+            for call in calls {
+                let Some(domains) = self.config.tool_domains.get(&call.name) else {
+                    continue;
+                };
+                if domains.is_empty() {
+                    continue;
+                }
+                if domains.iter().all(|d| !reading.domains.contains(d)) {
+                    return Some(format!(
+                        "called `{}` (domains: {}), which serves none of the current directive's domains ({})",
+                        call.name,
+                        domains.join(", "),
+                        reading.domains.join(", ")
+                    ));
+                }
+            }
+        }
+        if calls.is_empty() {
+            let text = response.text_content();
+            let trimmed = text.trim();
+            if !trimmed.is_empty() && past_narrations.iter().any(|n| n == trimmed) {
+                return Some(
+                    "repeated a previous turn's answer verbatim instead of addressing the current directive"
+                        .to_string(),
+                );
+            }
+        }
+        None
+    }
+
+    /// The degraded, honest completion returned when model drift exhausts
+    /// its steering budget (docs/design/68-context-engine.md §7) — same
+    /// shape as `degraded_outcome`'s tool-repair exhaustion
+    /// (docs/design/15-reliability.md), a different diagnostic label.
+    async fn degraded_drift_outcome(&self, last_reason: &str) -> TurnOutcome {
+        self.record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "model-drift-exhausted".into(),
+            Some(format!(
+                "three consecutive steps served a different directive than the current one; \
+                 run stopped rather than continuing to answer the wrong request. Last: {last_reason}"
+            )),
+            std::collections::BTreeMap::new(),
+        )
+        .await;
+        let response = AssistantMessage {
+            content: vec![ContentBlock::text(
+                "I kept drifting away from your current request across several steps and \
+                 could not stay on it within this turn's steering budget. Please restate what \
+                 you need now, or narrow the request, and I will address it directly."
+                    .to_string(),
+            )],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            model: self.config.model.clone(),
+            response_id: None,
+        };
+        TurnOutcome::Completed { response }
+    }
+
     /// One provider completion with watchdog, retry/backoff (honoring
     /// Retry-After), circuit breaker, dispatch-ceiling enforcement, and
     /// per-attempt receipt recording. When `forward` is true, stream
@@ -3558,6 +3767,12 @@ impl Agent {
                     .unwrap_or_else(|| provider_arc.name().to_string())
             };
             ledger.receipt.stamp_leg(&route_provider, model);
+            // Per-leg tool inclusion (docs/design/68-context-engine.md §5):
+            // only Anthropic legs get the deferred schemas (withheld from
+            // the prefix there via `defer_loading`); every other provider
+            // sees core only, since its tool index is already in the
+            // prefix and `find_tools` is how it reaches the rest.
+            leg_req.tools = tools_for_leg(&request.tools, &route_provider);
             if li > 0 && forward {
                 self.record_activity(
                     vak_session::ActivityKind::RouteFallback,
@@ -3595,17 +3810,17 @@ impl Agent {
                         .header()
                         .map(|h| h.session_id.clone())
                         .unwrap_or_default();
-                    let est_input = context::estimate_tokens(
-                        &leg_req.messages,
-                        leg_req.system.as_deref(),
-                        &leg_req.tools,
+                    let profile = self.effective_capacity_profile();
+                    let est_input = profile.estimate_tokens(
+                        messages_chars(&leg_req.messages)
+                            + prefix_chars(leg_req.system.as_deref().unwrap_or(""), &leg_req.tools),
                     );
                     let check = SpendCheck {
                         model,
                         provider: provider_arc.name(),
                         session_id: &session_id,
                         est_input_tokens: est_input,
-                        planned_output_tokens: self.config.context_policy.max_output,
+                        planned_output_tokens: self.config.max_output,
                     };
                     if let Err(reason) = gate.authorize(&check).await {
                         let approved = match &self.config.approver {
@@ -5094,6 +5309,13 @@ const MAX_TOOL_INPUT_CHARS: usize = 32_000;
 /// spinning on failing tool calls. This bounds model-guided repair so a weak
 /// model that ignores the recovery hint cannot burn the whole turn budget
 /// on the same fault class.
+/// Three consecutive model-drift events (docs/design/68-context-engine.md
+/// §7) end the turn with the degraded outcome, mirroring `MAX_REPAIR_TURNS`
+/// for tool repair: enough room for one bad step to self-correct after a
+/// steering nudge, not enough to spend the whole turn serving the wrong
+/// directive.
+const MODEL_DRIFT_EXHAUSTION_THRESHOLD: u32 = 3;
+
 const MAX_REPAIR_TURNS: u32 = 2;
 /// On the Nth consecutive correctable-failure turn the system stops relying
 /// on a text hint alone: it injects an authoritative, schema-resurfacing
