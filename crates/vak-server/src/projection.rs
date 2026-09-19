@@ -211,6 +211,7 @@ pub(crate) fn append_sandbox_artifacts(
                 entry_id: None,
                 tool_call_id: Some(execution_id),
                 source: Some("sandbox_artifact".into()),
+                presentation_id: None,
             }),
             actions: Vec::new(),
             fallback_text: format!("Generated artifact: {path}"),
@@ -276,17 +277,23 @@ fn snapshot_inner(
     // §10): the card a tool call displayed is read from its own written
     // entry, keyed by `tool_use_id` — never rebuilt from the call's
     // arguments at display time.
-    let presentation_by_tool_use_id: HashMap<String, &vak_session::types::PresentationRecord> =
-        session
-            .presentations()
-            .into_iter()
-            .filter_map(|(_, record)| match &record.source {
-                vak_session::types::PresentationSource::ToolCall { tool_use_id } => {
-                    Some((tool_use_id.clone(), record))
-                }
-                vak_session::types::PresentationSource::Fence { .. } => None,
-            })
-            .collect();
+    // The map's value keeps the Presentation entry's OWN id alongside the
+    // record: `presentation_id` on the projected item is this id, not the
+    // id of the message entry the tool call rode in on (docs/design/68 §10:
+    // feedback/selection key on the ledger fact, i.e. this entry).
+    let presentation_by_tool_use_id: HashMap<
+        String,
+        (String, &vak_session::types::PresentationRecord),
+    > = session
+        .presentations()
+        .into_iter()
+        .filter_map(|(entry_id, record)| match &record.source {
+            vak_session::types::PresentationSource::ToolCall { tool_use_id } => {
+                Some((tool_use_id.clone(), (entry_id, record)))
+            }
+            vak_session::types::PresentationSource::Fence { .. } => None,
+        })
+        .collect();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut turn_outcomes: HashMap<usize, vak_intent::OutcomeSpec> = HashMap::new();
@@ -790,6 +797,7 @@ fn snapshot_inner(
                                     entry_id: Some(entry.id.clone()),
                                     tool_call_id: assistant_tool_call_id,
                                     source: Some("session_ledger".into()),
+                                    presentation_id: None,
                                 }),
                                 actions: Vec::new(),
                                 fallback_text: text.clone(),
@@ -832,6 +840,7 @@ fn snapshot_inner(
                                         entry_id: Some(entry.id.clone()),
                                         tool_call_id: None,
                                         source: Some("adaptive_library".into()),
+                                        presentation_id: None,
                                     }),
                                     actions: Vec::new(),
                                     fallback_text: text.clone(),
@@ -859,6 +868,7 @@ fn snapshot_inner(
                                         entry_id: Some(entry.id.clone()),
                                         tool_call_id: None,
                                         source: Some("link_extractor".into()),
+                                        presentation_id: None,
                                     }),
                                     actions: Vec::new(),
                                     fallback_text: preview
@@ -915,6 +925,7 @@ fn snapshot_inner(
                                     entry_id: Some(entry.id.clone()),
                                     tool_call_id: Some(id.clone()),
                                     source: Some("tool_call".into()),
+                                    presentation_id: None,
                                 }),
                                 actions: Vec::new(),
                                 fallback_text: detail
@@ -940,10 +951,21 @@ fn snapshot_inner(
                                 // written once, at validation, and never
                                 // rebuilt from the call's arguments here.
                                 let name_is_card = vak_core::presentation_tools::is_card_tool(name);
+                                // At most one Presentation entry per
+                                // tool_use_id, so this is the id every
+                                // output produced below (0 or 1 of them)
+                                // was written as.
+                                let presentation_entry_id: Option<String> = name_is_card
+                                    .then(|| {
+                                        presentation_by_tool_use_id
+                                            .get(id)
+                                            .map(|(entry_id, _)| entry_id.clone())
+                                    })
+                                    .flatten();
                                 let outputs = if name_is_card {
                                     presentation_by_tool_use_id
                                         .get(id)
-                                        .map(|record| vak_delivery::StructuredOutput {
+                                        .map(|(_, record)| vak_delivery::StructuredOutput {
                                             semantic_type: record.semantic_type.clone(),
                                             schema_version: u16::try_from(record.schema_version)
                                                 .unwrap_or(u16::MAX),
@@ -998,6 +1020,7 @@ fn snapshot_inner(
                                             entry_id: Some(entry.id.clone()),
                                             tool_call_id: Some(id.clone()),
                                             source: Some(name.clone()),
+                                            presentation_id: presentation_entry_id.clone(),
                                         }),
                                         actions: Vec::new(),
                                     });
@@ -1024,6 +1047,7 @@ fn snapshot_inner(
                                         entry_id: Some(entry.id.clone()),
                                         tool_call_id: Some(id.clone()),
                                         source: Some(name.clone()),
+                                        presentation_id: None,
                                     }),
                                     actions: vec![DeliveryAction {
                                         id: format!("open-{id}"),
@@ -1084,6 +1108,7 @@ fn snapshot_inner(
                         entry_id: Some(entry.id.clone()),
                         tool_call_id: None,
                         source: Some("goal_update".into()),
+                        presentation_id: None,
                     }),
                     actions: Vec::new(),
                     fallback_text: format!("{label}: {}", update.request),
@@ -1443,6 +1468,7 @@ fn activity_item(
             entry_id: Some(entry_id.into()),
             tool_call_id: None,
             source: Some("activity_ledger".into()),
+            presentation_id: None,
         }),
         actions,
         fallback_text: activity
@@ -1472,6 +1498,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                     entry_id: None,
                     tool_call_id: None,
                     source: Some("live_event".into()),
+                    presentation_id: None,
                 }),
                 actions: Vec::new(),
                 fallback_text: String::new(),
@@ -1572,6 +1599,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                     entry_id: None,
                     tool_call_id: Some(execution_id),
                     source: Some("sandbox_artifact".into()),
+                    presentation_id: None,
                 }),
                 actions: Vec::new(),
                 fallback_text: format!("Generated artifact: {path}"),
@@ -1722,6 +1750,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                     entry_id: None,
                     tool_call_id: None,
                     source: Some("live_event".into()),
+                    presentation_id: None,
                 }),
                 actions: vec![
                     DeliveryAction {
@@ -1866,6 +1895,7 @@ fn live_item(
             entry_id: None,
             tool_call_id: None,
             source: Some("live_event".into()),
+            presentation_id: None,
         }),
         actions: Vec::new(),
         fallback_text,
@@ -2998,6 +3028,100 @@ mod tests {
             timeline.items.iter().any(|item| matches!(&item.content,
                 OutputContent::Structured { output } if output.semantic_type == "research.synthesis")),
             "the research card must render from the call arguments"
+        );
+    }
+
+    /// A card's `provenance.presentation_id` is the `Presentation` ledger
+    /// entry's OWN id (docs/design/68-context-engine.md §10), not the id of
+    /// the message entry the `emit_*_card` tool call rode in on — those two
+    /// entries are different chain entries, and the client's
+    /// `/presentation/feedback` and `/presentation/select` calls key on the
+    /// former.
+    #[test]
+    fn card_provenance_carries_the_presentations_own_entry_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("card-id.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "card-id".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("what's the temperature"),
+            meta: None,
+        })
+        .expect("user");
+        let input = serde_json::json!({
+            "semantic_type": "metric",
+            "payload": {"label": "Temperature", "value": 25, "unit": "C"}
+        });
+        let call_entry = log
+            .append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: "call-m".into(),
+                    name: "emit_metric_card".into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-m".into(),
+                    content: "Card displayed to the user (metric).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+        append_presentation_for_call(&mut log, "emit_metric_card", "call-m", &input);
+        let (presentation_entry_id, _) = log
+            .presentations()
+            .into_iter()
+            .next()
+            .expect("one presentation entry was written");
+        assert_ne!(
+            presentation_entry_id, call_entry.id,
+            "the Presentation entry must be its own chain entry, distinct \
+             from the message carrying the tool_use block"
+        );
+
+        let timeline = snapshot("card-id", &log);
+        let card = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Card)
+            .expect("a metric card must be projected");
+        assert_eq!(
+            card.provenance
+                .as_ref()
+                .and_then(|p| p.presentation_id.clone()),
+            Some(presentation_entry_id),
+            "the card's presentation_id must be the Presentation entry's \
+             own id, not the tool_use message's entry id"
         );
     }
 
