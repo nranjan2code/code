@@ -333,7 +333,7 @@ fn metric_payload_schema() -> Value {
             "location": {"type": "string", "description": "Optional grid title when reporting multiple metrics at once"}
         },
         "additionalProperties": {"type": ["string", "number"]},
-        "description": "For a single metric, set label/value/unit. For several at once (e.g. a weather or telemetry grid), use additional key/value fields instead."
+        "description": "For a single metric, set label/value/unit. For several at once (a grid of current readings), use additional key/value fields instead."
     })
 }
 
@@ -494,7 +494,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_metric_card",
-        description: "Emit a metric card: a single current measurement or a small grid of them (weather, a price, a KPI, a benchmark number). Prefer it whenever the answer is one value, even if you searched the web to get it.",
+        description: "Emit a metric card: a single current measurement or a small grid of them (a reading, a price, a KPI, a benchmark number). Prefer it whenever the answer is one value, even if you searched the web to get it.",
         semantic_types: &["metric", "telemetry.metric", "weather"],
         payload_schema: metric_payload_schema,
     },
