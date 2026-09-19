@@ -207,7 +207,10 @@ async fn ungrounded_answer_after_search_gets_one_repair_turn() {
             mpsc::channel(64).0,
         )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert!(
@@ -233,7 +236,9 @@ async fn ungrounded_answer_after_search_gets_one_repair_turn() {
             .collect()
     });
     assert!(
-        user_texts.iter().any(|t| t.contains("[grounding-check]") && t.contains("search")),
+        user_texts
+            .iter()
+            .any(|t| t.contains("[grounding-check]") && t.contains("search")),
         "expected a grounding-check nudge naming the ignored tool, got: {user_texts:?}"
     );
 }
@@ -262,7 +267,10 @@ async fn repair_is_bounded_to_one_attempt() {
             mpsc::channel(64).0,
         )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
@@ -296,7 +304,10 @@ async fn honest_no_data_admission_is_not_flagged() {
             mpsc::channel(64).0,
         )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
@@ -324,7 +335,10 @@ async fn grounded_first_answer_needs_no_repair() {
             mpsc::channel(64).0,
         )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
@@ -354,7 +368,9 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
             serde_json::json!({"type": "object"})
         }
         async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
-            ToolOutput::ok("1 hit(s): deploy-rollbacks — the deploy script must pause before rollback windows")
+            ToolOutput::ok(
+                "1 hit(s): deploy-rollbacks — the deploy script must pause before rollback windows",
+            )
         }
     }
 
@@ -431,7 +447,10 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
 
     let texts = assistant_texts(&agent);
     assert_eq!(
-        texts.iter().filter(|t| t.contains("Recalled from memory")).count(),
+        texts
+            .iter()
+            .filter(|t| t.contains("Recalled from memory"))
+            .count(),
         1,
         "no repair retry should have fired: {texts:?}"
     );
@@ -457,11 +476,17 @@ async fn ungrounded_prose_unrelated_to_any_tool_call_is_not_flagged() {
             mpsc::channel(64).0,
         )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
-        texts.iter().filter(|t| t.contains("capital of France")).count(),
+        texts
+            .iter()
+            .filter(|t| t.contains("capital of France"))
+            .count(),
         1,
         "no tool call happened, so no grounding retry should fire: {texts:?}"
     );

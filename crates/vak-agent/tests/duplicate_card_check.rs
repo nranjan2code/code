@@ -117,7 +117,11 @@ fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMes
     }
 }
 
-async fn build_agent(dir: &tempfile::TempDir, session_id: &str, responses: Vec<AssistantMessage>) -> Agent {
+async fn build_agent(
+    dir: &tempfile::TempDir,
+    session_id: &str,
+    responses: Vec<AssistantMessage>,
+) -> Agent {
     let header = SessionHeader {
         agent: None,
         session_id: session_id.into(),
@@ -142,7 +146,11 @@ async fn build_agent(dir: &tempfile::TempDir, session_id: &str, responses: Vec<A
     };
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let log = SessionLog::create(SessionPath::new_session_file(&home, dir.path(), session_id), header).unwrap();
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), session_id),
+        header,
+    )
+    .unwrap();
 
     Agent::new(
         Arc::new(Scripted {
@@ -218,9 +226,17 @@ async fn a_fence_repeating_a_just_emitted_card_gets_one_repair_turn() {
     .await;
 
     let outcome = agent
-        .run("show me a chart", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "show me a chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert!(
@@ -256,9 +272,17 @@ async fn repair_is_bounded_to_one_attempt_not_a_loop() {
     .await;
 
     let outcome = agent
-        .run("show me a chart", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "show me a chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
@@ -286,9 +310,17 @@ async fn narration_without_a_duplicate_fence_is_never_touched() {
     .await;
 
     let outcome = agent
-        .run("show me a chart", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "show me a chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let users = user_texts(&agent);
     assert!(
@@ -303,9 +335,17 @@ async fn a_fence_with_no_preceding_tool_call_is_never_touched() {
     let mut agent = build_agent(&dir, "dup-card-no-tool", vec![text_msg(DUPLICATE_FENCE)]).await;
 
     let outcome = agent
-        .run("show me a chart", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "show me a chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let users = user_texts(&agent);
     assert!(

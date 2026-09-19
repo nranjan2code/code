@@ -1281,9 +1281,15 @@ impl Agent {
                     let text = response.text_content();
                     let admits_no_data = {
                         let lower = text.to_ascii_lowercase();
-                        ["don't have", "do not have", "no access to", "couldn't find", "could not find"]
-                            .iter()
-                            .any(|phrase| lower.contains(phrase))
+                        [
+                            "don't have",
+                            "do not have",
+                            "no access to",
+                            "couldn't find",
+                            "could not find",
+                        ]
+                        .iter()
+                        .any(|phrase| lower.contains(phrase))
                     };
                     if !text.contains("\"semantic_type\"") && !admits_no_data {
                         grounding_repair_attempted = true;
@@ -1658,7 +1664,10 @@ impl Agent {
                 ToolRunOutput::Ok(_) => None,
             });
             receipts.unresolved_error = batch_error.or_else(|| {
-                if results.iter().all(|(_, out)| matches!(out, ToolRunOutput::Ok(_))) {
+                if results
+                    .iter()
+                    .all(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
+                {
                     None
                 } else {
                     receipts.unresolved_error.clone()
@@ -3519,7 +3528,15 @@ impl Agent {
 /// OUT of the exclusion: those already fetch external content today and
 /// should still be grounded on. Only the unambiguously local/internal ones
 /// are excluded here.
-const LOCAL_DATA_TOOLS: &[&str] = &["read", "read_file", "glob", "grep", "inspect", "session_search", "session_list"];
+const LOCAL_DATA_TOOLS: &[&str] = &[
+    "read",
+    "read_file",
+    "glob",
+    "grep",
+    "inspect",
+    "session_search",
+    "session_list",
+];
 
 /// Scans an assistant's final text for an explicit `vak`-tagged fence whose
 /// JSON body doesn't parse, and returns the parse error if one is found.
@@ -3652,7 +3669,13 @@ mod verification_stale_tests {
         // first from a concurrent batch.
         let order = vec!["b1".to_string(), "e1".to_string()];
         let succeeded: HashSet<&str> = ["b1", "e1"].into_iter().collect();
-        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+        assert!(resolve_verification_stale(
+            &order,
+            &["b1"],
+            &["e1"],
+            &succeeded,
+            false
+        ));
     }
 
     #[test]
@@ -3661,7 +3684,13 @@ mod verification_stale_tests {
         // longer stale, no matter which result comes back first.
         let order = vec!["e1".to_string(), "b1".to_string()];
         let succeeded: HashSet<&str> = ["b1", "e1"].into_iter().collect();
-        assert!(!resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+        assert!(!resolve_verification_stale(
+            &order,
+            &["b1"],
+            &["e1"],
+            &succeeded,
+            false
+        ));
     }
 
     #[test]
@@ -3670,14 +3699,26 @@ mod verification_stale_tests {
         // is still unverified, so staleness must not clear.
         let order = vec!["e1".to_string(), "b1".to_string()];
         let succeeded: HashSet<&str> = ["e1"].into_iter().collect(); // b1 not in succeeded
-        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+        assert!(resolve_verification_stale(
+            &order,
+            &["b1"],
+            &["e1"],
+            &succeeded,
+            false
+        ));
     }
 
     #[test]
     fn irrelevant_calls_in_the_batch_do_not_affect_the_flag() {
         let order = vec!["e1".to_string(), "r1".to_string()];
         let succeeded: HashSet<&str> = ["e1", "r1"].into_iter().collect();
-        assert!(resolve_verification_stale(&order, &["b1"], &["e1"], &succeeded, false));
+        assert!(resolve_verification_stale(
+            &order,
+            &["b1"],
+            &["e1"],
+            &succeeded,
+            false
+        ));
     }
 }
 

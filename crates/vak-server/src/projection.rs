@@ -258,7 +258,8 @@ fn snapshot_inner(
                 {
                     let is_repair_nudge = record.message.content.iter().any(|block| match block {
                         ContentBlock::Text { text } => {
-                            text.contains("[fence-check]") || text.contains("[duplicate-card-check]")
+                            text.contains("[fence-check]")
+                                || text.contains("[duplicate-card-check]")
                         }
                         _ => false,
                     });

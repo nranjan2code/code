@@ -248,7 +248,10 @@ impl MisreadLedger {
 /// dead: `CapabilitySlice::All` always matched and the signal never fired.
 /// Now it reads directly from what actually excluded the capability this
 /// turn.
-pub fn escalated_capability(excluded_by_domain_slice: &BTreeSet<String>, attempted: &[String]) -> Option<String> {
+pub fn escalated_capability(
+    excluded_by_domain_slice: &BTreeSet<String>,
+    attempted: &[String],
+) -> Option<String> {
     attempted
         .iter()
         .find(|name| excluded_by_domain_slice.contains(name.as_str()))

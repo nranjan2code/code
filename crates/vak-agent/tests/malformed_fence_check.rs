@@ -10,8 +10,8 @@
 //! is a new trigger condition on existing infrastructure, not a new system.
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -68,7 +68,11 @@ fn text_msg(t: &str) -> AssistantMessage {
     }
 }
 
-async fn build_agent(dir: &tempfile::TempDir, session_id: &str, responses: Vec<AssistantMessage>) -> Agent {
+async fn build_agent(
+    dir: &tempfile::TempDir,
+    session_id: &str,
+    responses: Vec<AssistantMessage>,
+) -> Agent {
     let header = SessionHeader {
         agent: None,
         session_id: session_id.into(),
@@ -93,7 +97,11 @@ async fn build_agent(dir: &tempfile::TempDir, session_id: &str, responses: Vec<A
     };
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let log = SessionLog::create(SessionPath::new_session_file(&home, dir.path(), session_id), header).unwrap();
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), session_id),
+        header,
+    )
+    .unwrap();
 
     Agent::new(
         Arc::new(Scripted {
@@ -163,19 +171,31 @@ async fn malformed_fence_gets_one_repair_turn_naming_the_parse_error() {
     .await;
 
     let outcome = agent
-        .run("can you make charts", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "can you make charts",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert!(
-        texts.iter().any(|t| t.contains("\"semantic_type\":\"metric\"")),
+        texts
+            .iter()
+            .any(|t| t.contains("\"semantic_type\":\"metric\"")),
         "final state must contain the repaired, valid fence: {texts:?}"
     );
 
     let users = user_texts(&agent);
     assert!(
-        users.iter().any(|t| t.contains("[fence-check]") && t.contains("invalid JSON")),
+        users
+            .iter()
+            .any(|t| t.contains("[fence-check]") && t.contains("invalid JSON")),
         "expected a fence-check repair nudge naming the parse failure: {users:?}"
     );
 }
@@ -194,13 +214,24 @@ async fn repair_is_bounded_to_one_attempt_not_a_loop() {
     .await;
 
     let outcome = agent
-        .run("can you make charts", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "can you make charts",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let texts = assistant_texts(&agent);
     assert_eq!(
-        texts.iter().filter(|t| t.contains("Capability Confirmation")).count(),
+        texts
+            .iter()
+            .filter(|t| t.contains("Capability Confirmation"))
+            .count(),
         2,
         "exactly one retry — not zero, not an infinite loop: {texts:?}"
     );
@@ -212,9 +243,17 @@ async fn a_valid_fence_is_never_touched() {
     let mut agent = build_agent(&dir, "fence-valid", vec![text_msg(VALID_FENCE)]).await;
 
     let outcome = agent
-        .run("what's our uptime", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "what's our uptime",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let users = user_texts(&agent);
     assert!(
@@ -226,12 +265,25 @@ async fn a_valid_fence_is_never_touched() {
 #[tokio::test]
 async fn plain_prose_with_no_fence_is_never_touched() {
     let dir = tempdir().unwrap();
-    let mut agent = build_agent(&dir, "fence-none", vec![text_msg("Paris is the capital of France.")]).await;
+    let mut agent = build_agent(
+        &dir,
+        "fence-none",
+        vec![text_msg("Paris is the capital of France.")],
+    )
+    .await;
 
     let outcome = agent
-        .run("what's the capital of france", &Default::default(), CancellationToken::new(), mpsc::channel(64).0)
+        .run(
+            "what's the capital of france",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "got {outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
 
     let users = user_texts(&agent);
     assert!(

@@ -339,9 +339,24 @@ const SHAPES: &[CardShape] = &[
         name: "emit_universal_card",
         description: "Emit a general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields.",
         semantic_types: &[
-            "map", "route_map", "calendar", "availability", "board", "entity", "search_results",
-            "coding.search", "evidence", "document", "graph", "form", "action", "transaction",
-            "alert", "conversation", "progress_dashboard", "simulation",
+            "map",
+            "route_map",
+            "calendar",
+            "availability",
+            "board",
+            "entity",
+            "search_results",
+            "coding.search",
+            "evidence",
+            "document",
+            "graph",
+            "form",
+            "action",
+            "transaction",
+            "alert",
+            "conversation",
+            "progress_dashboard",
+            "simulation",
         ],
         payload_schema: universal_card_payload_schema,
     },
@@ -373,10 +388,23 @@ const SHAPES: &[CardShape] = &[
         name: "emit_table_card",
         description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows.",
         semantic_types: &[
-            "coding.benchmark", "coding.dependencies", "data.grid", "table", "dataframe",
-            "comparison", "comparison_table", "pros_cons", "inventory", "scorecard",
-            "budget", "finance_summary", "invoice_summary", "travel_options",
-            "decision_matrix", "criteria_matrix", "tradeoff_analysis",
+            "coding.benchmark",
+            "coding.dependencies",
+            "data.grid",
+            "table",
+            "dataframe",
+            "comparison",
+            "comparison_table",
+            "pros_cons",
+            "inventory",
+            "scorecard",
+            "budget",
+            "finance_summary",
+            "invoice_summary",
+            "travel_options",
+            "decision_matrix",
+            "criteria_matrix",
+            "tradeoff_analysis",
         ],
         payload_schema: table_payload_schema,
     },
@@ -384,19 +412,55 @@ const SHAPES: &[CardShape] = &[
         name: "emit_timeline_card",
         description: "Emit a timeline/plan/checklist/schedule card: an ordered or grouped list of steps, milestones, or items.",
         semantic_types: &[
-            "coding.deployment", "coding.incident", "coding.architecture", "coding.release",
-            "plan.timeline", "timeline", "itinerary", "checklist", "schedule", "agenda", "milestones",
-            "progress", "status", "steps", "overview", "summary", "detail", "notes", "follow_up",
-            "reminder", "shopping_list", "lesson", "reading_list", "habit_plan", "project_plan",
-            "meeting_notes", "contact_log", "home_project", "care_plan", "event_plan", "media_list",
-            "collection", "faq", "decision", "decision_analysis", "meal_plan",
+            "coding.deployment",
+            "coding.incident",
+            "coding.architecture",
+            "coding.release",
+            "plan.timeline",
+            "timeline",
+            "itinerary",
+            "checklist",
+            "schedule",
+            "agenda",
+            "milestones",
+            "progress",
+            "status",
+            "steps",
+            "overview",
+            "summary",
+            "detail",
+            "notes",
+            "follow_up",
+            "reminder",
+            "shopping_list",
+            "lesson",
+            "reading_list",
+            "habit_plan",
+            "project_plan",
+            "meeting_notes",
+            "contact_log",
+            "home_project",
+            "care_plan",
+            "event_plan",
+            "media_list",
+            "collection",
+            "faq",
+            "decision",
+            "decision_analysis",
+            "meal_plan",
         ],
         payload_schema: timeline_payload_schema,
     },
     CardShape {
         name: "emit_recipe_card",
         description: "Emit a recipe card with ingredients and steps.",
-        semantic_types: &["recipe.card", "recipe", "recipe_summary", "lifestyle.recipe", "lifestyle.culinary_recipe"],
+        semantic_types: &[
+            "recipe.card",
+            "recipe",
+            "recipe_summary",
+            "lifestyle.recipe",
+            "lifestyle.culinary_recipe",
+        ],
         payload_schema: recipe_payload_schema,
     },
     CardShape {
@@ -408,7 +472,15 @@ const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_chart_card",
         description: "Emit a chart card for a numeric series over time or categories.",
-        semantic_types: &["chart", "trend", "timeseries", "bar_chart", "metric_chart", "comparison_chart", "telemetry.chart"],
+        semantic_types: &[
+            "chart",
+            "trend",
+            "timeseries",
+            "bar_chart",
+            "metric_chart",
+            "comparison_chart",
+            "telemetry.chart",
+        ],
         payload_schema: chart_payload_schema,
     },
     CardShape {
@@ -556,7 +628,11 @@ mod tests {
     #[test]
     fn every_shape_has_at_least_one_semantic_type() {
         for shape in SHAPES {
-            assert!(!shape.semantic_types.is_empty(), "{} has no semantic types", shape.name);
+            assert!(
+                !shape.semantic_types.is_empty(),
+                "{} has no semantic types",
+                shape.name
+            );
         }
     }
 
@@ -566,7 +642,10 @@ mod tests {
         for shape in SHAPES {
             for &t in shape.semantic_types {
                 if let Some(prev) = seen.insert(t, shape.name) {
-                    panic!("semantic_type `{t}` claimed by both {prev} and {}", shape.name);
+                    panic!(
+                        "semantic_type `{t}` claimed by both {prev} and {}",
+                        shape.name
+                    );
                 }
             }
         }
@@ -574,7 +653,10 @@ mod tests {
 
     #[tokio::test]
     async fn execute_wraps_payload_in_a_findable_envelope() {
-        let tool = EmitCardTool::all().into_iter().find(|t| t.name() == "emit_chart_card").unwrap();
+        let tool = EmitCardTool::all()
+            .into_iter()
+            .find(|t| t.name() == "emit_chart_card")
+            .unwrap();
         let args = serde_json::json!({
             "semantic_type": "chart",
             "payload": {
@@ -587,13 +669,21 @@ mod tests {
         let out = tool.execute(&args, &ctx).await;
         assert!(!out.is_error, "expected Ok, got: {}", out.content);
         let found = vak_delivery::structured_outputs_from_text(&out.content);
-        assert_eq!(found.len(), 1, "the render pipeline must find exactly one card in: {}", out.content);
+        assert_eq!(
+            found.len(),
+            1,
+            "the render pipeline must find exactly one card in: {}",
+            out.content
+        );
         assert_eq!(found[0].semantic_type, "chart");
     }
 
     #[tokio::test]
     async fn execute_rejects_a_semantic_type_outside_its_own_shape() {
-        let tool = EmitCardTool::all().into_iter().find(|t| t.name() == "emit_chart_card").unwrap();
+        let tool = EmitCardTool::all()
+            .into_iter()
+            .find(|t| t.name() == "emit_chart_card")
+            .unwrap();
         let args = serde_json::json!({
             "semantic_type": "recipe.card",
             "payload": {}
@@ -645,7 +735,9 @@ mod tests {
                 "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
             }),
             "emit_media_card" => serde_json::json!({"url": "https://example.com", "title": "Link"}),
-            "emit_metric_card" => serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"}),
+            "emit_metric_card" => {
+                serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"})
+            }
             other => panic!("no fixture defined for shape {other} — add one"),
         }
     }
@@ -656,9 +748,15 @@ mod tests {
     /// Override the shared fixture for those specific types.
     fn fixture_override(semantic_type: &str) -> Option<Value> {
         match semantic_type {
-            "media.image" => Some(serde_json::json!({"source": "https://example.com/a.png", "media_type": "image", "alt": "a"})),
-            "media.video" => Some(serde_json::json!({"source": "https://example.com/a.mp4", "media_type": "video", "alt": "a"})),
-            "media.audio" => Some(serde_json::json!({"source": "https://example.com/a.mp3", "media_type": "audio", "alt": "a"})),
+            "media.image" => Some(
+                serde_json::json!({"source": "https://example.com/a.png", "media_type": "image", "alt": "a"}),
+            ),
+            "media.video" => Some(
+                serde_json::json!({"source": "https://example.com/a.mp4", "media_type": "video", "alt": "a"}),
+            ),
+            "media.audio" => Some(
+                serde_json::json!({"source": "https://example.com/a.mp3", "media_type": "audio", "alt": "a"}),
+            ),
             _ => None,
         }
     }
@@ -669,12 +767,18 @@ mod tests {
         for tool in EmitCardTool::all() {
             let shared_fixture = fixture_for(tool.name());
             for &semantic_type in tool.shape.semantic_types {
-                let fixture = fixture_override(semantic_type).unwrap_or_else(|| shared_fixture.clone());
-                let args = serde_json::json!({"semantic_type": semantic_type, "payload": fixture.clone()});
+                let fixture =
+                    fixture_override(semantic_type).unwrap_or_else(|| shared_fixture.clone());
+                let args =
+                    serde_json::json!({"semantic_type": semantic_type, "payload": fixture.clone()});
                 let ctx = ToolContext::new(std::env::temp_dir());
                 let out = tool.execute(&args, &ctx).await;
                 if out.is_error {
-                    failures.push(format!("{semantic_type} ({}): tool rejected: {}", tool.name(), out.content));
+                    failures.push(format!(
+                        "{semantic_type} ({}): tool rejected: {}",
+                        tool.name(),
+                        out.content
+                    ));
                     continue;
                 }
                 let found = vak_delivery::structured_outputs_from_text(&out.content);
