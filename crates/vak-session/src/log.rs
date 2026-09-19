@@ -1492,6 +1492,27 @@ impl SessionLog {
     /// `ReadingKey` (docs/design/68-context-engine.md §4's `PlanInput`) —
     /// the newest `Intent` entry on the chain, whether or not its turn has
     /// closed yet. `None` before the first intent reading of the session.
+    /// The still-open turn's own verbatim messages, respecting the current
+    /// compaction boundary (docs/design/68-context-engine.md §4): after a
+    /// reset-with-handoff, everything before the reset entry is invisible
+    /// to the model even though the open turn technically started before
+    /// it, so planning must size its reserve against what will actually be
+    /// sent — never against text the reset already discarded. Empty when
+    /// there is no open turn, or the open turn itself predates the
+    /// boundary.
+    pub fn open_turn_verbatim(&self) -> Vec<Message> {
+        let (boundary_pos, position, _) = self.compaction_boundary();
+        let index = TurnIndex::from_log(self);
+        let Some(turn) = index.turns.last().filter(|t| !t.closed) else {
+            return Vec::new();
+        };
+        let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
+        if turn_pos < boundary_pos {
+            return Vec::new();
+        }
+        turn.current_verbatim()
+    }
+
     pub fn latest_reading(&self) -> Option<crate::turns::ReadingKey> {
         self.chain_to_root()
             .into_iter()

@@ -902,13 +902,11 @@ impl Agent {
             .last()
             .map(|turn| turn.directive.text_content())
             .unwrap_or_default();
-        let current_turn_tokens = profile.estimate_tokens(
-            index
-                .turns
-                .last()
-                .map(|turn| messages_chars(&turn.current_verbatim()))
-                .unwrap_or(0),
-        );
+        // Boundary-aware (docs/design/68 §4): after a reset-with-handoff,
+        // the open turn's pre-reset text is invisible to the model, so it
+        // must not inflate the reserve either.
+        let current_turn_tokens =
+            profile.estimate_tokens(messages_chars(&session.open_turn_verbatim()));
         let reading = session.latest_reading();
         planner::plan(planner::PlanInput {
             profile,
