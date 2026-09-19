@@ -73,6 +73,10 @@ impl Tool for FakeEmitChartCard {
         serde_json::json!({"type": "object"})
     }
 
+    fn presents_cards(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
         let envelope = serde_json::json!({
             "semantic_type": "chart",

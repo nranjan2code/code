@@ -468,31 +468,49 @@ Consequences, all enforced by tests:
   and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
   fails the build unless they equal the Rust lists exactly.
 
-### What is typed, and what is still heuristic
+### What is typed, and what is still judgement
 
-Typed and enforced (a wrong answer here is a bug, not a judgement call): which
-messages the runtime authored (`MessageMeta::control`), which transcript
-entries are context blocks, the ledger identity of every message
-(`entry_id` ↔ `provenance.entry_id`), the card kinds (`OutputKind::Card`), and
-the set of registered semantic types with the tool that carries each. The
-client's copy of the two text lists is equality-checked against the Rust
-vocabulary.
+Typed and enforced (a wrong answer here is a bug, not a judgement call):
 
-Still heuristic, on purpose and worth knowing when something misfires:
+- Which messages the runtime authored (`MessageMeta::control`), which
+  transcript entries are derived context blocks, and the ledger identity of
+  every message (`entry_id` ↔ `provenance.entry_id`).
+- The card kinds (`OutputKind::Card`), the registered semantic types and the
+  tool that carries each, and whether a tool *presents cards*
+  (`Tool::presents_cards`, declared by the tool; the agent loop no longer reads
+  an `emit_` name prefix).
+- **Whether a call reaches outside information** (the grounding check). Decided
+  by `AgentConfig::retrieval_check`, which `Core` builds from what each
+  capability *declares it serves* (`Domain::Web` / `Domain::LiveData`): a
+  built-in through `builtin_domains`, an MCP call through its server's
+  `serves`, falling back to the `mcp` broker's own declaration when a server
+  declares nothing, and listing tools is not retrieval. The agent never looks
+  at a tool's name or its output; a tool nothing classifies is not retrieval.
+  Tavily sets no MCP annotations (verified: all `null`), so the operator's
+  `serves` (or the broker fallback) is the typed source, not the server.
+- **Fences.** `vak` fences are found by a Markdown parse (`fences.rs`), so an
+  indented or `~~~` fence is found and a `vak` block quoted inside a longer
+  fence is not; an answer cut off mid-card is malformed; a duplicate is decided
+  by the parsed `semantic_type` field, not a substring.
+- **Structure signals** for the recipe catalog (`tabular`, `diff`) are read
+  from the parsed document (a table block, a diff code block, a real hunk
+  header, consecutive tab-separated rows), not from characters in raw text.
+- The client's copy of the two text lists is equality-checked against the Rust
+  vocabulary.
 
-- **Which answers "read as a card."** The presentation check runs
-  `signals_from_text` (keyword and structure signals) through the recipe
-  catalog. It nudges once and the model may decline; it does not decide.
-- **Whether a tool call "looks like retrieval"** for the grounding check
-  (tool-name keywords, URL count). `emit_*_card` is excluded explicitly, which
-  is the kind of special case this approach invites.
-- **Fence text.** `find_malformed_vak_fence` and `find_duplicate_card_fence`
-  scan answer text for ```` ```vak ```` blocks and a `"semantic_type":"x"`
-  substring.
-- **Inline hints and narration lines** (`[recovery]`, `Surface:`) are matched in
-  text, from the shared vocabulary, because they live inside other text.
-- **Which card the model picks** (metric vs research vs table) is the model's
-  judgement, steered by the tool descriptions.
+Still judgement, on purpose:
+
+- **Whether prose "reads as" a card** for the keyword signals (weather,
+  research, benchmarks) through `signals_from_text`. The presentation check
+  nudges once and the model may decline; it does not decide.
+- **Which card the model picks** (metric vs research vs table), steered only by
+  the tool descriptions.
+- **Inline hints inside tool results** (`[recovery]`, `[post-tool-use hook]`)
+  and echoed narration lines (`Surface:`) are matched in text, from the shared
+  vocabulary. They are read by the *model* in-band and shown only in operator
+  views (Workbench, Details), where the runtime's own guidance appears
+  verbatim on purpose. Typing them would change `ContentBlock::ToolResult`
+  at ~60 construction sites and every provider adapter for no user-visible
+  gain, so this was decided against rather than overlooked.
 - **Sessions written before typing** keep untagged nudges; there is no
   backward-compatibility path by design.
-

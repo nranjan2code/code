@@ -51,6 +51,50 @@ fn builtin_domains(name: &str) -> Serves {
     Serves::declared(domains.iter().cloned())
 }
 
+/// Whether a call reaches information from outside the machine and the
+/// conversation — the kind an answer should cite — decided from what the
+/// capability *declares it serves*, never from its name or its output.
+///
+/// * A built-in resolves through [`builtin_domains`] (`webfetch`, `browse`).
+/// * An MCP call resolves to its server's declared `serves`. A server that
+///   declares nothing falls back to the `mcp` broker's own declaration, which
+///   claims the web and live data; declaring `serves = ["documents"]` opts a
+///   server out. Listing a server's tools is not retrieval, only calling one.
+/// * A tool this build does not classify is not retrieval.
+///
+/// `alias_server` is the server a direct-named MCP alias maps to, if `name` is
+/// one; `server_serves` returns a server's configured `serves` list.
+pub(crate) fn call_retrieves_external(
+    name: &str,
+    input: &serde_json::Value,
+    alias_server: Option<&str>,
+    server_serves: &dyn Fn(&str) -> Vec<String>,
+) -> bool {
+    let reaches_outside = |serves: &Serves| {
+        serves.serves_any(&BTreeSet::from([Domain::Web, Domain::LiveData]))
+            && matches!(serves, Serves::Declared(_))
+    };
+    let server = if name == "mcp" {
+        if input.get("action").and_then(|a| a.as_str()) != Some("call") {
+            return false;
+        }
+        input.get("server").and_then(|s| s.as_str())
+    } else {
+        alias_server
+    };
+    match server {
+        Some(server) => {
+            let declared = server_serves(server);
+            if declared.is_empty() {
+                reaches_outside(&builtin_domains("mcp"))
+            } else {
+                reaches_outside(&Serves::Declared(Domain::parse_list(&declared)))
+            }
+        }
+        None => reaches_outside(&builtin_domains(name)),
+    }
+}
+
 /// Standard starter skills classify themselves here if not declared in frontmatter.
 fn starter_skill_domains(name: &str) -> Serves {
     use Domain::*;
@@ -458,5 +502,70 @@ mod tests {
         assert!(builtin_domains("some_future_tool").is_undeclared());
         let required = BTreeSet::from([Domain::Vcs]);
         assert!(builtin_domains("some_future_tool").serves_any(&required));
+    }
+}
+
+#[cfg(test)]
+mod retrieval_tests {
+    use super::call_retrieves_external;
+    use serde_json::json;
+
+    fn serves(server: &str) -> Vec<String> {
+        match server {
+            "docs-only" => vec!["documents".into()],
+            "search" => vec!["web".into()],
+            "local-fs" => vec!["filesystem".into()],
+            _ => Vec::new(), // declares nothing, like a stock Tavily config
+        }
+    }
+
+    fn retrieves(name: &str, input: serde_json::Value, alias: Option<&str>) -> bool {
+        call_retrieves_external(name, &input, alias, &serves)
+    }
+
+    #[test]
+    fn built_ins_that_reach_the_web_do_and_others_do_not() {
+        for tool in ["webfetch", "browse"] {
+            assert!(retrieves(tool, json!({}), None), "{tool}");
+        }
+        // Names the old keyword rule got wrong in either direction.
+        for tool in [
+            "read",
+            "grep",
+            "glob",
+            "bash",
+            "session_search",
+            "entity_query",
+            "emit_research_card",
+            "some_future_tool",
+        ] {
+            assert!(!retrieves(tool, json!({}), None), "{tool} is not retrieval");
+        }
+    }
+
+    #[test]
+    fn an_mcp_call_is_retrieval_unless_its_server_declares_otherwise() {
+        let call = |server: &str| json!({"action": "call", "server": server, "tool": "anything"});
+        assert!(
+            retrieves("mcp", call("tavily"), None),
+            "a server declaring nothing inherits the broker's web/live-data claim"
+        );
+        assert!(retrieves("mcp", call("search"), None));
+        assert!(
+            !retrieves("mcp", call("docs-only"), None),
+            "declaring documents opts out"
+        );
+        assert!(!retrieves("mcp", call("local-fs"), None));
+    }
+
+    #[test]
+    fn listing_mcp_tools_is_not_retrieval() {
+        assert!(!retrieves("mcp", json!({"action": "list"}), None));
+    }
+
+    #[test]
+    fn a_direct_named_mcp_alias_resolves_through_its_server() {
+        assert!(retrieves("tavily_search", json!({}), Some("tavily")));
+        assert!(!retrieves("notes_lookup", json!({}), Some("docs-only")));
     }
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.4.10 — 2026-09-19
+
+- Made the grounding check typed. It decided a tool "looked like retrieval" from name keywords ("search", "fetch", "query"…) and a count of URLs in the output — the harness-side table `capability/domain.rs` exists to delete — and needed `emit_*_card` excluded by hand. `AgentConfig::retrieval_check`, built by `Core`, now decides from what each capability declares it serves (`Web`/`LiveData`): built-ins through `builtin_domains`, an MCP call through its server's `serves` (a server that declares nothing inherits the `mcp` broker's claim, so an unconfigured Tavily keeps working; listing tools is not retrieval), and anything unclassified is not retrieval. Verified that Tavily sets no MCP annotations, so annotations could not have been the source. Also fixed a latent ordering hazard: the alias map was replaced after being captured; it is now filled in place.
+- Card-presenting tools declare it (`Tool::presents_cards`) instead of the agent matching an `emit_` prefix.
+- `vak` fences are found with a Markdown parse instead of substring scanning: indented and `~~~` fences are found, a `vak` block quoted inside a longer fence is not, an answer cut off mid-card is reported as malformed (it was ignored), and a duplicate is decided by the parsed `semantic_type`, not by a substring that a card's own text could contain.
+- The `tabular` and `diff` signals are read from the parsed document instead of raw-text substrings: a table shown inside a code sample is no longer a table, an indented table is found, one stray tab no longer counts, and a diff needs a diff code block, a `diff --git` line or a real hunk header.
+- Fixed the `fanout` timing test failing 24/24 under 8-way CPU load: it asserted the run finished in under 1.35s, a proxy for "disjoint workers run at the same time and a conflicting one waits". It now proves the ordering with marker files (a rendezvous only concurrent workers can pass), and passes 48/48 at 12-way load; mutation-checked in both directions.
+
 ## 3.4.9 — 2026-09-19
 
 - Fixed the chat showing an answer twice: the question repeated, the card on one copy and only prose on the second. The chat paired its Nth turn with the server's `turn-N`, and the two sides counted turns independently; one runtime nudge that the client counted as a user message and the server did not displaced every later turn, so the server's turn was drawn in the previous question's slot and the real one fell back to a local copy without the card. Pairing is now by identity: `/transcript` returns each message's ledger `entry_id` and the chat matches it to the projection's `provenance.entry_id`.

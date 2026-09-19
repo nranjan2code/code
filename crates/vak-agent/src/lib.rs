@@ -4,6 +4,8 @@
 //! TurnOutcome. Model context is always projected from the session log
 //! (model-visible means logged).
 
+mod fences;
+use fences::{find_duplicate_card_fence, find_malformed_vak_fence};
 pub mod circuit;
 pub mod context;
 pub mod goal;
@@ -291,6 +293,7 @@ pub struct AgentConfig {
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
     pub presentation_check: Option<PresentationCheck>,
+    pub retrieval_check: Option<RetrievalCheck>,
     pub hook_recorder: Option<HookRecorder>,
     pub tool_activity_recorder: Option<ToolActivityRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
@@ -349,6 +352,14 @@ pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send +
 /// vocabulary) so the agent loop stays free of any card knowledge.
 pub type PresentationCheck = Arc<dyn Fn(&str, &[String]) -> Option<String> + Send + Sync>;
 
+/// Whether a tool call reaches information from outside the machine and the
+/// conversation (the kind an answer should cite), given the tool's name and
+/// the call's input. Supplied by `Core`, which knows what each capability
+/// *declares it serves*; the agent loop never guesses from a tool's name or
+/// its output. Absent, no call counts as retrieval and the grounding check is
+/// inert.
+pub type RetrievalCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
+
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
@@ -374,6 +385,7 @@ impl AgentConfig {
             hooks: None,
             revocation_check: None,
             presentation_check: None,
+            retrieval_check: None,
             hook_recorder: None,
             tool_activity_recorder: None,
             max_retries: 3,
@@ -759,7 +771,7 @@ impl Agent {
             .map(|p| p.max_blocks)
             .unwrap_or(0);
         // Names of retrieval-shaped tools that succeeded on the immediately
-        // preceding turn (see `tool_call_looks_like_retrieval`), cleared and
+        // preceding turn (see `AgentConfig::retrieval_check`), cleared and
         // recomputed every time a tool-call batch runs. Consulted the very
         // next time the model produces a final text-only answer, to catch
         // the case where a search/fetch tool call succeeded and the model's
@@ -1618,9 +1630,14 @@ impl Agent {
             let retrieval_tool_names: Vec<String> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Ok(content) => {
+                    ToolRunOutput::Ok(_) => {
                         let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
-                        tool_call_looks_like_retrieval(name, content).then(|| name.to_string())
+                        let input = call_inputs.get(id)?;
+                        self.config
+                            .retrieval_check
+                            .as_ref()
+                            .is_some_and(|check| check(name, input))
+                            .then(|| name.to_string())
                     }
                     ToolRunOutput::Err(_) => None,
                 })
@@ -1635,7 +1652,7 @@ impl Agent {
                 .filter_map(|(id, out)| match out {
                     ToolRunOutput::Ok(_) => {
                         let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
-                        is_card_tool_name(name)
+                        self.tool_presents_cards(name)
                             .then(|| call_inputs.get(id))
                             .flatten()
                             .and_then(|input| input.get("semantic_type"))
@@ -2725,6 +2742,15 @@ impl Agent {
         }
     }
 
+    /// Whether `name` is one of this agent's tools and it declares that a
+    /// successful call presents a card (`Tool::presents_cards`).
+    fn tool_presents_cards(&self, name: &str) -> bool {
+        self.config
+            .tools
+            .iter()
+            .any(|tool| tool.name() == name && tool.presents_cards())
+    }
+
     async fn append_assistant(&self, response: &AssistantMessage) {
         let mut session = self.session.lock().await;
         let _ = session.append_message(MessageRecord {
@@ -3563,129 +3589,6 @@ impl Agent {
             }
         }
     }
-}
-
-/// First-party tools that search/read the user's OWN local data (session
-/// history, notes, the filesystem) rather than external sources. Their
-/// results are the user's own material, not something that needs a citation
-/// — and several of them (`session_search`, `search` as an internal
-/// session/note search) would otherwise collide with the generic "search"
-/// keyword below. This list mirrors the existing `read_or_inspected`
-/// classification a few lines up (`"read" | "read_file" | "glob" | "grep" |
-/// "inspect" | "browse" | "webfetch" | "session_search" | "search" |
-/// "session_list"`), but deliberately keeps `browse`/`webfetch`/`search`
-/// OUT of the exclusion: those already fetch external content today and
-/// should still be grounded on. Only the unambiguously local/internal ones
-/// are excluded here.
-const LOCAL_DATA_TOOLS: &[&str] = &[
-    "read",
-    "read_file",
-    "glob",
-    "grep",
-    "inspect",
-    "session_search",
-    "session_list",
-];
-
-/// Scans an assistant's final text for an explicit `vak`-tagged fence whose
-/// JSON body doesn't parse, and returns the parse error if one is found.
-///
-/// This is the runtime-enforcement counterpart to the client's malformed-
-/// fence fallback (structured.ts / PresentationRenderer.tsx's Blocks case):
-/// the client makes a broken fence visible instead of silent, but visible
-/// still means the user gets "This response could not be rendered" instead
-/// of an actual answer. A weak/small local model produces syntactically
-/// invalid JSON often enough (mismatched brackets, an unquoted key) that
-/// it's worth one bounded repair turn here, symmetric with
-/// `pending_grounding_check`, so the malformed card never reaches the user
-/// at all when it's repairable.
-fn find_malformed_vak_fence(text: &str) -> Option<String> {
-    let mut search_from = 0usize;
-    while let Some(rel_open) = text[search_from..].find("```vak") {
-        let open = search_from + rel_open;
-        let body_start = open + text[open..].find('\n')? + 1;
-        let Some(rel_close) = text[body_start..].find("```") else {
-            return None; // Unclosed fence: streaming/truncated, not our concern here.
-        };
-        let body = text[body_start..body_start + rel_close].trim();
-        search_from = body_start + rel_close + 3;
-        if !body.contains("\"semantic_type\"") {
-            continue;
-        }
-        if let Err(err) = serde_json::from_str::<serde_json::Value>(body) {
-            return Some(err.to_string());
-        }
-    }
-    None
-}
-
-/// Scans an assistant's final text for a `vak` fence whose `semantic_type`
-/// matches one already emitted via a successful `emit_*_card` tool call in
-/// the same turn, and returns that semantic_type if found. See
-/// `pending_duplicate_card_check` for why this fence would otherwise render
-/// as a second, redundant card.
-fn find_duplicate_card_fence(text: &str, emitted_types: &[String]) -> Option<String> {
-    let mut search_from = 0usize;
-    while let Some(rel_open) = text[search_from..].find("```vak") {
-        let open = search_from + rel_open;
-        let body_start = open + text[open..].find('\n')? + 1;
-        let Some(rel_close) = text[body_start..].find("```") else {
-            return None; // Unclosed fence: streaming/truncated, not our concern here.
-        };
-        let body = &text[body_start..body_start + rel_close];
-        search_from = body_start + rel_close + 3;
-        if let Some(dup_type) = emitted_types
-            .iter()
-            .find(|t| body.contains(&format!("\"semantic_type\":\"{t}\"")))
-        {
-            return Some(dup_type.clone());
-        }
-    }
-    None
-}
-
-/// Whether a succeeded tool call looks like it retrieved external
-/// information that a subsequent prose answer ought to cite/ground on.
-///
-/// Deliberately NOT a hardcoded allowlist of known providers (Tavily, Exa,
-/// Firecrawl, ...). Today it's a handful of curated MCP search integrations;
-/// tomorrow it could be any of a hundred different MCP servers a user wires
-/// up themselves, and this must keep working without a code change per
-/// integration. So it keys off two provider-agnostic signals instead:
-///
-///   1. the tool's own name reads as retrieval ("search", "fetch", "crawl",
-///      "lookup", "query", "retrieve", "find") — covers most search/browse
-///      MCP tools by naming convention alone, and
-///   2. the raw result text is shaped like retrieved web content (multiple
-///      URLs) — catches a tool whose name gives no hint at all.
-///
-/// Either signal alone is enough; this is intentionally permissive (a false
-/// positive just means one extra grounding nudge, not a broken turn) —
-/// EXCEPT for `LOCAL_DATA_TOOLS`, which are excluded outright regardless of
-/// name/result shape, since their output is the user's own data.
-/// `emit_*_card` presentation tools (vak-core `presentation_tools`).
-fn is_card_tool_name(name: &str) -> bool {
-    name.starts_with("emit_") && name.ends_with("_card")
-}
-
-fn tool_call_looks_like_retrieval(tool_name: &str, result_text: &str) -> bool {
-    // A card tool is the answer being *presented*, not information retrieved
-    // (`emit_research_card` contains "search" and carries URLs, so it matched
-    // both signals below and triggered a grounding nudge on a grounded answer).
-    if is_card_tool_name(tool_name) {
-        return false;
-    }
-    const NAME_KEYWORDS: &[&str] = &[
-        "search", "fetch", "crawl", "browse", "lookup", "query", "retriev", "find",
-    ];
-    let lower_name = tool_name.to_ascii_lowercase();
-    if LOCAL_DATA_TOOLS.contains(&lower_name.as_str()) {
-        return false;
-    }
-    if NAME_KEYWORDS.iter().any(|kw| lower_name.contains(kw)) {
-        return true;
-    }
-    result_text.matches("http://").count() + result_text.matches("https://").count() >= 2
 }
 
 /// Decides `verification_stale` from the model's actual call-issue order,
@@ -5314,28 +5217,5 @@ Execution finished."#;
         let cmd = calls[0].input["command"].as_str().unwrap_or_default();
         assert!(cmd.contains("mkdir -p .vak/scratch"));
         assert!(cmd.contains("python3 .vak/scratch/markov_dashboard.py"));
-    }
-}
-
-#[cfg(test)]
-mod card_tool_grounding_tests {
-    use super::tool_call_looks_like_retrieval;
-
-    /// `emit_research_card` contains "search" and its result can carry many
-    /// URLs; it matched both retrieval signals and forced a pointless
-    /// "didn't cite your results" redo on an answer that was already the
-    /// grounded, cited card.
-    #[test]
-    fn presenting_a_card_is_not_retrieval() {
-        let many_urls = "https://a.example https://b.example https://c.example";
-        for tool in [
-            "emit_research_card",
-            "emit_table_card",
-            "emit_chart_card",
-            "emit_universal_card",
-        ] {
-            assert!(!tool_call_looks_like_retrieval(tool, many_urls), "{tool}");
-        }
-        assert!(tool_call_looks_like_retrieval("tavily_search", "x"));
     }
 }

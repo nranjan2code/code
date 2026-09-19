@@ -670,6 +670,10 @@ impl Tool for EmitCardTool {
         })
     }
 
+    fn presents_cards(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!(

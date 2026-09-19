@@ -612,8 +612,15 @@ shipped behaviour rather than a proposal.
   (`task.rs::next_child_session_id`), because ids that were the clock's
   nanoseconds alone collided when tasks launched in the same wave. The chat
   pairs turns through `vak-client-ui/src/turnPairing.ts`. What remains
-  heuristic (the presentation and grounding checks, fence scanning, card
-  choice) is listed in `docs/design/30-output-engineering.md`.
+  judgement (the keyword signals behind the presentation check, which card the
+  model picks, inline tool-result hints) is listed in
+  `docs/design/30-output-engineering.md`. Whether a call is *retrieval* is
+  never guessed from a tool's name or output: `AgentConfig::retrieval_check`
+  is built by `Core` from each capability's declared `serves` domains
+  (`capability::provider::call_retrieves_external`), and a tool declares that it
+  presents cards with `Tool::presents_cards`. For an MCP server, declare
+  `serves = ["web"]` (or `documents`, etc.); a server that declares nothing
+  inherits the `mcp` broker's web/live-data claim.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

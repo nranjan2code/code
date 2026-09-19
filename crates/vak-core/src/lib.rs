@@ -4989,6 +4989,31 @@ impl Core {
         });
         let revoke_registry = registry.clone();
         {
+            // Grounding: which calls reach outside information is decided from
+            // what each capability declares it serves (`serves`), never from
+            // a tool's name or its output.
+            let servers: std::collections::BTreeMap<String, Vec<String>> = self
+                .effective_mcp()
+                .servers
+                .iter()
+                .map(|(name, server)| (name.clone(), server.serves.clone()))
+                .collect();
+            let aliases = cfg.mcp_aliases.clone();
+            cfg.retrieval_check = Some(Arc::new(move |name, input| {
+                let alias_server = aliases
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(name)
+                    .map(|alias| alias.server.clone());
+                capability::provider::call_retrieves_external(
+                    name,
+                    input,
+                    alias_server.as_deref(),
+                    &|server| servers.get(server).cloned().unwrap_or_default(),
+                )
+            }));
+        }
+        {
             let recipes = vak_delivery::built_in_recipes();
             cfg.presentation_check = Some(Arc::new(move |text, offered| {
                 presentation_tools::presentation_check_nudge(text, offered, &recipes)
@@ -5231,7 +5256,14 @@ impl Core {
             // against the same admitted server set, so runtime discoveries
             // never bypass the slice.
             let admitted_servers = turn_capabilities.mcp_server_names;
-            let aliases = Arc::new(std::sync::Mutex::new(turn_capabilities.mcp_aliases.clone()));
+            // One alias map for the config's whole life: fill it in place rather
+            // than replacing it, so anything that captured `cfg.mcp_aliases`
+            // earlier (the retrieval check) still sees the live entries.
+            let aliases = cfg.mcp_aliases.clone();
+            *aliases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                turn_capabilities.mcp_aliases.clone();
             let aliases_for_catalog = aliases.clone();
             let admitted_for_catalog = admitted_servers.clone();
             let builtins_for_catalog = self.tool_names();
@@ -5256,7 +5288,6 @@ impl Core {
                 *current = resolved;
             }));
             tools.push(Arc::new(mcp_tool));
-            cfg.mcp_aliases = aliases;
         }
         // Read-only self-knowledge, next to the other recall tool: "what am I
         // working on" reaches every surface as a capability rather than as a

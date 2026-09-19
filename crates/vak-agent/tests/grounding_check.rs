@@ -6,10 +6,11 @@
 //! prose. `Agent::run` must give the model exactly one bounded repair turn
 //! in that case instead of letting the ungrounded answer stand.
 //!
-//! The detection in `tool_call_looks_like_retrieval` (crates/vak-agent/src/lib.rs)
-//! is deliberately name-agnostic (keyword match + URL-shape sniff), so this
-//! test uses a tool named `search` — not `tavily_search` specifically — to
-//! prove the fix isn't a Tavily special case.
+//! Which calls count as retrieval is decided by `AgentConfig::retrieval_check`,
+//! supplied by `Core` from what each capability *declares it serves* — never
+//! from a tool's name or its output. These tests supply a check that declares
+//! the tool `search` as web-serving, and separately prove the name is
+//! irrelevant in both directions.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -118,6 +119,21 @@ async fn build_agent(
     session_id: &str,
     responses: Vec<AssistantMessage>,
 ) -> Agent {
+    build_agent_with_check(
+        dir,
+        session_id,
+        responses,
+        Some(Arc::new(|name: &str, _: &Value| name == "search")),
+    )
+    .await
+}
+
+async fn build_agent_with_check(
+    dir: &tempfile::TempDir,
+    session_id: &str,
+    responses: Vec<AssistantMessage>,
+    retrieval_check: Option<vak_agent::RetrievalCheck>,
+) -> Agent {
     let header = SessionHeader {
         agent: None,
         session_id: session_id.into(),
@@ -157,6 +173,7 @@ async fn build_agent(
             let mut cfg = AgentConfig::new("sys");
             cfg.model = "test-model".into();
             cfg.tools = vec![Arc::new(FakeSearchTool)];
+            cfg.retrieval_check = retrieval_check;
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg
@@ -426,6 +443,7 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
             let mut cfg = AgentConfig::new("sys");
             cfg.model = "test-model".into();
             cfg.tools = vec![Arc::new(SessionSearchTool)];
+            cfg.retrieval_check = Some(Arc::new(|name, _| name == "search"));
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg
@@ -489,5 +507,81 @@ async fn ungrounded_prose_unrelated_to_any_tool_call_is_not_flagged() {
             .count(),
         1,
         "no tool call happened, so no grounding retry should fire: {texts:?}"
+    );
+}
+
+/// The agent never decides what is retrieval. A tool literally named `search`
+/// whose results are full of URLs — exactly what the old keyword-and-URL rule
+/// flagged — is not grounded on when the capability layer does not declare it
+/// as reaching outside information.
+#[tokio::test]
+async fn a_tool_is_retrieval_only_if_the_check_says_so_whatever_its_name_or_output() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent_with_check(
+        &dir,
+        "grounding-name-irrelevant",
+        vec![
+            search_call("s1"),
+            text_msg("Here is a summary with no citations at all."),
+        ],
+        Some(Arc::new(|_: &str, _: &Value| false)),
+    )
+    .await;
+    let outcome = agent
+        .run(
+            "look something up",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
+    let users: Vec<String> = futures::executor::block_on(async {
+        agent
+            .session
+            .lock()
+            .await
+            .derive_messages()
+            .iter()
+            .filter(|m| m.role == vak_llm::types::Role::User)
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    });
+    assert!(
+        !users.iter().any(|t| t.contains("[grounding-check]")),
+        "an undeclared tool must never trigger a grounding nudge: {users:?}"
+    );
+}
+
+/// With no check configured at all the grounding check is inert rather than
+/// falling back to a guess.
+#[tokio::test]
+async fn with_no_retrieval_check_the_grounding_check_is_inert() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent_with_check(
+        &dir,
+        "grounding-inert",
+        vec![search_call("s1"), text_msg("Uncited summary.")],
+        None,
+    )
+    .await;
+    let outcome = agent
+        .run(
+            "look something up",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
     );
 }

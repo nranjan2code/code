@@ -183,6 +183,13 @@ pub trait Tool: Send + Sync {
     fn claims(&self, _args: &Value) -> ResourceClaims {
         ResourceClaims::default()
     }
+
+    /// Whether a successful call *is* the answer being presented to the user
+    /// (it shows a card) rather than a step toward one. The agent loop reads
+    /// this to know a card was emitted; it does not infer it from the name.
+    fn presents_cards(&self) -> bool {
+        false
+    }
 }
 
 /// Declared concurrent-execution constraints for one tool invocation.

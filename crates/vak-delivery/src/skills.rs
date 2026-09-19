@@ -862,7 +862,6 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
                 "current events",
             ][..],
         ),
-        ("diff", &["diff --", "```diff", "@@ "][..]),
         (
             "files_changed",
             &["files changed", "modified:", "created:"][..],
@@ -907,7 +906,6 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
                 "revenue breakdown",
             ][..],
         ),
-        ("tabular", &["| ---", "|---", "| :---", "|:---", "\t"][..]),
         (
             "recipe",
             &["recipe", "servings", "cook time", "prep time", "baste"][..],
@@ -940,7 +938,7 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
             &["docker", "container", "microservices", "ports"][..],
         ),
     ];
-    checks
+    let mut signals: Vec<String> = checks
         .iter()
         .filter_map(|(signal, needles)| {
             needles
@@ -948,7 +946,103 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
                 .any(|needle| signal_text_hit(&lower, needle))
                 .then_some((*signal).into())
         })
-        .collect()
+        .collect();
+    signals.extend(structural_signals(text).into_iter().map(String::from));
+    signals
+}
+
+/// Signals about the *structure* of a piece of Markdown, read from the parsed
+/// document rather than from characters in the raw text: a table is a table
+/// block, a diff is a code block in diff form. (These used to be substring
+/// hits on `| ---`, a fenced ```` ```diff ```` marker and a literal tab, which
+/// miss an indented table, match a table inside a code sample, and cannot tell
+/// a real tab-separated block from one stray tab.)
+fn structural_signals(text: &str) -> Vec<&'static str> {
+    use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+    let mut signals = Vec::new();
+    let mut code: Option<(bool, String)> = None; // (declared diff/patch, body)
+    for event in Parser::new_ext(text, Options::ENABLE_TABLES) {
+        match event {
+            Event::Start(Tag::Table(_)) => signals.push("tabular"),
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let declared_diff = matches!(&kind, CodeBlockKind::Fenced(info)
+                    if matches!(info.split_whitespace().next(), Some("diff" | "patch")));
+                code = Some((declared_diff, String::new()));
+            }
+            Event::Text(chunk) => {
+                if let Some((_, body)) = code.as_mut() {
+                    body.push_str(&chunk);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some((declared_diff, body)) = code.take() {
+                    let first = body.lines().next().unwrap_or_default();
+                    if declared_diff || first.starts_with("diff --git") || first.starts_with("@@ ")
+                    {
+                        signals.push("diff");
+                    }
+                    if is_tab_separated(&body) {
+                        signals.push("tabular");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if is_tab_separated(text) {
+        signals.push("tabular");
+    }
+    // An unfenced unified diff is still a diff: a `diff --git` header line or a
+    // hunk header (`@@ -1,2 +1,3 @@`) at the start of a line.
+    if text
+        .lines()
+        .any(|line| line.starts_with("diff --git ") || is_hunk_header(line))
+    {
+        signals.push("diff");
+    }
+    signals
+}
+
+/// `@@ -a[,b] +c[,d] @@` at the start of a line.
+fn is_hunk_header(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("@@ -") else {
+        return false;
+    };
+    let mut parts = rest.splitn(2, " +");
+    let (old, new) = (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+    );
+    let range = |text: &str| {
+        let text = text.split(" @@").next().unwrap_or_default();
+        !text.is_empty()
+            && text
+                .split(',')
+                .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    };
+    range(old) && range(new) && line.contains(" @@")
+}
+
+/// Two or more consecutive lines that each split into the same number (at
+/// least two) of tab-separated fields — a pasted spreadsheet range — as
+/// opposed to a stray tab in prose.
+fn is_tab_separated(text: &str) -> bool {
+    let mut previous: Option<usize> = None;
+    let mut run = 0;
+    for line in text.lines() {
+        let fields = line.split('\t').count();
+        if fields >= 2 && previous.is_none_or(|p| p == fields) {
+            run += 1;
+            previous = Some(fields);
+            if run >= 2 {
+                return true;
+            }
+        } else {
+            run = usize::from(fields >= 2);
+            previous = (fields >= 2).then_some(fields);
+        }
+    }
+    false
 }
 
 /// Match standalone lexical terms without allowing incidental substrings in
@@ -2406,6 +2500,54 @@ mod tests {
                 .requirements
                 .iter()
                 .any(|requirement| requirement.id == "plan-next-steps")
+        );
+    }
+}
+
+#[cfg(test)]
+mod structural_signal_tests {
+    use super::signals_from_text;
+
+    fn has(text: &str, signal: &str) -> bool {
+        signals_from_text(text).iter().any(|s| s == signal)
+    }
+
+    #[test]
+    fn a_real_markdown_table_is_tabular_even_when_indented_or_unspaced() {
+        assert!(has(
+            "| Index | Change |\n|---|---|\n| Nifty | -0.22% |\n",
+            "tabular"
+        ));
+        assert!(has(
+            "Results:\n\n  | a | b |\n  | - | - |\n  | 1 | 2 |\n",
+            "tabular"
+        ));
+    }
+
+    #[test]
+    fn table_syntax_inside_a_code_sample_is_not_a_table() {
+        let text = "Markdown tables look like this:\n\n```\n| a | b |\n|---|---|\n```\n";
+        assert!(
+            !has(text, "tabular"),
+            "a table shown as source is not a table"
+        );
+        assert!(!has("use `|---|` as the separator row", "tabular"));
+    }
+
+    #[test]
+    fn tab_separated_rows_are_tabular_but_one_stray_tab_is_not() {
+        assert!(has("name\tqty\napple\t3\npear\t5\n", "tabular"));
+        assert!(!has("He paused,\tthen left.", "tabular"));
+    }
+
+    #[test]
+    fn diffs_are_recognised_by_structure() {
+        assert!(has("```diff\n- old\n+ new\n```\n", "diff"));
+        assert!(has("diff --git a/x b/x\n--- a/x\n+++ b/x\n", "diff"));
+        assert!(has("@@ -1,2 +1,3 @@ fn main\n line\n", "diff"));
+        assert!(
+            !has("the @@ sign and diff of opinions", "diff"),
+            "prose mentioning them is not a diff"
         );
     }
 }
