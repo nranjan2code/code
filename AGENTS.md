@@ -574,7 +574,14 @@ shipped behaviour rather than a proposal.
   `semantic_type`) rather than writing an inline ` ```vak ` fence — measured
   far more reliable against the small local models this app targets (see
   `docs/design/07-prompt.md` v3.4.5, `docs/design/30-render-architecture.md`
-  §30.1). The fence path is the fallback when no matching tool is present.
+  §30.1). The fence path is the fallback when no matching tool is present. The
+  card travels in the call's *arguments* (recorded untruncated in the ledger);
+  the tool result is only a short ack or a repairable validation error, and
+  `vak-server`'s projection rebuilds the card from the call
+  (`vak_core::presentation_tools::card_output_from_call`) — never from result
+  text, which the tool framework line-truncates at ~2000 characters. A
+  projected card carries `OutputKind::Card`, never `Information`/`Progress`/
+  `Retry`, which chat views fold away (doc 30-output-engineering).
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

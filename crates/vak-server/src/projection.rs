@@ -738,7 +738,7 @@ fn snapshot_inner(
                                     timestamp: entry.ts.to_rfc3339(),
                                     turn_id: turn_id.clone(),
                                     role: OutputRole::Assistant,
-                                    kind: OutputKind::Information,
+                                    kind: OutputKind::Card,
                                     status: OutputStatus::Succeeded,
                                     outcome: None,
                                     content: OutputContent::Structured {
@@ -860,7 +860,7 @@ fn snapshot_inner(
                                         timestamp: entry.ts.to_rfc3339(),
                                         turn_id: turn_id.clone(),
                                         role: OutputRole::Tool,
-                                        kind: OutputKind::Information,
+                                        kind: OutputKind::Card,
                                         status: OutputStatus::Succeeded,
                                         outcome: None,
                                         fallback_text: structured_markdown(&output),
@@ -2892,6 +2892,18 @@ mod tests {
                         _ => None,
                     })
                     .collect();
+                // A card is answer content, never activity chatter: chat views
+                // fold away progress/retry/information items, so a card
+                // carrying one of those kinds is invisible to the user.
+                if let Some(bad) = timeline.items.iter().find(|i| {
+                    matches!(i.content, OutputContent::Structured { .. })
+                        && i.kind != OutputKind::Card
+                }) {
+                    failures.push(format!(
+                        "{semantic_type} via {tool}: card projected as {:?}, not Card",
+                        bad.kind
+                    ));
+                }
                 if found != [semantic_type.to_string()] {
                     failures.push(format!(
                         "{semantic_type} via {tool} padded={padded}: got {found:?}"

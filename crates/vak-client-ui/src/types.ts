@@ -42,7 +42,8 @@ export type OutputKind =
   | "retry"
   | "error"
   | "outcome"
-  | "artifact";
+  | "artifact"
+  | "card";
 export type OutputStatus =
   | "pending"
   | "running"

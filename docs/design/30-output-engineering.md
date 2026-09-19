@@ -36,7 +36,13 @@ previously conflated in prose and CSS:
 
 - `OutputRole`: system, user, assistant, tool, or worker.
 - `OutputKind`: message, information, approval, progress, retry, error,
-  outcome, or artifact.
+  outcome, artifact, or card. `card` marks a structured card that is part of
+  the answer (an `emit_*_card` call, a recognised provider shape, a link
+  preview); `information`/`progress`/`retry` are activity chatter that chat
+  views fold away. A card must never carry a chatter kind — until 3.4.7
+  tool-produced cards were projected as `information`, so the chat view
+  silently hid every one of them. `every_supported_type_renders_through_the_full_path_at_any_size`
+  pins this for all registered types.
 - `OutputStatus`: pending, running, succeeded, failed, denied, cancelled, or
   partial.
 

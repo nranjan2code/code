@@ -25,6 +25,11 @@ pub enum OutputKind {
     Error,
     Outcome,
     Artifact,
+    /// A structured card that is part of the answer (from an `emit_*_card`
+    /// call, a recognised provider shape, or a link preview) — content the
+    /// user should see, as opposed to `Information`/`Progress` activity
+    /// chatter that chat views fold away.
+    Card,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
