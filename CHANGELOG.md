@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.11 — 2026-09-19
+
+- Cards are Vak's own display channel: presenting tools (`emit_*_card`) need no approval in any mode, an identical repeat card call is acknowledged as a no-op instead of erroring or tripping the repeat breaker into an approval prompt, and identical card calls in a turn collapse to one card in the projection.
+- Chat: cards, artifacts and their narration share one assistant header, and an approval renders only while pending.
+
 ## 3.4.10 — 2026-09-19
 
 - Made the grounding check typed. It decided a tool "looked like retrieval" from name keywords ("search", "fetch", "query"…) and a count of URLs in the output — the harness-side table `capability/domain.rs` exists to delete — and needed `emit_*_card` excluded by hand. `AgentConfig::retrieval_check`, built by `Core`, now decides from what each capability declares it serves (`Web`/`LiveData`): built-ins through `builtin_domains`, an MCP call through its server's `serves` (a server that declares nothing inherits the `mcp` broker's claim, so an unconfigured Tavily keeps working; listing tools is not retrieval), and anything unclassified is not retrieval. Verified that Tavily sets no MCP annotations, so annotations could not have been the source. Also fixed a latent ordering hazard: the alias map was replaced after being captured; it is now filled in place.
