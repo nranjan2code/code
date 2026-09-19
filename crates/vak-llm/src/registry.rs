@@ -9,7 +9,7 @@ use crate::error::LlmError;
 use crate::stream::EventStream;
 use crate::types::ChatRequest;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProviderAuth {
     pub api_key: String,
     pub base_url: Option<String>,
@@ -17,6 +17,11 @@ pub struct ProviderAuth {
     /// Providers continue to authenticate with `api_key`; this label is
     /// never sent over the wire.
     pub credential_id: Option<String>,
+    /// Generic per-provider tuning knobs threaded from `vak-config`
+    /// (docs/design/68-context-engine.md §8), e.g. Ollama's `keep_alive`/
+    /// `num_ctx`. Keys and meaning are entirely provider-defined; the
+    /// registry and this struct stay agnostic to their contents.
+    pub options: std::collections::BTreeMap<String, String>,
 }
 
 type Factory = Arc<dyn Fn(&ProviderAuth) -> Result<Arc<dyn Provider>, LlmError> + Send + Sync>;
@@ -167,16 +172,9 @@ pub fn default_registry() -> ProviderRegistry {
         openai_compat("https://opencode.ai/zen/v1", true, false),
     );
 
-    use crate::ollama::{OLLAMA_DEFAULT_BASE_URL, OllamaConfig, OllamaProvider};
+    use crate::ollama::OllamaProvider;
     registry.register("ollama", |auth| {
-        Ok(Arc::new(OllamaProvider::new(OllamaConfig {
-            base_url: auth
-                .base_url
-                .clone()
-                .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.into()),
-            api_key: auth.api_key.clone(),
-            ..Default::default()
-        })?) as Arc<dyn Provider>)
+        Ok(Arc::new(OllamaProvider::new(ollama_config_from_auth(auth))?) as Arc<dyn Provider>)
     });
 
     // Amazon Bedrock Mantle exposes an OpenAI-compatible API. The region is
@@ -188,10 +186,110 @@ pub fn default_registry() -> ProviderRegistry {
     registry
 }
 
+/// Builds an `OllamaConfig` from generic `ProviderAuth` fields
+/// (docs/design/68-context-engine.md §8). Standalone so it can be unit
+/// tested without constructing a live `OllamaProvider`.
+fn ollama_config_from_auth(auth: &ProviderAuth) -> crate::ollama::OllamaConfig {
+    let default_config = crate::ollama::OllamaConfig::default();
+    // `auth.base_url` may carry the `/v1` OpenAI-compat suffix used for
+    // discovery (models.rs::default_base_url); the native `/api/chat` wire
+    // always wants the bare root.
+    let base_url = auth
+        .base_url
+        .clone()
+        .unwrap_or_else(|| crate::ollama::OLLAMA_DEFAULT_BASE_URL.into());
+    let base_url = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string();
+    let keep_alive = auth
+        .options
+        .get("keep_alive")
+        .cloned()
+        .unwrap_or(default_config.keep_alive);
+    let num_ctx = auth
+        .options
+        .get("num_ctx")
+        .and_then(|v| v.parse::<u64>().ok())
+        .or(default_config.num_ctx);
+    crate::ollama::OllamaConfig {
+        base_url,
+        api_key: auth.api_key.clone(),
+        keep_alive,
+        num_ctx,
+    }
+}
+
 pub async fn stream_via(
     provider: &dyn Provider,
     request: ChatRequest,
     cancel: CancellationToken,
 ) -> Result<EventStream, LlmError> {
     provider.stream(request, cancel).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_registry_names_include_ollama() {
+        assert!(default_registry().names().contains(&"ollama".to_string()));
+    }
+
+    #[test]
+    fn ollama_config_defaults_when_no_options_are_set() {
+        let auth = ProviderAuth {
+            api_key: "ollama".into(),
+            base_url: None,
+            credential_id: None,
+            options: Default::default(),
+        };
+        let config = ollama_config_from_auth(&auth);
+        assert_eq!(config.base_url, crate::ollama::OLLAMA_DEFAULT_BASE_URL);
+        assert_eq!(config.keep_alive, "30m");
+        assert_eq!(config.num_ctx, None);
+    }
+
+    #[test]
+    fn ollama_config_threads_keep_alive_and_num_ctx_from_options() {
+        let mut options = std::collections::BTreeMap::new();
+        options.insert("keep_alive".to_string(), "10m".to_string());
+        options.insert("num_ctx".to_string(), "8192".to_string());
+        let auth = ProviderAuth {
+            api_key: "ollama".into(),
+            base_url: None,
+            credential_id: None,
+            options,
+        };
+        let config = ollama_config_from_auth(&auth);
+        assert_eq!(config.keep_alive, "10m");
+        assert_eq!(config.num_ctx, Some(8192));
+    }
+
+    #[test]
+    fn ollama_config_strips_v1_compat_suffix_from_base_url() {
+        let auth = ProviderAuth {
+            api_key: "ollama".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            credential_id: None,
+            options: Default::default(),
+        };
+        let config = ollama_config_from_auth(&auth);
+        assert_eq!(config.base_url, "http://localhost:11434");
+    }
+
+    #[test]
+    fn ollama_config_ignores_unparseable_num_ctx() {
+        let mut options = std::collections::BTreeMap::new();
+        options.insert("num_ctx".to_string(), "not-a-number".to_string());
+        let auth = ProviderAuth {
+            api_key: "ollama".into(),
+            base_url: None,
+            credential_id: None,
+            options,
+        };
+        let config = ollama_config_from_auth(&auth);
+        assert_eq!(config.num_ctx, None);
+    }
 }

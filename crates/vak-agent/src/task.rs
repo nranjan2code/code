@@ -50,6 +50,12 @@ pub struct TaskDeps {
     pub role_prompts: std::collections::BTreeMap<String, String>,
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
+    /// The parent turn's tail (clock instant + epistemic stance,
+    /// docs/design/68-context-engine.md §6/§10). Children get the same
+    /// turn context block as the parent rather than an empty one, since a
+    /// worker dispatched mid-turn is still answering as of that turn's
+    /// instant and stance.
+    pub tail: crate::TailInput,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
     pub capabilities: Vec<CapabilityDescriptor>,
@@ -651,6 +657,7 @@ impl TaskTool {
 
         let mut cfg = AgentConfig::new(child_system_prompt.clone());
         cfg.model = self.deps.model.clone();
+        cfg.tail = self.deps.tail.clone();
         cfg.tool_definitions = Some(vak_tools::definitions(&child_tools));
         cfg.tools = child_tools;
         cfg.hooks = self.deps.hooks.clone();

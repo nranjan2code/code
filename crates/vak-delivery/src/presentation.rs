@@ -54,6 +54,16 @@ pub struct OutputProvenance {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The `Presentation` ledger entry id this card was written as
+    /// (docs/design/68-context-engine.md §10), distinct from `entry_id`
+    /// (which names the message entry the tool call rode in on). The
+    /// client sends this back verbatim as `presentation_id` on
+    /// `/presentation/feedback` and `/presentation/select`, since feedback
+    /// and selection key on the ledger fact, not on the containing
+    /// message. `None` for non-card items and for cards not sourced from a
+    /// written `Presentation` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

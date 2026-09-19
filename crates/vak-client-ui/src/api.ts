@@ -1647,10 +1647,15 @@ export function proposeSessionPresentationRevision(sessionId: string, request: u
   });
 }
 
-export function submitPresentationFeedback(sessionId: string, choice: string, feedback?: string): Promise<void> {
+// `presentationId` is the `Presentation` ledger entry's own id
+// (docs/design/68-context-engine.md §10: "the user dismissed this card" is
+// an event about a ledger fact) — the server requires it and 400s without
+// one. Read it from `OutputItem.provenance.presentation_id`, never from
+// `provenance.entry_id` (that names the containing message, not the card).
+export function submitPresentationFeedback(sessionId: string, choice: string, presentationId: string, feedback?: string): Promise<void> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/feedback`, {
     method: "POST",
-    body: JSON.stringify({ choice, feedback }),
+    body: JSON.stringify({ choice, feedback, presentation_id: presentationId }),
   });
 }
 
@@ -1659,18 +1664,19 @@ export function selectPresentation(
   specId: string,
   revision: number,
   lifetime: "use_once" | "remember",
+  presentationId: string,
   scope?: "user" | "workspace",
   owner?: string,
 ): Promise<unknown> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/select`, {
     method: "POST",
-    body: JSON.stringify({ spec_id: specId, revision, lifetime, scope, owner }),
+    body: JSON.stringify({ spec_id: specId, revision, lifetime, scope, owner, presentation_id: presentationId }),
   });
 }
 
-export function selectPresentationForSemantic(sessionId: string, semanticType: string): Promise<unknown> {
+export function selectPresentationForSemantic(sessionId: string, semanticType: string, presentationId: string): Promise<unknown> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/presentation/select`, {
     method: "POST",
-    body: JSON.stringify({ spec_id: "", revision: 0, semantic_type: semanticType, lifetime: "use_once" }),
+    body: JSON.stringify({ spec_id: "", revision: 0, semantic_type: semanticType, lifetime: "use_once", presentation_id: presentationId }),
   });
 }

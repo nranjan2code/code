@@ -820,15 +820,24 @@ function AnswerCard(props: { item: OutputItem; document: PresentationDocument })
   );
 }
 
-function PresentationFeedback(props: { sessionId: string; semanticType: string }) {
+function PresentationFeedback(props: { sessionId: string; semanticType: string; presentationId?: string }) {
   const [status, setStatus] = createSignal("");
   const [expanded, setExpanded] = createSignal(false);
   let input!: HTMLTextAreaElement;
   const send = async (choice: string) => {
+    // The server requires `presentation_id` (docs/design/68-context-engine.md
+    // §10) and 400s without one; a card with no known Presentation entry
+    // (e.g. still streaming, or not sourced from an `emit_*_card` call) has
+    // nothing to key feedback on yet.
+    const presentationId = props.presentationId;
+    if (!presentationId) {
+      setStatus("Could not save");
+      return;
+    }
     setStatus("Saving…");
     try {
-      if (choice === "Use this layout") await api.selectPresentationForSemantic(props.sessionId, props.semanticType);
-      await api.submitPresentationFeedback(props.sessionId, choice, input?.value.trim() || undefined);
+      if (choice === "Use this layout") await api.selectPresentationForSemantic(props.sessionId, props.semanticType, presentationId);
+      await api.submitPresentationFeedback(props.sessionId, choice, presentationId, input?.value.trim() || undefined);
       setStatus("Saved");
       setExpanded(false);
     } catch {
@@ -851,7 +860,7 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string }
   </section>;
 }
 
-export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; presentationId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
@@ -862,7 +871,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
         <>
           <StructuredRenderer output={props.output} />
           <Show when={showOperatorChrome() && props.sessionId}>
-            <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} />
+            <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />
           </Show>
         </>
       }>
@@ -1137,7 +1146,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") {
       const isRawJson = item.fallback_text.trim().startsWith("{") || item.fallback_text.includes('"type":');

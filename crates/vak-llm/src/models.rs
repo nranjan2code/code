@@ -18,6 +18,12 @@ use crate::registry::ProviderAuth;
 pub struct ModelContext {
     pub input_tokens: u64,
     pub output_tokens: Option<u64>,
+    /// Provider-reported quantisation label (Ollama `/api/show`
+    /// `details.quantization_level`, e.g. "Q4_K_M"). `None` when the
+    /// provider does not publish one — a `CapacityProfile` keys on this so a
+    /// requantised model is measured fresh rather than inheriting a stale
+    /// profile (docs/design/68-context-engine.md §1).
+    pub quantisation: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -257,6 +263,7 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
         "google" => Some(ModelContext {
             input_tokens: data.get("inputTokenLimit")?.as_u64()?,
             output_tokens: data.get("outputTokenLimit").and_then(|v| v.as_u64()),
+            quantisation: None,
         }),
         "ollama" => {
             // 1. Check modelfile parameters for "num_ctx <N>"
@@ -293,9 +300,18 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
 
             let input_tokens = param_ctx.or(details_ctx).or(model_info_ctx).unwrap_or(8192);
 
+            // `/api/show` reports the running quantisation under
+            // `details.quantization_level` (e.g. "Q4_K_M").
+            let quantisation = data
+                .get("details")
+                .and_then(|d| d.get("quantization_level"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+
             Some(ModelContext {
                 input_tokens,
                 output_tokens: Some(4096.min(input_tokens.saturating_div(2))),
+                quantisation,
             })
         }
         _ => {
@@ -310,6 +326,7 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
                     .get("top_provider")
                     .and_then(|v| v.get("max_completion_tokens"))
                     .and_then(|v| v.as_u64()),
+                quantisation: None,
             })
         }
     }
@@ -365,6 +382,7 @@ pub async fn model_context(
                     return Ok(Some(ModelContext {
                         input_tokens: 8192,
                         output_tokens: Some(4096),
+                        quantisation: None,
                     }));
                 }
             }
@@ -449,7 +467,8 @@ mod tests {
             context_from_json("openrouter", &json),
             Some(ModelContext {
                 input_tokens: 65536,
-                output_tokens: Some(8192)
+                output_tokens: Some(8192),
+                quantisation: None,
             })
         );
     }
@@ -481,7 +500,8 @@ mod tests {
             context_from_json("ollama", &json),
             Some(ModelContext {
                 input_tokens: 32768,
-                output_tokens: Some(4096)
+                output_tokens: Some(4096),
+                quantisation: None,
             })
         );
     }
@@ -498,7 +518,24 @@ mod tests {
             context_from_json("ollama", &json),
             Some(ModelContext {
                 input_tokens: 16384,
-                output_tokens: Some(4096)
+                output_tokens: Some(4096),
+                quantisation: None,
+            })
+        );
+    }
+
+    #[test]
+    fn ollama_context_parses_quantisation_from_details() {
+        let json = serde_json::json!({
+            "details": {"quantization_level": "Q4_K_M"},
+            "model_info": {"general.context_length": 8192}
+        });
+        assert_eq!(
+            context_from_json("ollama", &json),
+            Some(ModelContext {
+                input_tokens: 8192,
+                output_tokens: Some(4096),
+                quantisation: Some("Q4_K_M".to_string()),
             })
         );
     }

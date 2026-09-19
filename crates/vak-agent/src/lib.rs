@@ -1604,7 +1604,8 @@ impl Agent {
                     ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
                 );
             }
-            self.record_capacity_usage_feedback(&request, &usage).await;
+            self.record_capacity_usage_feedback(&request, &usage, ledger.last_first_token_ms)
+                .await;
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
@@ -3222,14 +3223,19 @@ impl Agent {
     /// "Feedback") and records a `capacity-feedback` activity when a field
     /// moved by more than `CAPACITY_FEEDBACK_CHANGE_THRESHOLD`. A no-op
     /// when no profile was wired in for this run.
-    async fn record_capacity_usage_feedback(&mut self, request: &ChatRequest, usage: &Usage) {
+    async fn record_capacity_usage_feedback(
+        &mut self,
+        request: &ChatRequest,
+        usage: &Usage,
+        first_token_latency_ms: Option<u64>,
+    ) {
         let Some(profile) = self.config.capacity.as_mut() else {
             return;
         };
         let before = profile.clone();
         let chars_sent = chat_request_chars(request);
         let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
-        profile.observe_usage(chars_sent, usage, None, cache_miss);
+        profile.observe_usage(chars_sent, usage, first_token_latency_ms, cache_miss);
         let after = profile.clone();
         let delta = capacity_feedback_delta(&before, &after);
         if delta.is_empty() {
@@ -3410,12 +3416,25 @@ impl Agent {
                     let mut stream = provider_for_stream
                         .stream(req_for_stream, cancel.clone())
                         .await?;
+                    // First-token latency, wall clock from just before
+                    // `.stream()` was called to the first event off the
+                    // wire. Ollama fills `usage.prefill_ms` itself
+                    // (preferred when present); this is what lets every
+                    // other provider feed `prefill_tps` too
+                    // (docs/design/68-context-engine.md §1 "Feedback").
+                    let mut first_token_ms: Option<u64> = None;
                     while let Some(ev) = futures::StreamExt::next(&mut stream).await {
+                        if first_token_ms.is_none() {
+                            first_token_ms = Some(started.elapsed().as_millis() as u64);
+                        }
                         if forward && events.send(AgentEvent::Stream(ev)).await.is_err() {
                             cancel.cancel();
                         }
                     }
-                    stream.result().await
+                    stream
+                        .result()
+                        .await
+                        .map(|message| (message, first_token_ms))
                 };
                 let step = std::panic::AssertUnwindSafe(step).catch_unwind();
 
@@ -3449,10 +3468,11 @@ impl Agent {
                 let elapsed_ms = started.elapsed().as_millis() as u64;
 
                 match outcome {
-                    Ok(r) => {
+                    Ok((r, first_token_ms)) => {
                         if let Some(breaker) = &self.config.circuit_breaker {
                             breaker.record_success_key(&breaker_key);
                         }
+                        ledger.last_first_token_ms = first_token_ms;
                         ledger.receipt.record(
                             reason,
                             FailureDomain::Unknown,

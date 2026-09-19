@@ -146,6 +146,12 @@ export interface OutputProvenance {
   entry_id?: string | null;
   tool_call_id?: string | null;
   source?: string | null;
+  /** The `Presentation` ledger entry's own id (docs/design/68-context-engine.md
+   * §10) — distinct from `entry_id`, which names the message entry the card's
+   * tool call rode in on. `/presentation/feedback` and `/presentation/select`
+   * key on this id, not on `entry_id`. `null`/absent for non-card items and
+   * for cards not sourced from a written `Presentation` entry. */
+  presentation_id?: string | null;
 }
 
 /**

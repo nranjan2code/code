@@ -557,6 +557,30 @@ fn probe_filler_text(seed: u64) -> String {
     s
 }
 
+/// Two identical requests are sent back to back at the same size the
+/// probe already used (§1 "Cache rung"); this classifies what the pair
+/// showed. `ProviderReported` when the second response's usage shows a
+/// cache hit (`cache_read_input_tokens`, which already folds in the OpenAI
+/// `prompt_tokens_details.cached_tokens` shape — see the adapters in
+/// vak-llm). Otherwise `PrefixStable` when the provider reports nothing but
+/// the second request's first-token latency dropped to a fifth or less of
+/// the first's — a local runner's prefix cache shows up only as timing.
+/// `None` (measured, no caching detected) when neither signal fired; the
+/// caller records both raw latencies as provenance signals regardless.
+pub fn classify_cache_rung(
+    first_latency_ms: u64,
+    second_latency_ms: u64,
+    second_usage: &vak_llm::Usage,
+) -> CacheBehaviour {
+    if second_usage.cache_read_input_tokens.unwrap_or(0) > 0 {
+        return CacheBehaviour::ProviderReported;
+    }
+    if first_latency_ms > 0 && second_latency_ms.saturating_mul(5) <= first_latency_ms {
+        return CacheBehaviour::PrefixStable;
+    }
+    CacheBehaviour::None
+}
+
 /// Whether a probe response followed the instruction: a `ToolUse` block
 /// named `probe_ack` anywhere in the response.
 pub fn followed(response: &vak_llm::AssistantMessage) -> bool {
@@ -701,6 +725,41 @@ mod tests {
         // translated through the given tokens/char.
         let total_chars: usize = req.messages.iter().map(|m| m.text_content().len()).sum();
         assert!(total_chars as f64 >= 1_000.0 / 0.25 * 0.5);
+    }
+
+    #[test]
+    fn cache_rung_prefers_provider_reported_cache_hit() {
+        let usage = vak_llm::Usage {
+            cache_read_input_tokens: Some(3_000),
+            ..Default::default()
+        };
+        // Even with no latency improvement at all, a real cache hit wins.
+        assert_eq!(
+            classify_cache_rung(1_000, 1_000, &usage),
+            CacheBehaviour::ProviderReported
+        );
+    }
+
+    #[test]
+    fn cache_rung_falls_back_to_five_x_latency_when_unreported() {
+        let usage = vak_llm::Usage::default();
+        // Exactly 5x faster: still counts (<=), not strictly less-than.
+        assert_eq!(
+            classify_cache_rung(1_000, 200, &usage),
+            CacheBehaviour::PrefixStable
+        );
+        assert_eq!(
+            classify_cache_rung(1_000, 201, &usage),
+            CacheBehaviour::None
+        );
+    }
+
+    #[test]
+    fn cache_rung_is_none_with_no_signal_at_all() {
+        let usage = vak_llm::Usage::default();
+        assert_eq!(classify_cache_rung(500, 480, &usage), CacheBehaviour::None);
+        // A zero first latency can't establish a ratio; never fabricate a hit.
+        assert_eq!(classify_cache_rung(0, 0, &usage), CacheBehaviour::None);
     }
 
     #[test]

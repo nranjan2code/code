@@ -131,6 +131,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         role_prompts: Default::default(),
         provider: scripted.clone(),
         system_prompt: "child-sys".into(),
+        tail: Default::default(),
         model: "test-model".into(),
         tools: vec![Arc::new(ReadTool)],
         capabilities: Vec::new(),
