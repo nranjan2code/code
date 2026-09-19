@@ -1549,6 +1549,14 @@ impl SessionLog {
             return None;
         }
 
+        // Directive drift (docs/design/68-context-engine.md §7): a listed
+        // directive whose reading shares no domain with the CURRENT
+        // directive's is marked paused rather than dropped — a
+        // re-weighting, not a cut. Turns without a card yet (never closed)
+        // have no reading to compare and are never marked.
+        let current_domains = self.latest_reading().map(|r| r.domains);
+        let index = TurnIndex::from_log(self);
+
         let mut thread = format!(
             "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
             goal.revision,
@@ -1565,7 +1573,17 @@ impl SessionLog {
             } else {
                 req.clone()
             };
-            thread.push_str(&format!("- Turn {num}: {preview}\n"));
+            let paused = current_domains.as_ref().is_some_and(|current| {
+                !current.is_empty()
+                    && index.turn_by_number(*num).is_some_and(|turn| {
+                        turn.card.as_ref().is_some_and(|card| {
+                            !card.reading.domains.is_empty()
+                                && card.reading.domains.iter().all(|d| !current.contains(d))
+                        })
+                    })
+            });
+            let suffix = if paused { " (earlier, now paused)" } else { "" };
+            thread.push_str(&format!("- Turn {num}: {preview}{suffix}\n"));
         }
         thread.push_str(
             "Rules for multi-turn execution:\n\
