@@ -2955,6 +2955,22 @@ impl Core {
         capabilities: &[CapabilityDescriptor],
         stance: Option<vak_intent::EpistemicStance>,
     ) -> prompts::Resolution {
+        self.resolve_prompt_with_stance_parts(capabilities, stance)
+            .0
+    }
+
+    /// Same composition as [`Core::resolve_prompt_with_stance`], additionally
+    /// returning the raw temporal and epistemic-stance text that fed
+    /// `Resolution::tail` — the per-turn place that assembles
+    /// `AgentConfig::tail` needs both pieces under their own tag rather than
+    /// the single concatenated blob, and re-deriving them from a second call
+    /// would both duplicate the formatting and risk a different clock
+    /// instant (docs/design/68-context-engine.md §6).
+    fn resolve_prompt_with_stance_parts(
+        &self,
+        capabilities: &[CapabilityDescriptor],
+        stance: Option<vak_intent::EpistemicStance>,
+    ) -> (prompts::Resolution, String, String) {
         let server_caps = capabilities
             .iter()
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
@@ -3040,7 +3056,7 @@ impl Core {
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,
-            epistemic_stance,
+            epistemic_stance: epistemic_stance.clone(),
             temporal: format!(
                 "\nTemporal context: current UTC instant {}; local date/time {} (system timezone {}). Treat relative dates as ambiguous unless the user's timezone is known.",
                 chrono::Utc::now().to_rfc3339(),
@@ -3048,7 +3064,9 @@ impl Core {
                 chrono::Local::now().offset()
             ),
         };
-        prompts::resolve(&self.prompt_layers(seed), &runtime)
+        let resolution = prompts::resolve(&self.prompt_layers(seed), &runtime);
+        let temporal = runtime.temporal;
+        (resolution, temporal, epistemic_stance)
     }
 
     /// Whether a session's frozen prompt still matches what this workspace
@@ -5061,12 +5079,21 @@ impl Core {
         // Prompt text is a projection of the same selected descriptor set as
         // the schemas. This is deliberately after intent/policy filtering so
         // a removed or withheld capability cannot remain in prose.
-        cfg.system_prompt = self
-            .resolve_prompt_with_stance(
-                &turn_capabilities.descriptors,
-                Some(engagement.posture.epistemic_stance),
-            )
-            .text;
+        //
+        // The prefix (identity, contract, guardrails, tool surface) is
+        // byte-stable and carried as `system_prefix`; the clock instant and
+        // epistemic stance are per-turn and carried separately as `tail` so
+        // the request assembler can render them into the moving tail instead
+        // of the cached prefix (docs/design/68-context-engine.md §4/§6).
+        let (turn_resolution, turn_temporal, turn_stance) = self.resolve_prompt_with_stance_parts(
+            &turn_capabilities.descriptors,
+            Some(engagement.posture.epistemic_stance),
+        );
+        cfg.system_prefix = turn_resolution.text;
+        cfg.tail = vak_agent::TailInput {
+            temporal: turn_temporal.trim().to_string(),
+            stance: prompts::stance_with_card_clarifier(&turn_stance),
+        };
 
         let work_config = self.effective_work();
         // Managed-ness follows from the reading's horizon rather than from a
@@ -5495,7 +5522,7 @@ impl Core {
             cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher {
                 core: self.clone(),
                 tools: cfg.tools.clone(),
-                system_prompt: cfg.system_prompt.clone(),
+                system_prompt: cfg.system_prefix.clone(),
             }));
         }
         let selected_ids: std::collections::BTreeSet<String> = turn_capabilities
@@ -5522,7 +5549,7 @@ impl Core {
                 epoch: cap_set.epoch,
                 capability_ids: selected_ids.iter().cloned().collect(),
                 excluded_ids: all_ids.difference(&selected_ids).cloned().collect(),
-                system_prompt: cfg.system_prompt.clone(),
+                system_prompt: cfg.system_prefix.clone(),
                 tool_schemas,
             })
         {

@@ -11,7 +11,7 @@ pub mod search;
 pub mod types;
 pub mod work;
 
-pub use log::{SessionLog, SessionPath};
+pub use log::{SessionLog, SessionPath, TailSections};
 pub use search::{
     DEFAULT_LIMIT, ExternalDoc, MEMORY_BONUS, ProjectHit, SearchError, SessionHit, search,
     search_all, search_all_extended, search_extended,

@@ -105,6 +105,20 @@ pub struct WorkReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub winning_attempt: Option<u32>,
     pub attempts: Vec<DispatchAttempt>,
+    /// SHA-256 hex digest of the stable prefix (system prompt + tool
+    /// schemas) this dispatch sent, per `vak_agent::context::prefix_digest`
+    /// (docs/design/68-context-engine.md §4). Empty for a receipt that
+    /// predates prefix tracking or a work purpose with no request prefix
+    /// (e.g. voice synthesis).
+    #[serde(default)]
+    pub prefix_digest: String,
+    /// Measured cost of the prefix in tokens: the provider's reported
+    /// `usage.input_tokens` on the first request seen with this digest,
+    /// minus an estimate of the messages alone — approximate, since the
+    /// provider does not itemize prefix vs. messages in its usage report.
+    /// `None` when not yet measured for this digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_tokens: Option<u64>,
 }
 
 impl WorkReceipt {
@@ -119,6 +133,8 @@ impl WorkReceipt {
             model: model.into(),
             winning_attempt: None,
             attempts: Vec::new(),
+            prefix_digest: String::new(),
+            prefix_tokens: None,
         }
     }
 

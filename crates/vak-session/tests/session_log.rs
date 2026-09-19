@@ -233,8 +233,11 @@ fn voice_activity_helpers_record_transcript_and_playback() {
     assert_eq!(a.status, ActivityStatus::Partial);
 }
 
+/// Active work state reaches the model through the request tail
+/// (docs/design/68-context-engine.md §6/§10), not spliced into the
+/// projection.
 #[test]
-fn active_work_is_reconstructed_into_model_context() {
+fn active_work_is_reconstructed_into_the_tail() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("work.jsonl"), header()).unwrap();
     let contract = WorkContract {
@@ -263,10 +266,16 @@ fn active_work_is_reconstructed_into_model_context() {
         kind: WorkEventKind::ContractCreated { contract },
     })
     .unwrap();
-    let messages = log.derive_messages();
-    assert_eq!(messages.len(), 1);
-    assert!(messages[0].text_content().contains("preserve active work"));
-    assert!(messages[0].text_content().contains("inspect"));
+    assert!(
+        log.derive_messages().is_empty(),
+        "work state must not be spliced into the projection"
+    );
+    let work_contract = log
+        .tail_sections()
+        .work_contract
+        .expect("active work contract present in the tail");
+    assert!(work_contract.contains("preserve active work"));
+    assert!(work_contract.contains("inspect"));
 }
 
 #[test]
@@ -304,9 +313,10 @@ fn active_work_survives_compaction() {
     log.compact("old summary".into(), boundary.id, 9000)
         .unwrap();
     assert!(
-        log.derive_messages()
-            .iter()
-            .any(|message| message.text_content().contains("survive compaction"))
+        log.tail_sections()
+            .work_contract
+            .expect("active work contract present in the tail")
+            .contains("survive compaction")
     );
 }
 
@@ -746,8 +756,12 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
     );
 }
 
+/// The conversation thread is a tail section (docs/design/68-context-engine.md
+/// §6/§10), not spliced into the projection, and it lists only directives no
+/// longer verbatim among `derive_messages()` — one still present in the
+/// working set needs no restating (§6 "one source per fact").
 #[test]
-fn conversation_thread_projects_across_multi_turn_drifts() {
+fn conversation_thread_lists_only_directives_dropped_by_compaction() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("thread.jsonl"), header()).unwrap();
 
@@ -787,36 +801,50 @@ fn conversation_thread_projects_across_multi_turn_drifts() {
     log.append_message(user_msg("now evaluate global GDP past 5 years"))
         .unwrap();
 
-    let messages = log.derive_messages();
-    let thread_msg = messages
-        .iter()
-        .find(|m| m.text_content().contains("<conversation_thread"));
+    // While every directive is still verbatim in the working set, the
+    // projection carries none of them (they moved to the tail) and the
+    // tail itself has nothing to add — restating a directive already in
+    // `derive_messages()` would duplicate a fact already sent.
     assert!(
-        thread_msg.is_some(),
-        "expected <conversation_thread> projection"
+        log.derive_messages()
+            .iter()
+            .all(|m| !m.text_content().contains("<conversation_thread")),
+        "the thread must never be spliced into the projection"
     );
-    let thread_text = thread_msg.unwrap().text_content();
+    assert!(
+        log.tail_sections().thread.is_none(),
+        "nothing is dropped from the working set yet, so the thread has nothing to add"
+    );
+
+    // Compact turns 1 and 2 away; only turn 3's directive stays verbatim.
+    let plan = log.plan_compaction(1).expect("a plan over five messages");
+    log.apply_compaction(&plan, "summary of turns 1-2".into(), 999)
+        .unwrap();
+
+    let joined = log
+        .derive_messages()
+        .iter()
+        .map(|m| m.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !joined.contains("<conversation_thread"),
+        "the thread must never be spliced into the projection"
+    );
+
+    let thread_text = log
+        .tail_sections()
+        .thread
+        .expect("compacted-away directives surface in the thread");
     assert!(thread_text.contains("revision=\"3\""));
     assert!(thread_text.contains("initial research on WEF"));
     assert!(thread_text.contains("use python sandbox"));
-    assert!(thread_text.contains("now evaluate global GDP past 5 years"));
+    // Turn 3's directive is still verbatim in the working set (it was kept,
+    // not compacted), so restating it in the thread would duplicate it.
+    assert!(!thread_text.contains("now evaluate global GDP past 5 years"));
     assert!(thread_text.contains("Follow the user's intent across conversational drifts"));
     assert!(thread_text.contains("Conversational drift across turns is expected: follow along smoothly and adapt immediately."));
     assert!(thread_text.contains("If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch"));
-
-    // The thread must appear before the latest user message
-    let last_user_idx = messages
-        .iter()
-        .rposition(|m| m.text_content().contains("now evaluate global GDP"))
-        .unwrap();
-    let thread_idx = messages
-        .iter()
-        .position(|m| m.text_content().contains("<conversation_thread"))
-        .unwrap();
-    assert!(
-        thread_idx < last_user_idx,
-        "thread must precede the active user turn"
-    );
 }
 
 #[test]
