@@ -74,6 +74,44 @@ pub struct Packet {
     pub summary: String,
 }
 
+/// The fidelity at which a closed turn rides along in one request
+/// (docs/design/68-context-engine.md §4/§10). Defined here (not in
+/// `vak-agent`, where `WorkingSetPlanner::plan` actually computes it) so
+/// `SessionLog::derive_with_plan` can consume a `WorkingSetPlan` without
+/// vak-session depending on vak-agent; `vak_agent::planner` re-exports both
+/// types for callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fidelity {
+    /// Two-message record (directive + trace/presentations/narration).
+    Full,
+    /// One `<turns>` line (`TurnCard::line`).
+    Card,
+    /// Represented only by a compaction packet covering a range of turns.
+    Packet,
+}
+
+/// The plan for one request: which turns ride at which fidelity, which
+/// range (if any) is represented only by a packet, which older turns were
+/// promoted by relevance, and the budget accounting that produced it.
+/// Computed by `vak_agent::planner::plan`; consumed by
+/// `SessionLog::derive_with_plan`.
+#[derive(Debug, Clone, Default)]
+pub struct WorkingSetPlan {
+    /// Chronological order (oldest first), one entry per closed turn that
+    /// is `Full` or `Card`. A turn absent from this list and not covered by
+    /// `packet_range` simply has no card yet — `derive_with_plan` treats
+    /// that as already covered by an existing `Compaction` entry.
+    pub per_turn: Vec<(String, Fidelity)>,
+    /// The contiguous, oldest-to-newest range of turns represented only by
+    /// a packet, inclusive — `(first_turn_id, last_turn_id)`.
+    pub packet_range: Option<(String, String)>,
+    /// Turn ids promoted to `Full` by relevance (search, reading overlap,
+    /// or anaphora) rather than by the recency fill.
+    pub retrieved: Vec<String>,
+    pub budget: u64,
+    pub spent: u64,
+}
+
 /// The ledger reorganized into turns, built once per request.
 #[derive(Debug, Clone, Default)]
 pub struct TurnIndex {

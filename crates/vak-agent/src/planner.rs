@@ -7,6 +7,7 @@
 //! `TurnIndex`, and the incoming directive; `plan()` returns a `WorkingSetPlan`
 //! that `SessionLog::derive_with_plan` turns into messages.
 
+pub use vak_session::{Fidelity, WorkingSetPlan};
 use vak_session::{ReadingKey, TurnIndex};
 
 /// Share of the budget reserved for relevance-promoted older turns (§4):
@@ -27,17 +28,6 @@ pub const ANAPHORA_PHRASES: [&str; 7] = [
     "that", "it", "again", "the same", "previous", "above", "this one",
 ];
 
-/// The fidelity at which a closed turn rides along in one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fidelity {
-    /// Two-message record (directive + trace/presentations/narration).
-    Full,
-    /// One `<turns>` line (`TurnCard::line`).
-    Card,
-    /// Represented only by a compaction packet covering a range of turns.
-    Packet,
-}
-
 /// Inputs to one planning pass. `reading` is the current directive's own
 /// reading, already resolved by the intent tier before planning runs.
 /// `current_turn_tokens` is the OPEN turn's measured size so far (directive
@@ -52,27 +42,6 @@ pub struct PlanInput<'a> {
     pub prefix_tokens: u64,
     pub tail_tokens: u64,
     pub current_turn_tokens: u64,
-}
-
-/// The plan for one request: which turns ride at which fidelity, which
-/// range (if any) is represented only by a packet, which older turns were
-/// promoted by relevance, and the budget accounting that produced it.
-#[derive(Debug, Clone, Default)]
-pub struct WorkingSetPlan {
-    /// Chronological order (oldest first), one entry per closed turn that
-    /// is `Full` or `Card`. A turn absent from this list and not covered by
-    /// `packet_range` simply has no card yet (nothing to plan) — the caller
-    /// treats that as already covered by an existing packet or as not yet
-    /// closed.
-    pub per_turn: Vec<(String, Fidelity)>,
-    /// The contiguous, oldest-to-newest range of turns represented only by
-    /// a packet, inclusive — `(first_turn_id, last_turn_id)`.
-    pub packet_range: Option<(String, String)>,
-    /// Turn ids promoted to `Full` by relevance (search, reading overlap,
-    /// or anaphora) rather than by the recency fill.
-    pub retrieved: Vec<String>,
-    pub budget: u64,
-    pub spent: u64,
 }
 
 /// Whether `directive` contains an anaphoric reference to "the last thing"
