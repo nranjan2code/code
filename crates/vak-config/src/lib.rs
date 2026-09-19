@@ -163,6 +163,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub route: RouteSettings,
     #[serde(default)]
+    pub probe: ProbeSettings,
+    #[serde(default)]
     pub intent: IntentSettings,
     #[serde(default)]
     pub commitment: CommitmentSettings,
@@ -573,6 +575,25 @@ pub struct FinopsSettings {
     /// Exact model id → (input USD/MTok, output USD/MTok). Overrides the
     /// built-in heuristic table; estimates stay labeled as estimates.
     pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
+}
+
+/// Capacity-probe cost control (docs/design/68-context-engine.md §1 "Cost
+/// control for hosted models"). Local models are always probed in full
+/// regardless of this setting; it governs hosted models only.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ProbeSettings {
+    /// "none" (default) starts a hosted profile's instruction horizon at
+    /// its declared window with low confidence, tightened only by
+    /// feedback; "full" opts in to running the horizon ladder against
+    /// hosted models too.
+    pub hosted: Option<String>,
+}
+
+/// Resolved capacity-probe policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeResolved {
+    pub hosted: String,
 }
 
 /// Frozen-ladder routing preferences (docs/design/15-reliability.md + Phase R).
@@ -1289,6 +1310,7 @@ pub struct Config {
     pub goal: GoalResolved,
     pub work: WorkResolved,
     pub route: RouteResolved,
+    pub probe: ProbeResolved,
     pub intent: IntentResolved,
     pub commitment: CommitmentResolved,
     pub automation: AutomationResolved,
@@ -1588,6 +1610,9 @@ impl Default for Config {
                 fallback_models: Vec::new(),
                 max_fallbacks: 4,
                 quality_hints: Vec::new(),
+            },
+            probe: ProbeResolved {
+                hosted: "none".into(),
             },
             intent: IntentResolved {
                 enabled: true,
@@ -3255,6 +3280,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .map(|h| h.to_ascii_lowercase())
         .collect();
 
+    cfg.probe.hosted = match merged.probe.hosted.as_deref() {
+        None | Some("none") => "none".into(),
+        Some("full") => "full".into(),
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "unknown probe.hosted '{other}'; using 'none' (valid: none | full)"
+            ));
+            "none".into()
+        }
+    };
+
     // --- intent kernel (docs/design/47-commitment-kernel.md) ---
     cfg.intent.enabled = merged.intent.enabled.unwrap_or(true);
     // Clamped rather than rejected: a nonsensical threshold should not stop
@@ -3607,6 +3643,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "plugins",
     "intent",
     "voice",
+    "probe",
 ];
 const KNOWN_PLUGINS_KEYS: &[&str] = &[
     "enabled",
@@ -4208,6 +4245,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.route.max_fallbacks.is_some() {
         base.route.max_fallbacks = over.route.max_fallbacks;
+    }
+    if over.probe.hosted.is_some() {
+        base.probe.hosted = over.probe.hosted;
     }
     if over.intent.enabled.is_some() {
         base.intent.enabled = over.intent.enabled;
@@ -5053,6 +5093,25 @@ mod tests {
         assert_eq!(cfg.ui.theme, "dark");
         assert_eq!(cfg.deny, vec!["bash"]);
         assert_eq!(cfg.route.objective, "quality-critical");
+    }
+
+    #[test]
+    fn probe_hosted_defaults_to_none_and_accepts_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.probe.hosted, "none");
+
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[probe]\nhosted = \"full\"\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.probe.hosted, "full");
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[probe]\nhosted = \"bogus\"\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.probe.hosted, "none");
+        assert!(cfg.warnings.iter().any(|w| w.contains("probe.hosted")));
     }
 
     #[test]

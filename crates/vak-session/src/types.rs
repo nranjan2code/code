@@ -588,6 +588,12 @@ pub enum ActivityKind {
     PresentationProposal,
     /// User choice or feedback about a presentation projection.
     PresentationFeedback,
+    /// A bind-time capacity probe ran and recorded a `CapacityProfile`
+    /// (docs/design/68-context-engine.md §1). Never model-visible.
+    CapacityProbe,
+    /// A turn's usage or instruction-following outcome updated an existing
+    /// `CapacityProfile` (§1 "Feedback"). Never model-visible.
+    CapacityFeedback,
 }
 
 /// Where a validated presentation came from (docs/design/68-context-engine.md

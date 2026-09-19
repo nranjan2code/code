@@ -89,6 +89,22 @@ use vak_llm::registry::{ProviderAuth, ProviderRegistry, default_registry};
 type ModelContextCache = std::sync::Mutex<
     HashMap<(String, String, String), (std::time::Instant, Option<vak_llm::models::ModelContext>)>,
 >;
+/// In-memory cache for measured capacity profiles (docs/design/68-context-engine.md
+/// §1), keyed by `(provider, model, quantisation)`. Per-process only —
+/// durable history lives in the ledger via `SessionLog::latest_capacity_profile`.
+type CapacityCache = std::sync::Mutex<
+    HashMap<vak_agent::capacity::ProfileKey, vak_agent::capacity::CapacityProfile>,
+>;
+
+/// Provider metadata gathered before a capacity probe runs, bundled so
+/// `run_capacity_probe` stays under clippy's argument-count lint.
+struct ProbeMetadata {
+    declared_window: u64,
+    output_reserve: u64,
+    metadata_digest: String,
+    probed_at: std::time::SystemTime,
+}
+
 type TaskSandboxMap =
     std::sync::Mutex<HashMap<String, (String, Arc<dyn vak_tools::sandbox::Sandbox>)>>;
 type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
@@ -489,6 +505,9 @@ struct CoreInner {
     /// cached briefly too, so an unavailable metadata endpoint cannot stall
     /// every turn.
     model_context_cache: ModelContextCache,
+    /// Measured capacity profiles, one per bound `(provider, model,
+    /// quantisation)` this process has seen (docs/design/68 §1).
+    capacity_cache: CapacityCache,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -792,6 +811,27 @@ pub struct RouteSelection {
 /// owns a concrete wire dialect. Keeping the conversion here prevents a
 /// route selected at admission from being silently sent through whichever
 /// adapter happened to share the provider's credential.
+/// Extracts the host from a `scheme://[user:pass@]host[:port][/path]` URL
+/// without a `url` crate dependency — enough to answer "is this loopback",
+/// not a general URL parser.
+fn url_host(url: &str) -> Option<&str> {
+    let after_scheme = url.split("://").nth(1).unwrap_or(url);
+    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
+    if let Some(stripped) = host_port.strip_prefix('[') {
+        // IPv6 literal, e.g. `[::1]:11434`.
+        stripped.split(']').next()
+    } else {
+        host_port.split(':').next()
+    }
+}
+
+/// Whether `host` names this machine (docs/design/68-context-engine.md §1
+/// local-vs-hosted probing).
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+}
+
 fn adapter_name_for_leg(leg: &vak_llm::RouteLeg) -> String {
     match (&*leg.provider, leg.dialect) {
         ("openai", vak_llm::EndpointDialect::Responses) => "openai-responses".into(),
@@ -1038,6 +1078,7 @@ impl Core {
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 model_context_cache: std::sync::Mutex::new(HashMap::new()),
+                capacity_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_override: std::sync::Mutex::new(None),
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
@@ -4294,6 +4335,253 @@ impl Core {
         (context_window, max_output.min(context_window).max(1))
     }
 
+    /// Whether `leg` reaches a runner on this machine: named `ollama`, or
+    /// its resolved credential's base URL host is loopback. Local models
+    /// are always probed in full (docs/design/68-context-engine.md §1:
+    /// "the probe is free apart from time, and time is exactly what it
+    /// saves"); a hosted model only gets the full horizon ladder when the
+    /// operator opts in via `[probe] hosted = "full"`.
+    fn is_local_provider(&self, leg: &vak_llm::RouteLeg) -> bool {
+        if leg.provider == "ollama" {
+            return true;
+        }
+        self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
+            .ok()
+            .and_then(|auth| auth.base_url)
+            .as_deref()
+            .and_then(url_host)
+            .is_some_and(is_loopback_host)
+    }
+
+    /// The measured capacity profile for `leg` (docs/design/68-context-engine.md
+    /// §1): served from the per-process cache when fresh, otherwise rebuilt
+    /// from provider metadata and — for a local provider, or a hosted one
+    /// with `[probe] hosted = "full"` — a bind-time horizon-ladder probe
+    /// run against the live provider client `Core` already builds for this
+    /// leg. A freshly built profile (probe or metadata-only) is recorded to
+    /// `session` as a `CapacityProbe` activity before being cached; a cache
+    /// hit records nothing. Never runs more than one probe per key per
+    /// process unless the cached profile is stale or `needs_reprobe`.
+    async fn capacity_profile_for(
+        &self,
+        leg: &vak_llm::RouteLeg,
+        session: &mut SessionLog,
+        cancel: &CancellationToken,
+    ) -> vak_agent::capacity::CapacityProfile {
+        let key = vak_agent::capacity::ProfileKey {
+            provider: leg.provider.clone(),
+            model: leg.model.clone(),
+            // Ollama's `/api/show` exposes a quantisation label, but
+            // exposing it here would mean extending vak-llm's model
+            // metadata surface, which is out of this change's scope
+            // (crates/vak-llm: probe-only ToolDefinition helper only, no
+            // adapter changes). Every profile keys on `None` until that
+            // lands.
+            quantisation: None,
+        };
+        let now = std::time::SystemTime::now();
+        let local = self.is_local_provider(leg);
+
+        let cached = self
+            .inner
+            .capacity_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+
+        let auth = self
+            .provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
+            .ok();
+        let metadata = match &auth {
+            Some(auth) => vak_llm::models::model_context(&leg.provider, auth, &leg.model)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        let declared_window = metadata
+            .as_ref()
+            .map(|m| m.input_tokens)
+            .unwrap_or(self.inner.config.context_window);
+        let output_reserve = metadata
+            .as_ref()
+            .and_then(|m| m.output_tokens)
+            .unwrap_or(u64::from(self.inner.config.max_tokens));
+        let metadata_digest = format!("{declared_window}:{output_reserve}");
+
+        if let Some(profile) = &cached
+            && !profile.needs_reprobe
+            && profile.provenance.metadata_digest == metadata_digest
+            && !profile.is_stale(now, local)
+        {
+            return profile.clone();
+        }
+
+        let run_full_probe = local || self.inner.config.probe.hosted == "full";
+        let provider_client = if run_full_probe {
+            auth.as_ref().and_then(|auth| {
+                self.inner
+                    .registry
+                    .get(&adapter_name_for_leg(leg), auth)
+                    .ok()
+            })
+        } else {
+            None
+        };
+
+        let profile = if let Some(provider_client) = provider_client {
+            self.run_capacity_probe(
+                leg,
+                provider_client,
+                ProbeMetadata {
+                    declared_window,
+                    output_reserve,
+                    metadata_digest,
+                    probed_at: now,
+                },
+                cancel,
+            )
+            .await
+        } else {
+            vak_agent::capacity::CapacityProfile::from_metadata_only(
+                declared_window,
+                output_reserve,
+                metadata_digest,
+                now,
+            )
+        };
+
+        if let Ok(mut cache) = self.inner.capacity_cache.lock() {
+            cache.insert(key.clone(), profile.clone());
+        }
+
+        let mut data = std::collections::BTreeMap::new();
+        if let Ok(key_json) = serde_json::to_string(&key) {
+            data.insert("key".into(), key_json);
+        }
+        if let Ok(profile_json) = serde_json::to_string(&profile) {
+            data.insert("profile".into(), profile_json);
+        }
+        let activity_id = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| format!("activity-{}", d.as_nanos()))
+            .unwrap_or_else(|_| format!("activity-{}", uuid_like()));
+        let _ = session.append_activity(vak_session::ActivityRecord {
+            activity_id,
+            turn: None,
+            kind: vak_session::ActivityKind::CapacityProbe,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: format!("Capacity profile bound for {}/{}", leg.provider, leg.model),
+            detail: None,
+            data,
+        });
+
+        profile
+    }
+
+    /// Runs the horizon-ladder probe (docs/design/68 §1 "Horizon ladder")
+    /// against a live provider client, one rung per request, honoring
+    /// `cancel`. A rung the provider rejects with a context-length error
+    /// (`LlmError::Context`) counts as a failed rung; any other transport
+    /// error stops the ladder early rather than fabricating more rungs, and
+    /// the ladder's result-so-far becomes the profile.
+    async fn run_capacity_probe(
+        &self,
+        leg: &vak_llm::RouteLeg,
+        provider_client: Arc<dyn Provider>,
+        metadata: ProbeMetadata,
+        cancel: &CancellationToken,
+    ) -> vak_agent::capacity::CapacityProfile {
+        let ProbeMetadata {
+            declared_window,
+            output_reserve,
+            metadata_digest,
+            probed_at,
+        } = metadata;
+        let mut ladder = vak_agent::capacity::Ladder::new(declared_window);
+        let mut rungs: Vec<vak_agent::capacity::Rung> = Vec::new();
+        let mut signals: Vec<String> = Vec::new();
+        // Refined as soon as one rung reports real usage, so later rungs
+        // land closer to their token target on a real tokenizer.
+        let mut tokens_per_char_hint = 0.25_f64;
+
+        while let Some(target) = ladder.next_rung() {
+            if cancel.is_cancelled() {
+                signals.push("probe cancelled before convergence".into());
+                break;
+            }
+            let request =
+                vak_agent::capacity::probe_request(target, tokens_per_char_hint, &leg.model);
+            let sent_chars: u64 = request
+                .messages
+                .iter()
+                .map(|m| m.text_content().len() as u64)
+                .sum();
+            let outcome = match provider_client.stream(request, cancel.clone()).await {
+                Ok(stream) => stream.result().await,
+                Err(e) => Err(e),
+            };
+            match outcome {
+                Ok(message) => {
+                    if sent_chars > 0 && message.usage.input_tokens > 0 {
+                        tokens_per_char_hint =
+                            message.usage.input_tokens as f64 / sent_chars as f64;
+                    }
+                    let followed = vak_agent::capacity::followed(&message);
+                    rungs.push(vak_agent::capacity::Rung {
+                        tokens: target,
+                        accepted: true,
+                        followed_instruction: Some(followed),
+                        prefill_ms: message.usage.prefill_ms,
+                    });
+                    ladder.report(target, true, followed);
+                }
+                Err(vak_llm::LlmError::Context(msg)) => {
+                    signals.push(format!("rung {target} rejected: {msg}"));
+                    rungs.push(vak_agent::capacity::Rung {
+                        tokens: target,
+                        accepted: false,
+                        followed_instruction: None,
+                        prefill_ms: None,
+                    });
+                    ladder.report(target, false, false);
+                }
+                Err(e) => {
+                    signals.push(format!("rung {target} probe failed: {e}"));
+                    break;
+                }
+            }
+        }
+
+        let verified_window = ladder.verified_window();
+        let horizon = ladder.result().unwrap_or_else(|| {
+            let largest_followed = rungs
+                .iter()
+                .filter(|r| r.followed_instruction == Some(true))
+                .map(|r| r.tokens)
+                .max();
+            vak_agent::capacity::Horizon {
+                tokens: largest_followed.unwrap_or_else(|| declared_window.min(4_000)),
+                confidence: if largest_followed.is_some() { 0.5 } else { 0.3 },
+                last_confirmed: probed_at,
+            }
+        });
+
+        vak_agent::capacity::CapacityProfile::from_probe(
+            declared_window,
+            verified_window,
+            horizon,
+            vak_agent::capacity::CacheBehaviour::Unknown,
+            output_reserve,
+            vak_agent::capacity::ProbeProvenance {
+                probed_at,
+                rungs,
+                signals,
+                metadata_digest,
+            },
+        )
+    }
+
     /// Drop memoised discovery for `provider` (or all of it) so the next
     /// read reflects a key that just changed.
     pub fn invalidate_models_cache(&self, provider: Option<&str>) {
@@ -5137,6 +5425,16 @@ impl Core {
             .await;
         cfg.context_policy.context_window = context_window;
         cfg.context_policy.max_output = max_output;
+        // Measured capacity (docs/design/68-context-engine.md §1): bound
+        // once per process per profile key (cached, TTL'd, re-probed on
+        // contradiction), never blocking this turn on more than one probe
+        // ladder run. `session` is the same ledger this turn is about to
+        // append to, so a fresh probe's Activity lands before the turn's
+        // own messages.
+        cfg.capacity = Some(
+            self.capacity_profile_for(&turn_primary_leg, &mut session, &cancel)
+                .await,
+        );
         let sp = &self.inner.config.stop_policy;
         cfg.stop_policy = if sp.enabled {
             Some(vak_agent::StopPolicy {
@@ -8800,5 +9098,189 @@ mod spend_gate_persistence_tests {
             core.provider_secret("ANTHROPIC_API_KEY"),
             Some("agent-private-key".into())
         );
+    }
+}
+
+/// docs/design/68-context-engine.md §1: a loopback ("ollama") leg is always
+/// probed in full, a hosted leg is not unless `[probe] hosted = "full"`.
+/// Uses the "Scripted"/`Fn`-provider pattern already used throughout
+/// `vak-agent`'s tests (e.g. `crates/vak-agent/tests/doom_loop.rs`): a fake
+/// `Provider` registered directly into the registry, no real network. The
+/// hosted comparison leg names a provider `provider_auth_for` does not
+/// recognize, so its auth resolution fails deterministically regardless of
+/// what real credentials happen to be set in the developer's environment —
+/// the point being tested is "no probe without opt-in", not credential
+/// plumbing.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod capacity_probe_tests {
+    use super::Core;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use vak_llm::{
+        AssistantMessage, ChatRequest, ContentBlock, LlmError, Provider, StopReason, Usage,
+    };
+    use vak_session::SessionLog;
+    use vak_session::types::{FrozenContract, SessionHeader};
+
+    /// Always answers a probe rung by calling `probe_ack` — enough to drive
+    /// the horizon ladder to convergence without any network I/O.
+    struct AlwaysFollowsProbe;
+
+    #[async_trait::async_trait]
+    impl Provider for AlwaysFollowsProbe {
+        fn name(&self) -> &str {
+            "ollama"
+        }
+
+        async fn stream(
+            &self,
+            _request: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, LlmError> {
+            let (mut sink, rx) = vak_llm::stream::channel(4);
+            sink.close_message(AssistantMessage {
+                content: vec![ContentBlock::ToolUse {
+                    id: "probe-1".into(),
+                    name: "probe_ack".into(),
+                    input: serde_json::json!({"ok": true}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage {
+                    input_tokens: 4_000,
+                    output_tokens: 5,
+                    prefill_ms: Some(50),
+                    ..Default::default()
+                },
+                model: "fake-ollama-model".into(),
+                response_id: None,
+            })
+            .await;
+            Ok(rx)
+        }
+    }
+
+    fn header() -> SessionHeader {
+        SessionHeader {
+            agent: None,
+            session_id: "s-capacity-probe".into(),
+            created_at: chrono::Utc::now(),
+            cwd: std::path::PathBuf::from("/tmp/proj"),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: FrozenContract {
+                app_version: "0.1.0".into(),
+                provider: "ollama".into(),
+                model: "fake-ollama-model".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "workspace-write".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn loopback_leg_is_probed_and_hosted_leg_is_not_by_default() {
+        super::isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        // No real Ollama server needs to exist: metadata discovery
+        // (`model_context`) is a plain reqwest call this test does not
+        // control, so it is pointed at a bound-then-dropped loopback port —
+        // guaranteed connection-refused, which `model_context`'s own
+        // fallback turns into a fixed 8192/4096 declared window/output
+        // reserve, deterministically and without depending on what may or
+        // may not be listening on the default Ollama port.
+        let unused_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        vak_config::set_override(
+            "VAK_OLLAMA_BASE_URL",
+            format!("http://127.0.0.1:{unused_port}/v1"),
+        );
+
+        // The probe ladder's provider client comes from the registry, not
+        // from `model_context`'s direct reqwest call — registering a fake
+        // factory here intercepts exactly that seam.
+        core.inner.registry.register("ollama", |_auth| {
+            Ok(Arc::new(AlwaysFollowsProbe) as Arc<dyn Provider>)
+        });
+
+        let loopback_leg = vak_llm::RouteLeg {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            dialect: vak_llm::EndpointDialect::default(),
+            credential_id: None,
+        };
+        assert!(core.is_local_provider(&loopback_leg));
+
+        let session_path = dir.path().join("probe-session.jsonl");
+        let mut session = SessionLog::create(session_path, header()).unwrap();
+        let cancel = CancellationToken::new();
+        let probed = core
+            .capacity_profile_for(&loopback_leg, &mut session, &cancel)
+            .await;
+
+        assert_eq!(
+            probed.declared_window, 8_192,
+            "the ollama metadata fallback"
+        );
+        assert_eq!(probed.output_reserve, 4_096);
+        assert_eq!(
+            probed.instruction_horizon.tokens, 4_000,
+            "the single rung under declared_window * 0.9 that the fake provider followed"
+        );
+        assert_eq!(probed.instruction_horizon.confidence, 0.9);
+        assert_eq!(probed.provenance.rungs.len(), 1);
+        assert!(probed.provenance.rungs[0].accepted);
+        assert_eq!(probed.provenance.rungs[0].followed_instruction, Some(true));
+
+        let recorded: vak_agent::capacity::CapacityProfile = session
+            .latest_capacity_profile(&vak_agent::capacity::ProfileKey {
+                provider: "ollama".into(),
+                model: "fake-ollama-model".into(),
+                quantisation: None,
+            })
+            .expect("the probe must be recorded as a ledger activity");
+        assert_eq!(recorded.instruction_horizon.tokens, 4_000);
+
+        // A hosted provider `provider_auth_for` has no wiring for at all
+        // fails auth resolution deterministically, regardless of any real
+        // credential the environment happens to carry for a KNOWN
+        // provider name — exactly what "not probed by default" needs to be
+        // hermetic.
+        let hosted_leg = vak_llm::RouteLeg {
+            provider: "hosted-test-provider-not-wired".into(),
+            model: "some-frontier-model".into(),
+            dialect: vak_llm::EndpointDialect::default(),
+            credential_id: None,
+        };
+        assert!(!core.is_local_provider(&hosted_leg));
+        assert_eq!(core.inner.config.probe.hosted, "none");
+
+        let hosted_session_path = dir.path().join("hosted-session.jsonl");
+        let mut hosted_session = SessionLog::create(hosted_session_path, header()).unwrap();
+        let hosted_profile = core
+            .capacity_profile_for(&hosted_leg, &mut hosted_session, &cancel)
+            .await;
+
+        assert!(
+            hosted_profile.provenance.rungs.is_empty(),
+            "no ladder rung should run for a hosted leg without opt-in"
+        );
+        assert_eq!(hosted_profile.instruction_horizon.confidence, 0.3);
+        assert_eq!(
+            hosted_profile.instruction_horizon.tokens, hosted_profile.declared_window,
+            "an unprobed hosted profile starts the horizon at the declared window"
+        );
+
+        vak_config::clear_override("VAK_OLLAMA_BASE_URL");
     }
 }

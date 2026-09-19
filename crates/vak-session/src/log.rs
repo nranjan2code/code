@@ -310,6 +310,39 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Presentation(record)))
     }
 
+    /// The most recently recorded capacity profile matching `key`,
+    /// reconstructed from the ledger's `CapacityProbe`/`CapacityFeedback`
+    /// activities (docs/design/68-context-engine.md §1). Generic over the
+    /// caller's key/profile types (vak-agent's `ProfileKey`/`CapacityProfile`)
+    /// because vak-session cannot depend on vak-agent — that dependency runs
+    /// the other way — so this crate stores and retrieves the profile as the
+    /// JSON the caller already serialized, never interpreting its shape.
+    pub fn latest_capacity_profile<K, P>(&self, key: &K) -> Option<P>
+    where
+        K: serde::Serialize,
+        P: serde::de::DeserializeOwned,
+    {
+        let key_json = serde_json::to_value(key).ok()?;
+        self.chain_to_root().into_iter().rev().find_map(|entry| {
+            let EntryPayload::Activity(activity) = &entry.payload else {
+                return None;
+            };
+            if !matches!(
+                activity.kind,
+                crate::types::ActivityKind::CapacityProbe
+                    | crate::types::ActivityKind::CapacityFeedback
+            ) {
+                return None;
+            }
+            let stored_key: serde_json::Value =
+                serde_json::from_str(activity.data.get("key")?).ok()?;
+            if stored_key != key_json {
+                return None;
+            }
+            serde_json::from_str(activity.data.get("profile")?).ok()
+        })
+    }
+
     /// Presentation entries along the active path, root→leaf, with their
     /// entry ids — the single source both the model-visible history and the
     /// display channel read.

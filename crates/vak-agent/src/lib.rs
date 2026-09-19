@@ -6,6 +6,7 @@
 
 mod fences;
 use fences::{find_duplicate_card_fence, find_malformed_vak_fence};
+pub mod capacity;
 pub mod circuit;
 pub mod context;
 pub mod goal;
@@ -15,6 +16,7 @@ pub mod stop_policy;
 pub mod task;
 pub mod workspace;
 
+pub use capacity::CapacityProfile;
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
@@ -344,6 +346,11 @@ pub struct AgentConfig {
     pub handoff_reset: bool,
     /// Audit blocks per goal before degrading to Unverified.
     pub max_audit_blocks: u32,
+    /// Measured capacity for this turn's model (docs/design/68-context-engine.md
+    /// §1), supplied by `Core::capacity_profile_for`. `None` when the host
+    /// has not wired capacity measurement in (e.g. standalone agent use);
+    /// the feedback calls in the turn loop are then no-ops.
+    pub capacity: Option<CapacityProfile>,
 }
 
 pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync>;
@@ -437,6 +444,7 @@ impl AgentConfig {
             workspace_delta: None,
             handoff_reset: true,
             max_audit_blocks: 2,
+            capacity: None,
         }
     }
 }
@@ -491,6 +499,82 @@ fn is_transient_step_error(e: &LlmError) -> bool {
 /// released seconds later).
 fn trips_breaker(e: &LlmError) -> bool {
     matches!(e, LlmError::Network(_) | LlmError::Parse(_))
+}
+
+/// Sum of text/tool_use/tool_result characters actually sent in `request` —
+/// what `CapacityProfile::observe_usage` calibrates `tokens_per_char`
+/// against (docs/design/68-context-engine.md §1 "Feedback"). Thinking and
+/// image blocks are excluded: no provider bills prefill on them the way it
+/// does on text, and images would swamp the char count relative to the
+/// tokens they actually cost.
+fn chat_request_chars(request: &ChatRequest) -> u64 {
+    let mut chars: u64 = request.system.as_deref().map(str::len).unwrap_or(0) as u64;
+    for message in &request.messages {
+        for block in &message.content {
+            chars += match block {
+                ContentBlock::Text { text } => text.len() as u64,
+                ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64,
+                ContentBlock::ToolResult { content, .. } => content.len() as u64,
+                ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => 0,
+            };
+        }
+    }
+    chars
+}
+
+/// Relative-change threshold for writing a `capacity-feedback` activity
+/// (docs/design/68 §6): small usage-to-usage jitter in a measured EWMA
+/// should not spam the ledger with an activity every turn.
+const CAPACITY_FEEDBACK_CHANGE_THRESHOLD: f64 = 0.05;
+
+fn relative_change(before: f64, after: f64) -> f64 {
+    if before == 0.0 {
+        if after == 0.0 { 0.0 } else { 1.0 }
+    } else {
+        ((after - before) / before).abs()
+    }
+}
+
+/// Fields of a `CapacityProfile` that changed by more than
+/// `CAPACITY_FEEDBACK_CHANGE_THRESHOLD`, rendered for an `Activity`'s
+/// `data` map. Empty means nothing worth recording changed.
+fn capacity_feedback_delta(
+    before: &CapacityProfile,
+    after: &CapacityProfile,
+) -> std::collections::BTreeMap<String, String> {
+    let mut delta = std::collections::BTreeMap::new();
+    if relative_change(before.tokens_per_char.value, after.tokens_per_char.value)
+        > CAPACITY_FEEDBACK_CHANGE_THRESHOLD
+    {
+        delta.insert(
+            "tokens_per_char".into(),
+            format!(
+                "{} -> {}",
+                before.tokens_per_char.value, after.tokens_per_char.value
+            ),
+        );
+    }
+    if relative_change(before.prefill_tps.value, after.prefill_tps.value)
+        > CAPACITY_FEEDBACK_CHANGE_THRESHOLD
+    {
+        delta.insert(
+            "prefill_tps".into(),
+            format!(
+                "{} -> {}",
+                before.prefill_tps.value, after.prefill_tps.value
+            ),
+        );
+    }
+    if before.instruction_horizon.tokens != after.instruction_horizon.tokens {
+        delta.insert(
+            "instruction_horizon_tokens".into(),
+            format!(
+                "{} -> {}",
+                before.instruction_horizon.tokens, after.instruction_horizon.tokens
+            ),
+        );
+    }
+    delta
 }
 
 pub struct AutoApprove;
@@ -1329,6 +1413,7 @@ impl Agent {
                     ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
                 );
             }
+            self.record_capacity_usage_feedback(&request, &usage).await;
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
@@ -1456,6 +1541,11 @@ impl Agent {
                             if turn + 1 >= self.config.max_turns {
                                 return TurnOutcome::MaxTurnsReached;
                             }
+                            // Required card not emitted: evidence the request
+                            // may already be past this model's real
+                            // instruction-following horizon (§1, §6).
+                            self.record_capacity_instruction_failure(response.usage.input_tokens)
+                                .await;
                             let _ =
                                 self.session
                                     .lock()
@@ -1530,6 +1620,11 @@ impl Agent {
                     )
                     .await
                 {
+                    // Stop-policy block: the model tried to end the turn
+                    // prematurely against an explicit completion
+                    // requirement (§1, §6).
+                    self.record_capacity_instruction_failure(response.usage.input_tokens)
+                        .await;
                     if self.guard_continue(reason, &events, turn).await {
                         turn += 1;
                         continue;
@@ -2908,6 +3003,84 @@ impl Agent {
             data,
         };
         let _ = self.session.lock().await.append_activity(activity);
+    }
+
+    /// Serializes a `CapacityProfile` and its key into an `Activity`'s
+    /// `data` map, the shape `SessionLog::latest_capacity_profile` reads
+    /// back (docs/design/68-context-engine.md §1, §4).
+    fn capacity_activity_data(
+        &self,
+        profile: &CapacityProfile,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut data = std::collections::BTreeMap::new();
+        let key = capacity::ProfileKey {
+            provider: self.provider.name().to_string(),
+            model: self.config.model.clone(),
+            quantisation: None,
+        };
+        if let Ok(key_json) = serde_json::to_string(&key) {
+            data.insert("key".into(), key_json);
+        }
+        if let Ok(profile_json) = serde_json::to_string(profile) {
+            data.insert("profile".into(), profile_json);
+        }
+        data
+    }
+
+    /// Folds one turn's real usage into `self.config.capacity` (§1
+    /// "Feedback") and records a `capacity-feedback` activity when a field
+    /// moved by more than `CAPACITY_FEEDBACK_CHANGE_THRESHOLD`. A no-op
+    /// when no profile was wired in for this run.
+    async fn record_capacity_usage_feedback(&mut self, request: &ChatRequest, usage: &Usage) {
+        let Some(profile) = self.config.capacity.as_mut() else {
+            return;
+        };
+        let before = profile.clone();
+        let chars_sent = chat_request_chars(request);
+        let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
+        profile.observe_usage(chars_sent, usage, None, cache_miss);
+        let after = profile.clone();
+        let delta = capacity_feedback_delta(&before, &after);
+        if delta.is_empty() {
+            return;
+        }
+        let mut data = self.capacity_activity_data(&after);
+        data.extend(delta);
+        self.record_activity(
+            vak_session::ActivityKind::CapacityFeedback,
+            vak_session::ActivityStatus::Succeeded,
+            "Capacity profile updated from usage".into(),
+            None,
+            data,
+        )
+        .await;
+    }
+
+    /// Folds an explicit-instruction failure (required card not emitted,
+    /// required tool not called, a stop-policy block — the runtime already
+    /// classifies each) into `self.config.capacity` (§1 "Horizon
+    /// tightening") and records the change. A no-op when no profile was
+    /// wired in, or when the request was far from the current horizon.
+    async fn record_capacity_instruction_failure(&mut self, request_tokens: u64) {
+        let Some(profile) = self.config.capacity.as_mut() else {
+            return;
+        };
+        let before = profile.clone();
+        profile.observe_instruction_failure(request_tokens);
+        let after = profile.clone();
+        if before.instruction_horizon.tokens == after.instruction_horizon.tokens {
+            return;
+        }
+        let mut data = self.capacity_activity_data(&after);
+        data.extend(capacity_feedback_delta(&before, &after));
+        self.record_activity(
+            vak_session::ActivityKind::CapacityFeedback,
+            vak_session::ActivityStatus::Succeeded,
+            "Capacity horizon lowered by instruction-following feedback".into(),
+            Some(format!("request was {request_tokens} tokens")),
+            data,
+        )
+        .await;
     }
 
     /// One provider completion with watchdog, retry/backoff (honoring

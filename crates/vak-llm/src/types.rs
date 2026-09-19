@@ -126,6 +126,24 @@ impl ToolDefinition {
             parameters,
         }
     }
+
+    /// The single tool offered on every horizon-ladder probe rung
+    /// (docs/design/68-context-engine.md §1): a no-op the model can only
+    /// reach by following the instruction placed at the end of the probe
+    /// prompt, so "was it called" is a clean instruction-following signal
+    /// independent of the filler content around it.
+    pub fn probe_ack() -> Self {
+        ToolDefinition::new(
+            "probe_ack",
+            "Acknowledge that you read this far. Call this with {\"ok\": true} \
+             and nothing else.",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "ok": { "type": "boolean" } },
+                "required": ["ok"],
+            }),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
