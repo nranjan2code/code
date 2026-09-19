@@ -485,7 +485,12 @@ async fn tool_roundtrip_executes_and_feeds_result_back() {
     );
 
     let session = agent.session.lock().await;
-    assert_eq!(session.derive_messages().len(), 4);
+    // Four raw entries on the ledger (directive, tool_use, tool_result,
+    // final answer); the turn is now closed, so the model-visible
+    // projection collapses it to its two-message full record
+    // (docs/design/68-context-engine.md §10).
+    assert_eq!(session.message_chain().len(), 4);
+    assert_eq!(session.derive_messages().len(), 2);
 }
 
 #[tokio::test]
@@ -508,10 +513,14 @@ async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     let session = agent.session.lock().await;
+    // Raw ledger, not the model-visible projection: once the turn closes,
+    // a closed turn's tool results collapse into trace lines
+    // (docs/design/68-context-engine.md §10) — the mechanics under test
+    // here are what got recorded, not how a later turn would see it.
     let result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|message| message.content.iter())
+        .flat_map(|(_, message)| message.content.iter())
         .find_map(|block| match block {
             ContentBlock::ToolResult { content, .. } => Some(content.clone()),
             _ => None,
@@ -540,11 +549,14 @@ async fn unknown_tool_becomes_error_value_not_crash() {
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     let session = agent.session.lock().await;
-    let msgs = session.derive_messages();
+    // Raw ledger: the closed turn's tool result is a trace line in the
+    // projection now, not a raw block (docs/design/68-context-engine.md
+    // §10) — this test is about what the tool actually recorded.
+    let msgs = session.message_chain();
     let results_block = msgs
         .iter()
         .rev()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult { content, .. } => Some(content.clone()),
             _ => None,
@@ -574,10 +586,11 @@ async fn skill_name_tool_call_returns_typed_loader_recovery() {
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     let session = h.agent.session.lock().await;
+    // Raw ledger: see the comment on `unknown_tool_becomes_error_value_not_crash`.
     let result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult { content, .. } => Some(content.clone()),
             _ => None,
@@ -629,7 +642,15 @@ async fn parallel_tools_preserve_source_order() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
     let session = agent.session.lock().await;
-    let msgs = session.derive_messages();
+    // Raw ledger: the closed turn's results are trace lines in the
+    // projection now (docs/design/68-context-engine.md §10); source order
+    // is a property of what was recorded, checked here against the raw
+    // entries.
+    let msgs: Vec<vak_llm::types::Message> = session
+        .message_chain()
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
     let results_msg = msgs
         .iter()
         .rev()
@@ -724,12 +745,27 @@ async fn projection_invariant_every_request_message_is_logged() {
         )
         .await;
 
-    let final_msgs = agent.session.lock().await.derive_messages();
+    // Raw ledger, not the model-visible projection: once this turn closes,
+    // `derive_messages()` collapses it to its two-message full record
+    // (docs/design/68-context-engine.md §10) and no longer contains the
+    // raw tool_use/tool_result blocks a mid-turn request carried — those
+    // are still reconstructable (a trace line + `SessionLog::evidence`),
+    // just not via byte-identical containment in the CURRENT projection.
+    // Invariant 1 ("model-visible means logged") is checked here against
+    // what was actually appended to the ledger.
+    let raw_msgs: Vec<vak_llm::types::Message> = agent
+        .session
+        .lock()
+        .await
+        .message_chain()
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
     for req in h.requests.lock().unwrap().iter() {
         for msg in &req.messages {
             assert!(
-                final_msgs.contains(msg),
-                "model-visible means logged: request message missing from log projection"
+                raw_msgs.contains(msg),
+                "model-visible means logged: request message missing from the ledger"
             );
         }
     }

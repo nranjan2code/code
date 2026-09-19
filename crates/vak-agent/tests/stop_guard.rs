@@ -126,14 +126,18 @@ fn drain_events(h: &mut Harness) -> Vec<AgentEvent> {
     out
 }
 
+// Raw ledger, not the model-visible projection: a stop-guard nudge is
+// mid-turn scaffolding and is dropped once the turn closes
+// (docs/design/68-context-engine.md §10) — this checks it was recorded
+// (and thus reached the model) at all.
 async fn guard_messages(h: &mut Harness) -> Vec<String> {
     let agent = h.agent.take().expect("guard_messages consumes the agent");
     let session = agent.into_session().await;
     session
-        .derive_messages()
+        .message_chain()
         .into_iter()
-        .filter(|m| m.role == vak_llm::Role::User)
-        .filter_map(|m| match m.content.first() {
+        .filter(|(_, m)| m.role == vak_llm::Role::User)
+        .filter_map(|(_, m)| match m.content.first() {
             Some(ContentBlock::Text { text }) => Some(text.clone()),
             _ => None,
         })

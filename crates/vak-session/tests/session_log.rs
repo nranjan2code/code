@@ -457,34 +457,46 @@ fn restart_attaches_completed_child_for_verification_without_marking_it_succeede
 
 #[test]
 fn branching_derives_only_active_path() {
+    // Each user/assistant pair is a whole turn (docs/design/68-context-
+    // engine.md principle 3); the projection now renders a closed turn as
+    // its two-message full record, so the fixture needs a reply per turn
+    // to exercise that rather than the old bare-message-per-turn shape.
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
     log.append_message(user_msg("a")).unwrap();
-    let fork_point = log.append_message(user_msg("b")).unwrap();
+    log.append_message(assistant_msg("a-reply")).unwrap();
+    log.append_message(user_msg("b")).unwrap();
+    let fork_point = log.append_message(assistant_msg("b-reply")).unwrap();
     log.append_message(user_msg("c")).unwrap();
+    log.append_message(assistant_msg("c-reply")).unwrap();
 
     log.branch_at(&fork_point.id).unwrap();
     log.append_message(user_msg("d")).unwrap();
+    log.append_message(assistant_msg("d-reply")).unwrap();
 
     let texts: Vec<String> = log
         .derive_messages()
         .iter()
         .map(|m| m.text_content())
         .collect();
-    assert_eq!(texts, vec!["a", "b", "d"]);
+    assert_eq!(texts, vec!["a", "a-reply", "b", "b-reply", "d", "d-reply"]);
 }
 
 #[test]
 fn compaction_replaces_prefix_keeps_suffix() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
-    let _e1 = log.append_message(user_msg("old-1")).unwrap();
-    let _e2 = log.append_message(user_msg("old-2")).unwrap();
+    log.append_message(user_msg("old-1")).unwrap();
+    log.append_message(assistant_msg("old-1-reply")).unwrap();
+    log.append_message(user_msg("old-2")).unwrap();
+    log.append_message(assistant_msg("old-2-reply")).unwrap();
     let e3 = log.append_message(user_msg("kept")).unwrap();
+    log.append_message(assistant_msg("kept-reply")).unwrap();
 
     log.compact("summary of old turns".into(), e3.id.clone(), 9000)
         .unwrap();
     log.append_message(user_msg("after")).unwrap();
+    log.append_message(assistant_msg("after-reply")).unwrap();
 
     let texts: Vec<String> = log
         .derive_messages()
@@ -496,7 +508,9 @@ fn compaction_replaces_prefix_keeps_suffix() {
         vec![
             "<context_summary>\nsummary of old turns\n</context_summary>",
             "kept",
-            "after"
+            "kept-reply",
+            "after",
+            "after-reply",
         ]
     );
 }
@@ -506,8 +520,12 @@ fn compaction_keeps_entries_between_marker_and_compaction_point() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
     log.append_message(user_msg("dropped")).unwrap();
+    log.append_message(assistant_msg("dropped-reply")).unwrap();
     let e2 = log.append_message(user_msg("kept-mid")).unwrap();
+    log.append_message(assistant_msg("kept-mid-reply")).unwrap();
     log.append_message(user_msg("kept-late")).unwrap();
+    log.append_message(assistant_msg("kept-late-reply"))
+        .unwrap();
 
     log.compact("s".into(), e2.id.clone(), 100).unwrap();
 
@@ -521,7 +539,9 @@ fn compaction_keeps_entries_between_marker_and_compaction_point() {
         vec![
             "<context_summary>\ns\n</context_summary>",
             "kept-mid",
-            "kept-late"
+            "kept-mid-reply",
+            "kept-late",
+            "kept-late-reply",
         ]
     );
 }
@@ -541,24 +561,28 @@ fn second_compaction_summarizes_the_prior_summary() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
 
-    // Seed 8 messages; compact down to last 2.
+    // Seed 8 closed turns (a directive plus its reply each); compact down
+    // to the last 2 TURNS — `keep_recent` is now a turn count, not a
+    // message count (docs/design/68-context-engine.md §10).
     for i in 0..8 {
         log.append_message(user_msg(&format!("m{i}"))).unwrap();
+        log.append_message(assistant_msg(&format!("m{i}-reply")))
+            .unwrap();
     }
     let plan1 = log.plan_compaction(2).expect("plan 1");
-    // Older segment = first 6 messages.
-    assert_eq!(plan1.older.len(), 6);
+    // Older segment = the first 6 turns' full records (2 messages each).
+    assert_eq!(plan1.older.len(), 12);
     log.apply_compaction(&plan1, "summary-one".into(), 9000)
         .unwrap();
 
-    // Projection: [summary-one, m6, m7].
+    // Projection: [summary-one, m6, m6-reply, m7, m7-reply].
     let msgs = log.derive_messages();
-    assert_eq!(msgs.len(), 3);
+    assert_eq!(msgs.len(), 5);
     assert!(msgs[0].text_content().contains("summary-one"));
 
     // Second cycle: grow past again, then compact once more.
     log.append_message(user_msg("m8")).unwrap();
-    log.append_message(user_msg("m9")).unwrap();
+    log.append_message(assistant_msg("m8-reply")).unwrap();
     let plan2 = log.plan_compaction(2).expect("plan 2");
     // The new older segment must START with the prior summary message —
     // raw pre-compaction history must NOT reappear.
@@ -566,7 +590,7 @@ fn second_compaction_summarizes_the_prior_summary() {
         plan2.older[0].text_content().contains("<context_summary>"),
         "repeated compaction must summarize the prior summary"
     );
-    assert_eq!(plan2.older.len(), 3); // summary-one, m7, m8 (m6 stays verbatim)
+    assert_eq!(plan2.older.len(), 3); // summary-one, m6, m6-reply (m7/m8 stay verbatim)
 
     log.apply_compaction(&plan2, "summary-two".into(), 400)
         .unwrap();
@@ -851,12 +875,17 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
     assert!(thread_text.contains("If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch"));
 }
 
+/// Replaces the old character-count trim: a closed turn's historical tool
+/// result is never truncated in the ledger, and never appears as a raw
+/// `ToolResult` block in the projection at all — it becomes a trace line
+/// naming its evidence id, and the full content is recoverable via
+/// `SessionLog::evidence` (docs/design/68-context-engine.md §3, §10).
 #[test]
-fn historical_tool_results_are_pruned_in_projection() {
+fn historical_tool_result_projects_as_a_trace_line_and_evidence_returns_it_whole() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("prune.jsonl"), header()).unwrap();
 
-    // Turn 1: Huge search result (2500 chars)
+    // Turn 1: closed, with a 5,000-char search result.
     log.append_message(user_msg("search the web")).unwrap();
     let call_id = "call-1".to_string();
     log.append_message(MessageRecord {
@@ -871,12 +900,12 @@ fn historical_tool_results_are_pruned_in_projection() {
         meta: None,
     })
     .unwrap();
-    let giant_output = "A".repeat(2500);
+    let giant_output = "A".repeat(5_000);
     log.append_message(MessageRecord {
         message: Message {
             role: vak_llm::Role::User,
             content: vec![vak_llm::ContentBlock::tool_result(
-                call_id,
+                call_id.clone(),
                 giant_output.clone(),
             )],
         },
@@ -885,7 +914,7 @@ fn historical_tool_results_are_pruned_in_projection() {
     .unwrap();
     log.append_message(assistant_msg("found results")).unwrap();
 
-    // Turn 2: Active turn with tool result (2500 chars)
+    // Turn 2: still open, with its own tool result.
     log.append_message(user_msg("now run python")).unwrap();
     let call_id_2 = "call-2".to_string();
     log.append_message(MessageRecord {
@@ -904,8 +933,8 @@ fn historical_tool_results_are_pruned_in_projection() {
         message: Message {
             role: vak_llm::Role::User,
             content: vec![vak_llm::ContentBlock::tool_result(
-                call_id_2,
-                giant_output.clone(),
+                call_id_2.clone(),
+                "small output".to_string(),
             )],
         },
         meta: None,
@@ -914,46 +943,54 @@ fn historical_tool_results_are_pruned_in_projection() {
 
     let messages = log.derive_messages();
 
-    // Find Turn 1's tool result: it should be pruned
-    let turn1_result = messages
-        .iter()
-        .find(|m| {
-            m.content.iter().any(|b| match b {
-                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id == "call-1",
-                _ => false,
-            })
+    // Turn 1 is closed: no raw ToolResult block anywhere in the projection
+    // for call-1, and no character-count trim marker either.
+    let has_raw_result_1 = messages.iter().any(|m| {
+        m.content.iter().any(|b| {
+            matches!(
+                b,
+                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == &call_id
+            )
         })
-        .unwrap();
-
-    let turn1_text = match &turn1_result.content[0] {
-        vak_llm::ContentBlock::ToolResult { content, .. } => content,
-        _ => unreachable!(),
-    };
+    });
     assert!(
-        turn1_text.len() < 600,
-        "historical tool result must be truncated: was {}",
-        turn1_text.len()
+        !has_raw_result_1,
+        "a closed turn's tool result must not appear verbatim"
     );
-    assert!(turn1_text.contains("historical tool output trimmed; total was 2500 chars"));
+    let joined: String = messages
+        .iter()
+        .map(|m| m.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !joined.contains("trimmed"),
+        "no character-count trim marker anywhere"
+    );
+    assert!(
+        joined.contains("ev:call-1"),
+        "the trace line must name the evidence id"
+    );
 
-    // Find Turn 2's active tool result: it MUST remain full-size verbatim (2500 chars)
+    // Turn 2 is still open: its tool result stays verbatim.
     let turn2_result = messages
         .iter()
         .find(|m| {
-            m.content.iter().any(|b| match b {
-                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id == "call-2",
-                _ => false,
+            m.content.iter().any(|b| {
+                matches!(b, vak_llm::ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == &call_id_2)
             })
         })
-        .unwrap();
-
+        .expect("the open turn's tool result stays a raw block");
     let turn2_text = match &turn2_result.content[0] {
         vak_llm::ContentBlock::ToolResult { content, .. } => content,
         _ => unreachable!(),
     };
-    assert_eq!(
-        turn2_text.len(),
-        2500,
-        "active turn tool result must be 100% verbatim"
-    );
+    assert_eq!(turn2_text, "small output");
+
+    // The full content is still recoverable whole, via evidence().
+    let evidence = log
+        .evidence(&call_id)
+        .expect("evidence for a closed turn's call");
+    assert_eq!(evidence.content.len(), 5_000);
+    assert_eq!(evidence.tool, "search");
+    assert!(!evidence.is_error);
 }

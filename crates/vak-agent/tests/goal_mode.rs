@@ -226,12 +226,15 @@ async fn rejected_claim_returns_findings_then_passes() {
     let statuses = goal_statuses(&session);
     assert_eq!(statuses, vec!["active", "done"]);
     // Findings were injected model-visible (invariant 1): a [goal-audit]
-    // user turn exists between claims.
+    // user turn exists between claims. Raw ledger: the nudge is mid-turn
+    // scaffolding and is dropped from the projection once the turn closes
+    // (docs/design/68-context-engine.md §10) — this checks it was
+    // recorded (and thus reached the model) at all.
     assert!(
         session
-            .derive_messages()
+            .message_chain()
             .iter()
-            .any(|m| m.text_content().contains("[goal-audit]"))
+            .any(|(_, m)| m.text_content().contains("[goal-audit]"))
     );
     let judge_calls = provider
         .requests
@@ -321,10 +324,11 @@ async fn unparseable_judge_fails_closed() {
     let outcome = run(&mut agent, "do it").await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     let session = agent.into_session().await;
-    let msgs = session.derive_messages();
+    // Raw ledger: see the comment above on the same pattern.
+    let msgs = session.message_chain();
     assert!(
         msgs.iter()
-            .any(|m| m.text_content().contains("[goal-audit]")
+            .any(|(_, m)| m.text_content().contains("[goal-audit]")
                 && m.text_content().contains("AUDIT UNAVAILABLE")),
         "unparseable verdict must inject fail-closed findings"
     );

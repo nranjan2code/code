@@ -15,6 +15,7 @@ pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
 pub mod read;
+pub mod recall;
 pub mod retired;
 pub mod sandbox;
 pub mod sandbox_events;
@@ -28,6 +29,7 @@ use serde_json::Value;
 pub use context::{OutputLimits, ToolContext};
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
+pub use recall::{RecallRequest, RecallTool, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;

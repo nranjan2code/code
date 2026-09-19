@@ -264,10 +264,13 @@ impl Store {
             // A Presentation entry is display-channel/model-history
             // data (docs/design/68-context-engine.md §10), not free text to
             // full-text index today; its own TurnIndex/recall search
-            // (design §3) is separate future work.
+            // (design §3) is separate future work. A TurnCard is derived,
+            // never-model-visible audit data with its own in-memory BM25
+            // index (`TurnIndex::search`) — not this store's concern either.
             EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::ChildRun { .. }
-            | EntryPayload::Presentation(_) => return None,
+            | EntryPayload::Presentation(_)
+            | EntryPayload::TurnCard(_) => return None,
         };
 
         match &entry.payload {
@@ -430,7 +433,8 @@ impl Store {
             }),
             EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::ChildRun { .. }
-            | EntryPayload::Presentation(_) => None,
+            | EntryPayload::Presentation(_)
+            | EntryPayload::TurnCard(_) => None,
         }
     }
 

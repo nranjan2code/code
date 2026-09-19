@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
 
+use crate::turns::{Evidence, TurnCard, TurnIndex};
 use crate::types::{
     CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, PresentationRecord,
-    SessionError, SessionHeader, TranscriptMessage, WorkEvent,
+    SessionError, SessionHeader, TranscriptMessage, TurnCardRecord, WorkEvent,
 };
 
 /// Session-derived content for the request tail (docs/design/68-context-
@@ -354,6 +355,79 @@ impl SessionLog {
         })
     }
 
+    /// Appends a turn's closing card (docs/design/68-context-engine.md §10).
+    /// Written once, at turn close, and never rewritten.
+    pub fn append_turn_card(&mut self, record: TurnCardRecord) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::TurnCard(record)))
+    }
+
+    /// `(turn_id, card)` for every `TurnCard` entry along the active chain,
+    /// in the order they were written.
+    pub fn turn_cards(&self) -> Vec<(String, TurnCard)> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::TurnCard(record) => {
+                    Some((record.turn_id.clone(), record.card.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Resolves a tool_use_id to its full `Evidence` — the tool name, its
+    /// call arguments, its result content, and whether it failed — by
+    /// scanning the active chain for the matching `ToolUse`/`ToolResult`
+    /// pair. Works for evidence in any turn, open or closed, which is what
+    /// lets `recall({ id })` reopen a result from a turn now reduced to a
+    /// card (docs/design/68-context-engine.md §3).
+    pub fn evidence(&self, tool_use_id: &str) -> Option<Evidence> {
+        let chain = self.chain_to_root();
+        let mut tool: Option<String> = None;
+        let mut input = serde_json::Value::Null;
+        for entry in &chain {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                if let vak_llm::ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input: call_input,
+                } = block
+                    && id == tool_use_id
+                {
+                    tool = Some(name.clone());
+                    input = call_input.clone();
+                }
+            }
+        }
+        let tool = tool?;
+        for entry in &chain {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                if let vak_llm::ContentBlock::ToolResult {
+                    tool_use_id: id,
+                    content,
+                    is_error,
+                } = block
+                    && id == tool_use_id
+                {
+                    return Some(Evidence {
+                        tool,
+                        input,
+                        content: content.clone(),
+                        is_error: *is_error,
+                    });
+                }
+            }
+        }
+        None
+    }
+
     /// Presentation entries along the active path, root→leaf, with their
     /// entry ids — the single source both the model-visible history and the
     /// display channel read.
@@ -388,7 +462,17 @@ impl SessionLog {
             .find_map(|entry| match &entry.payload {
                 EntryPayload::Message(record)
                     if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none() =>
+                        && record.control_kind().is_none()
+                        && record
+                            .message
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
+                        && !record
+                            .message
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. })) =>
                 {
                     Some(entry.id.clone())
                 }
@@ -1095,145 +1179,102 @@ impl SessionLog {
     /// into the request tail instead (docs/design/68-context-engine.md
     /// §6/§10), read separately via [`SessionLog::tail_sections`]. This
     /// function no longer contributes them.
+    ///
+    /// Every closed turn projects as its two-message `full_record`
+    /// (docs/design/68-context-engine.md §10) — no `tool_use`/`tool_result`
+    /// blocks, no character-count trim of historical tool output (deleted:
+    /// `MAX_HISTORICAL_TOOL_RESULT_CHARS`). The still-open turn (if any)
+    /// projects verbatim, exactly as recorded. A turn is never split: the
+    /// only decision left is *which whole turns* survive compaction, decided
+    /// below by the last `Compaction` entry's position in the chain.
     fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
+        let chain = self.chain_to_root();
+        let position: HashMap<&str, usize> = chain
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| (entry.id.as_str(), i))
+            .collect();
+
+        // Each compaction's boundary is computed from the CURRENT (already
+        // compacted) projection, so successive boundaries only ever move
+        // forward; the last `Compaction` entry alone describes the steady
+        // state.
+        let last_compaction = chain
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(pos, entry)| match &entry.payload {
+                EntryPayload::Compaction(c) => Some((pos, c.clone())),
+                _ => None,
+            });
+
+        let index = TurnIndex::from_log(self);
         let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
-        for entry in self.chain_to_root() {
-            match &entry.payload {
-                EntryPayload::Message(record) => {
-                    // A persisted nudge is runtime guidance for the turn in
-                    // flight, not conversation to summarise into a packet.
-                    out.push((
-                        entry.id.clone(),
-                        record.message.clone(),
-                        false,
-                        record.control_kind().is_some(),
-                    ));
-                }
-                EntryPayload::Compaction(c) => {
-                    if c.reset_all {
-                        // Reset-with-handoff: everything becomes the summary.
-                        out.drain(..);
-                    } else {
-                        let keep_from = out
-                            .iter()
-                            .position(|(id, _, _, _)| id == &c.first_kept_entry_id)
-                            .unwrap_or(out.len());
-                        out.drain(..keep_from);
-                    }
-                    let summary_msg = Message::user_text(format!(
-                        "<context_summary>\n{}\n</context_summary>",
-                        c.summary
-                    ));
-                    out.insert(0, (entry.id.clone(), summary_msg, true, false));
-                }
-                // Receipts, goal entries, presentations, and intent notes are
-                // audit / tail-rendered data, not part of this projection.
-                // The current turn already sees a card through the
-                // `tool_use` input it wrote; a `Presentation` entry is never
-                // replayed raw (docs/design/68-context-engine.md §10).
-                EntryPayload::Header(_)
-                | EntryPayload::Receipt(_)
-                | EntryPayload::Goal(_)
-                | EntryPayload::GoalUpdate(_)
-                | EntryPayload::Activity(_)
-                | EntryPayload::Work(_)
-                | EntryPayload::TurnCapabilitiesBound(_)
-                | EntryPayload::Presentation(_)
-                | EntryPayload::Intent(_)
-                | EntryPayload::ChildRun { .. } => {}
-            }
+        if let Some((_, c)) = &last_compaction {
+            let summary_msg = Message::user_text(format!(
+                "<context_summary>\n{}\n</context_summary>",
+                c.summary
+            ));
+            out.push((String::new(), summary_msg, true, false));
         }
 
-        // Prune older tool outputs: tool results from turns strictly prior to
-        // the current active exchange are truncated to prevent historical dumps
-        // (large crawls, lengthy tracebacks) from consuming context and causing
-        // attention drift. The active turn's tool results are always kept 100% verbatim.
-        let last_user_text_idx = out.iter().rposition(|(_, m, _, is_ctrl)| {
-            !*is_ctrl
-                && m.role == vak_llm::Role::User
-                && m.content
-                    .iter()
-                    .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
-        });
+        let boundary_pos = match &last_compaction {
+            Some((pos, c)) if c.reset_all => *pos,
+            Some((_, c)) => position
+                .get(c.first_kept_entry_id.as_str())
+                .copied()
+                .unwrap_or(0),
+            None => 0,
+        };
 
-        if let Some(pivot) = last_user_text_idx {
-            for (i, (_, msg, _, is_ctrl)) in out.iter_mut().enumerate() {
-                if i >= pivot || *is_ctrl || msg.role != vak_llm::Role::User {
-                    continue;
-                }
-                for block in &mut msg.content {
-                    if let vak_llm::ContentBlock::ToolResult { content, .. } = block {
-                        const MAX_HISTORICAL_TOOL_RESULT_CHARS: usize = 600;
-                        if content.len() > MAX_HISTORICAL_TOOL_RESULT_CHARS {
-                            let head_len = content
-                                .char_indices()
-                                .map(|(idx, _)| idx)
-                                .nth(300)
-                                .unwrap_or_else(|| 300.min(content.len()));
-                            let original_len = content.len();
-                            content.truncate(head_len);
-                            content.push_str(&format!(
-                                "\n... [historical tool output trimmed; total was {} chars]",
-                                original_len
-                            ));
-                        }
-                    }
-                }
+        for turn in &index.turns {
+            let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
+            if turn_pos < boundary_pos {
+                continue;
+            }
+            let messages = if turn.closed {
+                turn.full_record()
+            } else {
+                turn.current_verbatim()
+            };
+            for message in messages {
+                out.push((turn.id.clone(), message, false, false));
             }
         }
-
         out
     }
 
-    /// Packet accounting for a planned boundary: message entries before
-    /// `first_kept_entry_id` in the current projection become `dropped`,
-    /// the rest stay `selected`.
-    fn partition_at_boundary(
-        tagged: &[(String, Message, bool, bool)],
-        boundary: usize,
-    ) -> crate::types::ContextPartition {
-        let mut selected = Vec::new();
-        let mut dropped = Vec::new();
-        for (i, (id, _, is_summary, is_control)) in tagged.iter().enumerate() {
-            if *is_summary || *is_control {
-                continue;
-            }
-            if i < boundary {
-                dropped.push(id.clone());
-            } else {
-                selected.push(id.clone());
-            }
-        }
-        crate::types::ContextPartition {
-            selected_entry_ids: selected,
-            dropped_entry_ids: dropped,
-        }
-    }
-
-    /// The model-visible messages with their ledger identity and class, for
-    /// consumers that must tell conversation from runtime traffic and pair a
-    /// message with the projection built from the same entry.
+    /// Packet accounting for a planned turn boundary: turns before
+    /// `boundary` become `dropped`, the rest stay `selected`.
+    /// Every raw message entry in chain order, tagged with its ledger
+    /// identity and class — a human-facing audit view, independent of the
+    /// turn-based model-visible projection (`derive_messages`). Unlike that
+    /// projection, this one is never affected by compaction: a person
+    /// reading their own history sees everything they said, not what a
+    /// context budget kept. Compaction entries still surface as a
+    /// `context: true` pseudo-message so a consumer can show "context
+    /// summarized here" inline.
     pub fn derive_transcript(&self) -> Vec<TranscriptMessage> {
-        let controls: HashMap<String, vak_intent::control::ControlKind> = self
-            .chain_to_root()
-            .iter()
+        self.chain_to_root()
+            .into_iter()
             .filter_map(|entry| match &entry.payload {
-                EntryPayload::Message(record) => {
-                    record.control_kind().map(|kind| (entry.id.clone(), kind))
-                }
+                EntryPayload::Message(record) => Some(TranscriptMessage {
+                    entry_id: entry.id.clone(),
+                    message: record.message.clone(),
+                    control: record.control_kind(),
+                    context: false,
+                }),
+                EntryPayload::Compaction(c) => Some(TranscriptMessage {
+                    entry_id: entry.id.clone(),
+                    message: Message::user_text(format!(
+                        "<context_summary>\n{}\n</context_summary>",
+                        c.summary
+                    )),
+                    control: None,
+                    context: true,
+                }),
                 _ => None,
             })
-            .collect();
-        self.derive_keyed_tagged()
-            .into_iter()
-            .map(
-                |(entry_id, message, is_summary, is_context)| TranscriptMessage {
-                    control: controls.get(&entry_id).copied(),
-                    context: is_summary || is_context,
-                    entry_id,
-                    message,
-                },
-            )
             .collect()
     }
 
@@ -1394,39 +1435,63 @@ impl SessionLog {
         Some(thread)
     }
 
-    /// A projection-based compaction plan: `older` is everything before the
-    /// snapped boundary (prior `<context_summary>` entries included, so
-    /// repeated compaction summarizes summaries, not raw history), `keep`
-    /// is the verbatim tail. The boundary never splits an assistant
-    /// tool_use / user tool_result pair — it advances past result-bearing
-    /// user messages so the kept region always starts API-valid.
+    /// A turn-boundary compaction plan (docs/design/68-context-engine.md
+    /// §10): `older` is the full record of every closed turn being dropped;
+    /// `keep_recent` is now a TURN count, not a message count — a turn is
+    /// never split (principle 3), so there is no pair-boundary walk left to
+    /// do. The still-open turn, if any, is never a compaction candidate: it
+    /// is excluded from both `older` and the kept count.
     pub fn plan_compaction(&self, keep_recent: usize) -> Option<CompactionPlan> {
+        // Operates on the CURRENT projection (already turn-based and already
+        // reflecting any earlier compaction), grouped back into contiguous
+        // per-turn runs — so a repeated compaction folds the prior summary
+        // into the new one instead of re-reading raw pre-compaction turns,
+        // and a turn is never split (its messages are always one run).
         let tagged = self.derive_keyed_tagged();
-        if tagged.len() <= keep_recent {
+        const SUMMARY_KEY: &str = "\0summary";
+        let mut units: Vec<(String, usize, usize)> = Vec::new(); // (key, start, end-exclusive)
+        for (i, (id, _, is_summary, _)) in tagged.iter().enumerate() {
+            let key = if *is_summary {
+                SUMMARY_KEY.to_string()
+            } else {
+                id.clone()
+            };
+            match units.last_mut() {
+                Some((last_key, _, end)) if *last_key == key => *end = i + 1,
+                _ => units.push((key, i, i + 1)),
+            }
+        }
+        let turn_units: Vec<&(String, usize, usize)> = units
+            .iter()
+            .filter(|(key, _, _)| key != SUMMARY_KEY)
+            .collect();
+        if turn_units.len() <= keep_recent {
             return None;
         }
-        let mut boundary = tagged.len() - keep_recent;
-        let has_tool_result = |m: &Message| {
-            m.content
-                .iter()
-                .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. }))
-        };
-        while boundary < tagged.len() && has_tool_result(&tagged[boundary].1) {
-            boundary += 1;
-        }
+        let boundary = turn_units.len() - keep_recent;
         if boundary == 0 {
             return None;
         }
+        let kept_first_idx = turn_units[boundary].1;
+        let older: Vec<Message> = tagged[..kept_first_idx]
+            .iter()
+            .map(|(_, message, _, _)| message.clone())
+            .collect();
+        let selected_entry_ids = turn_units[boundary..]
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect();
+        let dropped_entry_ids = turn_units[..boundary]
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect();
         Some(CompactionPlan {
-            older: tagged[..boundary]
-                .iter()
-                .filter(|(_, _, _, is_control)| !*is_control)
-                .map(|(_, m, _, _)| m.clone())
-                .collect(),
-            // Anchor = FIRST KEPT entry: the walker drains everything
-            // strictly before this id and inserts the summary at index 0.
-            first_kept_entry_id: tagged[boundary].0.clone(),
-            partition: Self::partition_at_boundary(&tagged, boundary),
+            older,
+            first_kept_entry_id: turn_units[boundary].0.clone(),
+            partition: crate::types::ContextPartition {
+                selected_entry_ids,
+                dropped_entry_ids,
+            },
         })
     }
 

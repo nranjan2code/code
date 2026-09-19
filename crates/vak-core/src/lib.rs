@@ -3396,6 +3396,11 @@ impl Core {
             .iter()
             .map(|t| t.name().to_string())
             .collect();
+        // Always admitted, like `tasks` below: the evidence-store recall
+        // primitive (docs/design/68-context-engine.md §3/§5) belongs to
+        // `ToolSurface::ALWAYS_CORE` regardless of domain, but it still has
+        // to be an admitted Tool-kind capability for that check to see it.
+        names.push("recall".into());
         if self.effective_workers() {
             names.push("task".into());
         }
@@ -5436,7 +5441,20 @@ impl Core {
             // the same pattern `presentation_check`/`retrieval_check` use.
             let skills = vak_delivery::built_in_skill_registry();
             cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
-                presentation_tools::presentation_info(name, input, &skills).map(|info| {
+                // A tool call already passes its own tool name; a fence
+                // (docs/design/68-context-engine.md §10's inline-fence
+                // fallback) has no tool name at all — vak-agent has no
+                // card-shape knowledge (invariant 14) and cannot resolve
+                // `semantic_type` to the matching `emit_*_card` tool
+                // itself, so this hook does it here, preferring the
+                // payload's own declared type and falling back to
+                // whatever name the caller passed.
+                let resolved_name = input
+                    .get("semantic_type")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(presentation_tools::emit_tool_for)
+                    .unwrap_or(name);
+                presentation_tools::presentation_info(resolved_name, input, &skills).map(|info| {
                     vak_agent::PresentationCardInfo {
                         semantic_type: info.semantic_type,
                         skill_id: info.skill_id,
@@ -5804,6 +5822,13 @@ impl Core {
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
+        // Core evidence-store primitive (docs/design/68-context-engine.md
+        // §3/§5/§7): admitted like any other built-in tool (`tool_names()`
+        // always includes it) so `build_tool_surface`'s `ALWAYS_CORE` check
+        // sees it and keeps it in the stable prefix regardless of domain.
+        // `execute()` is never actually reached — the agent loop intercepts
+        // `recall` by name before dispatch (see `vak-agent/src/lib.rs`).
+        tools.push(Arc::new(vak_tools::RecallTool));
         tools.push(Arc::new(doc_reader::DocReaderTool));
         for emit_tool in presentation_tools::EmitCardTool::all() {
             tools.push(Arc::new(emit_tool));

@@ -329,10 +329,13 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     );
 
     let session = agent.session.lock().await;
-    let msgs = session.derive_messages();
+    // Raw ledger: the closed turn's results are trace lines in the
+    // projection now (docs/design/68-context-engine.md §10); source order
+    // is a property of what was recorded.
+    let msgs = session.message_chain();
     let results: Vec<&str> = msgs
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .filter_map(|b| match b {
             ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
             _ => None,

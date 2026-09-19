@@ -5,7 +5,7 @@
 //! (model-visible means logged).
 
 mod fences;
-use fences::{find_duplicate_card_fence, find_malformed_vak_fence};
+use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
 pub mod capacity;
 pub mod circuit;
 pub mod context;
@@ -87,8 +87,8 @@ use vak_llm::{
     work::{AttemptReason, FailureDomain, Settlement, StepLedger, WorkPurpose},
 };
 use vak_permission::{AskSource, Decision, Mode, PermissionEngine};
-use vak_session::{MessageMeta, MessageRecord, SessionLog};
-use vak_tools::{Tool, ToolContext, ToolErrorKind, ToolOutput};
+use vak_session::{MessageMeta, MessageRecord, SessionLog, TurnIndex};
+use vak_tools::{RecallRequest, Tool, ToolContext, ToolErrorKind, ToolOutput};
 
 pub use steering::{DrainMode, SteeringQueues};
 
@@ -637,6 +637,41 @@ fn chat_request_chars(request: &ChatRequest) -> u64 {
     chars
 }
 
+/// Renders a turn's full record (docs/design/68-context-engine.md §10) as
+/// plain text for a `recall({ turn })` result: one `role: text` line per
+/// message, in order.
+fn render_full_record(messages: &[Message]) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            let role = match message.role {
+                vak_llm::Role::User => "user",
+                vak_llm::Role::Assistant => "assistant",
+            };
+            format!("{role}: {}", message.text_content())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The text up to and including its first sentence-ending punctuation,
+/// used as the deterministic fallback when the narration-gist side call
+/// (docs/design/68-context-engine.md §10) errors. A semantic boundary, never
+/// a character count.
+fn first_sentence_fallback(text: &str) -> String {
+    let trimmed = text.trim();
+    let bytes = trimmed.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if matches!(b, b'.' | b'!' | b'?') {
+            let after = i + 1;
+            if after >= bytes.len() || matches!(bytes[after], b' ' | b'\n') {
+                return trimmed[..after].to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 /// Relative-change threshold for writing a `capacity-feedback` activity
 /// (docs/design/68 §6): small usage-to-usage jitter in a measured EWMA
 /// should not spam the ledger with an activity every turn.
@@ -879,6 +914,26 @@ impl Agent {
     /// Run with a prebuilt prompt `Message` — the seam for multimodal
     /// (image) input; the ledger stores exactly what the model sees.
     pub async fn run_message(
+        &mut self,
+        prompt: Message,
+        steering: &SteeringQueues,
+        cancel: CancellationToken,
+        events: mpsc::Sender<AgentEvent>,
+    ) -> TurnOutcome {
+        let outcome = self
+            .run_message_inner(prompt, steering, cancel.clone(), events.clone())
+            .await;
+        // Turn-close hook (docs/design/68-context-engine.md §10): builds and
+        // appends the TurnCard once the turn has actually closed. A turn
+        // that never got a final assistant text (most `Failed`/aborted
+        // exits) stays open and this is a no-op — there is nothing to card
+        // yet, and the next call to `run_message` will pick it up once it
+        // does close.
+        self.close_turn(&outcome, &cancel, &events).await;
+        outcome
+    }
+
+    async fn run_message_inner(
         &mut self,
         prompt: Message,
         steering: &SteeringQueues,
@@ -1466,7 +1521,7 @@ impl Agent {
                                 .append_receipt(ledger.take_receipt());
                             let partial = partial.map(|boxed| *boxed);
                             if let Some(p) = &partial {
-                                self.append_assistant(p).await;
+                                let _ = self.append_assistant(p).await;
                             }
                             return TurnOutcome::Aborted { partial };
                         }
@@ -1606,7 +1661,7 @@ impl Agent {
             }
             self.record_capacity_usage_feedback(&request, &usage, ledger.last_first_token_ms)
                 .await;
-            self.append_assistant(&response).await;
+            let response_entry_id = self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
             let calls = extract_tool_calls(&response)
@@ -1836,6 +1891,14 @@ impl Agent {
                         continue;
                     }
                     return TurnOutcome::MaxTurnsReached;
+                }
+                // Fence-path presentations (docs/design/68-context-engine.md
+                // §10): only for the answer actually being accepted — every
+                // gate above has already passed, so this text will not be
+                // redone. A repair-nudged draft never reaches here.
+                if let Some(entry_id) = &response_entry_id {
+                    self.write_fence_presentations(&response.text_content(), entry_id)
+                        .await;
                 }
                 return TurnOutcome::Completed { response };
             }
@@ -2169,6 +2232,171 @@ impl Agent {
             }
 
             turn += 1;
+        }
+    }
+
+    /// Detects ```` ```vak ```` fences in the accepted final answer and
+    /// writes a `Presentation` entry for each one that validates through
+    /// `AgentConfig::presentation_rebuild` and is not a duplicate of a card
+    /// already recorded for this turn — the inline-fence fallback for
+    /// models without tool calling (docs/design/68-context-engine.md §10).
+    /// `message_entry_id` is the ledger entry id of the assistant message
+    /// that carried the fence text. A fence whose `semantic_type` cannot be
+    /// mapped to a known card, or that fails validation, is silently
+    /// skipped — the malformed-fence repair nudge (above, in the caller)
+    /// already handles the "unparseable JSON" case separately.
+    async fn write_fence_presentations(&self, text: &str, message_entry_id: &str) {
+        let Some(rebuild) = self.config.presentation_rebuild.clone() else {
+            return;
+        };
+        for body in vak_fence_bodies(text) {
+            let Ok(fence_json) = serde_json::from_str::<Value>(body.trim()) else {
+                continue;
+            };
+            let Some(semantic_type) = fence_json.get("semantic_type").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            // `name` is a best-effort hint: the hook's own implementation
+            // (vak-core) knows how to map `semantic_type` to the matching
+            // `emit_*_card` tool via `presentation_tools::emit_tool_for`
+            // when that mapping is reachable; passing `semantic_type` here
+            // keeps this call meaningful even when it is not.
+            let Some(info) = rebuild(semantic_type, &fence_json) else {
+                continue;
+            };
+            let digest = vak_session::types::payload_digest(&info.payload);
+            let mut session = self.session.lock().await;
+            let Some(turn_id) = session.latest_directive_entry_id() else {
+                continue;
+            };
+            if session.has_presentation(&turn_id, &digest) {
+                // Duplicate of a card already recorded this turn (by tool
+                // call or an earlier fence) — dropped from the projection.
+                continue;
+            }
+            let derived_from =
+                session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+            let record = vak_session::types::PresentationRecord {
+                turn_id,
+                source: vak_session::types::PresentationSource::Fence {
+                    message_entry_id: message_entry_id.to_string(),
+                },
+                semantic_type: info.semantic_type,
+                skill_id: info.skill_id,
+                skill_version: info.skill_version,
+                schema_version: info.schema_version,
+                payload: info.payload,
+                payload_digest: digest,
+                derived_from,
+                title: info.title,
+                identity_digest: info.identity_digest,
+            };
+            let _ = session.append_presentation(record);
+        }
+    }
+
+    /// Builds and appends this turn's `TurnCard` (docs/design/68-context-
+    /// engine.md §10) once it has actually closed. Idempotent: a turn
+    /// already carrying a card (`TurnIndex` rebuilds `turn.card` from any
+    /// existing `TurnCard` entry) is left alone, since a card is written
+    /// once and never rewritten.
+    async fn close_turn(
+        &self,
+        outcome: &TurnOutcome,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) {
+        let outcome_label = match outcome {
+            TurnOutcome::Completed { .. } => "completed",
+            TurnOutcome::Aborted { .. } => "cancelled",
+            TurnOutcome::Failed { .. } => "failed",
+            TurnOutcome::MaxTurnsReached => "degraded",
+        };
+        let Some((turn_id, raw_narration)) = ({
+            let session = self.session.lock().await;
+            let index = TurnIndex::from_log(&session);
+            index.turns.last().and_then(|turn| {
+                (turn.closed && turn.card.is_none()).then(|| {
+                    let narration = turn
+                        .final_answer
+                        .as_ref()
+                        .map(Message::text_content)
+                        .unwrap_or_default();
+                    (turn.id.clone(), narration)
+                })
+            })
+        }) else {
+            return;
+        };
+        let narration = self.resolve_narration(&raw_narration, cancel, events).await;
+        let capacity = self.config.capacity.clone();
+        let estimate = move |s: &str| -> u64 {
+            match &capacity {
+                Some(profile) => profile.estimate_tokens(s.chars().count() as u64),
+                None => (s.len() as u64).div_ceil(4),
+            }
+        };
+        let mut session = self.session.lock().await;
+        let index = TurnIndex::from_log(&session);
+        let Some(turn) = index.turn_by_id(&turn_id) else {
+            return;
+        };
+        if turn.card.is_some() {
+            return; // written concurrently between the two locks above
+        }
+        let card = turn.build_card(outcome_label, narration, &estimate);
+        let _ = session.append_turn_card(vak_session::types::TurnCardRecord { turn_id, card });
+    }
+
+    /// Resolves the caller-visible narration for a `TurnCard`: verbatim when
+    /// short (≤ 60 words), otherwise one side call on the configured model
+    /// with ONLY the narration as input — never the turn's history — asking
+    /// for a one-sentence gist (docs/design/68-context-engine.md §10). On a
+    /// dispatch error, falls back to the narration's own first sentence
+    /// rather than failing turn close over a summarizer hiccup.
+    async fn resolve_narration(
+        &self,
+        narration: &str,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> String {
+        if narration.split_whitespace().count() <= 60 {
+            return narration.to_string();
+        }
+        let model = self.config.model.clone();
+        let mut request = ChatRequest::new(model.clone());
+        request.system = Some(
+            "Give a one-sentence gist of the following text. Output only that sentence, \
+             nothing else."
+                .to_string(),
+        );
+        request.messages = vec![Message::user_text(narration.to_string())];
+        request.max_tokens = 128;
+        let mut ledger = StepLedger::new(
+            WorkPurpose::Summarize,
+            self.provider.name(),
+            &model,
+            self.config.dispatch_ceiling,
+        );
+        let result = self
+            .complete_with_reliability(&request, cancel, events, false, &mut ledger)
+            .await;
+        {
+            let mut session = self.session.lock().await;
+            let _ = session.append_receipt(ledger.take_receipt());
+        }
+        match result {
+            Ok(message) => {
+                let gist = message.text_content();
+                let gist = gist.trim();
+                if gist.is_empty() {
+                    first_sentence_fallback(narration)
+                } else {
+                    gist.to_string()
+                }
+            }
+            Err(_) => first_sentence_fallback(narration),
         }
     }
 
@@ -3159,17 +3387,24 @@ impl Agent {
             .any(|tool| tool.name() == name && tool.presents_cards())
     }
 
-    async fn append_assistant(&self, response: &AssistantMessage) {
+    /// Appends the model's response and returns its ledger entry id, so
+    /// callers that need to attribute something back to this exact message
+    /// (a fence-path `Presentation`, docs/design/68-context-engine.md §10)
+    /// don't have to re-derive it. `None` only on a session write failure.
+    async fn append_assistant(&self, response: &AssistantMessage) -> Option<String> {
         let mut session = self.session.lock().await;
-        let _ = session.append_message(MessageRecord {
-            message: response.clone().into_message(),
-            meta: Some(MessageMeta {
-                model: Some(response.model.clone()),
-                stop_reason: Some(format!("{:?}", response.stop_reason).to_lowercase()),
-                usage: Some(response.usage.clone()),
-                control: None,
-            }),
-        });
+        session
+            .append_message(MessageRecord {
+                message: response.clone().into_message(),
+                meta: Some(MessageMeta {
+                    model: Some(response.model.clone()),
+                    stop_reason: Some(format!("{:?}", response.stop_reason).to_lowercase()),
+                    usage: Some(response.usage.clone()),
+                    control: None,
+                }),
+            })
+            .ok()
+            .map(|entry| entry.id)
     }
 
     async fn record_activity(
@@ -3565,6 +3800,79 @@ impl Agent {
     /// plain ack instead of being run — never an error, which the stop guard
     /// would count as an unresolved failure and answer with another model turn.
     async fn execute_batch(
+        &self,
+        calls: Vec<PendingToolCall>,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Vec<(String, ToolRunOutput)> {
+        // `recall` is answered from the session here, before dispatch —
+        // never sent to a worker (docs/design/68-context-engine.md §3/§7).
+        // Intercepting by name mirrors how `emit_*_card` results are
+        // rewritten after `execute_batch` below, just earlier: `recall` has
+        // no side effects to execute, only session state to read, and
+        // `ToolContext` carries no session handle for `RecallTool::execute`
+        // to use (AGENTS.md invariant 14).
+        let (recall_calls, calls): (Vec<_>, Vec<_>) = calls
+            .into_iter()
+            .partition(|call| vak_tools::canonical_tool_name(&call.name) == "recall");
+        let mut results = Vec::with_capacity(recall_calls.len());
+        for call in recall_calls {
+            let output = self.resolve_recall(&call.input).await;
+            results.push((call.id, output));
+        }
+        results.extend(self.execute_batch_inner(calls, cancel, events).await);
+        results
+    }
+
+    /// Resolves one `recall` call's arguments against the current session:
+    /// `turn` → the resolved turn's full record as text; `presentation` →
+    /// the canonical payload; `id` → the evidence content, optionally
+    /// sliced by line range. The result is a current-turn tool result and
+    /// is verbatim for the rest of that turn like any other result.
+    async fn resolve_recall(&self, input: &Value) -> ToolRunOutput {
+        let request = match vak_tools::parse_recall_args(input) {
+            Ok(request) => request,
+            Err(message) => {
+                return ToolRunOutput::Err(format!(
+                    r#"{{"type":"invalid_arguments","message":"{message}"}}"#
+                ));
+            }
+        };
+        let session = self.session.lock().await;
+        match request {
+            RecallRequest::Turn(n) => {
+                let index = TurnIndex::from_log(&session);
+                match index.turn_by_number(n as usize) {
+                    Some(turn) => ToolRunOutput::Ok(render_full_record(&turn.full_record())),
+                    None => ToolRunOutput::Err(format!(
+                        r#"{{"type":"invalid_arguments","message":"no turn numbered {n}"}}"#
+                    )),
+                }
+            }
+            RecallRequest::Presentation(id) => {
+                match session
+                    .presentations()
+                    .into_iter()
+                    .find(|(pid, _)| *pid == id)
+                {
+                    Some((_, record)) => ToolRunOutput::Ok(record.payload.to_string()),
+                    None => ToolRunOutput::Err(format!(
+                        r#"{{"type":"invalid_arguments","message":"no presentation {id}"}}"#
+                    )),
+                }
+            }
+            RecallRequest::Id { id, range } => match session.evidence(&id) {
+                Some(evidence) => {
+                    ToolRunOutput::Ok(vak_tools::apply_range(&evidence.content, range))
+                }
+                None => ToolRunOutput::Err(format!(
+                    r#"{{"type":"invalid_arguments","message":"no evidence {id}"}}"#
+                )),
+            },
+        }
+    }
+
+    async fn execute_batch_inner(
         &self,
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,

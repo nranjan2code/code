@@ -129,11 +129,13 @@ async fn deny_rule_blocks_execution_and_feeds_reason_back() {
         )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    // Raw ledger: the closed turn's result is a trace line in the
+    // projection now (docs/design/68-context-engine.md §10).
     let session = agent.session.lock().await;
     let result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..
@@ -162,11 +164,12 @@ async fn ask_without_approver_is_denied_with_hint() {
         )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    // Raw ledger: see the comment above on the same pattern.
     let session = agent.session.lock().await;
     let result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..

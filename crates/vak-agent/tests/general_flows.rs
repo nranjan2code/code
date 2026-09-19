@@ -315,13 +315,17 @@ async fn stop_gate_blocks_premature_report_until_verified() {
         .count();
     assert_eq!(continuations, 1, "gate must block exactly once");
 
+    // Raw ledger: a control nudge is scaffolding for the turn still in
+    // progress and is dropped once the turn closes
+    // (docs/design/68-context-engine.md §10) — this checks it was recorded
+    // at all, not that the final projection still carries it.
     let guard_msgs = agent
         .session
         .lock()
         .await
-        .derive_messages()
+        .message_chain()
         .iter()
-        .filter(|m| m.text_content().contains("[stop-guard]"))
+        .filter(|(_, m)| m.text_content().contains("[stop-guard]"))
         .count();
     assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
 
@@ -342,17 +346,74 @@ async fn stop_gate_blocks_premature_report_until_verified() {
 /// projection carries the summary forward, and the run completes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compaction_during_long_research_session() {
-    let big_line = "Research note covering climate data points and energy market shifts.\n";
-    let big_a = big_line.repeat(87);
-    let big_b = big_line.repeat(87);
+    // `plan_compaction` now works in whole closed turns
+    // (docs/design/68-context-engine.md §10: a turn is never split), so
+    // there has to be at least one closed turn for it to summarize away —
+    // the still-open research turn below is never itself a compaction
+    // candidate (§10: "current turn: every result verbatim, always"), so
+    // the source files stay modest here; what pushes the budget over is
+    // the seeded prior research, which compaction then drops.
+    let big_a = "Research note on climate data points.\n".repeat(6);
+    let big_b = "Research note on energy market shifts.\n".repeat(6);
 
-    let (mut agent, provider, dir) = setup(
-        vec![
+    let dir = tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let header = SessionHeader {
+        agent: None,
+        session_id: "general-flow".into(),
+        created_at: chrono::Utc::now(),
+        cwd: cwd.clone(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = cwd.join(".vak-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut log = SessionLog::create(
+        SessionPath::new_session_file(&home, &cwd, "general-flow"),
+        header,
+    )
+    .unwrap();
+    // Big enough on their own to already be over the trigger threshold
+    // before the real research turn starts, so compaction fires on the
+    // very first budget check — consuming the FIRST scripted response
+    // below (the compaction summary) rather than one meant for the real
+    // turn.
+    let seed_filler = "prior research finding ".repeat(220);
+    for i in 0..3 {
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::types::Message::user_text(format!("earlier note {i}")),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::types::Message::assistant(vec![ContentBlock::text(format!(
+                "acknowledged note {i}: {seed_filler}"
+            ))]),
+            meta: None,
+        })
+        .unwrap();
+    }
+    let provider = Arc::new(Scripted {
+        responses: std::sync::Mutex::new(VecDeque::from(vec![
+            text_msg(
+                "Summary: prior research condensed; key climate and energy findings retained for the brief.",
+            ),
             tool_call("r1", "read", serde_json::json!({"path": "big-a.txt"})),
             tool_call("r2", "read", serde_json::json!({"path": "big-b.txt"})),
-            text_msg(
-                "Summary: both sources reviewed; key climate and energy findings retained for the brief.",
-            ),
             tool_call(
                 "w1",
                 "write",
@@ -362,17 +423,26 @@ async fn compaction_during_long_research_session() {
                 }),
             ),
             text_msg("digest written"),
-        ],
-        vec![Arc::new(ReadTool), Arc::new(WriteTool)],
-        |cfg| {
-            cfg.context_policy = vak_agent::context::ContextPolicy {
-                context_window: 4000,
-                max_output: 256,
-                compact_threshold: 0.8,
-                keep_recent: 2,
-            };
-        },
-    );
+        ])),
+        requests: std::sync::Mutex::new(Vec::new()),
+    });
+    let mut cfg = AgentConfig::new("sys");
+    cfg.model = "test-model".into();
+    cfg.tools = vec![Arc::new(ReadTool), Arc::new(WriteTool)];
+    cfg.mode = Mode::FullAccess;
+    cfg.permission = Some(Arc::new(PermissionEngine::default()));
+    cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
+    cfg.context_policy = vak_agent::context::ContextPolicy {
+        context_window: 4000,
+        max_output: 256,
+        compact_threshold: 0.8,
+        keep_recent: 1,
+    };
+    // The handoff-reset rescue is a different mechanism (Phase H) from
+    // turn-boundary compaction and would consume its own scripted
+    // response if it fired; keep this test isolated to compaction alone.
+    cfg.handoff_reset = false;
+    let mut agent = Agent::new(provider.clone(), log, cfg);
 
     for (name, content) in [("big-a.txt", &big_a), ("big-b.txt", &big_b)] {
         std::fs::write(dir.path().join(name), content).unwrap();
@@ -413,18 +483,21 @@ async fn compaction_during_long_research_session() {
     let (before, after) = compacted.expect("compacted event");
     assert!(after < before, "compaction must shrink the estimate");
 
-    // The summarizer ran as its own model call against the transcript, and
-    // the whole run consumed exactly the scripted trajectory.
+    // The summarizer ran as its own model call against the transcript
+    // BEFORE the real research turn dispatched at all (the seeded prior
+    // research alone was already over budget), and the whole run consumed
+    // exactly the scripted trajectory: compaction + two reads + write +
+    // final.
     {
         let reqs = provider.requests.lock().unwrap();
-        assert_eq!(reqs.len(), 5, "two reads + compaction + write + final");
+        assert_eq!(reqs.len(), 5, "compaction + two reads + write + final");
         assert!(
-            reqs[2]
+            reqs[0]
                 .system
                 .as_deref()
                 .unwrap_or("")
                 .contains("compactor"),
-            "third request must be the compaction call"
+            "first request must be the compaction call"
         );
     }
 
@@ -439,7 +512,7 @@ async fn compaction_during_long_research_session() {
         .count();
     assert_eq!(compaction_lines, 1, "exactly one compaction entry expected");
     assert!(
-        raw.contains("Research note covering climate data points"),
+        raw.contains("prior research finding"),
         "original history must never be deleted from the ledger"
     );
 
@@ -684,13 +757,16 @@ async fn read_only_mode_denies_note_writes_and_agent_reports_inline() {
         !dir.path().join("field-notes.md").exists(),
         "denied write must never touch disk"
     );
+    // Raw ledger: the closed turn's result is a trace line in the
+    // projection now (docs/design/68-context-engine.md §10); this checks
+    // what actually got recorded.
     let denied = agent
         .session
         .lock()
         .await
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..

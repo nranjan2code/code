@@ -289,12 +289,14 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::TurnCapabilitiesBound(_) => "capabilities",
             EntryPayload::ChildRun { .. } => "child-run",
             EntryPayload::Presentation(_) => "presentation",
+            EntryPayload::TurnCard(_) => "turn-card",
         })
         .collect();
     assert_eq!(
         kinds,
-        vec!["header", "message", "receipt", "message"],
-        "receipt sits between the prompt and the reply it produced"
+        vec!["header", "message", "receipt", "message", "turn-card"],
+        "receipt sits between the prompt and the reply it produced; the turn-close hook \
+         appends the TurnCard once the reply lands"
     );
     drop(session);
 
