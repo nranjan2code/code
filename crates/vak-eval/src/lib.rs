@@ -7,11 +7,13 @@
 //! block releases.
 
 pub mod cases;
+pub mod context_engine_gate;
 pub mod context_gate;
 pub mod no_first_class_integrations;
 pub mod runner;
 
 pub use cases::{builtin_suite, general_suite, held_out_suite, live_suite};
+pub use context_engine_gate::run_context_engine_scorecard;
 pub use context_gate::{ContextScorecard, MetricDirection, QualityMetric, run_context_scorecard};
 pub use no_first_class_integrations::{Offense, scan_banned_tokens};
 pub use runner::{
