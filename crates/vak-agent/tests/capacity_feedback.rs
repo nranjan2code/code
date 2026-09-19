@@ -87,6 +87,7 @@ fn flat_profile(declared_window: u64) -> CapacityProfile {
             rungs: Vec::new(),
             signals: Vec::new(),
             metadata_digest: "digest".into(),
+            quantisation: None,
         },
     )
 }

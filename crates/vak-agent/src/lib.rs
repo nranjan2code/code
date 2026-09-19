@@ -373,6 +373,9 @@ pub struct AgentConfig {
     /// has not wired capacity measurement in (e.g. standalone agent use);
     /// the feedback calls in the turn loop are then no-ops.
     pub capacity: Option<CapacityProfile>,
+    /// The `ProfileKey` `capacity` was probed under, so feedback activities
+    /// land on the same key (docs/design/68 §1).
+    pub capacity_key: Option<capacity::ProfileKey>,
     /// Full schemas `find_tools` has surfaced so far this run
     /// (docs/design/68-context-engine.md §5). `tool_definitions()` appends
     /// these after the core set on every call, in discovery order, never
@@ -489,6 +492,7 @@ impl AgentConfig {
             handoff_reset: true,
             max_audit_blocks: 2,
             capacity: None,
+            capacity_key: None,
             discovered_tools: Arc::new(StdMutex::new(Vec::new())),
         }
     }
@@ -896,7 +900,8 @@ impl Agent {
         tail_tokens: u64,
     ) -> vak_session::WorkingSetPlan {
         let session = self.session.lock().await;
-        let index = TurnIndex::from_log(&session);
+        let mut index = TurnIndex::from_log(&session);
+        index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
         let directive = index
             .turns
             .last()
@@ -3565,11 +3570,15 @@ impl Agent {
         profile: &CapacityProfile,
     ) -> std::collections::BTreeMap<String, String> {
         let mut data = std::collections::BTreeMap::new();
-        let key = capacity::ProfileKey {
-            provider: self.provider.name().to_string(),
-            model: self.config.model.clone(),
-            quantisation: None,
-        };
+        let key = self
+            .config
+            .capacity_key
+            .clone()
+            .unwrap_or_else(|| capacity::ProfileKey {
+                provider: self.provider.name().to_string(),
+                model: self.config.model.clone(),
+                quantisation: profile.provenance.quantisation.clone(),
+            });
         if let Ok(key_json) = serde_json::to_string(&key) {
             data.insert("key".into(), key_json);
         }

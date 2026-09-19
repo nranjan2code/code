@@ -242,6 +242,7 @@ fn synthetic_profile() -> CapacityProfile {
             rungs: Vec::new(),
             signals: Vec::new(),
             metadata_digest: "context-engine-gate".into(),
+            quantisation: None,
         },
     )
 }

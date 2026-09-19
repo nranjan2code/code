@@ -264,6 +264,25 @@ impl TurnIndex {
     /// (docs/design/68 §10). A turn with no card yet (never closed, or
     /// closed before this workstream landed) never matches. Highest score
     /// first; ties break by turn id for determinism.
+    /// Gives every closed turn that has no written `TurnCard` a provisional
+    /// one, in memory only, so a ledger written before cards existed (or a
+    /// run that ended before its card was appended) is still costed,
+    /// searchable and plannable — never silently projected at `Full` around
+    /// the budget. The provisional card's narration is the final answer's
+    /// opening sentence; nothing is written to the ledger.
+    pub fn ensure_cards(&mut self, estimate_tokens: &dyn Fn(&str) -> u64) {
+        for turn in self.turns.iter_mut() {
+            if turn.closed && turn.card.is_none() {
+                let narration = turn
+                    .final_answer
+                    .as_ref()
+                    .map(|answer| first_sentence_by_words(&answer.text_content(), 60))
+                    .unwrap_or_default();
+                turn.card = Some(turn.build_card("unrecorded", narration, estimate_tokens));
+            }
+        }
+    }
+
     pub fn search(&self, query: &str) -> Vec<(String, f64)> {
         let terms = crate::search::tokenize_impl(query);
         let phrase = crate::search::normalize_impl(query);

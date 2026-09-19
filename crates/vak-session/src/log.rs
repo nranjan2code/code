@@ -1298,7 +1298,11 @@ impl SessionLog {
             .map(|(id, pos)| (id.as_str(), *pos))
             .collect();
 
-        let index = TurnIndex::from_log(self);
+        let mut index = TurnIndex::from_log(self);
+        // Rendering needs a card line for every closed turn the plan put at
+        // `Card`; the token counts on a provisional card are irrelevant
+        // here (the plan was costed by the caller), so they are left at 0.
+        index.ensure_cards(&|_| 0);
         let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
         if let Some(summary) = &existing_summary {
             let summary_msg =
@@ -1341,18 +1345,12 @@ impl SessionLog {
                         .is_some_and(|(lo, hi)| turn_pos >= lo && turn_pos <= hi)
                     {
                         Fidelity::Packet
-                    } else if turn.card.is_some() {
-                        // Has a card but the plan never classified it (a
-                        // stale plan against a longer chain, or a planner
-                        // bug) — render the cheap, safe form rather than
-                        // silently losing it (no-cut invariant).
-                        Fidelity::Card
                     } else {
-                        // No card at all (a turn seeded without going
-                        // through the real turn-close hook) — the only
-                        // lossless choice, since there is no card to
-                        // render as a line.
-                        Fidelity::Full
+                        // The plan never classified it (a stale plan
+                        // against a longer chain) — render the cheap, safe
+                        // form rather than silently losing it (no-cut
+                        // invariant); every closed turn has a card here.
+                        Fidelity::Card
                     }
                 }
             };

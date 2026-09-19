@@ -165,6 +165,10 @@ pub struct ProbeProvenance {
     pub rungs: Vec<Rung>,
     pub signals: Vec<String>,
     pub metadata_digest: String,
+    /// The quantisation label the profile was keyed under, so every later
+    /// feedback record lands on the same `ProfileKey` as the probe.
+    #[serde(default)]
+    pub quantisation: Option<String>,
 }
 
 /// A ledger-recorded, per-`(provider, model, quantisation)` measurement of
@@ -232,6 +236,7 @@ impl CapacityProfile {
                 rungs: Vec::new(),
                 signals: vec!["metadata-only: hosted probing not opted in".into()],
                 metadata_digest,
+                quantisation: None,
             },
             needs_reprobe: false,
             current_turn_reserve: Ewma::new(FEEDBACK_EWMA_ALPHA),
@@ -541,12 +546,23 @@ impl Ladder {
     }
 }
 
-/// Builds a probe request of roughly `tokens_target` tokens: alternating
-/// user/assistant filler messages of varied, non-repeating text (so no
-/// adjacent-message prefix-cache shortcut can mask the real prefill cost),
-/// ending with an instruction to call `probe_ack`. `tokens_per_char` should
-/// come from the profile being probed when calibrated, so rung sizes land
-/// close to their target on real providers.
+/// Identical requests sent per ladder rung; the rung's verdict is the
+/// majority. A sampling model answers the same prompt differently run to
+/// run, so a single completion cannot decide whether an instruction was
+/// followed at that size. Three is the smallest odd count with a majority.
+pub const PROBE_SAMPLES_PER_RUNG: u32 = 3;
+
+/// Builds a probe request of roughly `tokens_target` tokens shaped like the
+/// history the model will really see (docs/design/68 §1): each filler turn
+/// is a user question, an assistant `lookup` tool call, a digest-shaped
+/// tool result carrying an `[evidence:…]` tag, and a short assistant
+/// answer — the same call pattern a closed turn projects at `Full`. Inert
+/// prose would measure a horizon the model never reaches on real work.
+/// The content is varied and non-repeating so no adjacent-message
+/// prefix-cache shortcut masks the prefill cost. The request ends with an
+/// instruction to call `probe_ack`. `tokens_per_char` should come from the
+/// profile being probed when calibrated, so rung sizes land close to their
+/// target on real providers.
 pub fn probe_request(
     tokens_target: u64,
     tokens_per_char: f64,
@@ -562,13 +578,19 @@ pub fn probe_request(
     let mut chars_written: u64 = 0;
     let mut seed: u64 = 0;
     while chars_written < chars_target {
-        let text = probe_filler_text(seed);
-        chars_written += text.len() as u64;
-        messages.push(if seed.is_multiple_of(2) {
-            vak_llm::Message::user_text(text)
-        } else {
-            vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(text)])
-        });
+        for message in probe_filler_turn(seed) {
+            chars_written += message.text_content().len() as u64
+                + message
+                    .content
+                    .iter()
+                    .map(|block| match block {
+                        vak_llm::ContentBlock::ToolUse { input, .. } => input.to_string().len(),
+                        vak_llm::ContentBlock::ToolResult { content, .. } => content.len(),
+                        _ => 0,
+                    } as u64)
+                    .sum::<u64>();
+            messages.push(message);
+        }
         seed += 1;
     }
     messages.push(vak_llm::Message::user_text(
@@ -577,15 +599,64 @@ pub fn probe_request(
     ));
     let mut request = vak_llm::ChatRequest::new(model);
     request.messages = messages;
-    request.tools = vec![vak_llm::ToolDefinition::probe_ack()];
+    request.tools = vec![probe_lookup_tool(), vak_llm::ToolDefinition::probe_ack()];
     request.max_tokens = 32;
     request
 }
 
-/// Deterministic, non-repeating filler text for one probe message. Seeded
-/// by message index so a probe run is reproducible, and varied so the
-/// provider cannot shortcut prefill via a repeated-content optimisation.
-fn probe_filler_text(seed: u64) -> String {
+/// The stand-in retrieval tool the filler turns "called"; defined on the
+/// request so every provider accepts the replayed pairs.
+fn probe_lookup_tool() -> vak_llm::ToolDefinition {
+    vak_llm::ToolDefinition::new(
+        "lookup",
+        "Look a topic up and return matching records.",
+        serde_json::json!({
+            "type": "object",
+            "properties": { "query": { "type": "string" } },
+            "required": ["query"],
+        }),
+    )
+}
+
+/// One filler turn — four messages in the shape of a projected closed turn.
+/// Seeded by turn index so a probe run is reproducible and every turn
+/// differs.
+fn probe_filler_turn(seed: u64) -> Vec<vak_llm::Message> {
+    let call_id = format!("probe-call-{seed}");
+    let topic = probe_filler_text(seed, 6);
+    let question = format!("What did the {topic} report say in section {}?", seed + 1);
+    let result = format!(
+        "[{{\"title\":\"{}\",\"url\":\"https://example.invalid/{seed}\"}},\
+         {{\"title\":\"{}\",\"url\":\"https://example.invalid/{seed}-b\"}}]\n\
+         [evidence:{call_id} \u{2014} {} chars; call recall to expand]",
+        probe_filler_text(seed.wrapping_add(101), 5),
+        probe_filler_text(seed.wrapping_add(202), 5),
+        900 + seed * 7
+    );
+    let answer = format!(
+        "Section {} of the {topic} report covers {}.",
+        seed + 1,
+        probe_filler_text(seed.wrapping_add(303), 30)
+    );
+    vec![
+        vak_llm::Message::user_text(question),
+        vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+            id: call_id.clone(),
+            name: "lookup".into(),
+            input: serde_json::json!({ "query": topic }),
+        }]),
+        vak_llm::Message {
+            role: vak_llm::Role::User,
+            content: vec![vak_llm::ContentBlock::tool_result(call_id, result)],
+        },
+        vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(answer)]),
+    ]
+}
+
+/// Deterministic, non-repeating filler words. Seeded so a probe run is
+/// reproducible, and varied so the provider cannot shortcut prefill via a
+/// repeated-content optimisation.
+fn probe_filler_text(seed: u64, words: u64) -> String {
     const WORDS: [&str; 16] = [
         "ridge",
         "cobalt",
@@ -605,7 +676,7 @@ fn probe_filler_text(seed: u64) -> String {
         "switchback",
     ];
     let mut s = String::new();
-    for j in 0..40u64 {
+    for j in 0..words {
         let idx = ((seed.wrapping_mul(31).wrapping_add(j.wrapping_mul(17))) as usize) % WORDS.len();
         if j > 0 {
             s.push(' ');
@@ -792,26 +863,49 @@ mod tests {
     }
 
     #[test]
-    fn probe_request_shape_alternates_roles_and_ends_with_probe_ack_instruction() {
+    fn probe_request_is_shaped_like_projected_turns_and_ends_with_probe_ack() {
         let req = probe_request(1_000, 0.25, "test-model");
         assert_eq!(req.max_tokens, 32);
-        assert_eq!(req.tools.len(), 1);
-        assert_eq!(req.tools[0].name, "probe_ack");
+        let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["lookup", "probe_ack"]);
         assert!(req.cache.is_none());
         let last = req
             .messages
             .last()
             .expect("at least the instruction message");
         assert!(last.text_content().contains("probe_ack"));
-        // Alternates starting with user.
+        // Each filler turn is user question → assistant lookup call →
+        // digest-shaped result with an evidence tag → assistant answer.
         assert_eq!(req.messages[0].role, vak_llm::Role::User);
-        if req.messages.len() > 2 {
-            assert_eq!(req.messages[1].role, vak_llm::Role::Assistant);
-        }
+        assert!(matches!(
+            &req.messages[1].content[0],
+            vak_llm::ContentBlock::ToolUse { name, .. } if name == "lookup"
+        ));
+        assert!(matches!(
+            &req.messages[2].content[0],
+            vak_llm::ContentBlock::ToolResult { content, .. } if content.contains("[evidence:")
+        ));
+        assert_eq!(req.messages[3].role, vak_llm::Role::Assistant);
+        // Every filler turn differs (no prefix-cache shortcut inside a rung).
+        assert_ne!(
+            req.messages[0].text_content(),
+            req.messages[4].text_content()
+        );
         // Roughly sized: within a generous tolerance of the token target
         // translated through the given tokens/char.
-        let total_chars: usize = req.messages.iter().map(|m| m.text_content().len()).sum();
+        let total_chars: usize = req
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .map(|b| match b {
+                vak_llm::ContentBlock::Text { text } => text.len(),
+                vak_llm::ContentBlock::ToolUse { input, .. } => input.to_string().len(),
+                vak_llm::ContentBlock::ToolResult { content, .. } => content.len(),
+                _ => 0,
+            })
+            .sum();
         assert!(total_chars as f64 >= 1_000.0 / 0.25 * 0.5);
+        assert!(total_chars as f64 <= 1_000.0 / 0.25 * 2.0);
     }
 
     #[test]
@@ -894,6 +988,7 @@ mod tests {
                 rungs: Vec::new(),
                 signals: Vec::new(),
                 metadata_digest: "digest".into(),
+                quantisation: None,
             },
         )
     }

@@ -4436,12 +4436,19 @@ impl Core {
             quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
         };
 
-        let cached = self
-            .inner
-            .capacity_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(&key).cloned());
+        // The ledger's latest record for this key wins over the in-process
+        // cache: it carries every feedback update the turn loop wrote
+        // (tightened horizons, calibrated tokens/char), which the cache
+        // never sees, and it survives a restart.
+        let cached = session
+            .latest_capacity_profile::<_, vak_agent::capacity::CapacityProfile>(&key)
+            .or_else(|| {
+                self.inner
+                    .capacity_cache
+                    .lock()
+                    .ok()
+                    .and_then(|cache| cache.get(&key).cloned())
+            });
         let declared_window = metadata
             .as_ref()
             .map(|m| m.input_tokens)
@@ -4494,6 +4501,8 @@ impl Core {
             )
         };
 
+        let mut profile = profile;
+        profile.provenance.quantisation = key.quantisation.clone();
         if let Ok(mut cache) = self.inner.capacity_cache.lock() {
             cache.insert(key.clone(), profile.clone());
         }
@@ -4560,40 +4569,79 @@ impl Core {
                 .iter()
                 .map(|m| m.text_content().len() as u64)
                 .sum();
-            let outcome = match provider_client.stream(request, cancel.clone()).await {
-                Ok(stream) => stream.result().await,
-                Err(e) => Err(e),
-            };
-            match outcome {
-                Ok(message) => {
-                    if sent_chars > 0 && message.usage.input_tokens > 0 {
-                        tokens_per_char_hint =
-                            message.usage.input_tokens as f64 / sent_chars as f64;
-                    }
-                    let followed = vak_agent::capacity::followed(&message);
-                    rungs.push(vak_agent::capacity::Rung {
-                        tokens: target,
-                        accepted: true,
-                        followed_instruction: Some(followed),
-                        prefill_ms: message.usage.prefill_ms,
-                    });
-                    ladder.report(target, true, followed);
-                }
-                Err(vak_llm::LlmError::Context(msg)) => {
-                    signals.push(format!("rung {target} rejected: {msg}"));
-                    rungs.push(vak_agent::capacity::Rung {
-                        tokens: target,
-                        accepted: false,
-                        followed_instruction: None,
-                        prefill_ms: None,
-                    });
-                    ladder.report(target, false, false);
-                }
-                Err(e) => {
-                    signals.push(format!("rung {target} probe failed: {e}"));
+            // One completion from a sampling model is one coin flip; a rung
+            // is decided by the majority of up to PROBE_SAMPLES_PER_RUNG
+            // identical requests (identical on purpose: the prefix is
+            // cached after the first, so the extra samples cost decode
+            // time only), stopping as soon as the majority is settled.
+            let mut passes = 0u32;
+            let mut fails = 0u32;
+            let mut rejected: Option<String> = None;
+            let mut transport_error: Option<vak_llm::LlmError> = None;
+            let mut first_prefill_ms: Option<u64> = None;
+            let needed = vak_agent::capacity::PROBE_SAMPLES_PER_RUNG / 2 + 1;
+            while passes < needed && fails < needed && rejected.is_none() {
+                if cancel.is_cancelled() {
                     break;
                 }
+                let outcome = match provider_client
+                    .stream(request.clone(), cancel.clone())
+                    .await
+                {
+                    Ok(stream) => stream.result().await,
+                    Err(e) => Err(e),
+                };
+                match outcome {
+                    Ok(message) => {
+                        if sent_chars > 0 && message.usage.input_tokens > 0 {
+                            tokens_per_char_hint =
+                                message.usage.input_tokens as f64 / sent_chars as f64;
+                        }
+                        if first_prefill_ms.is_none() {
+                            first_prefill_ms = message.usage.prefill_ms;
+                        }
+                        if vak_agent::capacity::followed(&message) {
+                            passes += 1;
+                        } else {
+                            fails += 1;
+                        }
+                    }
+                    Err(vak_llm::LlmError::Context(msg)) => rejected = Some(msg),
+                    Err(e) => {
+                        transport_error = Some(e);
+                        break;
+                    }
+                }
             }
+            if let Some(e) = transport_error {
+                signals.push(format!("rung {target} probe failed: {e}"));
+                break;
+            }
+            if let Some(msg) = rejected {
+                signals.push(format!("rung {target} rejected: {msg}"));
+                rungs.push(vak_agent::capacity::Rung {
+                    tokens: target,
+                    accepted: false,
+                    followed_instruction: None,
+                    prefill_ms: None,
+                });
+                ladder.report(target, false, false);
+                continue;
+            }
+            if passes + fails == 0 {
+                break;
+            }
+            let followed = passes >= needed;
+            signals.push(format!(
+                "rung {target}: {passes} followed / {fails} did not"
+            ));
+            rungs.push(vak_agent::capacity::Rung {
+                tokens: target,
+                accepted: true,
+                followed_instruction: Some(followed),
+                prefill_ms: first_prefill_ms,
+            });
+            ladder.report(target, true, followed);
         }
 
         let verified_window = ladder.verified_window();
@@ -4674,6 +4722,7 @@ impl Core {
                 rungs,
                 signals,
                 metadata_digest,
+                quantisation: None,
             },
         )
     }
@@ -5577,10 +5626,15 @@ impl Core {
         // ladder run. `session` is the same ledger this turn is about to
         // append to, so a fresh probe's Activity lands before the turn's
         // own messages.
-        cfg.capacity = Some(
-            self.capacity_profile_for(&turn_primary_leg, &mut session, &cancel)
-                .await,
-        );
+        let capacity = self
+            .capacity_profile_for(&turn_primary_leg, &mut session, &cancel)
+            .await;
+        cfg.capacity_key = Some(vak_agent::capacity::ProfileKey {
+            provider: turn_primary_leg.provider.clone(),
+            model: turn_primary_leg.model.clone(),
+            quantisation: capacity.provenance.quantisation.clone(),
+        });
+        cfg.capacity = Some(capacity);
         let sp = &self.inner.config.stop_policy;
         cfg.stop_policy = if sp.enabled {
             Some(vak_agent::StopPolicy {
@@ -9585,12 +9639,14 @@ mod capacity_probe_tests {
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
     }
 
-    /// Always follows the probe instruction; the third call onward (the
-    /// cache rung's second request) reports a cache hit, so the test can
-    /// assert `CacheBehaviour::ProviderReported` end to end through
+    /// Always follows the probe instruction; a request identical to the
+    /// previous one (a repeated sample inside a rung, or the cache rung's
+    /// second request) reports a cache hit, so the test can assert
+    /// `CacheBehaviour::ProviderReported` end to end through
     /// `capacity_profile_for` without any network I/O.
     struct FollowsProbeAndReportsCacheOnThirdCall {
         calls: std::sync::atomic::AtomicU32,
+        last_fingerprint: std::sync::Mutex<Option<String>>,
     }
 
     #[async_trait::async_trait]
@@ -9605,6 +9661,16 @@ mod capacity_probe_tests {
             _cancel: CancellationToken,
         ) -> Result<vak_llm::EventStream, LlmError> {
             let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let fingerprint = serde_json::to_string(&_request.messages).unwrap_or_default();
+            let repeated = self
+                .last_fingerprint
+                .lock()
+                .map(|mut last| {
+                    let same = last.as_deref() == Some(fingerprint.as_str());
+                    *last = Some(fingerprint);
+                    same
+                })
+                .unwrap_or(false);
             let (mut sink, rx) = vak_llm::stream::channel(4);
             sink.close_message(AssistantMessage {
                 content: vec![ContentBlock::ToolUse {
@@ -9616,9 +9682,7 @@ mod capacity_probe_tests {
                 usage: Usage {
                     input_tokens: 4_000,
                     output_tokens: 5,
-                    // the third call overall is the cache rung's second
-                    // (repeat) request.
-                    cache_read_input_tokens: (call == 2).then_some(3_500),
+                    cache_read_input_tokens: repeated.then_some(3_500),
                     ..Default::default()
                 },
                 model: "fake-ollama-model".into(),
@@ -9645,6 +9709,7 @@ mod capacity_probe_tests {
         core.inner.registry.register("ollama", |_auth| {
             Ok(Arc::new(FollowsProbeAndReportsCacheOnThirdCall {
                 calls: std::sync::atomic::AtomicU32::new(0),
+                last_fingerprint: std::sync::Mutex::new(None),
             }) as Arc<dyn Provider>)
         });
 

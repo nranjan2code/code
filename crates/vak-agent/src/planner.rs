@@ -237,6 +237,7 @@ mod tests {
                 rungs: Vec::new(),
                 signals: Vec::new(),
                 metadata_digest: "d".into(),
+                quantisation: None,
             },
         )
     }
