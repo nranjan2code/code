@@ -481,6 +481,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     try { return JSON.stringify(JSON.parse(props.item.argsJson), null, 2); } catch { return props.item.argsJson; }
   });
   return (
+    <Show when={!props.item.resolved}>
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
     <div class="ap-head">Vak wants to use {props.item.tool}</div>
     <Show when={primary()}>
@@ -541,6 +542,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       </div>
     </Show>
   </div>
+    </Show>
   );
 };
 

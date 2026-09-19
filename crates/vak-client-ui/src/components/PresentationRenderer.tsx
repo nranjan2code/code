@@ -721,6 +721,9 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
   if (props.item.content.type !== "approval") return null;
   const content = props.item.content;
   const pending = () => props.item.status === "pending";
+  // An approval is a question, not a record: once answered it leaves the
+  // conversation (the decision lives in the ledger and activity log).
+  if (!pending()) return null;
   const argsPretty = () => { try { return JSON.stringify(JSON.parse(content.args_json), null, 2); } catch { return content.args_json; } };
   return (
     <section
@@ -1163,6 +1166,49 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     return <div class="semantic-source">{cleanFallback}</div>;
   };
   const visible = createMemo(() => ordered().map((item) => ({ item, node: OrderedItem(item) })).filter((entry) => entry.node !== null));
+  // Cards, artifacts and the narration that follows them are one reply from
+  // one author: they share a single assistant header, cards first (the order
+  // the ledger recorded them). Without this a card rendered as an orphan row
+  // above the header of the sentence that introduced it.
+  const blocks = createMemo(() => {
+    const out: JSX.Element[] = [];
+    let lead: JSX.Element[] = [];
+    const flush = () => {
+      if (lead.length === 0) return;
+      out.push(<AssistantMessage sessionId={props.sessionId}>{lead}</AssistantMessage>);
+      lead = [];
+    };
+    const grouping = !showOperatorChrome();
+    for (const { item, node } of visible()) {
+      const cardLike =
+        item.role !== "user" &&
+        (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
+      if (grouping && cardLike) {
+        lead.push(node);
+        continue;
+      }
+      const answer =
+        item.role === "assistant" && item.content.type === "document"
+          ? item.content.document
+          : item.role === "assistant" && item.content.type === "outcome"
+            ? item.content.document
+            : undefined;
+      if (grouping && answer) {
+        out.push(
+          <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
+            {lead}
+            <PresentationDocumentView document={answer} />
+          </AssistantMessage>,
+        );
+        lead = [];
+        continue;
+      }
+      flush();
+      out.push(node);
+    }
+    flush();
+    return out;
+  });
   return (
     <section class="semantic-turn" data-turn={props.id}>
       <Show
@@ -1179,7 +1225,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
           </Show>
         }
       >
-        <For each={visible()}>{(entry) => entry.node}</For>
+        <For each={blocks()}>{(node) => node}</For>
       </Show>
     </section>
   );

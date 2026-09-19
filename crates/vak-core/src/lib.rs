@@ -1507,6 +1507,7 @@ impl Core {
         vak_permission::PermissionEngine::from_rule_strings(&rule_specs_from(
             &allow, &ask, &deny, extra,
         ))
+        .map(|engine| engine.with_presenting_tools(presentation_tools::presenting_tool_names()))
         .map_err(CoreError::Rule)
     }
 
@@ -6955,6 +6956,7 @@ pub fn build_engine_with(
     extra: &[String],
 ) -> Result<vak_permission::PermissionEngine, CoreError> {
     vak_permission::PermissionEngine::from_rule_strings(&rule_specs(config, extra))
+        .map(|engine| engine.with_presenting_tools(presentation_tools::presenting_tool_names()))
         .map_err(CoreError::Rule)
 }
 

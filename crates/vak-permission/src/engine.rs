@@ -24,6 +24,10 @@ pub enum AskSource {
 pub struct PermissionEngine {
     rules: Vec<Rule>,
     write_scope: Option<Vec<PathBuf>>,
+    /// Tools that only display something to the user (`Tool::presents_cards`).
+    /// Supplied by the host from the tools' own declarations, never inferred
+    /// from a name here.
+    presenting: Vec<String>,
 }
 
 const READ_TOOLS: [&str; 7] = [
@@ -60,6 +64,7 @@ impl PermissionEngine {
         PermissionEngine {
             rules,
             write_scope: None,
+            presenting: Vec::new(),
         }
     }
 
@@ -71,7 +76,17 @@ impl PermissionEngine {
         Ok(PermissionEngine {
             rules,
             write_scope: None,
+            presenting: Vec::new(),
         })
+    }
+
+    /// Declare the tools that present cards. They show the user something
+    /// Vak already holds and reach nothing outside the conversation, so every
+    /// mode lets them through (read-only included) with no approval. An
+    /// operator's explicit Deny or Ask rule still wins.
+    pub fn with_presenting_tools(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.presenting = names.into_iter().collect();
+        self
     }
 
     pub fn rules(&self) -> &[Rule] {
@@ -154,7 +169,9 @@ impl PermissionEngine {
                 source: AskSource::Rule,
             };
         }
-        if crate::rules::allow_covers(&self.rules, tool, args) {
+        if crate::rules::allow_covers(&self.rules, tool, args)
+            || self.presenting.iter().any(|name| name == tool)
+        {
             return Decision::Allow;
         }
 

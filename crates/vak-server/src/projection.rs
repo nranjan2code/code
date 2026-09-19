@@ -292,6 +292,7 @@ fn snapshot_inner(
     // `vak-agent`'s own bounded repair-turn semantics (the model's LATEST
     // attempt is authoritative).
     let mut card_group_by_type: HashMap<String, String> = HashMap::new();
+    let mut seen_cards: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut repair_armed = false;
     let mut ids_to_remove: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in &chain {
@@ -311,6 +312,7 @@ fn snapshot_inner(
                     scan_turn += 1;
                     pending_tool_context = None;
                     card_group_by_type.clear();
+                    seen_cards.clear();
                     repair_armed = false;
                 }
                 if control.is_some_and(|kind| kind.retries_answer()) {
@@ -893,7 +895,8 @@ fn snapshot_inner(
                                 // arguments; the ledger stores those untruncated,
                                 // while its result is only a short ack (and any
                                 // result text the framework line-truncates).
-                                let outputs = if vak_core::presentation_tools::is_card_tool(name) {
+                                let name_is_card = vak_core::presentation_tools::is_card_tool(name);
+                                let outputs = if name_is_card {
                                     vak_core::presentation_tools::card_output_from_call(
                                         name,
                                         input,
@@ -915,6 +918,16 @@ fn snapshot_inner(
                                         .unwrap_or_default()
                                 };
                                 for (structured_index, output) in outputs.into_iter().enumerate() {
+                                    // The same card emitted twice in one answer is one
+                                    // card, armed retry or not: identical content has
+                                    // nothing to supersede and nothing to add.
+                                    if name_is_card
+                                        && !seen_cards.insert(
+                                            serde_json::to_string(&output).unwrap_or_default(),
+                                        )
+                                    {
+                                        continue;
+                                    }
                                     let item_id = format!("{id}-structured-{structured_index}");
                                     let previous = card_group_by_type
                                         .insert(output.semantic_type.clone(), item_id.clone());
@@ -3154,6 +3167,69 @@ mod tests {
             !text.contains("(no text)"),
             "a card-only run has no placeholder: {text}"
         );
+    }
+
+    /// Real ledger (gemma, "weather in noida"): a prose draft, a presentation
+    /// nudge, the same card called three times, then the narration. The user
+    /// sees one card and one answer, in that order.
+    #[test]
+    fn identical_repeated_card_calls_and_a_rejected_draft_project_to_one_card_one_answer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "repeat");
+        log.append_message(MessageRecord {
+            message: Message::user_text("weather in noida"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("DRAFT 28C")]),
+            meta: None,
+        })
+        .expect("draft");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::PresentationCheck,
+            "[presentation-check]: use a card",
+        ))
+        .expect("nudge");
+        for id in ["c1", "c2", "c3"] {
+            append_card_call(&mut log, id, "28C");
+        }
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("FINAL 28C")]),
+            meta: None,
+        })
+        .expect("final");
+        let timeline = snapshot("repeat", &log);
+        let cards = timeline
+            .items
+            .iter()
+            .filter(|i| i.kind == OutputKind::Card)
+            .count();
+        let answers: Vec<&str> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::Assistant)
+            .map(|i| i.fallback_text.as_str())
+            .collect();
+        assert_eq!(
+            cards,
+            1,
+            "{:?}",
+            timeline.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+        );
+        assert_eq!(answers.len(), 1, "{answers:?}");
+        assert!(answers[0].contains("FINAL"), "{answers:?}");
+        let kinds: Vec<_> = timeline.items.iter().map(|i| i.kind).collect();
+        let card_at = kinds
+            .iter()
+            .position(|k| *k == OutputKind::Card)
+            .expect("a card");
+        let answer_at = timeline
+            .items
+            .iter()
+            .position(|i| i.role == vak_delivery::OutputRole::Assistant)
+            .expect("an answer");
+        assert!(card_at < answer_at, "the card precedes its narration");
     }
 
     /// A draft the runtime sent back for a redo is internal: the user sees the

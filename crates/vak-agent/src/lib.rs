@@ -521,6 +521,8 @@ pub struct Agent {
     pub config: AgentConfig,
     /// Identical-call detector for the doom-loop guard, reset per run.
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
+    /// `name + input` of every card call that displayed successfully this run.
+    presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Active goal (Phase H): set via `set_goal`, consumed by the audit
     /// gate on completion claims.
     active_goal: Option<goal::GoalState>,
@@ -548,6 +550,7 @@ impl Agent {
             session,
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
+            presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
             active_goal: None,
             obligations: Vec::new(),
             handoff_used: false,
@@ -666,6 +669,10 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.presented_cards
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         if self.active_goal.is_some() {
             // Goal lifecycle opens the run (audit-only entry).
             let mut session = self.session.lock().await;
@@ -761,6 +768,10 @@ impl Agent {
         let mut outcome_turns = 0usize;
         self.repair.reset();
         self.run_call_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.presented_cards
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
@@ -3054,7 +3065,69 @@ impl Agent {
         Err(last_err.unwrap_or_else(|| LlmError::Network("route ladder exhausted".into())))
     }
 
+    /// Runs a batch, except that a card the user already sees is not shown
+    /// again. A card call is on screen after its first success, so an identical
+    /// one (a small model repeats it until a breaker fires) is answered with a
+    /// plain ack instead of being run — never an error, which the stop guard
+    /// would count as an unresolved failure and answer with another model turn.
     async fn execute_batch(
+        &self,
+        calls: Vec<PendingToolCall>,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Vec<(String, ToolRunOutput)> {
+        let key = |call: &PendingToolCall| {
+            format!(
+                "{}\u{0}{}",
+                call.name,
+                serde_json::to_string(&call.input).unwrap_or_default()
+            )
+        };
+        let mut shown = self
+            .presented_cards
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut repeats: Vec<String> = Vec::new();
+        let mut live_cards: HashMap<String, String> = HashMap::new();
+        let mut live = Vec::with_capacity(calls.len());
+        for call in calls {
+            if self.tool_presents_cards(&call.name) {
+                let card_key = key(&call);
+                if !shown.insert(card_key.clone()) {
+                    repeats.push(call.id.clone());
+                    continue;
+                }
+                live_cards.insert(call.id.clone(), card_key);
+            }
+            live.push(call);
+        }
+        let mut results = self.execute_batch_calls(live, cancel, events).await;
+        {
+            let mut presented = self
+                .presented_cards
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (id, output) in &results {
+                if let (Some(card_key), ToolRunOutput::Ok(_)) = (live_cards.get(id), output) {
+                    presented.insert(card_key.clone());
+                }
+            }
+        }
+        results.extend(repeats.into_iter().map(|id| {
+            (
+                id,
+                ToolRunOutput::Ok(
+                    "Card already displayed to the user. Do not call it again: add at most one \
+                     short sentence and finish."
+                        .into(),
+                ),
+            )
+        }));
+        results
+    }
+
+    async fn execute_batch_calls(
         &self,
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,

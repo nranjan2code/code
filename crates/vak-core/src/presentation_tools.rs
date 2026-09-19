@@ -750,6 +750,16 @@ pub fn presentation_check_nudge(
     ))
 }
 
+/// Names of every tool that declares `presents_cards()`, for the permission
+/// engine: a card is Vak's own display channel and needs no approval.
+pub fn presenting_tool_names() -> Vec<String> {
+    EmitCardTool::all()
+        .iter()
+        .filter(|tool| tool.presents_cards())
+        .map(|tool| tool.name().to_string())
+        .collect()
+}
+
 /// Whether `name` is one of the `emit_*_card` tools.
 pub fn is_card_tool(name: &str) -> bool {
     SHAPES.iter().any(|shape| shape.name == name)
@@ -772,6 +782,35 @@ pub fn card_output_from_call(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// Real trigger: "Vak wants to use emit_metric_card — this needs your
+    /// approval" under a card that had already rendered. Cards are Vak's own
+    /// display channel, so every shape is open in every mode, through the
+    /// engine `Core` builds — the one the capability preflight reads too.
+    #[test]
+    fn every_card_tool_is_allowed_in_every_mode_without_a_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = crate::build_engine_with(&vak_config::Config::default(), &[]).unwrap();
+        let args = serde_json::json!({});
+        assert!(!SHAPES.is_empty());
+        for shape in SHAPES {
+            for mode in [
+                vak_permission::Mode::ReadOnly,
+                vak_permission::Mode::WorkspaceWrite,
+                vak_permission::Mode::FullAccess,
+            ] {
+                assert!(
+                    matches!(
+                        engine.evaluate(shape.name, &args, mode, dir.path()),
+                        vak_permission::Decision::Allow
+                    ),
+                    "{} in {mode:?}",
+                    shape.name
+                );
+            }
+        }
+        assert_eq!(presenting_tool_names().len(), SHAPES.len());
+    }
 
     #[test]
     fn every_shape_has_a_unique_tool_name() {
