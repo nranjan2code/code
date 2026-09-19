@@ -288,6 +288,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Intent(_) => "intent",
             EntryPayload::TurnCapabilitiesBound(_) => "capabilities",
             EntryPayload::ChildRun { .. } => "child-run",
+            EntryPayload::Presentation(_) => "presentation",
         })
         .collect();
     assert_eq!(

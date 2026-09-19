@@ -26,10 +26,13 @@
 //! Call and response, not echo: the model's `emit_*_card` call carries the
 //! card in its arguments (schema-constrained, and recorded untruncated in the
 //! ledger). `execute()` validates them against the real `SkillRegistry` and
-//! answers with a short ack — or, if the card is invalid, a tool error the
-//! model can repair in the same turn. `vak-server`'s projection rebuilds the
-//! card from the call arguments via `card_output_from_call`. The card is never
-//! carried in the result text: the tool framework line-truncates results at
+//! answers with a short ack (now carrying the id of the `Presentation`
+//! ledger entry written at validation) — or, if the card is invalid, a tool
+//! error the model can repair in the same turn. `vak-server`'s projection
+//! reads that ledger entry directly (docs/design/68-context-engine.md
+//! §10); nothing rebuilds the card from call arguments at display time any
+//! more. The card is never carried in the result text: the tool framework
+//! line-truncates results at
 //! ~2000 characters, which silently destroyed any larger card (found live with
 //! a research card), and echoing the data back also invited the model to
 //! restate it as a duplicate fence.
@@ -765,17 +768,255 @@ pub fn is_card_tool(name: &str) -> bool {
     SHAPES.iter().any(|shape| shape.name == name)
 }
 
-/// The card an `emit_*_card` call displays, rebuilt from the call's own
+/// Rebuilds an `emit_*_card` call's validated output from the call's own
 /// arguments — the ledger records these untruncated, so nothing depends on
 /// the tool result text (which the tool framework line-truncates at ~2000
-/// characters, silently destroying any larger card's JSON).
-pub fn card_output_from_call(
+/// characters, silently destroying any larger card's JSON). Private: the
+/// only consumers are this module's own conformance tests and
+/// `presentation_info`, which turns this into a `Presentation` ledger entry
+/// at the moment a card validates (docs/design/68-context-engine.md §10).
+/// `vak-server`'s projection used to call a public version of this
+/// (`card_output_from_call`) to rebuild the card for display on every
+/// snapshot; it now reads the written `Presentation` entry instead, so
+/// nothing outside this crate needs to re-validate a call's arguments.
+fn rebuild_call(
     name: &str,
     input: &Value,
     skills: &vak_delivery::SkillRegistry,
 ) -> Option<vak_delivery::StructuredOutput> {
     let shape = SHAPES.iter().find(|shape| shape.name == name)?;
     validate_call(shape, input, skills).ok()
+}
+
+/// Everything needed to write a `PresentationRecord` for a call that just
+/// validated: the canonical payload, the schema-driven title and identity
+/// digest, and which skill/version/schema owns the type. `vak-agent`'s
+/// tool-execution path has no session-log access (AGENTS.md invariant 14:
+/// tools cross a broker boundary), so this is exposed through
+/// `AgentConfig::presentation_rebuild`, a closure `Core` installs — the
+/// agent loop stays free of card-shape knowledge and calls this indirectly.
+pub struct PresentationInfo {
+    pub semantic_type: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub schema_version: u32,
+    /// Canonical (key-sorted) form — see `vak_session::types::canonicalize_json`.
+    pub payload: Value,
+    pub title: String,
+    pub identity_digest: String,
+}
+
+/// Validates an `emit_*_card` call and returns everything needed to write
+/// its `Presentation` ledger entry. `None` when the call does not validate
+/// (the tool's own `execute()` already rejected it in that case, so this is
+/// only ever called for a call that already succeeded — see
+/// `AgentConfig::presentation_rebuild`'s call site in `Core`).
+pub fn presentation_info(
+    name: &str,
+    input: &Value,
+    skills: &vak_delivery::SkillRegistry,
+) -> Option<PresentationInfo> {
+    let output = rebuild_call(name, input, skills)?;
+    let payload = vak_session::types::canonicalize_json(&output.payload);
+    let title = title_for(&output.semantic_type, &payload);
+    let identity_digest = identity_digest(&output.semantic_type, &payload);
+    Some(PresentationInfo {
+        semantic_type: output.semantic_type,
+        skill_id: output.skill_id,
+        skill_version: output.skill_version,
+        schema_version: u32::from(output.schema_version),
+        payload,
+        title,
+        identity_digest,
+    })
+}
+
+/// Title fallback for a card whose payload has no `title` field (only the
+/// metric shape lacks one; every other shape's schema asks the model for
+/// one).
+fn title_for(semantic_type: &str, payload: &Value) -> String {
+    if let Some(title) = payload.get("title").and_then(Value::as_str)
+        && !title.trim().is_empty()
+    {
+        return title.to_string();
+    }
+    payload
+        .get("label")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("location").and_then(Value::as_str))
+        .unwrap_or(semantic_type)
+        .to_string()
+}
+
+fn compact_scalar(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn canonical_compact(payload: &Value) -> String {
+    let canonical = vak_session::types::canonicalize_json(payload);
+    serde_json::to_string(&canonical).unwrap_or_default()
+}
+
+fn research_digest(payload: &Value) -> String {
+    let takeaways: Vec<String> = payload
+        .get("takeaways")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|t| t.get("text").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let sources: Vec<String> = payload
+        .get("sources")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|s| {
+                    let title = s.get("title").and_then(Value::as_str).unwrap_or("");
+                    let url = s.get("url").and_then(Value::as_str).unwrap_or("");
+                    format!("{title} ({url})")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    format!(
+        "takeaways: {} | sources: {}",
+        takeaways.join(" ~ "),
+        sources.join(", ")
+    )
+}
+
+fn table_digest(payload: &Value) -> String {
+    let title = payload.get("title").and_then(Value::as_str).unwrap_or("");
+    let columns: Vec<String> = payload
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|c| c.get("key").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let rows = payload.get("rows").and_then(Value::as_array);
+    let row_count = rows.map(Vec::len).unwrap_or(0);
+    let first_row = rows.and_then(|r| r.first()).cloned().unwrap_or(Value::Null);
+    format!(
+        "title: {title} | columns: {} | rows: {row_count} | first: {}",
+        columns.join(","),
+        canonical_compact(&first_row)
+    )
+}
+
+fn chart_digest(payload: &Value) -> String {
+    let title = payload.get("title").and_then(Value::as_str).unwrap_or("");
+    let summary = payload
+        .get("accessible_summary")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let series: Vec<String> = payload
+        .get("series")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|s| {
+                    let name = s.get("name").and_then(Value::as_str).unwrap_or("");
+                    let points = s
+                        .get("points")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    format!("{name}({points})")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    format!(
+        "title: {title} | series: {} | summary: {summary}",
+        series.join(",")
+    )
+}
+
+fn entity_digest(payload: &Value) -> String {
+    let title = payload.get("title").and_then(Value::as_str).unwrap_or("");
+    let entity_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut fields: Vec<String> = payload
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .filter(|(key, _)| key.as_str() != "title" && key.as_str() != "type")
+                .map(|(key, value)| format!("{key}={}", compact_scalar(value)))
+                .collect()
+        })
+        .unwrap_or_default();
+    fields.sort();
+    format!(
+        "title: {title} | type: {entity_type} | fields: {}",
+        fields.join(",")
+    )
+}
+
+fn items_digest(payload: &Value) -> String {
+    let title = payload.get("title").and_then(Value::as_str).unwrap_or("");
+    let labels: Vec<String> = payload
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("label")
+                        .or_else(|| item.get("title"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    format!("title: {title} | items: {}", labels.join(","))
+}
+
+fn default_digest(semantic_type: &str, payload: &Value) -> String {
+    let title = payload
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(semantic_type);
+    let mut keys: Vec<&str> = payload
+        .as_object()
+        .map(|obj| obj.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    keys.sort();
+    format!("title: {title} | keys: {}", keys.join(","))
+}
+
+/// Schema-driven identity digest (docs/design/68-context-engine.md §10):
+/// which fields make a presentation distinguishable from another of the
+/// same `semantic_type`. Dispatches by shape (the same grouping `SHAPES`
+/// already uses — a `table`-shaped type and a `chart`-shaped type get
+/// digested the same way as their siblings), with `entity` and the
+/// checklist/timeline/itinerary family called out explicitly per the
+/// design. Never a character-count truncation: each branch names the
+/// fields that carry identity for its shape instead of cutting the payload
+/// short.
+pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
+    match emit_tool_for(semantic_type) {
+        Some("emit_metric_card") => canonical_compact(payload),
+        Some("emit_research_card") => research_digest(payload),
+        Some("emit_table_card") => table_digest(payload),
+        Some("emit_chart_card") => chart_digest(payload),
+        Some("emit_timeline_card") => items_digest(payload),
+        _ if semantic_type == "entity" => entity_digest(payload),
+        _ => default_digest(semantic_type, payload),
+    }
 }
 
 #[cfg(test)]
@@ -867,7 +1108,7 @@ mod tests {
             !out.content.contains("semantic_type"),
             "ack must not echo the card"
         );
-        let card = card_output_from_call(
+        let card = rebuild_call(
             "emit_chart_card",
             &args,
             &vak_delivery::built_in_skill_registry(),
@@ -906,7 +1147,7 @@ mod tests {
                 "takeaways": [{"text": long, "citation_indices": [1]}]
             }
         });
-        let card = card_output_from_call(
+        let card = rebuild_call(
             "emit_research_card",
             &args,
             &vak_delivery::built_in_skill_registry(),
@@ -949,7 +1190,7 @@ mod tests {
                     ));
                     continue;
                 }
-                let card = card_output_from_call(name, &args, &skills);
+                let card = rebuild_call(name, &args, &skills);
                 if card.as_ref().map(|c| c.semantic_type.as_str()) != Some(semantic_type) {
                     failures.push(format!(
                         "{semantic_type} ({name}): did not rebuild into a card"
@@ -1009,5 +1250,138 @@ mod tests {
                 assert_eq!(emit_tool_for(t), Some(shape.name));
             }
         }
+    }
+
+    #[test]
+    fn identity_digest_for_metric_is_the_whole_compact_payload() {
+        let payload = serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"});
+        let digest = identity_digest("metric", &payload);
+        // The whole card, canonical and compact — every field survives.
+        assert!(digest.contains("\"label\":\"Uptime\""), "{digest}");
+        assert!(digest.contains("\"value\":99.9"), "{digest}");
+        assert!(digest.contains("\"unit\":\"%\""), "{digest}");
+    }
+
+    #[test]
+    fn identity_digest_for_research_synthesis_is_takeaways_and_sources() {
+        let payload = serde_json::json!({
+            "sources": [{"title": "Reuters", "url": "https://example.com/a"}],
+            "takeaways": [{"text": "Markets fell", "citation_indices": [1]}]
+        });
+        let digest = identity_digest("research.synthesis", &payload);
+        assert!(digest.contains("Markets fell"), "{digest}");
+        assert!(digest.contains("Reuters"), "{digest}");
+        assert!(digest.contains("https://example.com/a"), "{digest}");
+        // Not the raw snippet field, which the design excludes.
+        assert!(!digest.contains("snippet"), "{digest}");
+    }
+
+    #[test]
+    fn identity_digest_for_table_is_title_columns_row_count_and_first_row() {
+        let payload = serde_json::json!({
+            "title": "Q3 Budget",
+            "columns": [{"key": "dept", "label": "Department"}, {"key": "spend", "label": "Spend"}],
+            "rows": [{"dept": "Eng", "spend": 100}, {"dept": "Sales", "spend": 50}]
+        });
+        let digest = identity_digest("table", &payload);
+        assert!(digest.contains("Q3 Budget"), "{digest}");
+        assert!(
+            digest.contains("dept") && digest.contains("spend"),
+            "{digest}"
+        );
+        assert!(digest.contains("rows: 2"), "{digest}");
+        assert!(digest.contains("Eng"), "{digest}");
+        assert!(
+            !digest.contains("Sales"),
+            "digest must not include every row: {digest}"
+        );
+    }
+
+    #[test]
+    fn identity_digest_for_chart_is_title_series_points_and_summary() {
+        let payload = serde_json::json!({
+            "title": "Revenue",
+            "chart_type": "line",
+            "accessible_summary": "rising trend",
+            "series": [{"name": "actual", "points": [{"x": 1, "y": 2.0}, {"x": 2, "y": 3.0}]}]
+        });
+        let digest = identity_digest("chart", &payload);
+        assert!(digest.contains("Revenue"), "{digest}");
+        assert!(digest.contains("actual(2)"), "{digest}");
+        assert!(digest.contains("rising trend"), "{digest}");
+    }
+
+    #[test]
+    fn identity_digest_for_entity_is_title_type_and_fields() {
+        let payload = serde_json::json!({
+            "title": "Paris",
+            "type": "city",
+            "population": "2.1M",
+            "country": "France"
+        });
+        let digest = identity_digest("entity", &payload);
+        assert!(digest.contains("Paris"), "{digest}");
+        assert!(digest.contains("type: city"), "{digest}");
+        assert!(digest.contains("population=2.1M"), "{digest}");
+        assert!(digest.contains("country=France"), "{digest}");
+    }
+
+    #[test]
+    fn identity_digest_for_checklist_timeline_itinerary_is_title_and_item_labels() {
+        let payload = serde_json::json!({
+            "title": "Trip",
+            "items": [{"label": "Fly to Paris"}, {"label": "Check into hotel"}]
+        });
+        for semantic_type in ["checklist", "timeline", "itinerary"] {
+            let digest = identity_digest(semantic_type, &payload);
+            assert!(digest.contains("Trip"), "{semantic_type}: {digest}");
+            assert!(digest.contains("Fly to Paris"), "{semantic_type}: {digest}");
+            assert!(
+                digest.contains("Check into hotel"),
+                "{semantic_type}: {digest}"
+            );
+        }
+    }
+
+    #[test]
+    fn identity_digest_for_anything_else_is_title_plus_top_level_keys() {
+        let payload =
+            serde_json::json!({"title": "Custom", "status": "ready", "artifact_path": "a.html"});
+        let digest = identity_digest("ui.preview", &payload);
+        assert!(digest.contains("Custom"), "{digest}");
+        assert!(digest.contains("status"), "{digest}");
+        assert!(digest.contains("artifact_path"), "{digest}");
+    }
+
+    #[test]
+    fn presentation_info_rebuilds_a_validated_call_into_a_ledger_ready_record() {
+        let skills = vak_delivery::built_in_skill_registry();
+        let args = serde_json::json!({
+            "semantic_type": "chart",
+            "payload": {
+                "title": "Revenue",
+                "chart_type": "line",
+                "accessible_summary": "flat",
+                "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
+            }
+        });
+        let info = presentation_info("emit_chart_card", &args, &skills)
+            .expect("a valid call must rebuild");
+        assert_eq!(info.semantic_type, "chart");
+        assert_eq!(info.title, "Revenue");
+        assert!(
+            info.identity_digest.contains("s1(1)"),
+            "{}",
+            info.identity_digest
+        );
+        assert!(info.schema_version > 0);
+        assert!(!info.skill_id.is_empty());
+    }
+
+    #[test]
+    fn presentation_info_is_none_for_an_invalid_call() {
+        let skills = vak_delivery::built_in_skill_registry();
+        let args = serde_json::json!({"semantic_type": "chart", "payload": {"series": []}});
+        assert!(presentation_info("emit_chart_card", &args, &skills).is_none());
     }
 }

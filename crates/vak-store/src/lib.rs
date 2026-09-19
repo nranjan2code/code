@@ -261,7 +261,13 @@ impl Store {
             EntryPayload::Activity(_) => EntryKind::Activity,
             EntryPayload::Work(_) => EntryKind::Work,
             EntryPayload::Intent(_) => EntryKind::Intent,
-            EntryPayload::TurnCapabilitiesBound(_) | EntryPayload::ChildRun { .. } => return None,
+            // A Presentation entry is display-channel/model-history
+            // data (docs/design/68-context-engine.md §10), not free text to
+            // full-text index today; its own TurnIndex/recall search
+            // (design §3) is separate future work.
+            EntryPayload::TurnCapabilitiesBound(_)
+            | EntryPayload::ChildRun { .. }
+            | EntryPayload::Presentation(_) => return None,
         };
 
         match &entry.payload {
@@ -422,7 +428,9 @@ impl Store {
                 ),
                 is_error: false,
             }),
-            EntryPayload::TurnCapabilitiesBound(_) | EntryPayload::ChildRun { .. } => None,
+            EntryPayload::TurnCapabilitiesBound(_)
+            | EntryPayload::ChildRun { .. }
+            | EntryPayload::Presentation(_) => None,
         }
     }
 

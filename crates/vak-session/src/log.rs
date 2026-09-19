@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use vak_llm::Message;
 
 use crate::types::{
-    CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, SessionError, SessionHeader,
-    TranscriptMessage, WorkEvent,
+    CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, PresentationRecord,
+    SessionError, SessionHeader, TranscriptMessage, WorkEvent,
 };
 
 pub struct SessionLog {
@@ -298,6 +298,102 @@ impl SessionLog {
     ) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         self.append(Entry::new(parent, EntryPayload::Activity(activity)))
+    }
+
+    /// Appends a validated presentation (docs/design/68-context-engine.md
+    /// §10). Hash-linked like every entry; never rewritten.
+    pub fn append_presentation(
+        &mut self,
+        record: PresentationRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Presentation(record)))
+    }
+
+    /// Presentation entries along the active path, root→leaf, with their
+    /// entry ids — the single source both the model-visible history and the
+    /// display channel read.
+    pub fn presentations(&self) -> Vec<(String, &PresentationRecord)> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|e| match &e.payload {
+                EntryPayload::Presentation(record) => Some((e.id.clone(), record)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether a presentation with this exact canonical payload already
+    /// exists for this turn — the duplicate rule that drops a repeated
+    /// fence from the model-visible projection (docs/design/68-context-engine.md
+    /// §10: "a second card in the same turn with the same `payload_digest`
+    /// is not written").
+    pub fn has_presentation(&self, turn_id: &str, payload_digest: &str) -> bool {
+        self.presentations()
+            .iter()
+            .any(|(_, record)| record.turn_id == turn_id && record.payload_digest == payload_digest)
+    }
+
+    /// The id of the most recent non-control user message entry in the
+    /// active chain — the directive the current turn answers. `None` before
+    /// any real user message exists.
+    pub fn latest_directive_entry_id(&self) -> Option<String> {
+        self.chain_to_root()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::Message(record)
+                    if record.message.role == vak_llm::Role::User
+                        && record.control_kind().is_none() =>
+                {
+                    Some(entry.id.clone())
+                }
+                _ => None,
+            })
+    }
+
+    /// Ids of every non-card tool result already committed to the ledger
+    /// strictly after `turn_id`, in chain order — the evidence a card built
+    /// after them was derived from (`PresentationRecord::derived_from`).
+    /// `is_card_tool` is supplied by the caller so this crate never needs to
+    /// know what a "card" tool is (that knowledge lives in
+    /// `vak-core::presentation_tools`).
+    pub fn non_card_evidence_since(
+        &self,
+        turn_id: &str,
+        is_card_tool: impl Fn(&str) -> bool,
+    ) -> Vec<String> {
+        let chain = self.chain_to_root();
+        let start = chain
+            .iter()
+            .position(|entry| entry.id == turn_id)
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        let mut tool_names: HashMap<String, String> = HashMap::new();
+        let mut out = Vec::new();
+        for entry in &chain[start..] {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, .. } => {
+                        tool_names.insert(id.clone(), name.clone());
+                    }
+                    vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => {
+                        let is_card = tool_names
+                            .get(tool_use_id)
+                            .map(|name| is_card_tool(name))
+                            .unwrap_or(false);
+                        if !is_card && !out.iter().any(|seen| seen == tool_use_id) {
+                            out.push(tool_use_id.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 
     /// Append a finalized or provisional voice transcript. The transcript
@@ -1007,7 +1103,11 @@ impl SessionLog {
                         out.push((entry.id.clone(), Message::user_text(block), false, true));
                     }
                 }
-                // Receipts and goal entries are audit, not model-visible input.
+                // Receipts, goal entries, and presentations are audit /
+                // display-channel data, not model-visible input. The
+                // current turn already sees a card through the `tool_use`
+                // input it wrote; a `Presentation` entry is never replayed
+                // raw (docs/design/68-context-engine.md §10).
                 EntryPayload::Header(_)
                 | EntryPayload::Receipt(_)
                 | EntryPayload::Goal(_)
@@ -1015,6 +1115,7 @@ impl SessionLog {
                 | EntryPayload::Activity(_)
                 | EntryPayload::Work(_)
                 | EntryPayload::TurnCapabilitiesBound(_)
+                | EntryPayload::Presentation(_)
                 | EntryPayload::ChildRun { .. } => {}
             }
         }
