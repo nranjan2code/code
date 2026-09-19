@@ -1070,6 +1070,11 @@ pub struct SignalContext<'a> {
     pub tool_input: Option<&'a serde_json::Value>,
     pub tool_output: Option<&'a str>,
     pub is_error: bool,
+    /// Domain names the calling capability declares it serves (e.g. `"web"`,
+    /// `"live-data"`), as recorded by `vak_core::capability::domain::Domain`.
+    /// Drives presentation signals that depend on external retrieval; a
+    /// tool's name or identity is never matched for this.
+    pub domains: &'a [&'a str],
 }
 
 pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
@@ -1108,20 +1113,24 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
                 signals.push("diff".into());
                 signals.push("files_changed".into());
             }
-            s if s == "websearch"
-                || s == "tavily"
-                || s.contains("search")
-                || s.contains("research")
-                || s.contains("crawl") =>
-            {
-                signals.push("citations".into());
-                signals.push("multiple_sources".into());
-                signals.push("research".into());
-                signals.push("synthesis".into());
-                signals.push("takeaways".into());
-            }
             _ => {}
         }
+    }
+    // Retrieval-flavoured presentation signals come from what the calling
+    // capability declares it serves, never from the tool's name: a vendor
+    // renamed or replaced still serves `web`/`live-data`, and an
+    // undeclared capability contributes nothing here rather than being
+    // guessed at.
+    if ctx
+        .domains
+        .iter()
+        .any(|domain| matches!(*domain, "web" | "live-data"))
+    {
+        signals.push("citations".into());
+        signals.push("multiple_sources".into());
+        signals.push("research".into());
+        signals.push("synthesis".into());
+        signals.push("takeaways".into());
     }
     if let Some(output) = ctx.tool_output {
         let lower = output.to_ascii_lowercase();
@@ -2405,6 +2414,7 @@ mod tests {
             tool_input: Some(&cmd),
             tool_output: Some("CONTAINER ID IMAGE STATUS"),
             is_error: false,
+            domains: &[],
         };
         let sigs = signals_from_context(&ctx);
         let decision = catalog.choose(&sigs, "desktop").expect("terminal decision");

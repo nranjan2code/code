@@ -2,14 +2,14 @@
 //! be reinterpreted for rendering.
 //!
 //! `structured_outputs_from_text` (see `skills.rs`) covers tools we can ask
-//! to speak our contract. Most tools are not ours to ask — a weather API, a
-//! ticketing system, a third-party MCP server ships whatever shape it ships,
-//! and nothing here can make the rest of the world adopt `semantic_type` /
-//! `payload`. Rewriting a tool's actual output to fit our envelope would
-//! also reach past our own boundary: that output is the same value the
-//! ledger records, the same value a future turn's model sees, the same
-//! value any other consumer reads — none of which asked for our rendering
-//! concerns.
+//! to speak our contract. Most tools are not ours to ask — a ticketing
+//! system, an inventory API, a third-party MCP server ships whatever shape
+//! it ships, and nothing here can make the rest of the world adopt
+//! `semantic_type` / `payload`. Rewriting a tool's actual output to fit our
+//! envelope would also reach past our own boundary: that output is the same
+//! value the ledger records, the same value a future turn's model sees, the
+//! same value any other consumer reads — none of which asked for our
+//! rendering concerns.
 //!
 //! So the boundary sits at render composition, not at the tool: an adapter
 //! reads the *stored, untouched* result and, only for shapes it explicitly
@@ -21,14 +21,16 @@
 //! An adapter is deliberately narrow: it matches one provider's actual,
 //! known response shape and returns `None` for anything else. There is no
 //! adapter here that pattern-matches on field names in general ("has a
-//! `temp` key, must be weather") — that would be exactly the guessing this
+//! `value` key, must be a metric") — that would be exactly the guessing this
 //! module exists to avoid. Recognizing a *specific, known* schema precisely
 //! is not guessing; inferring meaning from incidental field names is.
 //!
 //! Adding support for a new provider means writing one adapter and
 //! registering it — never touching another adapter, never adding a branch
 //! to the render pipeline itself, and never touching the tool that produced
-//! the data.
+//! the data. The core ships none: a specific vendor's JSON shape is an
+//! integration's own concern, declared by its own manifest, not baked into
+//! this crate.
 
 use serde_json::Value;
 
@@ -46,30 +48,6 @@ pub trait ResultAdapter: Send + Sync {
     /// shape. Any other shape — including one that merely looks similar —
     /// must return `None` rather than guess.
     fn adapt(&self, raw: &Value) -> Option<StructuredOutput>;
-}
-
-struct WeatherApiCurrentAdapter;
-
-impl ResultAdapter for WeatherApiCurrentAdapter {
-    fn id(&self) -> &'static str {
-        "weatherapi.current"
-    }
-
-    fn adapt(&self, raw: &Value) -> Option<StructuredOutput> {
-        let current = raw.get("current")?;
-        let temperature = current.get("temp_c")?.as_f64()?;
-        Some(StructuredOutput {
-            semantic_type: "metric".into(),
-            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1.0.0".into(),
-            payload: serde_json::json!({
-                "label": "Temperature",
-                "value": temperature,
-                "unit": "C",
-            }),
-        })
-    }
 }
 
 /// An ordered, purely additive set of adapters. Order only matters as a
@@ -141,10 +119,11 @@ pub fn structured_outputs_from_tool_result_with(
     }
 }
 
+/// The core ships no built-in adapters: a specific vendor's JSON shape is an
+/// integration's own concern. An integration that needs one registers it
+/// through its own manifest; this registry stays the extension point.
 pub fn built_in_adapters() -> AdapterRegistry {
-    let mut registry = AdapterRegistry::default();
-    registry.register(Box::new(WeatherApiCurrentAdapter));
-    registry
+    AdapterRegistry::default()
 }
 
 #[cfg(test)]
@@ -211,8 +190,11 @@ mod tests {
     }
 
     #[test]
-    fn built_in_adapters_register_real_provider_shapes() {
-        assert_eq!(built_in_adapters().ids(), vec!["weatherapi.current"]);
+    fn built_in_adapters_register_no_vendor_shapes() {
+        // The core ships no provider-specific adapter: a vendor's JSON shape
+        // is an integration's own concern, declared by its own manifest.
+        let empty: Vec<&str> = Vec::new();
+        assert_eq!(built_in_adapters().ids(), empty);
     }
 
     #[test]
@@ -251,16 +233,5 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].semantic_type, "metric");
         assert_eq!(outputs[0].payload["value"], 21.5);
-    }
-
-    #[test]
-    fn weatherapi_shape_becomes_specialist_output() {
-        let adapters = built_in_adapters();
-        let weather = structured_outputs_from_tool_result(
-            r#"{"current":{"temp_c":31.5,"condition":{"text":"Sunny"}}}"#,
-            "desktop",
-            &adapters,
-        );
-        assert_eq!(weather[0].semantic_type, "metric");
     }
 }

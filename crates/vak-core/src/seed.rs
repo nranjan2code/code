@@ -22,36 +22,46 @@ use std::path::Path;
 use vak_config::HookConfig;
 use vak_plugin::{InstallOptions, InstallScope, PluginStore};
 
-const SKILLS: &[(&str, &str, &str)] = &[
+/// name, description, guidance body, `serves:` domains (in `Domain::parse`
+/// vocabulary). A skill declares what it is for itself, in its own
+/// frontmatter, exactly as a plugin or user-authored skill would — there is
+/// no name-keyed table anywhere that grants these seeds special treatment.
+const SKILLS: &[(&str, &str, &str, &[&str])] = &[
     (
         "getting-started",
         "Explain tasks clearly and help a new user choose the simplest next step.",
         "Translate jargon into plain language. Ask only for information that is genuinely needed, then present a short, actionable next step before optional detail.",
+        &["documents"],
     ),
     (
         "research-and-sources",
         "Research a question with traceable sources and clearly separated evidence and inference.",
         "Define the question and freshness requirement, prefer primary sources, record publication dates, and distinguish sourced facts from your own synthesis. Never present an unverified assumption as a citation.",
+        &["web", "live-data"],
     ),
     (
         "planning-and-organizing",
         "Turn goals into practical plans, checklists, and prioritised next actions.",
         "Clarify the desired outcome, identify dependencies and decisions, then produce a plan sized to the work. Keep ownership, deadlines, and open questions explicit.",
+        &["orchestration"],
     ),
     (
         "debugging",
         "Diagnose failures from evidence before proposing or applying a fix.",
         "Reproduce or isolate the failure, capture the first meaningful error, trace inputs to the failing boundary, and test the smallest fix. Separate confirmed cause from hypotheses.",
+        &["code-exec", "observability"],
     ),
     (
         "code-review",
         "Review code for correctness, security, regressions, and maintainability with actionable findings.",
         "Read the diff in context, prioritise concrete defects over style preferences, include impact and a precise location, and say when a concern is unverified rather than overstating it.",
+        &["vcs", "documents"],
     ),
     (
         "data-and-spreadsheets",
         "Clean, analyse, and explain tabular data without silently changing its meaning.",
         "Inspect headers, types, missing values, and units before transforming data. Keep source data intact, make calculations reproducible, and label estimates, exclusions, and assumptions.",
+        &["documents", "code-exec"],
     ),
 ];
 
@@ -70,16 +80,18 @@ const PLUGINS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
-const PLUGIN_SKILLS: &[(&str, &str, &str)] = &[
+const PLUGIN_SKILLS: &[(&str, &str, &str, &[&str])] = &[
     (
         "software-development",
         "Implement and explain software changes with focused verification and clear tradeoffs.",
         "Inspect the existing conventions first. Make the smallest coherent change, preserve public contracts, add targeted tests for changed behavior, and report exactly what was verified.",
+        &["code-exec", "documents", "vcs", "filesystem"],
     ),
     (
         "writing-and-editing",
         "Draft, rewrite, summarize, and polish documents while preserving the requested voice.",
         "First identify audience, purpose, and format. Preserve facts and explicit constraints, make the smallest useful edit, and call out material ambiguities instead of inventing details.",
+        &["documents"],
     ),
 ];
 
@@ -136,14 +148,30 @@ fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Render a seeded `SKILL.md`. `serves` is the skill's own classification of
+/// what it is for — front-matter it writes about itself, in the same
+/// `serves:` field a plugin or user-authored skill would use. An empty list
+/// stays undeclared, exactly as an unclassified skill from any other source
+/// would.
+fn skill_markdown(name: &str, description: &str, body: &str, serves: &[&str]) -> String {
+    if serves.is_empty() {
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n")
+    } else {
+        format!(
+            "---\nname: {name}\ndescription: {description}\nserves: {}\n---\n\n{body}\n",
+            serves.join(", ")
+        )
+    }
+}
+
 fn seed_skills(root: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(root)?;
     let manifest_root = root.parent().unwrap_or(root);
     let mut shipped = load_seed_manifest(manifest_root);
     let previous = shipped.clone();
-    for (name, description, body) in PLUGIN_SKILLS {
+    for (name, description, body, serves) in PLUGIN_SKILLS {
         let path = root.join(name).join("SKILL.md");
-        let expected = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n");
+        let expected = skill_markdown(name, description, body, serves);
         if path.is_file()
             && matches!(std::fs::read_to_string(&path), Ok(content) if content == expected)
         {
@@ -151,11 +179,11 @@ fn seed_skills(root: &Path) -> std::io::Result<()> {
             let _ = std::fs::remove_dir(path.parent().unwrap_or(root));
         }
     }
-    for (name, description, body) in SKILLS {
+    for (name, description, body, serves) in SKILLS {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("SKILL.md");
-        let content = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n");
+        let content = skill_markdown(name, description, body, serves);
         let expected = content.as_bytes();
         let expected_digest = digest(expected);
         match std::fs::read(&path) {
@@ -226,14 +254,14 @@ fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 r#"{{"schema":1,"name":"{name}","version":"{version}","description":"{description}","license":"MIT","components":{{"skills":["skills"]}}}}"#
             ),
         )?;
-        let (skill_description, body) = PLUGIN_SKILLS
+        let (skill_description, body, serves) = PLUGIN_SKILLS
             .iter()
-            .find(|(candidate, _, _)| candidate == skill_name)
-            .map(|(_, description, body)| (*description, *body))
+            .find(|(candidate, _, _, _)| candidate == skill_name)
+            .map(|(_, description, body, serves)| (*description, *body, *serves))
             .ok_or_else(|| format!("missing seed skill {skill_name}"))?;
         std::fs::write(
             skill_path.join("SKILL.md"),
-            format!("---\nname: {skill_name}\ndescription: {skill_description}\n---\n\n{body}\n"),
+            skill_markdown(skill_name, skill_description, body, serves),
         )?;
         if let Some(existing) = store
             .list()?

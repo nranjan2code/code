@@ -135,8 +135,8 @@ impl CapabilityReport {
 /// The model-facing standing section: what is configured but not usable on
 /// this turn, and what changed since this session's last turn.
 ///
-/// The wording matters. A model told only "you have no weather tool" answers
-/// from memory and sounds certain; told "the `tavily` server is configured
+/// The wording matters. A model told only "you have no live-data tool" answers
+/// from memory and sounds certain; told "the `search` server is configured
 /// and currently unreachable", it says so and names the fix.
 pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) -> String {
     let mut out = String::new();
