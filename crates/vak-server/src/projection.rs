@@ -256,21 +256,22 @@ fn snapshot_inner(
                         _ => false,
                     })
                 {
-                    let is_repair_nudge = record.message.content.iter().any(|block| match block {
+                    scan_turn += 1;
+                    pending_tool_context = None;
+                    card_group_by_type.clear();
+                    repair_armed = false;
+                }
+                if record.message.role == Role::User
+                    && record.message.content.iter().any(|block| match block {
                         ContentBlock::Text { text } => {
                             text.contains("[fence-check]")
                                 || text.contains("[duplicate-card-check]")
+                                || text.contains("[grounding-check]")
                         }
                         _ => false,
-                    });
-                    scan_turn += 1;
-                    pending_tool_context = None;
-                    if is_repair_nudge {
-                        repair_armed = true;
-                    } else {
-                        card_group_by_type.clear();
-                        repair_armed = false;
-                    }
+                    })
+                {
+                    repair_armed = true;
                 }
                 for block in &record.message.content {
                     match block {
@@ -822,20 +823,32 @@ fn snapshot_inner(
                             // anything renders from it, and the tool's own
                             // stored result is read, never rewritten.
                             if !failed {
-                                for (structured_index, output) in detail
-                                    .as_deref()
-                                    .map(|text| {
-                                        structured_outputs_from_tool_result_with(
-                                            text,
-                                            "desktop",
-                                            &built_in_adapters(),
-                                            &planner.skills,
-                                        )
-                                    })
-                                    .unwrap_or_default()
+                                // An `emit_*_card` call carries its card in its own
+                                // arguments; the ledger stores those untruncated,
+                                // while its result is only a short ack (and any
+                                // result text the framework line-truncates).
+                                let outputs = if vak_core::presentation_tools::is_card_tool(name) {
+                                    vak_core::presentation_tools::card_output_from_call(
+                                        name,
+                                        input,
+                                        &planner.skills,
+                                    )
                                     .into_iter()
-                                    .enumerate()
-                                {
+                                    .collect()
+                                } else {
+                                    detail
+                                        .as_deref()
+                                        .map(|text| {
+                                            structured_outputs_from_tool_result_with(
+                                                text,
+                                                "desktop",
+                                                &built_in_adapters(),
+                                                &planner.skills,
+                                            )
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                for (structured_index, output) in outputs.into_iter().enumerate() {
                                     let item_id = format!("{id}-structured-{structured_index}");
                                     let previous = card_group_by_type
                                         .insert(output.semantic_type.clone(), item_id.clone());
@@ -1095,6 +1108,9 @@ pub(crate) fn is_scaffolding_line(line: &str) -> bool {
         || trimmed.starts_with("[stop-hook]")
         || trimmed.starts_with("[repair directive]")
         || trimmed.starts_with("[recovery]")
+        || trimmed.starts_with("[grounding-check]")
+        || trimmed.starts_with("[fence-check]")
+        || trimmed.starts_with("[duplicate-card-check]")
         || trimmed.starts_with("[post-tool-use hook]")
         || trimmed.starts_with("I will write and execute this within the sandbox")
 }
@@ -2511,17 +2527,14 @@ mod tests {
         })
         .expect("append user message");
 
-        let chart_result = |summary: &str| {
-            format!(
-                r#"{{"semantic_type":"chart","payload":{{"chart_type":"line","series":[],"accessible_summary":"{summary}"}}}}"#
-            )
-        };
+        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}});
+        let ack = || "Card displayed to the user (chart).".to_string();
 
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({}),
+                input: chart_input("first attempt"),
             }]),
             meta: None,
         })
@@ -2531,7 +2544,7 @@ mod tests {
                 role: Role::User,
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: "call-1".into(),
-                    content: chart_result("first attempt"),
+                    content: ack(),
                     is_error: false,
                 }],
             },
@@ -2562,7 +2575,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({}),
+                input: chart_input("retried attempt"),
             }]),
             meta: None,
         })
@@ -2572,7 +2585,7 @@ mod tests {
                 role: Role::User,
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: "call-2".into(),
-                    content: chart_result("retried attempt"),
+                    content: ack(),
                     is_error: false,
                 }],
             },
@@ -2655,7 +2668,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({}),
+                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}),
             }]),
             meta: None,
         })
@@ -2665,7 +2678,7 @@ mod tests {
                 role: Role::User,
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: "call-1".into(),
-                    content: r#"{"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}"#.into(),
+                    content: "Card displayed to the user (chart).".into(),
                     is_error: false,
                 }],
             },
@@ -2676,7 +2689,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({}),
+                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}),
             }]),
             meta: None,
         })
@@ -2686,7 +2699,7 @@ mod tests {
                 role: Role::User,
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: "call-2".into(),
-                    content: r#"{"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}"#.into(),
+                    content: "Card displayed to the user (chart).".into(),
                     is_error: false,
                 }],
             },
@@ -2706,6 +2719,191 @@ mod tests {
             chart_items.len(),
             2,
             "two intentional cards of the same type with no repair nudge between them must both survive: {chart_items:?}"
+        );
+    }
+
+    /// The live bug: a research card over the tool framework's ~2000-char
+    /// line limit had its recorded RESULT truncated mid-JSON, so no card was
+    /// produced and the user saw prose. The card now comes from the call's
+    /// own (untruncated) arguments; the result is only an ack.
+    #[test]
+    fn a_card_larger_than_the_result_line_limit_still_renders_from_the_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("big-card.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "big-card".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("summarize last week's market"),
+            meta: None,
+        })
+        .expect("user");
+        let takeaways: Vec<_> = (0..12)
+            .map(|i| serde_json::json!({"text": format!("Takeaway {i}: {}", "detail ".repeat(40)), "citation_indices": [1]}))
+            .collect();
+        let input = serde_json::json!({
+            "semantic_type": "research.synthesis",
+            "payload": {"sources": [{"title": "Reuters", "url": "https://example.com/a"}], "takeaways": takeaways}
+        });
+        assert!(
+            input.to_string().len() > 3000,
+            "fixture must exceed the limit"
+        );
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-r".into(),
+                name: "emit_research_card".into(),
+                input,
+            }]),
+            meta: None,
+        })
+        .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-r".into(),
+                    content: "Card displayed to the user (research.synthesis).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+        let timeline = snapshot("big-card", &log);
+        assert!(
+            timeline.items.iter().any(|item| matches!(&item.content,
+                OutputContent::Structured { output } if output.semantic_type == "research.synthesis")),
+            "the research card must render from the call arguments"
+        );
+    }
+
+    #[test]
+    fn repair_nudges_are_never_projected_as_user_messages() {
+        for nudge in [
+            "[grounding-check]: Your last answer didn't cite the results. Please redo your answer now.",
+            "[fence-check]: The vak-fence in your last answer has invalid JSON.",
+            "[duplicate-card-check]: You already emitted a `chart` card.",
+        ] {
+            assert_eq!(super::clean_scaffolding(nudge), "", "{nudge}");
+        }
+    }
+
+    /// Not per-type and not per-size: every type the emit tools support, at a
+    /// normal size and padded far past the tool framework's result line
+    /// limit, must come out of the real `snapshot()` as exactly one card of
+    /// that type — from the call arguments alone, with only an ack as result.
+    #[test]
+    fn every_supported_type_renders_through_the_full_path_at_any_size() {
+        let cases = vak_core::presentation_tools::conformance_cases();
+        assert!(
+            cases.len() >= 97,
+            "expected every registered type, got {}",
+            cases.len()
+        );
+        let mut failures = Vec::new();
+        for (tool, semantic_type, payload) in cases {
+            for padded in [false, true] {
+                let mut payload = payload.clone();
+                if padded {
+                    payload["x_padding"] = serde_json::Value::String("p".repeat(6000));
+                }
+                let dir = tempfile::tempdir().expect("tempdir");
+                let mut log = SessionLog::create(
+                    dir.path().join("t.jsonl"),
+                    SessionHeader {
+                        agent: None,
+                        session_id: "conformance".into(),
+                        created_at: chrono::Utc::now(),
+                        cwd: PathBuf::from("/tmp/project"),
+                        parent_session_id: None,
+                        contract_id: None,
+                        work_item_id: None,
+                        conversation: None,
+                        contract: FrozenContract {
+                            app_version: "test".into(),
+                            provider: "test".into(),
+                            model: "test".into(),
+                            route_ladder: Vec::new(),
+                            route_objective: String::new(),
+                            route_annotations: Vec::new(),
+                            system_prompt: String::new(),
+                            permission_mode: "read-only".into(),
+                            capabilities: Vec::new(),
+                            prompt_layers: Vec::new(),
+                        },
+                    },
+                )
+                .expect("create");
+                log.append_message(MessageRecord {
+                    message: Message::user_text("go"),
+                    meta: None,
+                })
+                .expect("user");
+                log.append_message(MessageRecord {
+                    message: Message::assistant(vec![ContentBlock::ToolUse {
+                        id: "c1".into(),
+                        name: tool.into(),
+                        input: serde_json::json!({"semantic_type": semantic_type, "payload": payload}),
+                    }]),
+                    meta: None,
+                })
+                .expect("call");
+                log.append_message(MessageRecord {
+                    message: Message {
+                        role: Role::User,
+                        content: vec![ContentBlock::ToolResult {
+                            tool_use_id: "c1".into(),
+                            content: "Card displayed to the user.".into(),
+                            is_error: false,
+                        }],
+                    },
+                    meta: None,
+                })
+                .expect("result");
+                let timeline = snapshot("conformance", &log);
+                let found: Vec<_> = timeline
+                    .items
+                    .iter()
+                    .filter_map(|i| match &i.content {
+                        OutputContent::Structured { output } => Some(output.semantic_type.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if found != [semantic_type.to_string()] {
+                    failures.push(format!(
+                        "{semantic_type} via {tool} padded={padded}: got {found:?}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} failures:\n{}",
+            failures.len(),
+            failures.join("\n")
         );
     }
 }

@@ -181,10 +181,12 @@ row above is how `vak-core/src/presentation_tools.rs`'s twelve
 `emit_*_card` tools reach this pipeline — one tool per payload *shape*
 (not per `semantic_type`; siblings that share a shape, e.g. every
 timeline-flavored type, share one tool), each with a JSON Schema precise
-enough to satisfy `SkillRegistry::validate()`. `execute()` echoes the
-model's schema-validated arguments back as a bare envelope string, which
-`structured_outputs_from_tool_result_with()` already scanned any tool's
-result for — no new pipeline. This is now the *preferred* path over
+enough to satisfy `SkillRegistry::validate()`. `execute()` validates the
+call's arguments against `SkillRegistry` and replies with a short ack (or a
+repairable tool error); the projection rebuilds the card from the call's own
+arguments (`card_output_from_call`), which the ledger records untruncated —
+the card is never carried in result text, which the tool framework
+line-truncates at ~2000 characters. This is now the *preferred* path over
 writing a ```vak fence directly (`system-prompt.md`,
 `docs/design/07-prompt.md` v3.4.5): measured against the real local model
 this app ships (gemma4:e2b-mlx via Ollama), a free-text fence in prose

@@ -23,16 +23,16 @@
 //! kept in sync deliberately, since both are describing the same
 //! `build*Spec` functions in `GenericSpecRenderer.tsx`.
 //!
-//! Rendering integration needs no new code: `execute()` just echoes its own
-//! (schema-valid-by-construction) arguments back as
-//! `{"semantic_type":...,"payload":...}` JSON text. The existing
-//! `vak_delivery::structured_outputs_from_tool_result_with` pipeline
-//! (originally built for third-party/MCP tool results that self-declare a
-//! `semantic_type`) already scans any tool's result for exactly this shape,
-//! validates it against `SkillRegistry` — the real 97-type allowlist,
-//! independent of anything the model claims — and turns it into a rendered
-//! card. That pipeline is untouched; this just gives it schema-clean input
-//! instead of a hand-rolled markdown fence.
+//! Call and response, not echo: the model's `emit_*_card` call carries the
+//! card in its arguments (schema-constrained, and recorded untruncated in the
+//! ledger). `execute()` validates them against the real `SkillRegistry` and
+//! answers with a short ack — or, if the card is invalid, a tool error the
+//! model can repair in the same turn. `vak-server`'s projection rebuilds the
+//! card from the call arguments via `card_output_from_call`. The card is never
+//! carried in the result text: the tool framework line-truncates results at
+//! ~2000 characters, which silently destroyed any larger card (found live with
+//! a research card), and echoing the data back also invited the model to
+//! restate it as a duplicate fence.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -548,6 +548,91 @@ fn normalize_payload(semantic_type: &str, mut payload: Value) -> Value {
     payload
 }
 
+/// One representative-but-minimal fixture payload per shape, built to
+/// satisfy that shape's `payload_schema` (and, where the schema alone
+/// isn't enough, the stricter per-type validators in
+/// `vak_delivery::skills::validate_payload`). Every `semantic_type` this
+/// shape's tool can emit is then executed with the SAME fixture, to
+/// prove the shared schema (plus `normalize_payload` for the couple of
+/// known type-specific exceptions) genuinely renders for every type the
+/// tool claims to support — not just one hand-picked example.
+#[allow(clippy::panic)]
+fn fixture_for(shape_name: &str) -> Value {
+    match shape_name {
+        "emit_universal_card" => serde_json::json!({"title": "T", "summary": "S"}),
+        "emit_research_card" => serde_json::json!({
+            "sources": [{"title": "Src", "url": "https://example.com"}],
+            "takeaways": [{"text": "Point", "citation_indices": [1]}]
+        }),
+        "emit_diff_card" => serde_json::json!({
+            "files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]
+        }),
+        "emit_test_report_card" => serde_json::json!({
+            "tests": [{"name": "it_works", "status": "passed"}]
+        }),
+        "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
+        "emit_table_card" => serde_json::json!({
+            "columns": [{"key": "name", "label": "Name"}],
+            "rows": [{"name": "Alice"}]
+        }),
+        "emit_timeline_card" => serde_json::json!({
+            "title": "T",
+            "items": [{"label": "Step 1", "detail": "d"}]
+        }),
+        "emit_recipe_card" => serde_json::json!({
+            "title": "Soup",
+            "ingredients": [{"name": "Water"}],
+            "steps": [{"text": "Boil"}]
+        }),
+        "emit_ui_preview_card" => serde_json::json!({"title": "Preview"}),
+        "emit_chart_card" => serde_json::json!({
+            "chart_type": "line",
+            "accessible_summary": "flat",
+            "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
+        }),
+        "emit_media_card" => serde_json::json!({"url": "https://example.com", "title": "Link"}),
+        "emit_metric_card" => {
+            serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"})
+        }
+        other => panic!("no fixture defined for shape {other} — add one"),
+    }
+}
+
+/// A shape's schema can be a `oneOf` covering several distinct payload
+/// shapes for different semantic_types within it (e.g. `emit_media_card`:
+/// `link.preview` wants url+title, `media.*` wants source+media_type+alt).
+/// Override the shared fixture for those specific types.
+fn fixture_override(semantic_type: &str) -> Option<Value> {
+    match semantic_type {
+        "media.image" => Some(
+            serde_json::json!({"source": "https://example.com/a.png", "media_type": "image", "alt": "a"}),
+        ),
+        "media.video" => Some(
+            serde_json::json!({"source": "https://example.com/a.mp4", "media_type": "video", "alt": "a"}),
+        ),
+        "media.audio" => Some(
+            serde_json::json!({"source": "https://example.com/a.mp3", "media_type": "audio", "alt": "a"}),
+        ),
+        _ => None,
+    }
+}
+
+/// Every `(tool, semantic_type, payload)` the tools claim to support, with a
+/// schema-valid payload — the single source for conformance tests here and in
+/// vak-server (which checks the full call → ledger → projection path).
+#[doc(hidden)]
+pub fn conformance_cases() -> Vec<(&'static str, &'static str, Value)> {
+    let mut out = Vec::new();
+    for shape in SHAPES {
+        for &semantic_type in shape.semantic_types {
+            let payload =
+                fixture_override(semantic_type).unwrap_or_else(|| fixture_for(shape.name));
+            out.push((shape.name, semantic_type, payload));
+        }
+    }
+    out
+}
+
 pub struct EmitCardTool {
     shape: &'static CardShape,
 }
@@ -586,36 +671,64 @@ impl Tool for EmitCardTool {
     }
 
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
-        let Some(semantic_type) = args.get("semantic_type").and_then(|v| v.as_str()) else {
-            return ToolOutput::error("missing or non-string `semantic_type`");
-        };
-        if !self.shape.semantic_types.contains(&semantic_type) {
-            return ToolOutput::error(format!(
-                "`{semantic_type}` is not one of this tool's supported types: {:?}. Call the matching emit_*_card tool instead.",
-                self.shape.semantic_types
-            ));
+        match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
+            Ok(output) => ToolOutput::ok(format!(
+                "Card displayed to the user ({}). It is already on screen: do not restate its \
+                 data or write a `vak` fence for it; at most add one short sentence of narration.",
+                output.semantic_type
+            )),
+            Err(reason) => ToolOutput::error(format!(
+                "Card not displayed: {reason}. Fix the arguments and call {} again.",
+                self.shape.name
+            )),
         }
-        let Some(payload) = args.get("payload") else {
-            return ToolOutput::error("missing `payload`");
-        };
-        let payload = normalize_payload(semantic_type, payload.clone());
-        // `structured_outputs_from_tool_result_with` (vak-delivery) scans this
-        // tool's own result text for a bare `{"semantic_type","payload"}`
-        // envelope — no markdown fence needed. `parse_fragment_with` parses
-        // that envelope with `#[serde(deny_unknown_fields)]`, so it must be
-        // *exactly* these two fields; schema_version/skill_id/skill_version
-        // are filled in by the parser itself from the registry, not carried
-        // in the envelope.
-        let envelope = serde_json::json!({
-            "semantic_type": semantic_type,
-            "payload": payload,
-        });
-        ToolOutput::ok(envelope.to_string())
     }
 }
 
+fn validate_call(
+    shape: &CardShape,
+    args: &Value,
+    skills: &vak_delivery::SkillRegistry,
+) -> Result<vak_delivery::StructuredOutput, String> {
+    let Some(semantic_type) = args.get("semantic_type").and_then(Value::as_str) else {
+        return Err("missing or non-string `semantic_type`".into());
+    };
+    if !shape.semantic_types.contains(&semantic_type) {
+        return Err(format!(
+            "`{semantic_type}` is not one of this tool's types {:?}; use the matching emit_*_card tool",
+            shape.semantic_types
+        ));
+    }
+    let Some(payload) = args.get("payload") else {
+        return Err("missing `payload`".into());
+    };
+    let envelope = serde_json::json!({
+        "semantic_type": semantic_type,
+        "payload": normalize_payload(semantic_type, payload.clone()),
+    });
+    vak_delivery::parse_fragment_with(&envelope.to_string(), skills).map_err(|e| e.to_string())
+}
+
+/// Whether `name` is one of the `emit_*_card` tools.
+pub fn is_card_tool(name: &str) -> bool {
+    SHAPES.iter().any(|shape| shape.name == name)
+}
+
+/// The card an `emit_*_card` call displays, rebuilt from the call's own
+/// arguments — the ledger records these untruncated, so nothing depends on
+/// the tool result text (which the tool framework line-truncates at ~2000
+/// characters, silently destroying any larger card's JSON).
+pub fn card_output_from_call(
+    name: &str,
+    input: &Value,
+    skills: &vak_delivery::SkillRegistry,
+) -> Option<vak_delivery::StructuredOutput> {
+    let shape = SHAPES.iter().find(|shape| shape.name == name)?;
+    validate_call(shape, input, skills).ok()
+}
+
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -652,7 +765,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_wraps_payload_in_a_findable_envelope() {
+    async fn a_valid_call_is_acked_and_rebuilds_into_a_card() {
         let tool = EmitCardTool::all()
             .into_iter()
             .find(|t| t.name() == "emit_chart_card")
@@ -665,17 +778,61 @@ mod tests {
                 "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
             }
         });
-        let ctx = ToolContext::new(std::env::temp_dir());
-        let out = tool.execute(&args, &ctx).await;
+        let out = tool
+            .execute(&args, &ToolContext::new(std::env::temp_dir()))
+            .await;
         assert!(!out.is_error, "expected Ok, got: {}", out.content);
-        let found = vak_delivery::structured_outputs_from_text(&out.content);
-        assert_eq!(
-            found.len(),
-            1,
-            "the render pipeline must find exactly one card in: {}",
-            out.content
+        assert!(out.content.contains("already on screen"), "{}", out.content);
+        assert!(
+            !out.content.contains("semantic_type"),
+            "ack must not echo the card"
         );
-        assert_eq!(found[0].semantic_type, "chart");
+        let card = card_output_from_call(
+            "emit_chart_card",
+            &args,
+            &vak_delivery::built_in_skill_registry(),
+        )
+        .expect("the call's own arguments must rebuild into a card");
+        assert_eq!(card.semantic_type, "chart");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_payload_is_a_repairable_tool_error_not_a_silent_drop() {
+        let tool = EmitCardTool::all()
+            .into_iter()
+            .find(|t| t.name() == "emit_chart_card")
+            .unwrap();
+        let args = serde_json::json!({
+            "semantic_type": "chart",
+            "payload": {"chart_type": "line", "series": []}
+        });
+        let out = tool
+            .execute(&args, &ToolContext::new(std::env::temp_dir()))
+            .await;
+        assert!(
+            out.is_error,
+            "validator-rejected card must be an error the model sees"
+        );
+        assert!(out.content.contains("Fix the arguments"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn a_card_far_larger_than_the_tool_output_line_limit_still_rebuilds() {
+        let long = "x".repeat(6000);
+        let args = serde_json::json!({
+            "semantic_type": "research.synthesis",
+            "payload": {
+                "sources": [{"title": "S", "url": "https://example.com"}],
+                "takeaways": [{"text": long, "citation_indices": [1]}]
+            }
+        });
+        let card = card_output_from_call(
+            "emit_research_card",
+            &args,
+            &vak_delivery::built_in_skill_registry(),
+        )
+        .expect("size must not matter: the card comes from the call arguments");
+        assert_eq!(card.semantic_type, "research.synthesis");
     }
 
     #[tokio::test]
@@ -693,107 +850,36 @@ mod tests {
         assert!(out.is_error, "a chart tool must refuse a recipe type");
     }
 
-    /// One representative-but-minimal fixture payload per shape, built to
-    /// satisfy that shape's `payload_schema` (and, where the schema alone
-    /// isn't enough, the stricter per-type validators in
-    /// `vak_delivery::skills::validate_payload`). Every `semantic_type` this
-    /// shape's tool can emit is then executed with the SAME fixture, to
-    /// prove the shared schema (plus `normalize_payload` for the couple of
-    /// known type-specific exceptions) genuinely renders for every type the
-    /// tool claims to support — not just one hand-picked example.
-    fn fixture_for(shape_name: &str) -> Value {
-        match shape_name {
-            "emit_universal_card" => serde_json::json!({"title": "T", "summary": "S"}),
-            "emit_research_card" => serde_json::json!({
-                "sources": [{"title": "Src", "url": "https://example.com"}],
-                "takeaways": [{"text": "Point", "citation_indices": [1]}]
-            }),
-            "emit_diff_card" => serde_json::json!({
-                "files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]
-            }),
-            "emit_test_report_card" => serde_json::json!({
-                "tests": [{"name": "it_works", "status": "passed"}]
-            }),
-            "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
-            "emit_table_card" => serde_json::json!({
-                "columns": [{"key": "name", "label": "Name"}],
-                "rows": [{"name": "Alice"}]
-            }),
-            "emit_timeline_card" => serde_json::json!({
-                "title": "T",
-                "items": [{"label": "Step 1", "detail": "d"}]
-            }),
-            "emit_recipe_card" => serde_json::json!({
-                "title": "Soup",
-                "ingredients": [{"name": "Water"}],
-                "steps": [{"text": "Boil"}]
-            }),
-            "emit_ui_preview_card" => serde_json::json!({"title": "Preview"}),
-            "emit_chart_card" => serde_json::json!({
-                "chart_type": "line",
-                "accessible_summary": "flat",
-                "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
-            }),
-            "emit_media_card" => serde_json::json!({"url": "https://example.com", "title": "Link"}),
-            "emit_metric_card" => {
-                serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"})
-            }
-            other => panic!("no fixture defined for shape {other} — add one"),
-        }
-    }
-
-    /// A shape's schema can be a `oneOf` covering several distinct payload
-    /// shapes for different semantic_types within it (e.g. `emit_media_card`:
-    /// `link.preview` wants url+title, `media.*` wants source+media_type+alt).
-    /// Override the shared fixture for those specific types.
-    fn fixture_override(semantic_type: &str) -> Option<Value> {
-        match semantic_type {
-            "media.image" => Some(
-                serde_json::json!({"source": "https://example.com/a.png", "media_type": "image", "alt": "a"}),
-            ),
-            "media.video" => Some(
-                serde_json::json!({"source": "https://example.com/a.mp4", "media_type": "video", "alt": "a"}),
-            ),
-            "media.audio" => Some(
-                serde_json::json!({"source": "https://example.com/a.mp3", "media_type": "audio", "alt": "a"}),
-            ),
-            _ => None,
-        }
-    }
-
     #[tokio::test]
     async fn every_registered_semantic_type_across_all_shapes_renders() {
+        let skills = vak_delivery::built_in_skill_registry();
         let mut failures = Vec::new();
         for tool in EmitCardTool::all() {
-            let shared_fixture = fixture_for(tool.name());
-            for &semantic_type in tool.shape.semantic_types {
-                let fixture =
-                    fixture_override(semantic_type).unwrap_or_else(|| shared_fixture.clone());
-                let args =
-                    serde_json::json!({"semantic_type": semantic_type, "payload": fixture.clone()});
+            for (name, semantic_type, payload) in conformance_cases()
+                .into_iter()
+                .filter(|(name, _, _)| *name == tool.name())
+            {
+                let args = serde_json::json!({"semantic_type": semantic_type, "payload": payload});
                 let ctx = ToolContext::new(std::env::temp_dir());
                 let out = tool.execute(&args, &ctx).await;
                 if out.is_error {
                     failures.push(format!(
-                        "{semantic_type} ({}): tool rejected: {}",
-                        tool.name(),
+                        "{semantic_type} ({name}): rejected: {}",
                         out.content
                     ));
                     continue;
                 }
-                let found = vak_delivery::structured_outputs_from_text(&out.content);
-                if found.len() != 1 || found[0].semantic_type != semantic_type {
+                let card = card_output_from_call(name, &args, &skills);
+                if card.as_ref().map(|c| c.semantic_type.as_str()) != Some(semantic_type) {
                     failures.push(format!(
-                        "{semantic_type} ({}): render pipeline found {found:?} in {}",
-                        tool.name(),
-                        out.content
+                        "{semantic_type} ({name}): did not rebuild into a card"
                     ));
                 }
             }
         }
         assert!(
             failures.is_empty(),
-            "{} of the registered semantic_types failed to render through the real SkillRegistry:\n{}",
+            "{} registered types failed:\n{}",
             failures.len(),
             failures.join("\n")
         );

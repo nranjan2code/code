@@ -217,7 +217,7 @@ async fn a_fence_repeating_a_just_emitted_card_gets_one_repair_turn() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
             ),
             text_msg(DUPLICATE_FENCE),
             text_msg(NARRATION_ONLY),
@@ -263,7 +263,7 @@ async fn repair_is_bounded_to_one_attempt_not_a_loop() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
             ),
             text_msg(DUPLICATE_FENCE),
             text_msg(DUPLICATE_FENCE), // still duplicated after the nudge
@@ -302,7 +302,7 @@ async fn narration_without_a_duplicate_fence_is_never_touched() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
             ),
             text_msg(NARRATION_ONLY),
         ],

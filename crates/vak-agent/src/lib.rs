@@ -1534,6 +1534,10 @@ impl Agent {
                 .iter()
                 .map(|c| (c.id.clone(), c.name.clone()))
                 .collect();
+            let call_inputs: HashMap<String, serde_json::Value> = calls
+                .iter()
+                .map(|c| (c.id.clone(), c.input.clone()))
+                .collect();
             // The order the model actually issued these calls in, captured
             // before `execute_batch` (which may run calls concurrently and
             // return `results` in completion order, not issue order).
@@ -1588,16 +1592,14 @@ impl Agent {
             let emitted_card_types: Vec<String> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Ok(content) => {
+                    ToolRunOutput::Ok(_) => {
                         let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
-                        (name.starts_with("emit_") && name.ends_with("_card"))
-                            .then(|| serde_json::from_str::<serde_json::Value>(content).ok())
+                        is_card_tool_name(name)
+                            .then(|| call_inputs.get(id))
                             .flatten()
-                            .and_then(|v| {
-                                v.get("semantic_type")
-                                    .and_then(|s| s.as_str())
-                                    .map(str::to_string)
-                            })
+                            .and_then(|input| input.get("semantic_type"))
+                            .and_then(|s| s.as_str())
+                            .map(str::to_string)
                     }
                     ToolRunOutput::Err(_) => None,
                 })
@@ -3614,7 +3616,18 @@ fn find_duplicate_card_fence(text: &str, emitted_types: &[String]) -> Option<Str
 /// positive just means one extra grounding nudge, not a broken turn) —
 /// EXCEPT for `LOCAL_DATA_TOOLS`, which are excluded outright regardless of
 /// name/result shape, since their output is the user's own data.
+/// `emit_*_card` presentation tools (vak-core `presentation_tools`).
+fn is_card_tool_name(name: &str) -> bool {
+    name.starts_with("emit_") && name.ends_with("_card")
+}
+
 fn tool_call_looks_like_retrieval(tool_name: &str, result_text: &str) -> bool {
+    // A card tool is the answer being *presented*, not information retrieved
+    // (`emit_research_card` contains "search" and carries URLs, so it matched
+    // both signals below and triggered a grounding nudge on a grounded answer).
+    if is_card_tool_name(tool_name) {
+        return false;
+    }
     const NAME_KEYWORDS: &[&str] = &[
         "search", "fetch", "crawl", "browse", "lookup", "query", "retriev", "find",
     ];
@@ -5254,5 +5267,28 @@ Execution finished."#;
         let cmd = calls[0].input["command"].as_str().unwrap_or_default();
         assert!(cmd.contains("mkdir -p .vak/scratch"));
         assert!(cmd.contains("python3 .vak/scratch/markov_dashboard.py"));
+    }
+}
+
+#[cfg(test)]
+mod card_tool_grounding_tests {
+    use super::tool_call_looks_like_retrieval;
+
+    /// `emit_research_card` contains "search" and its result can carry many
+    /// URLs; it matched both retrieval signals and forced a pointless
+    /// "didn't cite your results" redo on an answer that was already the
+    /// grounded, cited card.
+    #[test]
+    fn presenting_a_card_is_not_retrieval() {
+        let many_urls = "https://a.example https://b.example https://c.example";
+        for tool in [
+            "emit_research_card",
+            "emit_table_card",
+            "emit_chart_card",
+            "emit_universal_card",
+        ] {
+            assert!(!tool_call_looks_like_retrieval(tool, many_urls), "{tool}");
+        }
+        assert!(tool_call_looks_like_retrieval("tavily_search", "x"));
     }
 }
