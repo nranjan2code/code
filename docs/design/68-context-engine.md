@@ -1,8 +1,14 @@
 # 68 — Context engine: measured capacity, turn working set, recallable evidence
-Status: proposed (greenfield replacement of `derive_messages` projection and
-`ContextPolicy`; supersedes the history parts of 15-reliability.md)
+Status: implemented in 3.5.0 (greenfield replacement of the `derive_messages`
+projection and `ContextPolicy`; supersedes 17-context.md and the history
+parts of 15-reliability.md). Native provider compaction (§12) stays opt-in
+and is not wired; the hosted probe ladder is opt-in via `[probe] hosted`.
 
 ## Why this document exists
+
+The findings below describe the tree as it stood on 2026-09-19 (release
+3.4.11), before this design was implemented; the cited locations are
+historical and no longer exist.
 
 A weather question on `gemma4:e2b-mlx` answered in prose instead of a card.
 Tracing it exposed that Vak's context assembly is a set of hard-coded cuts
@@ -12,12 +18,12 @@ actually do. Findings, all measured against the live ledger
 
 | Finding | Where | Evidence |
 |---|---|---|
-| Every user/assistant message of every turn goes out verbatim until 80% of the *window* | `vak-session/src/log.rs` `derive_keyed_tagged`, `vak-agent/src/context.rs:50` | 130 messages, 0 compactions, 29.9k prompt tokens |
+| Every user/assistant message of every turn goes out verbatim until 80% of the *window* | `vak-session/src/log.rs` `derive_keyed_tagged`, `ContextPolicy::compact_threshold` (then in `vak-agent/src/context.rs`) | 130 messages, 0 compactions, 29.9k prompt tokens |
 | Tool results from earlier turns are cut to 300 chars, silently | `log.rs:1147` `MAX_HISTORICAL_TOOL_RESULT_CHARS` | receipt input 46,139 → 22,441 across one turn boundary |
 | The budget is the declared window, so a 5B model and a frontier model get the same history policy | `ContextPolicy` | compaction would first fire at ~98k on a 131k window |
-| `dynamic_history_budget_cap` and intent `ContextProfile` are computed and never consumed | `context.rs:104`, `vak-intent/src/engage.rs:206` | grep |
+| `dynamic_history_budget_cap` and intent `ContextProfile` are computed and never consumed | `dynamic_history_budget_cap` in `vak-agent/src/context.rs`, `ContextProfile` in `vak-intent/src/engage.rs` | grep |
 | The system prompt carries per-turn text (UTC instant, epistemic stance, intent), so the provider prefix cache dies at ~2.8k tokens on every new turn | `turn_capabilities_bound.system_prompt` | Ollama `total=32487 matched=2817`, 42s response; within-turn steps match ~100% |
-| Tool surface is triplicated: Tavily schemas inline in the system prompt, as direct tools, and behind the `mcp` broker; slicing fails open on low-confidence intent | `vak-core/src/intent.rs:140`, prompt builder | 30 schemas + 5 inline MCP schemas; "question only" already costs 12k tokens |
+| Tool surface is triplicated: Tavily schemas inline in the system prompt, as direct tools, and behind the `mcp` broker; slicing fails open on low-confidence intent | `slice_capabilities` in `vak-core/src/intent.rs`, prompt builder | 30 schemas + 5 inline MCP schemas; "question only" already costs 12k tokens |
 | `<conversation_thread>` repeats the last 8 user messages already present verbatim | `log.rs:1060` | inspection |
 | Token estimate is chars/4 with no feedback from provider usage | `context::estimate_tokens` | ledger 286k chars vs 29.9k real tokens |
 | Ollama over-length is a hard 400, mapped to a permanent error; the turn dies instead of compacting | `vak-llm/src/openai.rs`, Ollama 0.34.2 probe | 367k-token prompt → HTTP 400; 115k → accepted, 156s |
@@ -300,9 +306,9 @@ fixtures must not steer production behaviour. Audit of `crates/*/src`
 
 | Hard-coding | Where | Replacement |
 |---|---|---|
-| `s == "tavily"` tool-name sniffing to derive presentation signals | `vak-delivery/src/skills.rs:1112` | Signals come from the capability's declared `serves`/domains (Web, LiveData → citations, sources); a tool name is never matched. |
-| `WeatherApiCurrentAdapter` — a specific vendor JSON shape (`current.temp_c`) baked into the delivery pipeline | `vak-delivery/src/adapters.rs:51` | Delete. Result adaptation is the model's job through `emit_*_card`, or an adapter declared by the integration's own manifest; the core ships none. |
-| Skill-name → domain table (`"research-and-sources" => [Web, LiveData]`, …) | `vak-core/src/capability/provider.rs:106` | Each skill declares `serves` in its own front-matter; the seeded skills in `seed.rs` carry it there. Undeclared stays `Undeclared`. |
+| `s == "tavily"` tool-name sniffing to derive presentation signals | `vak-delivery/src/skills.rs` (`signals_from_context`) | Signals come from the capability's declared `serves`/domains (Web, LiveData → citations, sources); a tool name is never matched. |
+| `WeatherApiCurrentAdapter` — a specific vendor JSON shape (`current.temp_c`) baked into the delivery pipeline | `vak-delivery/src/adapters.rs` | Delete. Result adaptation is the model's job through `emit_*_card`, or an adapter declared by the integration's own manifest; the core ships none. |
+| Skill-name → domain table (`"research-and-sources" => [Web, LiveData]`, …) | `vak-core/src/capability/provider.rs` | Each skill declares `serves` in its own front-matter; the seeded skills in `seed.rs` carry it there. Undeclared stays `Undeclared`. |
 | Seeded skill `research-and-sources` and its guidelines injected into every turn's system prompt | `vak-core/src/seed.rs`, prompt builder | Seeds are ordinary skills loaded through `skill`, disclosed by the tool index, never inlined by name. |
 | Worked card examples in the system prompt (`"San Francisco Weather"`, "weather, telemetry") | `vak-core/src/prompts.rs` | Card catalogue stays, but examples are drawn from the card schema (`metric`: label/value/unit) rather than a topic; the catalogue moves to a skill loaded when the surface renders cards. |
 | Doc comments narrating "the weather bug" / "the tavily server" | `health.rs`, `engage.rs`, `reach.rs`, `report.rs`, `provider.rs` | Rewrite in general terms (a live-data question; a configured search server). Comments are not behaviour, but they are how the next hard-coding gets justified. |

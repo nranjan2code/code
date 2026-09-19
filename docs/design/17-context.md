@@ -1,5 +1,5 @@
 # 17 — Long-horizon context
-Status: implemented in 2.0.0
+Status: superseded by 68-context-engine.md (3.5.0); kept for history
 
 How multi-turn sessions survive context-window limits. Inspired by
 A prompt-budget protocol reduced to a coding-harness kernel.

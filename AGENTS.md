@@ -29,7 +29,8 @@ alone.
 
 Core layers, one document each: 01 LLM · 02 sessions · 03 agent loop ·
 04 tools · 05 config · 07 prompt · 08 permissions · 09 extensibility ·
-10 flows · 11 planner · 12 evals · 13 server · 14 checkpoints · 17 context.
+10 flows · 11 planner · 12 evals · 13 server · 14 checkpoints · 68 context
+(17 is superseded by it).
 00-roadmap.md holds the phase history.
 
 Read before changing behaviour in these areas:
@@ -501,23 +502,25 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     when unapproved. Frontend client preview frames must be sandboxed
     (`sandbox="allow-scripts"`) within safe error boundaries to protect the
     client host from untrusted script execution.
-36. **Multi-turn continuity and conversational drift are harness-guaranteed,
-    model-agnostic invariants.** The harness guarantees multi-turn execution
-    and conversational drift continuity across both local and cloud models.
-    Turn projection deterministically injects a `<conversation_thread>`
-    summarizing the chronological user request timeline across turns when
-    multiple revisions exist, instructing the model to follow user intent
-    across conversational drifts smoothly without complaint or resistance,
-    resolve references ("the data", "do that", "it", "something") against the
-    timeline, and prohibits using clarification as an exception-handling
-    escape hatch to avoid taking action or calling available tools. Historical
-    tool execution results from prior turns exceeding length limits are pruned
-    to compact summaries in runtime memory projections without modifying the
-    append-only ledger on disk. Provider model context discovery (including
-    native Ollama metadata queries via `/api/show`) must discover the real
-    context window or default conservatively (8,192 tokens) to ensure context
-    compaction triggers reliably on local hardware rather than overflowing
-    context.
+36. **Context is measured, never assumed, and nothing model-visible is cut
+    blind** (docs/design/68-context-engine.md). Every number that shapes a
+    request — window, usable instruction horizon, tokens per char, prefill
+    rate, cache behaviour — comes from a per-model `CapacityProfile` probed
+    at bind time and revised from every receipt; feedback never widens a
+    horizon. The turn is the unit: a turn is never split, the open turn is
+    verbatim, closed turns project at `Full` (directive + trace lines +
+    presentations + narration, no tool blocks), `Card` (one `TurnCard` line)
+    or `Packet` fidelity chosen by the `WorkingSetPlanner` against the
+    measured budget, and every tool result stays reachable through `recall`
+    by evidence id, presentation id or turn number. No character-count
+    truncation anywhere. The system prefix (identity, contract, card
+    catalogue, tool index) is byte-stable across turns; everything per-turn
+    (temporal context, intent, stance, work contract, conversation thread,
+    nudges) rides in one tail block on the last user message, and cache
+    breakpoints/keys are rendered per provider. Presentations and TurnCards
+    are hash-linked ledger entries, never rebuilt from tool arguments.
+    Vendor and topic names (a search provider, a weather API) are never
+    behaviour keys; `vak-eval`'s banned-token gate enforces it.
 37. **Agent ownership is mandatory for new work and isolates workspaces,
     memory, and execution.** Every newly admitted session, request, scheduled
     run, child/delegated run, and channel delivery has one resolved Agent
@@ -743,8 +746,9 @@ crates/vak-voice     provider-neutral voice contracts, audio framing and
                      discovery registry, and transcription validation
                      (docs/design/49-live-voice.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
-                     receipt entries (audit-only, projection-neutral),
-                     compaction packet partitions (docs/design/17-context.md),
+                     receipt, presentation and turn-card entries (audit-only,
+                     projection-neutral), TurnIndex and fidelity projections
+                     (docs/design/68-context-engine.md),
                      dependency-free cross-session search w/ mtime-indexed
                      cache + cross-project search_all (docs/design/
                      23-memory.md)
@@ -831,7 +835,8 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      parent-scoped WorkerRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
-                     context-quality scorecard (docs/design/17-context.md)
+                     context-engine gate and banned-token gate
+                     (docs/design/68-context-engine.md)
 crates/vak-config    layered TOML config + atomic persisted workspace
                      preferences + credential-store secret loading (OS
                      keychain or encrypted-file fallback) + canonical filesystem
