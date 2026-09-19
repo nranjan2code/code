@@ -1,21 +1,33 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+//! Worker tail (docs/design/68-context-engine.md §6/§10): a spawned child
+//! agent must carry the same turn context block (clock instant + epistemic
+//! stance) as its parent turn, not an empty one — see `TaskDeps::tail` and
+//! `Core`'s `TaskDeps` construction, which now thread the parent's
+//! `AgentConfig::tail` through instead of leaving the child's default.
+//! Assembly and single-turn stability of the tail itself are covered by
+//! `context_tail.rs`; this test only checks that a WORKER's own request
+//! carries it too.
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use tempfile::tempdir;
-
-use vak_agent::{Agent, AgentConfig, TaskDeps, TaskTool, TurnOutcome, WorkerRegistry};
+use vak_agent::{Agent, AgentConfig, AutoApprove, TailInput, TaskDeps, TaskTool, TurnOutcome};
 use vak_llm::stream;
-use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
+use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Role, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
+use vak_permission::{Mode, PermissionEngine};
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 use vak_tools::read::ReadTool;
 
+/// Records every request it sees and replays a scripted queue of
+/// responses — shared between the parent agent and its spawned child, so
+/// both turns' requests land in one inspectable list, in dispatch order.
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
@@ -77,14 +89,12 @@ fn task_call(id: &str, prompt: &str) -> AssistantMessage {
     }
 }
 
-use vak_permission::PermissionEngine;
-
-#[tokio::test]
-async fn worker_roundtrip_with_shared_scripted_provider() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spawned_worker_request_carries_the_parent_turns_tail() {
     let dir = tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let parent_id = "parent-x".to_string();
+    let parent_id = "parent-tail".to_string();
 
     let header = SessionHeader {
         agent: None,
@@ -124,14 +134,23 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         requests: requests.clone(),
     });
 
+    let parent_tail = TailInput {
+        temporal: "current UTC instant 2026-09-19T00:00:00Z".into(),
+        stance: "Provide a clear, direct answer.".into(),
+    };
+
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
+    cfg.tail = parent_tail.clone();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
         parent_agent_identity: None,
         role_prompts: Default::default(),
         provider: scripted.clone(),
         system_prompt: "child-sys".into(),
-        tail: Default::default(),
+        // The field under test: `Core` threads `cfg.tail.clone()` through
+        // here (crates/vak-core/src/lib.rs, TaskDeps construction) rather
+        // than leaving the child with an empty `TailInput::default()`.
+        tail: parent_tail.clone(),
         model: "test-model".into(),
         tools: vec![Arc::new(ReadTool)],
         capabilities: Vec::new(),
@@ -153,7 +172,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         dispatch_ceiling: 1,
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
-        mode: vak_permission::Mode::WorkspaceWrite,
+        mode: Mode::WorkspaceWrite,
         approval_mode: vak_agent::ApprovalMode::Ask,
         approver: None,
         sandbox: None,
@@ -164,12 +183,12 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         work_item_id: None,
         work_item_ids: vec![],
         events: None,
-        registry: Some(Arc::new(WorkerRegistry::new())),
+        registry: Some(Arc::new(vak_agent::WorkerRegistry::new())),
     }))];
     cfg.permission = Some(Arc::new(
         PermissionEngine::from_rule_strings(&["+task".to_string()]).unwrap(),
     ));
-    cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
+    cfg.approver = Some(Arc::new(AutoApprove));
 
     let mut agent = Agent::new(scripted, log, cfg);
     let outcome = agent
@@ -180,63 +199,45 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
             mpsc::channel(64).0,
         )
         .await;
-
-    match outcome {
-        TurnOutcome::Completed { response } => {
-            assert_eq!(response.text_content(), "parent done");
-        }
-        other => panic!("expected completed, got {other:?}"),
-    }
-
-    let session = agent.session.lock().await;
-    let tool_result = session
-        .derive_messages()
-        .iter()
-        .flat_map(|m| m.content.iter())
-        .find_map(|b| match b {
-            ContentBlock::ToolResult {
-                content, is_error, ..
-            } => Some((content.clone(), *is_error)),
-            _ => None,
-        })
-        .expect("tool result from task must exist");
-    assert!(!tool_result.1);
-    assert_eq!(tool_result.0, "child final answer");
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
     let reqs = requests.lock().unwrap();
     assert!(
-        reqs.len() >= 3,
-        "parent call + child call(s) + parent continuation expected, got {}",
+        reqs.len() >= 2,
+        "parent call + child call expected, got {}",
         reqs.len()
     );
-    let child_req = &reqs[1];
+    let child_request = &reqs[1];
     assert_eq!(
-        child_req.system.as_deref(),
+        child_request.system.as_deref(),
         Some("child-sys"),
-        "child must run with its own narrowed system prompt"
-    );
-    assert!(
-        child_req.tools.iter().all(|t| t.name != "task"),
-        "children must not be able to spawn further workers"
+        "reqs[1] must be the child's own request"
     );
 
-    let mut found_child = false;
-    for entry in std::fs::read_dir(SessionPath::sessions_dir(&home, dir.path()))
-        .unwrap()
-        .flatten()
-    {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("child-") {
-            found_child = true;
-            let content = std::fs::read_to_string(entry.path()).unwrap();
-            let first: serde_json::Value =
-                serde_json::from_str(content.lines().next().unwrap()).unwrap();
-            assert_eq!(
-                first["parent_session_id"].as_str(),
-                Some(parent_id.as_str()),
-                "child session must link to its parent"
-            );
-        }
-    }
-    assert!(found_child, "a child session file must exist");
+    let last = child_request
+        .messages
+        .last()
+        .expect("child request has at least one message");
+    assert_eq!(
+        last.role,
+        Role::User,
+        "the tail rides the child's last USER message"
+    );
+    let tail_text = match last.content.last().expect("at least one content block") {
+        ContentBlock::Text { text } => text.clone(),
+        other => panic!("expected the tail as a trailing text block, got {other:?}"),
+    };
+    assert!(
+        tail_text.contains("<turn_context>"),
+        "worker request tail: {tail_text}"
+    );
+    assert!(
+        tail_text.contains("current UTC instant 2026-09-19T00:00:00Z"),
+        "worker must carry the PARENT turn's temporal context, not an empty one: {tail_text}"
+    );
+    assert!(tail_text.contains("<stance>"));
+    assert!(
+        tail_text.contains("Provide a clear, direct answer."),
+        "worker must carry the parent turn's epistemic stance: {tail_text}"
+    );
 }

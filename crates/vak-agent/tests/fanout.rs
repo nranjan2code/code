@@ -254,6 +254,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         role_prompts: Default::default(),
         provider: provider.clone(),
         system_prompt: "child-sys".into(),
+        tail: Default::default(),
         model: "test-model".into(),
         tools: vec![Arc::new(BashTool)],
         capabilities: Vec::new(),

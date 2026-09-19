@@ -5855,6 +5855,7 @@ impl Core {
                 outcome: cfg.outcome.clone(),
                 provider: provider.clone(),
                 system_prompt: child_default_prompt,
+                tail: cfg.tail.clone(),
                 role_prompts,
                 model: model.clone(),
                 tools: tools.clone(),
