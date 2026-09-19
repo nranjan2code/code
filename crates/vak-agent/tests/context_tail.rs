@@ -384,8 +384,10 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
     })
     .unwrap();
 
-    // Compact the first turn away; the second turn (2 messages) stays verbatim.
-    let plan = log.plan_compaction(2).expect("a plan over four messages");
+    // Compact the first turn away; the second turn stays verbatim.
+    // `keep_recent` is a TURN count now (docs/design/68-context-engine.md
+    // §10), and there are two turns here.
+    let plan = log.plan_compaction(1).expect("a plan over two turns");
     log.apply_compaction(&plan, "summary of the WEF research turn".into(), 999)
         .unwrap();
 

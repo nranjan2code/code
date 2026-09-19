@@ -55,6 +55,15 @@ pub struct Turn {
     presentation_records: Vec<PresentationRecord>,
     /// The turn's resolved intent reading, when an `Intent` entry exists.
     reading: Option<ReadingKey>,
+    /// Every message after the directive, in ledger order, INCLUDING
+    /// control ones (nudges) — the raw material for `current_verbatim`.
+    /// Control messages are still never a `Step` and never end up in
+    /// `full_record`: they are mid-turn runtime scaffolding for the model
+    /// still working the turn, not part of what a later turn should see
+    /// (docs/design/68-context-engine.md §10's "within a turn" rules), but
+    /// they must stay verbatim in the CURRENT turn's own request or a
+    /// repair nudge would never reach the model at all.
+    raw_tail: Vec<Message>,
 }
 
 /// A compaction summary over a range of turns (docs/design/68 §2: "Compaction
@@ -84,10 +93,18 @@ impl TurnIndex {
         for entry in &chain {
             match &entry.payload {
                 EntryPayload::Message(record) => {
+                    let msg = &record.message;
                     if record.control_kind().is_some() {
+                        // Not a turn, not a step — but still mid-turn
+                        // scaffolding for the OPEN turn's own request; kept
+                        // verbatim there via `raw_tail` (see its doc
+                        // comment) and dropped entirely once the turn
+                        // closes and is rendered as `full_record`.
+                        if let Some(turn) = turns.last_mut() {
+                            turn.raw_tail.push(msg.clone());
+                        }
                         continue;
                     }
-                    let msg = &record.message;
                     match msg.role {
                         Role::User => {
                             let has_text = msg
@@ -110,24 +127,27 @@ impl TurnIndex {
                                     closed: true,
                                     presentation_records: Vec::new(),
                                     reading: None,
+                                    raw_tail: Vec::new(),
                                 });
                             } else if has_tool_result
                                 && let Some(turn) = turns.last_mut()
-                                && let Some(step) = turn.steps.last_mut()
                             {
-                                for block in &msg.content {
-                                    if let ContentBlock::ToolResult {
-                                        tool_use_id,
-                                        content,
-                                        is_error,
-                                    } = block
-                                    {
-                                        step.results.push((
-                                            tool_use_id.clone(),
-                                            content.clone(),
-                                            *is_error,
-                                        ));
-                                        turn.evidence.push(tool_use_id.clone());
+                                turn.raw_tail.push(msg.clone());
+                                if let Some(step) = turn.steps.last_mut() {
+                                    for block in &msg.content {
+                                        if let ContentBlock::ToolResult {
+                                            tool_use_id,
+                                            content,
+                                            is_error,
+                                        } = block
+                                        {
+                                            step.results.push((
+                                                tool_use_id.clone(),
+                                                content.clone(),
+                                                *is_error,
+                                            ));
+                                            turn.evidence.push(tool_use_id.clone());
+                                        }
                                     }
                                 }
                             }
@@ -138,6 +158,7 @@ impl TurnIndex {
                                 .iter()
                                 .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
                             if let Some(turn) = turns.last_mut() {
+                                turn.raw_tail.push(msg.clone());
                                 if has_tool_use {
                                     turn.steps.push(Step {
                                         assistant: msg.clone(),
@@ -337,35 +358,16 @@ impl Turn {
         ]
     }
 
-    /// The open turn exactly as recorded: directive, then each step's
-    /// assistant message and its tool-result message, then the final answer
-    /// if one has landed. Used for the still-open turn, which stays verbatim
-    /// because it is still being worked from within this run.
+    /// The open turn exactly as recorded: directive, then every message
+    /// since (assistant steps, tool results, and any control nudge),
+    /// verbatim and in order. Used for the still-open turn, which stays
+    /// verbatim because it is still being worked from within this run — a
+    /// nudge must reach the model on its next request, so it stays here
+    /// even though it is dropped once the turn closes and is rendered as
+    /// `full_record`.
     pub fn current_verbatim(&self) -> Vec<Message> {
         let mut out = vec![self.directive.clone()];
-        for step in &self.steps {
-            out.push(step.assistant.clone());
-            if !step.results.is_empty() {
-                let content = step
-                    .results
-                    .iter()
-                    .map(|(id, content, is_error)| {
-                        if *is_error {
-                            ContentBlock::tool_error(id.clone(), content.clone())
-                        } else {
-                            ContentBlock::tool_result(id.clone(), content.clone())
-                        }
-                    })
-                    .collect();
-                out.push(Message {
-                    role: Role::User,
-                    content,
-                });
-            }
-        }
-        if let Some(final_answer) = &self.final_answer {
-            out.push(final_answer.clone());
-        }
+        out.extend(self.raw_tail.iter().cloned());
         out
     }
 

@@ -147,10 +147,12 @@ async fn pre_tool_use_hook_blocks_execution() {
         "blocked command must never have executed"
     );
     let session = agent.session.lock().await;
+    // Raw ledger: the closed turn's result is a trace line in the
+    // projection now (docs/design/68-context-engine.md §10).
     let result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..
@@ -198,11 +200,14 @@ async fn stop_hook_forces_continuation_once() {
         other => panic!("expected completed after continuation, got {other:?}"),
     }
     let session = agent.session.lock().await;
+    // Raw ledger: a control nudge is scaffolding for the turn still in
+    // progress and is dropped once the turn closes
+    // (docs/design/68-context-engine.md §10).
     let texts: Vec<String> = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .filter(|m| m.text_content().contains("[stop-hook]"))
-        .map(|m| m.text_content())
+        .filter(|(_, m)| m.text_content().contains("[stop-hook]"))
+        .map(|(_, m)| m.text_content())
         .collect();
     assert_eq!(texts.len(), 1, "continuation message must be logged once");
 }

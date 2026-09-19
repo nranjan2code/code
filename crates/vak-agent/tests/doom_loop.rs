@@ -144,13 +144,16 @@ async fn third_identical_call_is_blocked_with_reason() {
         "got {outcome:?}"
     );
 
+    // Raw ledger: the closed turn's results are trace lines in the
+    // model-visible projection now (docs/design/68-context-engine.md
+    // §10); this test is about what the guard actually recorded.
     let results: Vec<(bool, String)> = agent
         .session
         .lock()
         .await
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .filter_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..

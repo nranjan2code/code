@@ -187,11 +187,13 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         other => panic!("expected completed, got {other:?}"),
     }
 
+    // Raw ledger: the closed turn's result is a trace line in the
+    // projection now (docs/design/68-context-engine.md §10).
     let session = agent.session.lock().await;
     let tool_result = session
-        .derive_messages()
+        .message_chain()
         .iter()
-        .flat_map(|m| m.content.iter())
+        .flat_map(|(_, m)| m.content.iter())
         .find_map(|b| match b {
             ContentBlock::ToolResult {
                 content, is_error, ..

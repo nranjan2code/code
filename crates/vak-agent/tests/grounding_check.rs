@@ -183,16 +183,21 @@ async fn build_agent_with_check(
     )
 }
 
+// Raw ledger, not the model-visible projection: these tests are about the
+// repair loop's mechanics (how many drafts were tried, what a nudge said),
+// which a closed turn's full record deliberately no longer preserves
+// (docs/design/68-context-engine.md §10) — a rejected draft is never
+// projected, and every step collapses into one trace+narration message.
 fn assistant_texts(agent: &Agent) -> Vec<String> {
     futures::executor::block_on(async {
         agent
             .session
             .lock()
             .await
-            .derive_messages()
+            .message_chain()
             .iter()
-            .filter(|m| m.role == vak_llm::types::Role::Assistant)
-            .flat_map(|m| m.content.iter())
+            .filter(|(_, m)| m.role == vak_llm::types::Role::Assistant)
+            .flat_map(|(_, m)| m.content.iter())
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.clone()),
                 _ => None,
@@ -244,10 +249,10 @@ async fn ungrounded_answer_after_search_gets_one_repair_turn() {
             .session
             .lock()
             .await
-            .derive_messages()
+            .message_chain()
             .iter()
-            .filter(|m| m.role == vak_llm::types::Role::User)
-            .flat_map(|m| m.content.iter())
+            .filter(|(_, m)| m.role == vak_llm::types::Role::User)
+            .flat_map(|(_, m)| m.content.iter())
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.clone()),
                 _ => None,
