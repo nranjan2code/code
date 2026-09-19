@@ -1658,6 +1658,7 @@ fn audit_signals() {
             tool_input: None,
             tool_output: None,
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(!signals.contains(&"terminal".to_string()));
@@ -1670,6 +1671,7 @@ fn audit_signals() {
             tool_input: None,
             tool_output: None,
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"terminal".to_string()));
@@ -1684,6 +1686,7 @@ fn audit_signals() {
             tool_input: Some(&input),
             tool_output: None,
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"tests".to_string()));
@@ -1697,36 +1700,55 @@ fn audit_signals() {
             tool_input: None,
             tool_output: None,
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"diff".to_string()));
         assert!(signals.contains(&"files_changed".to_string()));
     }));
 
-    scenarios.push(tc("context_websearch_adds_research", || {
+    scenarios.push(tc("context_web_domain_adds_research", || {
         let ctx = SignalContext {
             text: "searching",
-            tool_name: Some("websearch"),
+            tool_name: Some("some_configured_mcp_tool"),
             tool_input: None,
             tool_output: None,
             is_error: false,
+            domains: &["web"],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"citations".to_string()));
         assert!(signals.contains(&"research".to_string()));
     }));
 
-    scenarios.push(tc("context_tavily_adds_research", || {
+    scenarios.push(tc("context_live_data_domain_adds_research", || {
         let ctx = SignalContext {
             text: "searching",
-            tool_name: Some("tavily"),
+            tool_name: Some("some_configured_mcp_tool"),
             tool_input: None,
             tool_output: None,
             is_error: false,
+            domains: &["live-data"],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"research".to_string()));
         assert!(signals.contains(&"synthesis".to_string()));
+    }));
+
+    scenarios.push(tc("context_tool_name_alone_never_adds_research", || {
+        // The name of a tool must never drive this signal — only its
+        // capability's declared domains do. A tool named after a search
+        // vendor but with no declared domain gets nothing here.
+        let ctx = SignalContext {
+            text: "searching",
+            tool_name: Some("tavily_search"),
+            tool_input: None,
+            tool_output: None,
+            is_error: false,
+            domains: &[],
+        };
+        let signals = signals_from_context(&ctx);
+        assert!(!signals.contains(&"research".to_string()));
     }));
 
     scenarios.push(tc("context_output_test_result", || {
@@ -1736,6 +1758,7 @@ fn audit_signals() {
             tool_input: None,
             tool_output: Some("test result: 5 passed; 0 failed"),
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"tests".to_string()));
@@ -1749,6 +1772,7 @@ fn audit_signals() {
             tool_input: None,
             tool_output: Some("diff --git a/file b/file"),
             is_error: false,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"diff".to_string()));
@@ -1762,6 +1786,7 @@ fn audit_signals() {
             tool_input: None,
             tool_output: None,
             is_error: true,
+            domains: &[],
         };
         let signals = signals_from_context(&ctx);
         assert!(signals.contains(&"terminal".to_string()));
@@ -2738,18 +2763,6 @@ fn audit_structured_outputs() {
         );
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].semantic_type, "metric");
-    }));
-
-    scenarios.push(tc("adapter_weatherapi", || {
-        let adapters = built_in_adapters();
-        let outputs = structured_outputs_from_tool_result(
-            r#"{"current":{"temp_c":25.0,"condition":{"text":"Sunny"}}}"#,
-            "desktop",
-            &adapters,
-        );
-        assert_eq!(outputs.len(), 1);
-        assert_eq!(outputs[0].semantic_type, "metric");
-        assert_eq!(outputs[0].payload["value"], 25.0);
     }));
 
     scenarios.push(tc("adapter_unrecognized_empty", || {

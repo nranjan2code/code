@@ -35,7 +35,7 @@ fn builtin_domains(name: &str) -> Serves {
         "webfetch" => &[Web, LiveData],
         "browse" => &[Web, LiveData],
         // The broker to every external integration. Claiming `live-data`
-        // here is what let "how is the weather" reach a configured search
+        // here is what lets a live-data question reach a configured search
         // server; the individual servers refine it by declaring their own.
         "mcp" => &[LiveData, Web, Documents, Messaging],
         "skill" => &[Documents, Orchestration],
@@ -93,23 +93,6 @@ pub(crate) fn call_retrieves_external(
         }
         None => reaches_outside(&builtin_domains(name)),
     }
-}
-
-/// Standard starter skills classify themselves here if not declared in frontmatter.
-fn starter_skill_domains(name: &str) -> Serves {
-    use Domain::*;
-    let domains: &[Domain] = match name {
-        "software-development" => &[CodeExec, Documents, Vcs, Filesystem],
-        "debugging" => &[CodeExec, Observability],
-        "code-review" => &[Vcs, Documents],
-        "data-and-spreadsheets" => &[Documents, CodeExec],
-        "research-and-sources" => &[Web, LiveData],
-        "writing-and-editing" => &[Documents],
-        "planning-and-organizing" => &[Orchestration],
-        "getting-started" => &[Documents],
-        _ => return Serves::Undeclared,
-    };
-    Serves::declared(domains.iter().cloned())
 }
 
 impl Core {
@@ -224,11 +207,16 @@ impl CapabilityProvider for Core {
                 // loader could not then produce.
                 continue;
             };
+            // A skill classifies itself through its own `serves:`
+            // frontmatter (`crate::skills::validate`). One that declares
+            // nothing — including every seeded skill that predates this
+            // field — is undeclared and therefore never sliced away; there
+            // is no name-keyed table here to fall back to.
             let serves = skill
                 .serves
                 .as_ref()
                 .map(|values| Serves::Declared(Domain::parse_list(values)))
-                .unwrap_or_else(|| starter_skill_domains(&skill.name));
+                .unwrap_or(Serves::Undeclared);
             out.push(Declaration {
                 id: CapabilityId::new(CapabilityKind::Skill, &skill.name),
                 origin: origin_from_provenance(skill.provenance.as_deref()),
@@ -446,7 +434,7 @@ pub fn required_domains(act: vak_intent::Act, evidence_is_external: bool) -> BTr
     }
     // A question whose answer is not already in front of us needs a way to
     // go and get one, whatever the act was read as. This is the general form
-    // of the weather bug: the failure was never specific to `Answer`.
+    // of the live-data gap: the failure was never specific to `Answer`.
     if evidence_is_external {
         required.insert(LiveData);
         required.insert(Web);

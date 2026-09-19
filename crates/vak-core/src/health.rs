@@ -343,7 +343,7 @@ fn capability_reach_check(core: &Core) -> HealthCheck {
 /// already knew a server was unreachable, but it was rendered only into the
 /// system prompt — so the model was told, and the person who could actually
 /// repair the configuration was not. An agent answering "I do not have
-/// access to real-time weather" while a misconfigured search server sat in
+/// access to live data" while a misconfigured search server sat in
 /// `[mcp.servers]` produced no error, no failing check, and nothing in
 /// `doctor`. Now the same diagnostics reach both audiences.
 ///

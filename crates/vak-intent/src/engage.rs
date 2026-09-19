@@ -373,11 +373,11 @@ pub const ORIENTATION_FLOOR: &[&str] = &[
 /// (`Act::Answer => ["webfetch", "mcp"]`). That shape could not answer the
 /// only question that matters — which of the capabilities this user actually
 /// installed could serve this request — because installed capabilities were
-/// never in it. Its failure mode was silent: "how is the weather in noida"
-/// read as `Answer`, sliced to six file tools, and came back "I do not have
-/// access to real-time weather information" with a configured, connected
-/// search server sitting right there. Naming the server in the next turn did
-/// not help either, because `Locate` had no way to reach one.
+/// never in it. Its failure mode was silent: a live-data question about a
+/// specific place read as `Answer`, sliced to six file tools, and came back
+/// "I do not have access to real-time information" with a configured,
+/// connected search server sitting right there. Naming the server in the
+/// next turn did not help either, because `Locate` had no way to reach one.
 ///
 /// Domains are matched against what each capability declares it serves, so
 /// adding an integration never edits this function. A capability that
@@ -449,7 +449,7 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
         // Evidence the reading demands has to come from somewhere. A turn
         // required to cite cannot satisfy that from memory, so requiring
         // citation implies the ability to reach a source — whatever the act
-        // was read as. This is the general form of the weather failure: it
+        // was read as. This is the general form of the live-data failure: it
         // was never specific to `Answer`.
         if reading.evidence.rank() >= Evidence::Cited.rank() {
             domains.insert("live-data".into());

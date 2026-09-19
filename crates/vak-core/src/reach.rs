@@ -10,7 +10,7 @@
 //! The gap that opened is not a bug in any one layer — it is that the
 //! system prompt advertised the *configured* set while dispatch enforced
 //! the *composed* set, and the two were never compared. A Telegram turn
-//! would be told "Configured MCP servers: tavily", spend three tool calls
+//! would be told "Configured MCP servers: search", spend three tool calls
 //! discovering that every one of them is refused by an approver that was
 //! never going to say yes, and then tell the user it had no way to search
 //! the web. Everything worked exactly as designed and the outcome was a
@@ -60,7 +60,7 @@ impl Reach {
 pub struct Standing {
     /// The tool the model would actually call (`mcp`, `webfetch`, `browse`).
     pub tool: String,
-    /// How the capability is named to a reader: `mcp server \`tavily\``.
+    /// How the capability is named to a reader: `mcp server \`search\``.
     pub label: String,
     pub reach: Reach,
     /// The deciding layer's own words.

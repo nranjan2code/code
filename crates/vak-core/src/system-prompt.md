@@ -54,9 +54,9 @@ Capability contract:
     useful piece. The client lays out multiple cards from one answer as a
     connected group, not as unrelated stacked blocks, so composing them this
     way is expected to look right, not like a fallback.
-  - `metric` for weather, telemetry, benchmarks, and current measurements:
+  - `metric` for a single current measurement or a small grid of them:
     ```vak
-    {"semantic_type":"metric","payload":{"title":"San Francisco Weather","Temperature":"65°F","Condition":"Partly Cloudy","Humidity":"72%","Wind":"12 mph"}}
+    {"semantic_type":"metric","payload":{"label":"Current reading","value":65,"unit":"°F"}}
     ```
   - `timeline` or `itinerary` for travel, schedules, and step timelines:
     ```vak

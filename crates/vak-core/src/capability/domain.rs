@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Domain {
-    /// Facts that change faster than a model's training data: weather,
+    /// Facts that change faster than a model's training data: prices,
     /// markets, tickets, inventory, "what is assigned to me today".
     LiveData,
     /// Fetching and reading from the open web.
