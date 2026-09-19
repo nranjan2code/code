@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 use vak_llm::{Message, Usage};
@@ -589,6 +590,92 @@ pub enum ActivityKind {
     PresentationFeedback,
 }
 
+/// Where a validated presentation came from (docs/design/68-context-engine.md
+/// §10 "Presentations are ledger entries"). Both paths converge on the same
+/// `PresentationRecord` shape; only the provenance differs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PresentationSource {
+    /// Emitted through an `emit_*_card` tool call.
+    ToolCall { tool_use_id: String },
+    /// Emitted as an inline ```` ```vak ```` fence in assistant text (models
+    /// without tool calling).
+    Fence { message_entry_id: String },
+}
+
+/// A validated `emit_*_card` (or fence) presentation, written once at the
+/// moment it validates. Never model-visible raw (`derive_messages` skips it,
+/// like `Receipt`): the current turn already sees the card through the
+/// `tool_use` input it wrote; later turns see it through a `TurnCard` or a
+/// full-record rendering, both of which read this entry. This is the single
+/// source both the model-visible history and the display channel read —
+/// nothing is rebuilt from tool arguments after this is written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresentationRecord {
+    /// The entry id of the user directive this turn answers.
+    pub turn_id: String,
+    pub source: PresentationSource,
+    pub semantic_type: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub schema_version: u32,
+    /// Canonical (validated, key-sorted) form. See [`canonicalize_json`].
+    pub payload: Value,
+    /// Hash of the canonical payload. See [`payload_digest`].
+    pub payload_digest: String,
+    /// Evidence ids: the `tool_use_id`s of every non-card tool result that
+    /// appears in the current turn before this card.
+    pub derived_from: Vec<String>,
+    pub title: String,
+    /// Schema-driven summary of the fields that make this presentation
+    /// distinguishable from another of the same `semantic_type`, used in
+    /// `TurnCard` index lines. Never a character truncation.
+    pub identity_digest: String,
+}
+
+/// Recursively sorts object keys so two payloads that differ only in field
+/// insertion order canonicalize to identical bytes. Array order is
+/// preserved — it is meaningful (e.g. chart series, table rows).
+///
+/// Uses an explicit `BTreeMap` pass (rather than relying on `serde_json`'s
+/// own map ordering, which is only sorted when the `preserve_order` feature
+/// is off) so the canonical form is deterministic regardless of that
+/// feature flag.
+pub fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<&String, &Value> = map.iter().collect();
+            let mut out = serde_json::Map::new();
+            for (key, val) in sorted {
+                out.insert(key.clone(), canonicalize_json(val));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
+        other => other.clone(),
+    }
+}
+
+/// SHA-256 hex digest of a payload's canonical form (see
+/// [`canonicalize_json`]). Used to detect a repeated presentation — the
+/// same card validated twice in one turn (once via tool call, once via a
+/// duplicate fence) hashes identically regardless of key order.
+pub fn payload_digest(payload: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = canonicalize_json(payload);
+    let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        })
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityStatus {
@@ -676,6 +763,9 @@ pub enum EntryPayload {
     },
     /// Exact capability interface used by one provider turn.
     TurnCapabilitiesBound(TurnCapabilitiesBound),
+    /// A validated presentation (docs/design/68-context-engine.md §10).
+    /// Never model-visible raw: `derive_messages` skips it like `Receipt`.
+    Presentation(PresentationRecord),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

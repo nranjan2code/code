@@ -259,6 +259,21 @@ fn snapshot_inner(
     adaptive_library: Option<&vak_presentation::PresentationLibrary>,
 ) -> OutputTimeline {
     let chain = session.chain_to_root();
+    // Presentations are ledger entries (docs/design/68-context-engine.md
+    // §10): the card a tool call displayed is read from its own written
+    // entry, keyed by `tool_use_id` — never rebuilt from the call's
+    // arguments at display time.
+    let presentation_by_tool_use_id: HashMap<String, &vak_session::types::PresentationRecord> =
+        session
+            .presentations()
+            .into_iter()
+            .filter_map(|(_, record)| match &record.source {
+                vak_session::types::PresentationSource::ToolCall { tool_use_id } => {
+                    Some((tool_use_id.clone(), record))
+                }
+                vak_session::types::PresentationSource::Fence { .. } => None,
+            })
+            .collect();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut turn_outcomes: HashMap<usize, vak_intent::OutcomeSpec> = HashMap::new();
@@ -891,19 +906,26 @@ fn snapshot_inner(
                             // anything renders from it, and the tool's own
                             // stored result is read, never rewritten.
                             if !failed {
-                                // An `emit_*_card` call carries its card in its own
-                                // arguments; the ledger stores those untruncated,
-                                // while its result is only a short ack (and any
-                                // result text the framework line-truncates).
+                                // An `emit_*_card` call's card is read from
+                                // its own `Presentation` ledger entry
+                                // (docs/design/68-context-engine.md §10),
+                                // keyed by this call's `tool_use_id` —
+                                // written once, at validation, and never
+                                // rebuilt from the call's arguments here.
                                 let name_is_card = vak_core::presentation_tools::is_card_tool(name);
                                 let outputs = if name_is_card {
-                                    vak_core::presentation_tools::card_output_from_call(
-                                        name,
-                                        input,
-                                        &planner.skills,
-                                    )
-                                    .into_iter()
-                                    .collect()
+                                    presentation_by_tool_use_id
+                                        .get(id)
+                                        .map(|record| vak_delivery::StructuredOutput {
+                                            semantic_type: record.semantic_type.clone(),
+                                            schema_version: u16::try_from(record.schema_version)
+                                                .unwrap_or(u16::MAX),
+                                            skill_id: record.skill_id.clone(),
+                                            skill_version: record.skill_version.clone(),
+                                            payload: record.payload.clone(),
+                                        })
+                                        .into_iter()
+                                        .collect()
                                 } else {
                                     detail
                                         .as_deref()
@@ -1835,6 +1857,39 @@ mod tests {
         SessionLog,
     };
 
+    /// Writes the `Presentation` entry a real turn would have written at
+    /// card validation (docs/design/68-context-engine.md §10), so these
+    /// fixture ledgers exercise the same projection path production does:
+    /// reading the entry, never rebuilding the card from `tool_use.input`.
+    fn append_presentation_for_call(
+        log: &mut SessionLog,
+        tool: &str,
+        tool_use_id: &str,
+        args: &serde_json::Value,
+    ) {
+        let skills = vak_delivery::built_in_skill_registry();
+        let info = vak_core::presentation_tools::presentation_info(tool, args, &skills)
+            .expect("fixture call must validate");
+        let turn_id = log.latest_directive_entry_id().unwrap_or_default();
+        let payload_digest = vak_session::types::payload_digest(&info.payload);
+        log.append_presentation(vak_session::types::PresentationRecord {
+            turn_id,
+            source: vak_session::types::PresentationSource::ToolCall {
+                tool_use_id: tool_use_id.into(),
+            },
+            semantic_type: info.semantic_type,
+            skill_id: info.skill_id,
+            skill_version: info.skill_version,
+            schema_version: info.schema_version,
+            payload: info.payload,
+            payload_digest,
+            derived_from: Vec::new(),
+            title: info.title,
+            identity_digest: info.identity_digest,
+        })
+        .expect("append presentation");
+    }
+
     #[test]
     fn write_tools_project_artifacts() {
         let artifact = artifact_from_tool(
@@ -2536,6 +2591,12 @@ mod tests {
             meta: None,
         })
         .expect("append result 1");
+        append_presentation_for_call(
+            &mut log,
+            "emit_chart_card",
+            "call-1",
+            &chart_input("first attempt"),
+        );
         log.append_message(MessageRecord {
             message: Message {
                 role: Role::Assistant,
@@ -2580,6 +2641,12 @@ mod tests {
             meta: None,
         })
         .expect("append result 2");
+        append_presentation_for_call(
+            &mut log,
+            "emit_chart_card",
+            "call-2",
+            &chart_input("retried attempt"),
+        );
         log.append_message(MessageRecord {
             message: Message {
                 role: Role::Assistant,
@@ -2673,6 +2740,12 @@ mod tests {
             meta: None,
         })
         .expect("append result 1");
+        append_presentation_for_call(
+            &mut log,
+            "emit_chart_card",
+            "call-1",
+            &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}),
+        );
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
@@ -2694,6 +2767,12 @@ mod tests {
             meta: None,
         })
         .expect("append result 2");
+        append_presentation_for_call(
+            &mut log,
+            "emit_chart_card",
+            "call-2",
+            &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}),
+        );
 
         let timeline = snapshot("two-charts", &log);
         let chart_items: Vec<_> = timeline
@@ -2763,7 +2842,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-r".into(),
                 name: "emit_research_card".into(),
-                input,
+                input: input.clone(),
             }]),
             meta: None,
         })
@@ -2780,6 +2859,7 @@ mod tests {
             meta: None,
         })
         .expect("result");
+        append_presentation_for_call(&mut log, "emit_research_card", "call-r", &input);
         let timeline = snapshot("big-card", &log);
         assert!(
             timeline.items.iter().any(|item| matches!(&item.content,
@@ -2973,11 +3053,13 @@ mod tests {
                     meta: None,
                 })
                 .expect("user");
+                let call_args =
+                    serde_json::json!({"semantic_type": semantic_type, "payload": payload});
                 log.append_message(MessageRecord {
                     message: Message::assistant(vec![ContentBlock::ToolUse {
                         id: "c1".into(),
                         name: tool.into(),
-                        input: serde_json::json!({"semantic_type": semantic_type, "payload": payload}),
+                        input: call_args.clone(),
                     }]),
                     meta: None,
                 })
@@ -2994,6 +3076,7 @@ mod tests {
                     meta: None,
                 })
                 .expect("result");
+                append_presentation_for_call(&mut log, tool, "c1", &call_args);
                 let timeline = snapshot("conformance", &log);
                 let found: Vec<_> = timeline
                     .items
@@ -3060,11 +3143,12 @@ mod tests {
     }
 
     fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {
+        let input = serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}});
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: id.into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}}),
+                input: input.clone(),
             }]),
             meta: None,
         })
@@ -3081,6 +3165,7 @@ mod tests {
             meta: None,
         })
         .expect("result");
+        append_presentation_for_call(log, "emit_chart_card", id, &input);
     }
 
     /// The bug this guards: a card emitted through a tool is not in the

@@ -5020,6 +5020,28 @@ impl Core {
                 presentation_tools::presentation_check_nudge(text, offered, &recipes)
             }));
         }
+        {
+            // Presentations are ledger entries (docs/design/68-context-engine.md
+            // §10): the agent loop has no card-shape or skill-registry
+            // knowledge (AGENTS.md invariant 14 — the tool itself executes
+            // across the worker/broker boundary and has no session-log
+            // access either), so `Core` supplies the rebuild as a closure,
+            // the same pattern `presentation_check`/`retrieval_check` use.
+            let skills = vak_delivery::built_in_skill_registry();
+            cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
+                presentation_tools::presentation_info(name, input, &skills).map(|info| {
+                    vak_agent::PresentationCardInfo {
+                        semantic_type: info.semantic_type,
+                        skill_id: info.skill_id,
+                        skill_version: info.skill_version,
+                        schema_version: info.schema_version,
+                        payload: info.payload,
+                        title: info.title,
+                        identity_digest: info.identity_digest,
+                    }
+                })
+            }));
+        }
         cfg.revocation_check = Some(Arc::new(move |name, input| {
             let id = if name == "mcp" {
                 input

@@ -4267,6 +4267,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Intent(_) => {}
                         vak_session::EntryPayload::TurnCapabilitiesBound(_) => {}
                         vak_session::EntryPayload::ChildRun { .. } => {}
+                        vak_session::EntryPayload::Presentation(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -6421,6 +6422,12 @@ struct PresentationFeedbackBody {
     feedback: Option<String>,
     #[serde(default)]
     chain_id: Option<String>,
+    /// The `Presentation` ledger entry id this feedback is about
+    /// (docs/design/68-context-engine.md §10: "the user dismissed this
+    /// card" is an event about a ledger fact, so feedback keys on the
+    /// entry, not on an unscoped choice string). Greenfield: required, no
+    /// compatibility path for feedback that names no card.
+    presentation_id: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -6436,10 +6443,38 @@ struct PresentationSelectionBody {
     scope: Option<vak_presentation::LibraryScope>,
     #[serde(default)]
     owner: Option<String>,
+    /// The `Presentation` ledger entry id the user was looking at when they
+    /// picked this renderer (docs/design/68-context-engine.md §10).
+    presentation_id: String,
 }
 
 fn default_presentation_selection() -> String {
     "use_once".into()
+}
+
+/// Whether `presentation_id` names a real `Presentation` entry in this
+/// session's ledger — live if the runner currently owns the log, otherwise
+/// a read-only reopen from disk (mirrors `session_result`'s fallback).
+fn presentation_entry_exists(
+    state: &AppState,
+    handle: &SessionHandle,
+    id: &str,
+    presentation_id: &str,
+) -> bool {
+    if let Ok(guard) = handle.session.lock()
+        && let Some(session) = guard.as_ref()
+    {
+        return session
+            .presentations()
+            .into_iter()
+            .any(|(entry_id, _)| entry_id == presentation_id);
+    }
+    open_historical_session(state, id).is_some_and(|session| {
+        session
+            .presentations()
+            .into_iter()
+            .any(|(entry_id, _)| entry_id == presentation_id)
+    })
 }
 
 async fn select_presentation_for_session(
@@ -6456,12 +6491,17 @@ async fn select_presentation_for_session(
         || (body.lifetime == "remember"
             && (body.scope.is_none()
                 || body.owner.as_deref().unwrap_or_default().trim().is_empty()))
+        || body.presentation_id.trim().is_empty()
+        || body.presentation_id.len() > 256
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if !presentation_entry_exists(&state, &handle, &id, &body.presentation_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let store = presentation_store(&state);
     let library = match store.load() {
         Ok(library) => library,
@@ -6516,6 +6556,7 @@ async fn select_presentation_for_session(
     data.insert("spec_id".into(), spec_id);
     data.insert("revision".into(), revision.to_string());
     data.insert("lifetime".into(), body.lifetime);
+    data.insert("presentation_id".into(), body.presentation_id);
     let activity = vak_session::ActivityRecord {
         activity_id: format!("presentation-select-{}", uuid::Uuid::now_v7()),
         turn: None,
@@ -6555,15 +6596,22 @@ async fn presentation_feedback(
     {
         return StatusCode::BAD_REQUEST;
     }
+    if body.presentation_id.trim().is_empty() || body.presentation_id.len() > 256 {
+        return StatusCode::BAD_REQUEST;
+    }
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND;
     };
+    if !presentation_entry_exists(&state, &handle, &id, &body.presentation_id) {
+        return StatusCode::NOT_FOUND;
+    }
     let feedback_denied = matches!(
         body.choice.trim().to_ascii_lowercase().as_str(),
         "keep_original" | "reject" | "dismiss"
     );
     let mut data = std::collections::BTreeMap::new();
     data.insert("choice".into(), body.choice);
+    data.insert("presentation_id".into(), body.presentation_id);
     if let Some(chain_id) = body.chain_id {
         data.insert("chain_id".into(), chain_id);
     }

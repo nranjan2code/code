@@ -294,6 +294,10 @@ pub struct AgentConfig {
     pub revocation_check: Option<RevocationCheck>,
     pub presentation_check: Option<PresentationCheck>,
     pub retrieval_check: Option<RetrievalCheck>,
+    /// Writes a `Presentation` ledger entry at the moment a card validates.
+    /// See `PresentationRebuild`. `None` disables the write (the ack stays
+    /// the tool's own generic text — no id to embed).
+    pub presentation_rebuild: Option<PresentationRebuild>,
     pub hook_recorder: Option<HookRecorder>,
     pub tool_activity_recorder: Option<ToolActivityRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
@@ -360,6 +364,35 @@ pub type PresentationCheck = Arc<dyn Fn(&str, &[String]) -> Option<String> + Sen
 /// inert.
 pub type RetrievalCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
+/// Everything the agent loop needs to write a `Presentation` ledger entry
+/// for a validated `emit_*_card` call (docs/design/68-context-engine.md
+/// §10), supplied by the card-shape knowledge that lives in
+/// `vak-core::presentation_tools` — this crate has no skill-registry or
+/// card-shape knowledge of its own, only the mechanics of writing the entry.
+#[derive(Debug, Clone)]
+pub struct PresentationCardInfo {
+    pub semantic_type: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub schema_version: u32,
+    /// Canonical (key-sorted) payload — see
+    /// `vak_session::types::canonicalize_json`.
+    pub payload: serde_json::Value,
+    pub title: String,
+    pub identity_digest: String,
+}
+
+/// Re-validates a card call from its own arguments and returns the info
+/// needed to write its `Presentation` entry, or `None` if it no longer
+/// validates (unreachable in practice: `execute()` already validated it
+/// before this is ever consulted). Supplied by `Core`
+/// (`presentation_tools::presentation_info`) because a card tool executes
+/// across the worker/broker boundary (AGENTS.md invariant 14) and has no
+/// session-log access itself, so the agent loop writes the entry here, at
+/// the point the tool result is appended to the session.
+pub type PresentationRebuild =
+    Arc<dyn Fn(&str, &serde_json::Value) -> Option<PresentationCardInfo> + Send + Sync>;
+
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
@@ -386,6 +419,7 @@ impl AgentConfig {
             revocation_check: None,
             presentation_check: None,
             retrieval_check: None,
+            presentation_rebuild: None,
             hook_recorder: None,
             tool_activity_recorder: None,
             max_retries: 3,
@@ -1610,7 +1644,7 @@ impl Agent {
             // bash" are different situations even if both calls land in the
             // same batch and finish in the opposite order.
             let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
-            let results = self.execute_batch(calls, &cancel, &events).await;
+            let mut results = self.execute_batch(calls, &cancel, &events).await;
             self.record_worker_work(&task_assignments, &results).await;
             // Classify unresolved correctable tool failures this turn for the
             // repair budget (see `reconcile_repair_budget`). Computed before
@@ -1679,6 +1713,77 @@ impl Agent {
             } else {
                 Some(emitted_card_types)
             };
+            // Presentations are ledger entries
+            // (docs/design/68-context-engine.md §10): a validated
+            // `emit_*_card` call gets its own hash-linked entry, written
+            // HERE rather than inside the tool itself — the tool executes
+            // across the worker/broker boundary (AGENTS.md invariant 14)
+            // and has no session-log access. `execute()`'s generic ack is
+            // replaced with a short one carrying the new entry's id.
+            if let Some(rebuild) = self.config.presentation_rebuild.clone() {
+                let mut session = self.session.lock().await;
+                if let Some(turn_id) = session.latest_directive_entry_id() {
+                    let prior_evidence = session
+                        .non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+                    let mut in_batch_evidence: Vec<String> = Vec::new();
+                    for id in &call_issue_order {
+                        let Some(name) = call_names.get(id) else {
+                            continue;
+                        };
+                        let succeeded_here = results
+                            .iter()
+                            .any(|(rid, out)| rid == id && matches!(out, ToolRunOutput::Ok(_)));
+                        if !succeeded_here {
+                            continue;
+                        }
+                        if !self.tool_presents_cards(name) {
+                            in_batch_evidence.push(id.clone());
+                            continue;
+                        }
+                        let Some(input) = call_inputs.get(id) else {
+                            continue;
+                        };
+                        let Some(info) = rebuild(name.as_str(), input) else {
+                            continue;
+                        };
+                        let digest = vak_session::types::payload_digest(&info.payload);
+                        if session.has_presentation(&turn_id, &digest) {
+                            // Already recorded — a repeated identical call
+                            // (`execute_batch`'s own short-circuit reuses the
+                            // exact same arguments) or a fence that beat this
+                            // write to it. Nothing new to append; the tool's
+                            // own result text (ack or "already displayed")
+                            // stands.
+                            continue;
+                        }
+                        let mut derived_from = prior_evidence.clone();
+                        derived_from.extend(in_batch_evidence.iter().cloned());
+                        let record = vak_session::types::PresentationRecord {
+                            turn_id: turn_id.clone(),
+                            source: vak_session::types::PresentationSource::ToolCall {
+                                tool_use_id: id.clone(),
+                            },
+                            semantic_type: info.semantic_type,
+                            skill_id: info.skill_id,
+                            skill_version: info.skill_version,
+                            schema_version: info.schema_version,
+                            payload: info.payload,
+                            payload_digest: digest,
+                            derived_from,
+                            title: info.title,
+                            identity_digest: info.identity_digest,
+                        };
+                        if let Ok(entry) = session.append_presentation(record)
+                            && let Some(slot) = results.iter_mut().find(|(rid, _)| rid == id)
+                        {
+                            slot.1 = ToolRunOutput::Ok(
+                                serde_json::json!({"presentation": entry.id, "ok": true})
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
             for (id, out) in &results {
                 match out {
                     ToolRunOutput::Ok(_) => {
