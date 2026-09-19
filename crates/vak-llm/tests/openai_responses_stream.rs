@@ -36,7 +36,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_maps_neutral_history_to_responses_shape() {
-    let body = build_body(&sample_request()).unwrap();
+    let body = build_body(&OpenAiResponsesConfig::default(), &sample_request()).unwrap();
     assert_eq!(body["model"], "gpt-5.6");
     assert_eq!(body["stream"], true);
     assert_eq!(body["instructions"], "You are a coding agent.");
@@ -84,7 +84,7 @@ event: response.function_call_arguments.delta\n\
 data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"\\\"a.txt\\\"}\"}\n\
 \n\
 event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":33,\"output_tokens\":9,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"usage\":{\"input_tokens\":33,\"output_tokens\":9,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\
 \n";
 
 #[tokio::test]
@@ -92,6 +92,7 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_STREAM).await,
+        ..Default::default()
     })
     .unwrap();
 
@@ -114,6 +115,7 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     assert_eq!(msg.usage.input_tokens, 33);
     assert_eq!(msg.usage.output_tokens, 9);
     assert_eq!(msg.usage.cache_read_input_tokens, Some(4));
+    assert_eq!(msg.response_id, Some("resp_123".to_string()));
 
     let calls: Vec<&ContentBlock> = msg
         .content
@@ -139,6 +141,7 @@ async fn incomplete_maps_to_max_tokens() {
     let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_INCOMPLETE).await,
+        ..Default::default()
     })
     .unwrap();
     let mut req = ChatRequest::new("m");
@@ -158,6 +161,7 @@ async fn http_error_maps_to_typed_value() {
     let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
         api_key: "bad".into(),
         base_url: url,
+        ..Default::default()
     })
     .unwrap();
     let err = provider

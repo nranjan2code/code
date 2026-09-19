@@ -109,32 +109,39 @@ pub fn default_registry() -> ProviderRegistry {
     });
 
     use crate::openai::{OPENAI_DEFAULT_BASE_URL, OpenAiCompletionsProvider, OpenAiConfig};
-    let openai_compat = |default_base: &'static str| {
+    let openai_compat = |default_base: &'static str, cache_key: bool, openrouter: bool| {
         move |auth: &ProviderAuth| {
             Ok(Arc::new(OpenAiCompletionsProvider::new(OpenAiConfig {
                 api_key: auth.api_key.clone(),
                 base_url: auth.base_url.clone().unwrap_or_else(|| default_base.into()),
+                cache_key,
+                openrouter,
             })?) as Arc<dyn Provider>)
         }
     };
-    registry.register("openai", openai_compat(OPENAI_DEFAULT_BASE_URL));
+    registry.register(
+        "openai",
+        openai_compat(OPENAI_DEFAULT_BASE_URL, true, false),
+    );
 
     use crate::openai_responses::{
         OPENAI_RESPONSES_DEFAULT_BASE_URL, OpenAiResponsesConfig, OpenAiResponsesProvider,
     };
-    let responses = |default_base: &'static str| {
+    let responses = |default_base: &'static str, cache_key: bool, openrouter: bool| {
         move |auth: &ProviderAuth| {
             Ok(
                 Arc::new(OpenAiResponsesProvider::new(OpenAiResponsesConfig {
                     api_key: auth.api_key.clone(),
                     base_url: auth.base_url.clone().unwrap_or_else(|| default_base.into()),
+                    cache_key,
+                    openrouter,
                 })?) as Arc<dyn Provider>,
             )
         }
     };
     registry.register(
         "openai-responses",
-        responses(OPENAI_RESPONSES_DEFAULT_BASE_URL),
+        responses(OPENAI_RESPONSES_DEFAULT_BASE_URL, true, false),
     );
 
     use crate::google::{GOOGLE_DEFAULT_BASE_URL, GoogleConfig, GoogleProvider};
@@ -147,18 +154,36 @@ pub fn default_registry() -> ProviderRegistry {
                 .unwrap_or_else(|| GOOGLE_DEFAULT_BASE_URL.into()),
         })?) as Arc<dyn Provider>)
     });
-    registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
+    registry.register(
+        "openrouter",
+        openai_compat("https://openrouter.ai/api/v1", true, true),
+    );
     registry.register(
         "openrouter-responses",
-        responses("https://openrouter.ai/api/v1"),
+        responses("https://openrouter.ai/api/v1", true, true),
     );
-    registry.register("opencode-zen", openai_compat("https://opencode.ai/zen/v1"));
-    registry.register("ollama", openai_compat("http://localhost:11434/v1"));
+    registry.register(
+        "opencode-zen",
+        openai_compat("https://opencode.ai/zen/v1", true, false),
+    );
+
+    use crate::ollama::{OLLAMA_DEFAULT_BASE_URL, OllamaConfig, OllamaProvider};
+    registry.register("ollama", |auth| {
+        Ok(Arc::new(OllamaProvider::new(OllamaConfig {
+            base_url: auth
+                .base_url
+                .clone()
+                .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.into()),
+            api_key: auth.api_key.clone(),
+            ..Default::default()
+        })?) as Arc<dyn Provider>)
+    });
+
     // Amazon Bedrock Mantle exposes an OpenAI-compatible API. The region is
     // part of the endpoint; callers may override it with VAK_BEDROCK_BASE_URL.
     registry.register(
         "bedrock",
-        openai_compat("https://bedrock-mantle.us-east-1.api.aws/v1"),
+        openai_compat("https://bedrock-mantle.us-east-1.api.aws/v1", true, false),
     );
     registry
 }

@@ -14,7 +14,10 @@ use crate::error::LlmError;
 use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventStream, StreamEvent, channel};
-use crate::types::{AssistantMessage, ChatRequest, ContentBlock, Role, StopReason, ToolDefinition};
+use crate::turn::{current_turn_boundary, strip_thinking};
+use crate::types::{
+    AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition,
+};
 
 pub const GOOGLE_DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -46,13 +49,21 @@ impl GoogleProvider {
 }
 
 pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
+    let boundary = current_turn_boundary(&request.messages);
     let mut contents: Vec<Value> = Vec::with_capacity(request.messages.len());
     // function_call ids → names, resolved while walking history so
     // functionResponse parts can be keyed correctly.
     let mut id_to_name: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
-    for m in &request.messages {
+    for (i, m) in request.messages.iter().enumerate() {
+        let stripped;
+        let m: &Message = if i < boundary {
+            stripped = strip_thinking(m);
+            &stripped
+        } else {
+            m
+        };
         match m.role {
             Role::User => {
                 let mut parts: Vec<Value> = Vec::new();
@@ -215,7 +226,8 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         .unwrap_or_else(|| body.chars().take(500).collect());
     match status {
         401 | 403 => LlmError::Auth(message),
-        400 | 404 | 413 | 422 => LlmError::InvalidRequest(message),
+        400 => LlmError::classify_400(message),
+        404 | 413 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
             message,
             retry_after_secs: retry_after,
@@ -413,7 +425,7 @@ impl Provider for GoogleProvider {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        let partial = (!acc.message.content.is_empty()).then(|| acc.message.clone());
+                        let partial = (!acc.message.content.is_empty()).then(|| Box::new(acc.message.clone()));
                         sink.close_error(LlmError::Aborted { partial }).await;
                         return;
                     }
@@ -453,5 +465,94 @@ impl Provider for GoogleProvider {
         });
 
         Ok(stream_rx.with_guard(provider_permit))
+    }
+}
+
+#[cfg(test)]
+mod build_body_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::types::Role;
+
+    #[test]
+    fn thought_signature_round_trips_into_the_request_body() {
+        let mut req = ChatRequest::new("gemini-3-pro");
+        req.messages = vec![
+            Message::user_text("do the thing"),
+            Message::assistant(vec![
+                ContentBlock::Thinking {
+                    text: String::new(),
+                    signature: Some("thought-sig-abc".into()),
+                },
+                ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "search".into(),
+                    input: serde_json::json!({"q": "x"}),
+                },
+            ]),
+        ];
+        let body = build_body(&req).unwrap();
+        let parts = body["contents"][1]["parts"].as_array().unwrap();
+        let call_part = parts
+            .iter()
+            .find(|p| p.get("functionCall").is_some())
+            .unwrap();
+        assert_eq!(call_part["thoughtSignature"], "thought-sig-abc");
+    }
+
+    #[test]
+    fn thinking_before_the_current_turn_boundary_is_stripped() {
+        let mut req = ChatRequest::new("gemini-3-pro");
+        req.messages = vec![
+            Message::user_text("first"),
+            Message::assistant(vec![
+                ContentBlock::Thinking {
+                    text: String::new(),
+                    signature: Some("old-sig".into()),
+                },
+                ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "search".into(),
+                    input: serde_json::json!({}),
+                },
+            ]),
+            Message::user_text("second, a fresh directive"),
+        ];
+        let body = build_body(&req).unwrap();
+        let parts = body["contents"][1]["parts"].as_array().unwrap();
+        assert!(
+            parts.iter().all(|p| p.get("thoughtSignature").is_none()),
+            "thinking from a closed turn must not carry a thought signature"
+        );
+    }
+
+    #[test]
+    fn tool_result_only_message_does_not_start_a_new_turn() {
+        let mut req = ChatRequest::new("gemini-3-pro");
+        req.messages = vec![
+            Message::user_text("do the thing"),
+            Message::assistant(vec![
+                ContentBlock::Thinking {
+                    text: String::new(),
+                    signature: Some("sig".into()),
+                },
+                ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "search".into(),
+                    input: serde_json::json!({}),
+                },
+            ]),
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::tool_result("t1", "result")],
+            },
+        ];
+        let body = build_body(&req).unwrap();
+        let parts = body["contents"][1]["parts"].as_array().unwrap();
+        let call_part = parts
+            .iter()
+            .find(|p| p.get("functionCall").is_some())
+            .unwrap();
+        assert_eq!(call_part["thoughtSignature"], "sig");
     }
 }

@@ -17,10 +17,17 @@ use crate::types::{
 
 pub const OPENAI_RESPONSES_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OpenAiResponsesConfig {
     pub api_key: String,
     pub base_url: String,
+    /// When true, and the request carries `ChatRequest::cache`, send
+    /// `prompt_cache_key` so the provider can route repeat traffic to the
+    /// same cache-warm backend.
+    pub cache_key: bool,
+    /// When true, also send OpenRouter's `session_id` alongside
+    /// `prompt_cache_key` (for the `openrouter-responses` route).
+    pub openrouter: bool,
 }
 
 #[derive(Clone)]
@@ -44,20 +51,54 @@ impl OpenAiResponsesProvider {
     }
 }
 
-pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
-    let mut input: Vec<Value> = Vec::with_capacity(request.messages.len());
-    for m in &request.messages {
+/// The messages an incremental chained request must send: everything after
+/// the last assistant message. `previous_response_id` already carries the
+/// server's record of that assistant turn and everything before it, so
+/// replaying it here would duplicate history the provider already has.
+fn messages_since_last_assistant(messages: &[Message]) -> &[Message] {
+    match messages.iter().rposition(|m| m.role == Role::Assistant) {
+        Some(idx) => &messages[idx + 1..],
+        None => messages,
+    }
+}
+
+pub fn build_body(
+    config: &OpenAiResponsesConfig,
+    request: &ChatRequest,
+) -> Result<Value, LlmError> {
+    let messages: &[Message] = match &request.previous_response_id {
+        Some(_) => messages_since_last_assistant(&request.messages),
+        None => &request.messages,
+    };
+    let mut input: Vec<Value> = Vec::with_capacity(messages.len());
+    for m in messages {
         append_input_item(&mut input, m)?;
     }
 
+    // `previous_response_id` only resolves against a response the provider
+    // actually retained, so a request that is (or may become) a chain link
+    // must opt into `store`. A plain one-shot request with neither cache
+    // hints nor a chain to continue keeps the old `store: false` default.
+    let store = request.cache.is_some() || request.previous_response_id.is_some();
     let mut body = serde_json::json!({
         "model": request.model,
         "input": input,
         "stream": true,
-        "store": false,
+        "store": store,
     });
     if let Some(system) = &request.system {
         body["instructions"] = Value::String(system.clone());
+    }
+    if let Some(previous) = &request.previous_response_id {
+        body["previous_response_id"] = Value::String(previous.clone());
+    }
+    if let Some(cache) = &request.cache {
+        if config.cache_key {
+            body["prompt_cache_key"] = serde_json::json!(cache.session_key);
+        }
+        if config.openrouter {
+            body["session_id"] = serde_json::json!(cache.session_key);
+        }
     }
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
@@ -178,7 +219,8 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         .unwrap_or_else(|| body.chars().take(500).collect());
     match status {
         401 | 403 => LlmError::Auth(message),
-        400 | 404 | 413 | 422 => LlmError::InvalidRequest(message),
+        400 => LlmError::classify_400(message),
+        404 | 413 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
             message,
             retry_after_secs: retry_after,
@@ -290,6 +332,9 @@ impl Accumulator {
                 }))
             }
             "response.completed" | "response.incomplete" => {
+                if let Some(id) = v.pointer("/response/id").and_then(|i| i.as_str()) {
+                    self.message.response_id = Some(id.to_string());
+                }
                 if let Some(usage) = v.pointer("/response/usage") {
                     self.message.usage = Usage {
                         input_tokens: usage
@@ -304,6 +349,7 @@ impl Accumulator {
                             .pointer("/input_tokens_details/cached_tokens")
                             .and_then(|x| x.as_u64()),
                         cache_creation_input_tokens: None,
+                        ..Default::default()
                     };
                 }
                 if kind == "response.incomplete" {
@@ -356,7 +402,7 @@ impl Provider for OpenAiResponsesProvider {
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/responses", self.config.base_url.trim_end_matches('/'));
-        let body = build_body(&request)?;
+        let body = build_body(&self.config, &request)?;
         let send_fut = self
             .http
             .post(&url)
@@ -392,7 +438,7 @@ impl Provider for OpenAiResponsesProvider {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        let partial = (!acc.message.content.is_empty()).then(|| acc.message.clone());
+                        let partial = (!acc.message.content.is_empty()).then(|| Box::new(acc.message.clone()));
                         sink.close_error(LlmError::Aborted { partial }).await;
                         return;
                     }
@@ -432,5 +478,98 @@ impl Provider for OpenAiResponsesProvider {
         });
 
         Ok(stream_rx.with_guard(provider_permit))
+    }
+}
+
+#[cfg(test)]
+mod build_body_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::types::CacheHints;
+
+    fn config() -> OpenAiResponsesConfig {
+        OpenAiResponsesConfig::default()
+    }
+
+    #[test]
+    fn cache_key_on_sends_prompt_cache_key() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        req.cache = Some(CacheHints {
+            session_key: "sess-1".into(),
+            breakpoints: Vec::new(),
+        });
+        let cfg = OpenAiResponsesConfig {
+            cache_key: true,
+            ..config()
+        };
+        let body = build_body(&cfg, &req).unwrap();
+        assert_eq!(body["prompt_cache_key"], "sess-1");
+        assert!(body.get("session_id").is_none());
+        // Cache hints imply this response might be chained from later.
+        assert_eq!(body["store"], true);
+    }
+
+    #[test]
+    fn openrouter_flag_adds_session_id() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        req.cache = Some(CacheHints {
+            session_key: "sess-1".into(),
+            breakpoints: Vec::new(),
+        });
+        let cfg = OpenAiResponsesConfig {
+            cache_key: true,
+            openrouter: true,
+            ..config()
+        };
+        let body = build_body(&cfg, &req).unwrap();
+        assert_eq!(body["session_id"], "sess-1");
+    }
+
+    #[test]
+    fn no_cache_hints_keeps_store_false() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        let body = build_body(&config(), &req).unwrap();
+        assert_eq!(body["store"], false);
+        assert!(body.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn previous_response_id_chains_only_messages_after_the_last_assistant_turn() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![
+            Message::user_text("first"),
+            Message::assistant(vec![ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "search".into(),
+                input: serde_json::json!({}),
+            }]),
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::tool_result("t1", "result")],
+            },
+        ];
+        req.previous_response_id = Some("resp_abc".into());
+        let body = build_body(&config(), &req).unwrap();
+        assert_eq!(body["previous_response_id"], "resp_abc");
+        let input = body["input"].as_array().unwrap();
+        // Only the tool-result message (after the last assistant turn) is
+        // sent; the earlier user/assistant exchange is already server-side.
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn no_previous_response_id_sends_full_history() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![
+            Message::user_text("first"),
+            Message::assistant(vec![ContentBlock::text("answer")]),
+        ];
+        let body = build_body(&config(), &req).unwrap();
+        assert_eq!(body["input"].as_array().unwrap().len(), 2);
+        assert!(body.get("previous_response_id").is_none());
     }
 }

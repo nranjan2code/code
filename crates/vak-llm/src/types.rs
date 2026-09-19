@@ -138,6 +138,17 @@ pub struct Usage {
     pub cache_read_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_creation_input_tokens: Option<u64>,
+    /// Provider-reported prefill (prompt evaluation) latency, when the
+    /// provider reports it directly rather than only through usage counts
+    /// (Ollama's `prompt_eval_duration`). Used by the capacity probe to
+    /// measure prefill throughput without inferring it from wall-clock time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<u64>,
+    /// Provider-reported model load latency folded into the same response
+    /// (Ollama's `load_duration`), so the probe can separate "model was
+    /// already warm" from "cold load" when explaining a slow first token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_ms: Option<u64>,
 }
 
 impl Usage {
@@ -161,6 +172,12 @@ pub struct AssistantMessage {
     pub stop_reason: StopReason,
     pub usage: Usage,
     pub model: String,
+    /// Provider-assigned identity for this response, when the provider
+    /// exposes one (OpenAI Responses `response.id`). `previous_response_id`
+    /// on a later `ChatRequest` chains from this value to avoid replaying
+    /// the turn's history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
 }
 
 impl AssistantMessage {
@@ -170,6 +187,7 @@ impl AssistantMessage {
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
             model: model.into(),
+            response_id: None,
         }
     }
 
@@ -192,6 +210,29 @@ impl AssistantMessage {
     }
 }
 
+/// A cache breakpoint's position relative to `ChatRequest::messages`.
+/// `None` places it immediately after the stable prefix (system + tools),
+/// before any message — the position a fresh session with no history yet
+/// still wants cached. `Some(i)` places it after `messages[i]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheBreakpoint {
+    pub after_message: Option<usize>,
+}
+
+/// Cache hints the assembler attaches to a request; each provider adapter
+/// renders them in its own wire shape (§10/§11 of docs/design/68). Absent
+/// entirely, adapters fall back to their unconditional defaults (e.g.
+/// Anthropic still marks the system prompt ephemeral).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CacheHints {
+    /// Stable identity for this session, sent as a routing/cache key to
+    /// providers that key cache reuse off an opaque string rather than
+    /// content-addressing the prefix (OpenAI `prompt_cache_key`, OpenRouter
+    /// `session_id`).
+    pub session_key: String,
+    pub breakpoints: Vec<CacheBreakpoint>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
     pub model: String,
@@ -200,6 +241,11 @@ pub struct ChatRequest {
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: u32,
     pub temperature: Option<f32>,
+    pub cache: Option<CacheHints>,
+    /// When set, an OpenAI Responses adapter chains from this prior
+    /// response instead of replaying the full history: only messages after
+    /// the last assistant message are sent, alongside this id.
+    pub previous_response_id: Option<String>,
 }
 
 impl ChatRequest {
@@ -211,6 +257,8 @@ impl ChatRequest {
             tools: Vec::new(),
             max_tokens: 8192,
             temperature: None,
+            cache: None,
+            previous_response_id: None,
         }
     }
 }

@@ -11,6 +11,7 @@ pub mod gate;
 pub mod google;
 pub mod google_live;
 pub mod models;
+pub mod ollama;
 pub mod openai;
 pub mod openai_realtime;
 pub mod openai_responses;
@@ -19,6 +20,7 @@ pub mod registry;
 pub mod route;
 pub mod sse;
 pub mod stream;
+pub(crate) mod turn;
 pub mod types;
 pub mod work;
 
@@ -31,7 +33,8 @@ pub use route::{
 };
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use types::{
-    AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition, Usage,
+    AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Message, Role,
+    StopReason, ToolDefinition, Usage,
 };
 pub use work::{
     AttemptReason, DispatchAttempt, DispatchBudget, DispatchCeiling, FailureDomain, Settlement,

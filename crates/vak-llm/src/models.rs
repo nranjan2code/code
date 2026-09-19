@@ -134,7 +134,8 @@ fn status_error(status: u16, body: String) -> LlmError {
             message,
             retry_after_secs: None,
         },
-        400 | 404 | 422 => LlmError::InvalidRequest(message),
+        400 => LlmError::classify_400(message),
+        404 | 422 => LlmError::InvalidRequest(message),
         503 | 529 => LlmError::Overloaded(message),
         _ => LlmError::Api { status, message },
     }
