@@ -1297,7 +1297,9 @@ fn activity_item(
         | ActivityKind::VoicePlayback
         | ActivityKind::PresentationSelection
         | ActivityKind::PresentationProposal
-        | ActivityKind::PresentationFeedback => (
+        | ActivityKind::PresentationFeedback
+        | ActivityKind::CapacityProbe
+        | ActivityKind::CapacityFeedback => (
             OutputRole::System,
             OutputKind::Information,
             OutputContent::Information {
