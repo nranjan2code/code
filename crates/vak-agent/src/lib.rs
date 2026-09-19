@@ -10,6 +10,7 @@ pub mod capacity;
 pub mod circuit;
 pub mod context;
 pub mod goal;
+pub mod planner;
 pub mod spend;
 pub mod steering;
 pub mod stop_policy;
