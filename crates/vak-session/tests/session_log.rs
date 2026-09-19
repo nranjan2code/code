@@ -743,6 +743,10 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
         excluded_ids: vec!["Tool:bash".into()],
         system_prompt: "system".into(),
         tool_schemas: vec![serde_json::json!({"name":"read"})],
+        core_tool_names: vec!["read".into()],
+        deferred_tool_names: Vec::new(),
+        tool_index: String::new(),
+        tool_domains: Default::default(),
     })
     .unwrap();
     assert!(log.derive_messages().is_empty());

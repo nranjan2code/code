@@ -141,6 +141,9 @@ pub fn estimate_tokens(
                 ContentBlock::ToolResult { content, .. } => content.len() as u64,
                 // Base64 payload size counts against the request budget.
                 ContentBlock::Image { source } => source.data.len() as u64,
+                ContentBlock::Provider { raw, .. } => serde_json::to_string(raw)
+                    .map(|s| s.len() as u64)
+                    .unwrap_or(0),
             };
         }
     }

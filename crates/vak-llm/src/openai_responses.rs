@@ -144,6 +144,10 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
                         ));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    // Only the Anthropic adapter understands server-side
+                    // tool search; every other adapter skips this opaque
+                    // block entirely (docs/design/68 §5/§12).
+                    ContentBlock::Provider { .. } => {}
                 }
             }
             for (call_id, output) in outputs {
@@ -195,7 +199,8 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
                     }
                     ContentBlock::Thinking { .. }
                     | ContentBlock::ToolResult { .. }
-                    | ContentBlock::Image { .. } => {}
+                    | ContentBlock::Image { .. }
+                    | ContentBlock::Provider { .. } => {}
                 }
             }
             if !text.is_empty() {

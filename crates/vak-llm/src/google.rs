@@ -100,6 +100,10 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                             ));
                         }
                         ContentBlock::Thinking { .. } => {}
+                        // Only the Anthropic adapter understands
+                        // server-side tool search; every other adapter
+                        // skips this opaque block (docs/design/68 §5/§12).
+                        ContentBlock::Provider { .. } => {}
                     }
                 }
                 if !text.is_empty() {
@@ -154,7 +158,9 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                             }
                             parts.push(call_part);
                         }
-                        ContentBlock::ToolResult { .. } | ContentBlock::Image { .. } => {}
+                        ContentBlock::ToolResult { .. }
+                        | ContentBlock::Image { .. }
+                        | ContentBlock::Provider { .. } => {}
                     }
                 }
                 if !text.is_empty() {

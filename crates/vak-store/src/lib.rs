@@ -513,6 +513,7 @@ fn extract_message_text(
                 }
             }
             ContentBlock::Image { .. } => {}
+            ContentBlock::Provider { .. } => {}
         }
     }
     (text_parts.join("\n"), tool_name, is_error)
