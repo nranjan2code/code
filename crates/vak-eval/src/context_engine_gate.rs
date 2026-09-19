@@ -312,9 +312,9 @@ fn every_turn_accounted_exactly_once(index: &TurnIndex, plan: &WorkingSetPlan) -
 }
 
 /// The no-cut invariant (docs/design/68 "No-cut invariant"): every tool
-/// result in the ledger is either verbatim (the open turn), a trace line
-/// carrying its evidence id (a `Full` turn), or named in a card/packet —
-/// never silently absent.
+/// result in the ledger is either verbatim (the open turn), a digest
+/// carrying its evidence id in its paired `tool_result` (a `Full` turn), or
+/// named in a card/packet — never silently absent and never a raw replay.
 fn no_cut_invariant_holds(log: &SessionLog, index: &TurnIndex, plan: &WorkingSetPlan) -> bool {
     let messages = log.derive_with_plan(plan);
     let joined: String = messages
@@ -357,9 +357,21 @@ fn no_cut_invariant_holds(log: &SessionLog, index: &TurnIndex, plan: &WorkingSet
         let card = turn.card.as_ref().unwrap_or_else(|| unreachable!());
         match fidelity_of.get(turn.id.as_str()) {
             Some(Fidelity::Full) => {
+                // The pair stays; the result is the digest tagged with the
+                // evidence id, never the raw content of a closed turn.
                 for trace in &card.did {
-                    let needle = format!("ev:{}", trace.evidence_id);
-                    if !joined.contains(&needle) {
+                    let tag = format!("[evidence:{}", trace.evidence_id);
+                    let digested = derived_tool_results
+                        .iter()
+                        .any(|content| content.contains(&tag));
+                    let raw = turn
+                        .evidence_for(&trace.evidence_id)
+                        .map(|evidence| evidence.content);
+                    let leaked_raw = raw
+                        .as_deref()
+                        .map(|raw| derived_tool_results.contains(&raw))
+                        .unwrap_or(false);
+                    if !digested || leaked_raw {
                         return false;
                     }
                 }

@@ -178,26 +178,32 @@ fn every_tool_result_is_verbatim_traced_or_covered_by_a_packet() {
         .map(|m| m.text_content())
         .collect::<Vec<_>>()
         .join("\n");
-    let has_verbatim = |id: &str| {
-        messages.iter().any(|m| {
-            m.content.iter().any(
-                |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == id),
-            )
+    let result_content = |id: &str| -> Option<String> {
+        messages.iter().find_map(|m| {
+            m.content.iter().find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } if tool_use_id == id => Some(content.clone()),
+                _ => None,
+            })
         })
     };
 
     // ev-a: dropped by compaction — covered by the packet summary, never
-    // verbatim and never traced.
-    assert!(!has_verbatim("ev-a"));
-    assert!(!joined.contains("ev:ev-a"));
+    // present as a block and never digested.
+    assert!(result_content("ev-a").is_none());
+    assert!(!joined.contains("evidence:ev-a"));
     assert!(joined.contains("<context_summary>"));
 
-    // ev-b: closed and kept — a trace line, not a raw block.
-    assert!(!has_verbatim("ev-b"));
-    assert!(joined.contains("ev:ev-b"));
+    // ev-b: closed and kept — the pair stays, the result is the digest
+    // naming the evidence id, not the raw content.
+    let b = result_content("ev-b").expect("closed turn keeps its pair");
+    assert!(b.contains("[evidence:ev-b"), "{b}");
 
     // ev-c: still open — verbatim.
-    assert!(has_verbatim("ev-c"));
+    assert_eq!(result_content("ev-c").as_deref(), Some("result c"));
 }
 
 #[test]

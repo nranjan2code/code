@@ -10,14 +10,6 @@
 pub use vak_session::{Fidelity, WorkingSetPlan};
 use vak_session::{ReadingKey, TurnIndex};
 
-/// Share of the budget reserved for relevance-promoted older turns (§4):
-/// "a reserved slice of the budget (`horizon × 0.15`, measured not guessed:
-/// it is the share the vakyartha simulation found recovers 2.5–2.8×) —
-/// re-validate with the probe harness." Not a cap on the whole plan, only
-/// on how much of the budget retrieval promotion may spend beyond the
-/// recency fill.
-pub const RETRIEVAL_SHARE: f64 = 0.15;
-
 /// Directive fragments that refer back to the immediately preceding turn
 /// without repeating its subject (§4/§10: "anaphora ... always promotes the
 /// immediately preceding turn"). Matched as a case-insensitive substring of
@@ -61,14 +53,29 @@ fn is_anaphoric(directive: &str) -> bool {
     })
 }
 
-/// Whether two readings share an act or at least one domain — the "reading
-/// overlap (same act/domains)" relevance signal (§10).
-fn reading_overlaps(current: &ReadingKey, candidate: &ReadingKey) -> bool {
-    current.act == candidate.act
-        || current
-            .domains
-            .iter()
-            .any(|domain| candidate.domains.contains(domain))
+/// A turn's value from recency alone: `1 / (1 + age)` where `age` is how
+/// many closed turns came after it. The most recent closed turn is worth
+/// 1.0, the one before it 0.5, and so on — a parameter-free decay that a
+/// perfectly relevant older turn (normalised lexical score 1.0) ties with
+/// rather than loses to.
+fn recency_value(age: usize) -> f64 {
+    1.0 / (1.0 + age as f64)
+}
+
+/// The relevance query: the directive plus the current reading's act and
+/// domain words, so reading overlap is scored by the same BM25 as the text
+/// instead of being a separate boolean bonus.
+fn relevance_query(directive: &str, reading: Option<&ReadingKey>) -> String {
+    let mut query = directive.to_string();
+    if let Some(reading) = reading {
+        query.push(' ');
+        query.push_str(&reading.act);
+        for domain in &reading.domains {
+            query.push(' ');
+            query.push_str(domain);
+        }
+    }
+    query
 }
 
 /// Builds the working-set plan for one request (§4, §10). Never splits a
@@ -97,78 +104,56 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     let mut full_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut retrieved: Vec<String> = Vec::new();
 
-    // The retrieval slice is carved out of the budget UP FRONT for the
-    // *recency* fill, so a relevant or anaphoric older turn is never
-    // permanently shut out just because recency alone already exhausted the
-    // budget on newer turns — that would defeat the purpose of a reserved
-    // slice. Anaphora gets a stronger guarantee still: it is checked against
-    // the full remaining budget (main-budget leftover plus the whole
-    // reserve), because "always promotes" (§4/§10) is a harder promise than
-    // ordinary relevance's "top-k within the reserved slice".
-    let retrieval_reserve = (budget as f64 * RETRIEVAL_SHARE) as u64;
-    let main_budget = budget.saturating_sub(retrieval_reserve);
-
-    // 1) Recency fill, newest -> oldest, at Full, against `main_budget`.
-    // Stops at the first turn that would overflow it; every older turn is
-    // left for anaphora/relevance/card/packet — never skip-scanned past a
-    // gap.
-    for turn in closed.iter().rev() {
+    // Every closed turn is scored once and the budget is filled in
+    // descending value: the most recent turn and the most relevant turn are
+    // both worth 1.0, an older or less relevant one proportionally less, so
+    // no share of the budget is reserved for either signal — recency and
+    // relevance compete for the same tokens on equal terms, and a turn that
+    // does not fit is skipped for a cheaper one further down the ranking
+    // rather than blocking everything behind it.
+    let anaphoric = is_anaphoric(input.directive);
+    let preceding = closed.last().map(|turn| turn.id.clone());
+    let query = relevance_query(input.directive, input.reading);
+    let lexical: std::collections::HashMap<String, f64> =
+        input.index.search(&query).into_iter().collect();
+    let best_lexical = lexical.values().copied().fold(0.0_f64, f64::max);
+    let mut ranked: Vec<(f64, f64, usize, &vak_session::Turn)> = closed
+        .iter()
+        .enumerate()
+        .map(|(position, turn)| {
+            let age = closed.len() - 1 - position;
+            let recency = recency_value(age);
+            let relevance = if best_lexical > 0.0 {
+                lexical.get(&turn.id).copied().unwrap_or(0.0) / best_lexical
+            } else {
+                0.0
+            };
+            let anaphora = if anaphoric && preceding.as_deref() == Some(turn.id.as_str()) {
+                1.0
+            } else {
+                0.0
+            };
+            (
+                recency.max(relevance).max(anaphora),
+                recency,
+                position,
+                *turn,
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.2.cmp(&a.2))
+    });
+    for (value, recency, _, turn) in &ranked {
         let cost = turn.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
-        if spent.saturating_add(cost) <= main_budget {
-            spent += cost;
-            full_ids.insert(turn.id.clone());
-        } else {
-            break;
-        }
-    }
-
-    // 2) Anaphora: the immediately preceding closed turn, regardless of
-    // topic overlap, against the FULL remaining budget.
-    if is_anaphoric(input.directive)
-        && let Some(preceding) = closed.last()
-        && !full_ids.contains(&preceding.id)
-    {
-        let cost = preceding.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
         if spent.saturating_add(cost) <= budget {
             spent += cost;
-            full_ids.insert(preceding.id.clone());
-            retrieved.push(preceding.id.clone());
-        }
-    }
-
-    // 3) General relevance (lexical + reading overlap) for everything else
-    // not yet promoted, inside what remains of the reserved slice.
-    let mut retrieval_left = retrieval_reserve.min(budget.saturating_sub(spent));
-    let mut candidates: Vec<String> = Vec::new();
-    for (id, score) in input.index.search(input.directive) {
-        if score > 0.0 && !full_ids.contains(&id) && !candidates.contains(&id) {
-            candidates.push(id);
-        }
-    }
-    if let Some(reading) = input.reading {
-        for turn in &closed {
-            let Some(card) = &turn.card else { continue };
-            if !full_ids.contains(&turn.id)
-                && reading_overlaps(reading, &card.reading)
-                && !candidates.contains(&turn.id)
-            {
-                candidates.push(turn.id.clone());
+            full_ids.insert(turn.id.clone());
+            if *value > *recency {
+                retrieved.push(turn.id.clone());
             }
-        }
-    }
-    for id in candidates {
-        if full_ids.contains(&id) {
-            continue;
-        }
-        let Some(turn) = closed.iter().find(|t| t.id == id) else {
-            continue;
-        };
-        let cost = turn.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
-        if cost <= retrieval_left && spent.saturating_add(cost) <= budget {
-            spent += cost;
-            retrieval_left -= cost;
-            full_ids.insert(id.clone());
-            retrieved.push(id);
         }
     }
 
@@ -429,10 +414,10 @@ mod tests {
             ],
         );
         let index = TurnIndex::from_log(&log);
-        // budget = 200; retrieval_reserve = 30, main_budget = 170. The AAPL
-        // turn is the immediately preceding (newest) turn but its cost
-        // (180) exceeds main_budget (170), so plain recency would skip it
-        // entirely; anaphora rescues it against the full remaining budget.
+        // budget = 200: only one of the two turns can be Full. The AAPL turn
+        // is the immediately preceding one, so it is worth 1.0 by recency
+        // and by anaphora alike and must be the one that rides Full; the
+        // filler turn falls to a card.
         let profile = profile(200);
         let result = plan(PlanInput {
             profile: &profile,
@@ -444,7 +429,10 @@ mod tests {
             current_turn_tokens: 0,
         });
         assert!(
-            result.retrieved.contains(&ids[1]),
+            result
+                .per_turn
+                .iter()
+                .any(|(id, fidelity)| id == &ids[1] && *fidelity == Fidelity::Full),
             "anaphora must promote the immediately preceding turn: {:?}",
             result
         );

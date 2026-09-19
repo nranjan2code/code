@@ -487,10 +487,16 @@ async fn tool_roundtrip_executes_and_feeds_result_back() {
     let session = agent.session.lock().await;
     // Four raw entries on the ledger (directive, tool_use, tool_result,
     // final answer); the turn is now closed, so the model-visible
-    // projection collapses it to its two-message full record
+    // projection is its full record: the same four messages with the
+    // result digested and thinking dropped
     // (docs/design/68-context-engine.md §10).
     assert_eq!(session.message_chain().len(), 4);
-    assert_eq!(session.derive_messages().len(), 2);
+    let projected = session.derive_messages();
+    assert_eq!(projected.len(), 4);
+    assert!(projected.iter().any(|m| m.content.iter().any(|b| matches!(
+        b,
+        ContentBlock::ToolResult { content, .. } if content.contains("[evidence:")
+    ))));
 }
 
 #[tokio::test]

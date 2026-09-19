@@ -943,32 +943,33 @@ fn historical_tool_result_projects_as_a_trace_line_and_evidence_returns_it_whole
 
     let messages = log.derive_messages();
 
-    // Turn 1 is closed: no raw ToolResult block anywhere in the projection
-    // for call-1, and no character-count trim marker either.
-    let has_raw_result_1 = messages.iter().any(|m| {
-        m.content.iter().any(|b| {
-            matches!(
-                b,
-                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == &call_id
-            )
+    // Turn 1 is closed: its tool_use/tool_result pair is still there (the
+    // call pattern is what a later turn imitates), but the result is the
+    // schema-driven digest naming the evidence id — never the 5,000 raw
+    // characters and never a character-count trim marker.
+    let closed_result = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .find_map(|b| match b {
+            vak_llm::ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } if tool_use_id == &call_id => Some(content.clone()),
+            _ => None,
         })
-    });
+        .expect("the closed turn keeps its tool_use/tool_result pair");
     assert!(
-        !has_raw_result_1,
+        closed_result.contains("[evidence:call-1"),
+        "the digest must name the evidence id: {closed_result}"
+    );
+    assert!(
+        !closed_result.contains(&giant_output),
         "a closed turn's tool result must not appear verbatim"
     );
-    let joined: String = messages
-        .iter()
-        .map(|m| m.text_content())
-        .collect::<Vec<_>>()
-        .join("\n");
     assert!(
-        !joined.contains("trimmed"),
+        !closed_result.contains("trimmed"),
         "no character-count trim marker anywhere"
-    );
-    assert!(
-        joined.contains("ev:call-1"),
-        "the trace line must name the evidence id"
     );
 
     // Turn 2 is still open: its tool result stays verbatim.

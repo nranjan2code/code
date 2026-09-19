@@ -1,8 +1,8 @@
 # 68 — Context engine: measured capacity, turn working set, recallable evidence
 Status: implemented in 3.5.0 (greenfield replacement of the `derive_messages`
 projection and `ContextPolicy`; supersedes 17-context.md and the history
-parts of 15-reliability.md). Native provider compaction (§12) stays opt-in
-and is not wired; the hosted probe ladder is opt-in via `[probe] hosted`.
+parts of 15-reliability.md). Native provider compaction (§12) is not
+implemented; the hosted probe ladder is opt-in via `[probe] hosted`.
 
 ## Why this document exists
 
@@ -190,18 +190,15 @@ budget      = horizon.tokens
             − tail_tokens                (time, intent, thread, nudges)
             − output_reserve
             − current_turn_reserve       (= max observed current-turn size for this model, EWMA)
-working_set = []
-for turn in newest → oldest:
-    cost = turn.tokens_with_digests
-    if cost ≤ budget: working_set.push(turn); budget −= cost
-    else: break                          # never split a turn
-older       = turns not in working_set
-retrieved   = top-k older turns by relevance to the directive (existing
-              retrieve_relevant_entries), admitted whole while they fit in
-              a reserved slice of the budget (`horizon × 0.15`, measured not
-              guessed: it is the share the vakyartha simulation found
-              recovers 2.5–2.8× — re-validate with the probe harness)
-summary     = compaction packet over (older − retrieved), or the stored one
+# never split a turn: every cost check is turn-whole
+value(turn) = max(recency, relevance, anaphora)
+              recency   = 1 / (1 + age in closed turns)      # newest = 1.0
+              relevance = BM25(directive + reading terms) / best score  # best = 1.0
+              anaphora  = 1.0 for the preceding turn when the directive refers back
+fill turns at Full in descending value while cost ≤ budget, skipping one
+that does not fit for a cheaper one further down; the rest as cards
+newest → oldest while they fit; the overflow collapses into one packet.
+summary     = compaction packet over the packet range, or the stored one
 ```
 
 Properties:
@@ -503,17 +500,23 @@ Estimated shape for the failing session (31 past turns): ~2 turns full
 tokens of history for the whole session, against ~17k today. To be measured
 by the replay test.
 
-The full record, when used, is **two messages**, regardless of how many
-steps the turn took:
+The full record, when used, is the turn as recorded with thinking dropped,
+every evidence result replaced by its digest and every card result by the
+short ack — the real `tool_use`/`tool_result` pairs stay, because what a
+later turn imitates is the assistant role's *behaviour* (search, then card),
+and a prose transcript of a call teaches a small model to write calls as
+text (observed live: `▸ emit_metric_card {…}` emitted as plain text). Pairs
+are always complete, so the record is API-valid everywhere and byte-stable
+once the turn closes:
 
 ```
 user:      <directive verbatim>  (+ images)
-assistant: <trace>               one line per evidence-producing call:
-                                   ▸ tavily_search {"query":"…"} → ev:9f2 (8 results, 14.2k chars)
-           <presentations>       each emitted card's payload, as
-                                 `[card research.synthesis pres:a1] {…}` —
-                                 the answer the user saw, derived_from ev:9f2
-           <narration>           the prose around the cards, verbatim
+assistant: tool_use tavily_search {"query":"…"}
+user:      tool_result → digest: titles + URLs … [evidence:9f2 — 14.2k chars; call recall to expand]
+assistant: tool_use emit_research_card {payload}
+user:      tool_result → {"presentation":"a1","ok":true}
+assistant: <narration>           the prose around the card, verbatim, minus
+                                 any `vak` fence that duplicates an emitted card
 ```
 
 | Content | Follow-up rule | Why |
@@ -521,17 +524,15 @@ assistant: <trace>               one line per evidence-producing call:
 | Directive | verbatim | it is the intent record and what references ("that", "the second one") resolve against |
 | Final answer | presentation payloads verbatim (they are the answer) + narration verbatim | what the user saw; the payload is the `tool_use` input, replayed as assistant text, not as a tool call |
 | Intermediate assistant narration ("Let me search…") | dropped | process, not information; on small models it is the prose pattern the model then imitates |
-| Tool calls | one trace line each, in the assistant text | answers "what did you already check?" and prevents repeating a search, at ~20 tokens |
-| Tool results | trace line + evidence id; full result via `recall` | §3 |
+| Tool calls | the real `tool_use` block | the call pattern is what the next turn imitates; a prose rendering of it is imitated as prose |
+| Tool results | the schema-driven digest carrying the evidence id, as the paired `tool_result`; full result via `recall` | §3 |
 | Thinking | never | no provider needs it across turns; it is the largest and least useful block |
 | Nudges, repair directives, intent notes, stance, thread | never | they were runtime guidance for that turn |
 | Compaction packet | rendered from turn records (directive + trace + answer), not from raw exchanges | the summary is of decisions, not of tool dumps |
 
-Because past turns carry no `tool_use`/`tool_result` blocks, the projection
-is API-valid on every provider without pair-boundary logic
-(`plan_compaction`'s boundary walk goes away), and it is byte-stable: a
-past turn's two messages never change once written, so the prefix cache
-survives across turns as well as within them.
+Compaction works in whole turns, so `plan_compaction`'s pair-boundary walk
+is gone, and a closed turn's record never changes once written, so the
+prefix cache survives across turns as well as within them.
 
 #### Cache mechanics per provider
 
@@ -593,10 +594,12 @@ cheaper than doing the same client-side. The rule for using them:
   discovered `tool_reference` blocks are in the response), `clear_thinking`,
   OpenAI `previous_response_id` within a turn, Gemini `previous_interaction_id`
   within a turn.
-- **Default off** for a native feature whose output the ledger cannot audit:
-  OpenAI compaction items are encrypted; Anthropic `compact_20260112` is
-  readable but replaces history server-side. Both are opt-in per operator
-  (`context.native_compaction = true`) and, when on, the returned block is
+- **Not implemented** for a native feature whose output the ledger cannot
+  audit or that would replace history server-side: OpenAI compaction items
+  are encrypted; Anthropic `compact_20260112` is readable but drops
+  everything before it on the server. Vak's own card-level compaction
+  already covers the need portably, so there is no switch for these and no
+  dead code behind one. If one is ever wired, the returned block must be
   stored as a `Compaction` ledger entry so `derive` remains the single
   source of what the model saw.
 - **Never** let a native feature change what Vak sends to a different

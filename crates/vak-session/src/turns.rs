@@ -354,44 +354,92 @@ impl Turn {
             .collect()
     }
 
-    /// The two-message follow-up projection (docs/design/68 §10): the
-    /// directive verbatim, then one trace line per evidence call, then each
-    /// presentation's canonical payload, then the narration. No
-    /// `tool_use`/`tool_result` blocks — API-valid on every provider without
-    /// pair-boundary logic, and byte-stable once the turn is closed.
+    /// The follow-up projection of a closed turn (docs/design/68 §3, §10):
+    /// the turn as it was recorded, with thinking dropped, every evidence
+    /// result replaced by its schema-driven digest (recallable by id), every
+    /// card result replaced by the short ack, and a duplicate `vak` fence in
+    /// the narration omitted. The tool calls themselves stay real
+    /// `tool_use`/`tool_result` pairs: a later turn on a small model imitates
+    /// what the assistant role did, so the record must show the call pattern
+    /// (search → card), not a prose transcript of it. Pairs are always
+    /// complete (a call whose result never arrived is dropped), so the
+    /// projection is API-valid on every provider and byte-stable once the
+    /// turn closes.
     pub fn full_record(&self) -> Vec<Message> {
-        let mut assistant_text = String::new();
-        for line in self.trace_lines() {
-            assistant_text.push_str(&format!(
-                "\u{25b8} {} {} \u{2192} ev:{} ({})\n",
-                line.tool, line.args_digest, line.evidence_id, line.shape
-            ));
-        }
-        for (id, record) in self
+        let card_ids = self.presentation_tool_use_ids();
+        let presentation_for_call: HashMap<&str, &str> = self
             .presentations
             .iter()
             .zip(self.presentation_records.iter())
-        {
-            assistant_text.push_str(&format!(
-                "[card {} pres:{}] {}\n",
-                record.semantic_type, id, record.payload
-            ));
-        }
-        let narration = self
-            .final_answer
-            .as_ref()
-            .map(Message::text_content)
-            .unwrap_or_default();
-        if !narration.trim().is_empty() {
-            assistant_text.push_str(narration.trim());
-        }
-        vec![
-            self.directive.clone(),
-            Message {
+            .filter_map(|(id, record)| match &record.source {
+                PresentationSource::ToolCall { tool_use_id } => {
+                    Some((tool_use_id.as_str(), id.as_str()))
+                }
+                PresentationSource::Fence { .. } => None,
+            })
+            .collect();
+        let mut out = vec![self.directive.clone()];
+        for step in &self.steps {
+            let answered: HashSet<&str> =
+                step.results.iter().map(|(id, _, _)| id.as_str()).collect();
+            let assistant: Vec<ContentBlock> = step
+                .assistant
+                .content
+                .iter()
+                .filter(|block| match block {
+                    ContentBlock::Thinking { .. } => false,
+                    ContentBlock::ToolUse { id, .. } => answered.contains(id.as_str()),
+                    _ => true,
+                })
+                .cloned()
+                .collect();
+            if assistant.is_empty() {
+                continue;
+            }
+            out.push(Message {
                 role: Role::Assistant,
-                content: vec![ContentBlock::text(assistant_text.trim_end().to_string())],
-            },
-        ]
+                content: assistant,
+            });
+            let results: Vec<ContentBlock> = step
+                .results
+                .iter()
+                .map(|(id, content, is_error)| {
+                    let rendered = if card_ids.contains(id.as_str()) {
+                        presentation_for_call
+                            .get(id.as_str())
+                            .map(|pres| format!("{{\"presentation\":\"{pres}\",\"ok\":true}}"))
+                            .unwrap_or_else(|| content.clone())
+                    } else {
+                        match self.evidence_for(id) {
+                            Some(evidence) if !evidence.is_error => evidence_digest(id, &evidence),
+                            _ => content.clone(),
+                        }
+                    };
+                    ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: rendered,
+                        is_error: *is_error,
+                    }
+                })
+                .collect();
+            if !results.is_empty() {
+                out.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+            }
+        }
+        if let Some(answer) = &self.final_answer {
+            let narration =
+                strip_duplicate_fences(&answer.text_content(), &self.presentation_records);
+            if !narration.trim().is_empty() {
+                out.push(Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::text(narration.trim().to_string())],
+                });
+            }
+        }
+        out
     }
 
     /// The open turn exactly as recorded: directive, then every message
@@ -469,6 +517,59 @@ pub struct Evidence {
     pub input: Value,
     pub content: String,
     pub is_error: bool,
+}
+
+/// Drops every ```` ```vak ```` fence from `narration` whose `payload`
+/// digest matches one of this turn's presentation entries: the card is
+/// already shown through the entry, and replaying the fence would teach the
+/// model the duplicate it is told never to produce (docs/design/68 §10).
+fn strip_duplicate_fences(narration: &str, presentations: &[PresentationRecord]) -> String {
+    let known: HashSet<&str> = presentations
+        .iter()
+        .map(|record| record.payload_digest.as_str())
+        .collect();
+    let mut out = String::with_capacity(narration.len());
+    let mut lines = narration.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        let opens_fence = trimmed
+            .strip_prefix("```")
+            .or_else(|| trimmed.strip_prefix("~~~"))
+            .map(|rest| rest.trim() == "vak")
+            .unwrap_or(false);
+        if !opens_fence {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let fence_marker = &trimmed[..3];
+        let mut body = String::new();
+        let mut closed = false;
+        for inner in lines.by_ref() {
+            if inner.trim_start().starts_with(fence_marker) {
+                closed = true;
+                break;
+            }
+            body.push_str(inner);
+            body.push('\n');
+        }
+        let duplicate = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|value| value.get("payload").cloned())
+            .map(|payload| crate::types::payload_digest(&payload))
+            .map(|digest| known.contains(digest.as_str()))
+            .unwrap_or(false);
+        if !duplicate {
+            out.push_str(line);
+            out.push('\n');
+            out.push_str(&body);
+            if closed {
+                out.push_str(fence_marker);
+                out.push('\n');
+            }
+        }
+    }
+    out
 }
 
 /// A content-aware summary of one result, ending with the fixed
@@ -576,11 +677,17 @@ fn text_digest(content: &str) -> String {
         .map(str::trim_start)
         .filter(|line| line.starts_with('#'))
         .collect();
+    // The opening of the first paragraph: its first sentence, bounded by
+    // words. A paragraph with no whitespace at all is not prose (a blob, a
+    // token, base64) and has no opening worth quoting — it would "digest" to
+    // itself — so only its counts are reported.
     let first_paragraph = content
         .split("\n\n")
         .map(str::trim)
         .find(|paragraph| !paragraph.is_empty() && !paragraph.starts_with('#'))
-        .unwrap_or("");
+        .filter(|paragraph| paragraph.contains(char::is_whitespace))
+        .map(|paragraph| truncate_words(first_sentence(paragraph), 60))
+        .unwrap_or_default();
     let lines = content.lines().count();
     let bytes = content.len();
     let mut out = String::new();
@@ -590,7 +697,7 @@ fn text_digest(content: &str) -> String {
         out.push('\n');
     }
     if !first_paragraph.is_empty() {
-        out.push_str(first_paragraph);
+        out.push_str(&first_paragraph);
         out.push('\n');
     }
     out.push_str(&format!("({lines} lines, {bytes} bytes)"));
@@ -762,6 +869,8 @@ impl TurnCard {
             parts.push(trace.tool.clone());
             parts.push(trace.args_digest.to_string());
         }
+        parts.push(self.reading.act.clone());
+        parts.extend(self.reading.domains.iter().cloned());
         parts.join(" ")
     }
 
@@ -995,28 +1104,84 @@ mod tests {
     }
 
     #[test]
-    fn full_record_has_no_tool_blocks_and_includes_presentations() {
+    fn full_record_keeps_the_call_pattern_with_digested_results() {
         let dir = tempfile::tempdir().unwrap();
         let (log, _, t2, _) = two_closed_one_open(dir.path());
         let index = TurnIndex::from_log(&log);
         let turn2 = index.turn_by_id(&t2).unwrap();
         let record = turn2.full_record();
-        assert_eq!(record.len(), 2);
-        assert_eq!(record[0].role, R::User);
-        assert_eq!(record[1].role, R::Assistant);
-        for message in &record {
-            assert!(
-                !message
-                    .content
-                    .iter()
-                    .any(|b| matches!(b, CB::ToolUse { .. } | CB::ToolResult { .. })),
-                "full record must carry no tool_use/tool_result blocks"
-            );
-        }
-        let text = record[1].text_content();
-        assert!(text.contains("ev:call-1"));
-        assert!(text.contains("[card research.synthesis pres:"));
-        assert!(text.contains("Here is what I found."));
+        // directive, search call, digested result, card call, ack, narration
+        let roles: Vec<R> = record.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![
+                R::User,
+                R::Assistant,
+                R::User,
+                R::Assistant,
+                R::User,
+                R::Assistant
+            ]
+        );
+        let search_result = match &record[2].content[0] {
+            CB::ToolResult { content, .. } => content.clone(),
+            other => panic!("expected a tool result, got {other:?}"),
+        };
+        assert!(
+            search_result.contains("[evidence:call-1"),
+            "{search_result}"
+        );
+        assert!(search_result.contains("https://example.com/a"));
+        assert!(
+            !search_result.contains("Rust 2.0\",\"url"),
+            "raw JSON must be digested, not replayed: {search_result}"
+        );
+        assert!(matches!(
+            &record[3].content[0],
+            CB::ToolUse { name, .. } if name == "emit_research_card"
+        ));
+        assert!(matches!(
+            &record[4].content[0],
+            CB::ToolResult { tool_use_id, content, .. }
+                if tool_use_id == "card-1" && content.contains("\"ok\":true")
+        ));
+        assert!(
+            !record
+                .iter()
+                .any(|m| m.content.iter().any(|b| matches!(b, CB::Thinking { .. })))
+        );
+        assert_eq!(record[5].text_content(), "Here is what I found.");
+    }
+
+    #[test]
+    fn full_record_drops_a_fence_that_duplicates_an_emitted_card() {
+        let payload = serde_json::json!({"label": "Temperature", "value": 29.1, "unit": "C"});
+        let record = PresentationRecord {
+            turn_id: "t".into(),
+            source: PresentationSource::ToolCall {
+                tool_use_id: "card-9".into(),
+            },
+            semantic_type: "metric".into(),
+            skill_id: "core".into(),
+            skill_version: "1.0.0".into(),
+            schema_version: 2,
+            payload: crate::types::canonicalize_json(&payload),
+            payload_digest: crate::types::payload_digest(&payload),
+            derived_from: vec![],
+            title: "Temperature".into(),
+            identity_digest: String::new(),
+        };
+        let narration = format!(
+            "It is 29.1°C.\n```vak\n{}\n```\nStay hydrated.",
+            serde_json::json!({"semantic_type": "metric", "payload": payload})
+        );
+        let kept = strip_duplicate_fences(&narration, std::slice::from_ref(&record));
+        assert_eq!(kept.trim(), "It is 29.1°C.\nStay hydrated.");
+        let other = "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Wind\"}}\n```";
+        assert_eq!(
+            strip_duplicate_fences(other, std::slice::from_ref(&record)).trim(),
+            other
+        );
     }
 
     #[test]
