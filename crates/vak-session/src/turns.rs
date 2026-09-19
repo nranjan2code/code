@@ -129,9 +129,7 @@ impl TurnIndex {
                                     reading: None,
                                     raw_tail: Vec::new(),
                                 });
-                            } else if has_tool_result
-                                && let Some(turn) = turns.last_mut()
-                            {
+                            } else if has_tool_result && let Some(turn) = turns.last_mut() {
                                 turn.raw_tail.push(msg.clone());
                                 if let Some(step) = turn.steps.last_mut() {
                                     for block in &msg.content {

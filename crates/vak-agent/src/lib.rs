@@ -2274,8 +2274,8 @@ impl Agent {
                 // call or an earlier fence) — dropped from the projection.
                 continue;
             }
-            let derived_from = session
-                .non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+            let derived_from =
+                session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
             let record = vak_session::types::PresentationRecord {
                 turn_id,
                 source: vak_session::types::PresentationSource::Fence {
@@ -3830,7 +3830,11 @@ impl Agent {
                 }
             }
             RecallRequest::Presentation(id) => {
-                match session.presentations().into_iter().find(|(pid, _)| *pid == id) {
+                match session
+                    .presentations()
+                    .into_iter()
+                    .find(|(pid, _)| *pid == id)
+                {
                     Some((_, record)) => ToolRunOutput::Ok(record.payload.to_string()),
                     None => ToolRunOutput::Err(format!(
                         r#"{{"type":"invalid_arguments","message":"no presentation {id}"}}"#

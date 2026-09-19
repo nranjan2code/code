@@ -236,6 +236,22 @@ fn latest_directive_entry_id_ignores_control_messages() {
             meta: None,
         })
         .unwrap();
+    assert_eq!(log.latest_directive_entry_id(), Some(second.id.clone()));
+
+    // A mid-turn tool-result message is `User` role and non-control, but it
+    // is not a directive: it carries no `Text` block and it carries a
+    // `ToolResult` block. Mistaking it for the directive breaks any
+    // `turn_id` computed from it after the tool call — the fence-path
+    // presentation write does exactly this
+    // (docs/design/68-context-engine.md §10).
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::User,
+            content: vec![vak_llm::ContentBlock::tool_result("call-1", "result")],
+        },
+        meta: None,
+    })
+    .unwrap();
     assert_eq!(log.latest_directive_entry_id(), Some(second.id));
 }
 

@@ -646,8 +646,11 @@ async fn parallel_tools_preserve_source_order() {
     // projection now (docs/design/68-context-engine.md §10); source order
     // is a property of what was recorded, checked here against the raw
     // entries.
-    let msgs: Vec<vak_llm::types::Message> =
-        session.message_chain().into_iter().map(|(_, m)| m).collect();
+    let msgs: Vec<vak_llm::types::Message> = session
+        .message_chain()
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
     let results_msg = msgs
         .iter()
         .rev()

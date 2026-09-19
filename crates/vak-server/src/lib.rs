@@ -4272,6 +4272,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::TurnCapabilitiesBound(_) => {}
                         vak_session::EntryPayload::ChildRun { .. } => {}
                         vak_session::EntryPayload::Presentation(_) => {}
+                        vak_session::EntryPayload::TurnCard(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {

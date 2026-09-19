@@ -462,7 +462,17 @@ impl SessionLog {
             .find_map(|entry| match &entry.payload {
                 EntryPayload::Message(record)
                     if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none() =>
+                        && record.control_kind().is_none()
+                        && record
+                            .message
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
+                        && !record
+                            .message
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. })) =>
                 {
                     Some(entry.id.clone())
                 }
