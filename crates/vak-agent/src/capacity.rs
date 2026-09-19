@@ -185,6 +185,16 @@ pub struct CapacityProfile {
     /// lowered estimate indefinitely.
     #[serde(default)]
     pub needs_reprobe: bool,
+    /// EWMA of past current-turn sizes (docs/design/68 §4), fed at turn
+    /// close by `Agent::record_capacity_usage_feedback`. The planner uses it
+    /// — floored by the turn-so-far's actually measured size — to reserve
+    /// room for the open turn before budgeting history.
+    #[serde(default = "default_current_turn_reserve")]
+    pub current_turn_reserve: Ewma,
+}
+
+fn default_current_turn_reserve() -> Ewma {
+    Ewma::new(FEEDBACK_EWMA_ALPHA)
 }
 
 impl CapacityProfile {
@@ -217,6 +227,7 @@ impl CapacityProfile {
                 metadata_digest,
             },
             needs_reprobe: false,
+            current_turn_reserve: Ewma::new(FEEDBACK_EWMA_ALPHA),
         }
     }
 
@@ -240,6 +251,7 @@ impl CapacityProfile {
             output_reserve,
             provenance,
             needs_reprobe: false,
+            current_turn_reserve: Ewma::new(FEEDBACK_EWMA_ALPHA),
         }
     }
 
@@ -319,6 +331,24 @@ impl CapacityProfile {
             last_confirmed: SystemTime::now(),
         };
         self.needs_reprobe = true;
+    }
+
+    /// Folds one closed turn's total size into `current_turn_reserve` (§4),
+    /// so the planner's reserve for the NEXT open turn reflects how large
+    /// this model's turns actually tend to be.
+    pub fn observe_current_turn_tokens(&mut self, tokens: u64) {
+        self.current_turn_reserve.observe(tokens as f64);
+    }
+
+    /// The reserve the planner sets aside for the still-open turn (§4):
+    /// the EWMA of past current-turn sizes, floored by `measured_so_far` —
+    /// the open turn's own measured size can never be estimated as less
+    /// than what it has already spent.
+    pub fn current_turn_reserve(&self, measured_so_far: u64) -> u64 {
+        if self.current_turn_reserve.samples == 0 {
+            return measured_so_far;
+        }
+        (self.current_turn_reserve.value.round() as u64).max(measured_so_far)
     }
 
     /// Whether this profile should be re-probed before being trusted again:
@@ -663,6 +693,19 @@ mod tests {
         profile.observe_instruction_failure(1_000); // well under 0.8 * horizon
         assert_eq!(profile.instruction_horizon.tokens, 10_000);
         assert!(!profile.needs_reprobe);
+    }
+
+    #[test]
+    fn current_turn_reserve_floors_at_the_measured_size_before_and_after_samples() {
+        let mut profile = flat_profile(10_000);
+        // No samples yet: the reserve is exactly the measured-so-far floor.
+        assert_eq!(profile.current_turn_reserve(500), 500);
+        profile.observe_current_turn_tokens(200);
+        // One low sample must not undercut a larger turn-so-far measurement.
+        assert_eq!(profile.current_turn_reserve(500), 500);
+        profile.observe_current_turn_tokens(2_000);
+        // EWMA now exceeds a smaller measured-so-far value and wins.
+        assert!(profile.current_turn_reserve(10) > 10);
     }
 
     #[test]
