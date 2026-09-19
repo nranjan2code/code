@@ -200,6 +200,48 @@ fn incremental_compaction_extends_the_boundary_and_the_summary_survives_reopen()
 }
 
 #[test]
+fn packet_needs_compaction_until_an_incremental_entry_covers_it() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+    let ids = three_closed_turns(&mut log);
+
+    assert!(
+        log.packet_needs_compaction(&ids[1]),
+        "nothing compacted yet, so the range still needs it"
+    );
+    let (transcript, _) = log.packet_transcript(&ids[1]);
+    assert!(transcript.contains("#1 asked:") && transcript.contains("#2 asked:"));
+    assert!(
+        !transcript.contains("third question"),
+        "the transcript must stop at last_turn_id, not run to the end"
+    );
+
+    log.append_incremental_compaction(&ids[1], "summary of turns 1-2".to_string(), 999)
+        .unwrap();
+    assert!(
+        !log.packet_needs_compaction(&ids[1]),
+        "an incremental Compaction entry now covers this range"
+    );
+}
+
+#[test]
+fn packet_transcript_carries_the_prior_summary_forward() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+    let ids = three_closed_turns(&mut log);
+    log.append_incremental_compaction(&ids[0], "FIRST-SUMMARY".to_string(), 100)
+        .unwrap();
+
+    assert!(log.packet_needs_compaction(&ids[1]));
+    let (transcript, _) = log.packet_transcript(&ids[1]);
+    assert!(
+        transcript.contains("FIRST-SUMMARY"),
+        "the prior summary must carry forward: {transcript}"
+    );
+    assert!(transcript.contains("#2 asked:"));
+}
+
+#[test]
 fn incremental_compaction_rejects_a_range_with_no_following_turn() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();

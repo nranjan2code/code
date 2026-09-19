@@ -1200,17 +1200,18 @@ impl SessionLog {
     /// The intent note, work contract, and conversation thread are rendered
     /// into the request tail instead (§6/§10), read separately via
     /// [`SessionLog::tail_sections`]; this function never contributes them.
-    fn derive_with_plan_tagged(
-        &self,
-        plan: Option<&WorkingSetPlan>,
-    ) -> Vec<(String, Message, bool, bool)> {
+    /// The current cumulative compaction boundary: the chain position
+    /// before which everything is already summarized, and the existing
+    /// summary text (if any). Shared by `derive_with_plan_tagged` and the
+    /// incremental-compaction helpers below so all three agree on what
+    /// "already covered" means.
+    fn compaction_boundary(&self) -> (usize, HashMap<String, usize>, Option<String>) {
         let chain = self.chain_to_root();
-        let position: HashMap<&str, usize> = chain
+        let position: HashMap<String, usize> = chain
             .iter()
             .enumerate()
-            .map(|(i, entry)| (entry.id.as_str(), i))
+            .map(|(i, entry)| (entry.id.clone(), i))
             .collect();
-
         // Each compaction's boundary is computed from the CURRENT (already
         // compacted) projection, so successive boundaries only ever move
         // forward; the last `Compaction` entry alone describes the steady
@@ -1223,17 +1224,6 @@ impl SessionLog {
                 EntryPayload::Compaction(c) => Some((pos, c.clone())),
                 _ => None,
             });
-
-        let index = TurnIndex::from_log(self);
-        let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
-        if let Some((_, c)) = &last_compaction {
-            let summary_msg = Message::user_text(format!(
-                "<context_summary>\n{}\n</context_summary>",
-                c.summary
-            ));
-            out.push((String::new(), summary_msg, true, false));
-        }
-
         let boundary_pos = match &last_compaction {
             Some((pos, c)) if c.reset_all => *pos,
             Some((_, c)) => position
@@ -1242,6 +1232,79 @@ impl SessionLog {
                 .unwrap_or(0),
             None => 0,
         };
+        let summary = last_compaction.map(|(_, c)| c.summary);
+        (boundary_pos, position, summary)
+    }
+
+    /// Whether the packet range ending at `last_turn_id` (a `WorkingSetPlan`
+    /// packet range's newer endpoint) still needs an incremental compaction
+    /// (docs/design/68-context-engine.md §4): true when no existing
+    /// `Compaction` entry's boundary already reaches at or past it. `false`
+    /// for an unknown id, since there is nothing to compact.
+    pub fn packet_needs_compaction(&self, last_turn_id: &str) -> bool {
+        let (boundary_pos, position, _) = self.compaction_boundary();
+        position
+            .get(last_turn_id)
+            .is_some_and(|&pos| pos >= boundary_pos)
+    }
+
+    /// The summarizer input for an incremental compaction covering
+    /// everything up through `last_turn_id`: the existing compaction
+    /// summary (if any, so information already folded in survives) followed
+    /// by one `TurnCard` line per newly covered turn — cards, not raw
+    /// history (§4). Also returns a char-count estimate of that input for
+    /// the caller's `tokens_before` reporting.
+    pub fn packet_transcript(&self, last_turn_id: &str) -> (String, u64) {
+        let (boundary_pos, position, existing_summary) = self.compaction_boundary();
+        let mut out = String::new();
+        if let Some(summary) = existing_summary {
+            out.push_str(&summary);
+            out.push_str("\n\n");
+        }
+        let Some(&last_pos) = position.get(last_turn_id) else {
+            let chars = out.chars().count() as u64;
+            return (out, chars);
+        };
+        let index = TurnIndex::from_log(self);
+        for (turn_number, turn) in index.turns.iter().enumerate() {
+            let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
+            if turn_pos < boundary_pos || turn_pos > last_pos {
+                continue;
+            }
+            match &turn.card {
+                Some(card) => {
+                    out.push_str(&card.line(turn_number + 1));
+                    out.push('\n');
+                }
+                None => {
+                    for message in turn.full_record() {
+                        out.push_str(&message.text_content());
+                        out.push('\n');
+                    }
+                }
+            }
+        }
+        let chars = out.chars().count() as u64;
+        (out, chars)
+    }
+
+    fn derive_with_plan_tagged(
+        &self,
+        plan: Option<&WorkingSetPlan>,
+    ) -> Vec<(String, Message, bool, bool)> {
+        let (boundary_pos, position_owned, existing_summary) = self.compaction_boundary();
+        let position: HashMap<&str, usize> = position_owned
+            .iter()
+            .map(|(id, pos)| (id.as_str(), *pos))
+            .collect();
+
+        let index = TurnIndex::from_log(self);
+        let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
+        if let Some(summary) = &existing_summary {
+            let summary_msg =
+                Message::user_text(format!("<context_summary>\n{summary}\n</context_summary>"));
+            out.push((String::new(), summary_msg, true, false));
+        }
 
         let fidelity_of: HashMap<&str, Fidelity> = plan
             .map(|p| p.per_turn.iter().map(|(id, f)| (id.as_str(), *f)).collect())
@@ -1313,7 +1376,7 @@ impl SessionLog {
         }
         if !card_lines.is_empty() {
             let block = format!("<turns>\n{}\n</turns>", card_lines.join("\n"));
-            let insert_at = usize::from(last_compaction.is_some());
+            let insert_at = usize::from(existing_summary.is_some());
             out.insert(
                 insert_at,
                 (String::new(), Message::user_text(block), true, false),
