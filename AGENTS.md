@@ -607,6 +607,13 @@ shipped behaviour rather than a proposal.
   (`INLINE_HINT_MARKERS`, `CONTEXT_BLOCK_TAGS` in `structured.ts`) are checked
   for exact equality with the Rust vocabulary by
   `vak-server/tests/control_vocabulary_sync.rs`.
+  Identifiers that name a lockable resource are unique by construction, not by
+  clock: a child worker's session id carries a process-wide sequence number
+  (`task.rs::next_child_session_id`), because ids that were the clock's
+  nanoseconds alone collided when tasks launched in the same wave. The chat
+  pairs turns through `vak-client-ui/src/turnPairing.ts`. What remains
+  heuristic (the presentation and grounding checks, fence scanning, card
+  choice) is listed in `docs/design/30-output-engineering.md`.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

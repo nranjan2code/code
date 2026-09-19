@@ -467,3 +467,32 @@ Consequences, all enforced by tests:
 - **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
   and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
   fails the build unless they equal the Rust lists exactly.
+
+### What is typed, and what is still heuristic
+
+Typed and enforced (a wrong answer here is a bug, not a judgement call): which
+messages the runtime authored (`MessageMeta::control`), which transcript
+entries are context blocks, the ledger identity of every message
+(`entry_id` ↔ `provenance.entry_id`), the card kinds (`OutputKind::Card`), and
+the set of registered semantic types with the tool that carries each. The
+client's copy of the two text lists is equality-checked against the Rust
+vocabulary.
+
+Still heuristic, on purpose and worth knowing when something misfires:
+
+- **Which answers "read as a card."** The presentation check runs
+  `signals_from_text` (keyword and structure signals) through the recipe
+  catalog. It nudges once and the model may decline; it does not decide.
+- **Whether a tool call "looks like retrieval"** for the grounding check
+  (tool-name keywords, URL count). `emit_*_card` is excluded explicitly, which
+  is the kind of special case this approach invites.
+- **Fence text.** `find_malformed_vak_fence` and `find_duplicate_card_fence`
+  scan answer text for ```` ```vak ```` blocks and a `"semantic_type":"x"`
+  substring.
+- **Inline hints and narration lines** (`[recovery]`, `Surface:`) are matched in
+  text, from the shared vocabulary, because they live inside other text.
+- **Which card the model picks** (metric vs research vs table) is the model's
+  judgement, steered by the tool descriptions.
+- **Sessions written before typing** keep untagged nudges; there is no
+  backward-compatibility path by design.
+
