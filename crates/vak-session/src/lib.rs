@@ -18,8 +18,8 @@ pub use search::{
     search_all, search_all_extended, search_extended,
 };
 pub use turns::{
-    Answer, Evidence, Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard,
-    TurnIndex, evidence_digest, evidence_shape,
+    Answer, Evidence, Fidelity, Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn,
+    TurnCard, TurnIndex, WorkingSetPlan, evidence_digest, evidence_shape,
 };
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, CapabilityDescriptor, CapabilityInvocation,

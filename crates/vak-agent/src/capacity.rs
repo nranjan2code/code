@@ -39,6 +39,13 @@ const HORIZON_FAILURE_FRACTION: f64 = 0.8;
 /// scheduled re-probe still wins once it runs.
 const HORIZON_FEEDBACK_CONFIDENCE: f64 = 0.6;
 
+/// Shrink factor applied to a rejected request's size when a provider
+/// returns an over-length error (§5): the new horizon is deliberately
+/// slightly below the rejected size rather than exactly at it, so the very
+/// next replanned request has room to fit without immediately re-testing
+/// the boundary.
+const OVER_LENGTH_SHRINK: f64 = 0.9;
+
 /// Confidence assigned to an unverified hosted-model horizon that starts
 /// from `declared_window` because the operator has not opted into full
 /// hosted probing (§1 "Cost control for hosted models").
@@ -185,6 +192,16 @@ pub struct CapacityProfile {
     /// lowered estimate indefinitely.
     #[serde(default)]
     pub needs_reprobe: bool,
+    /// EWMA of past current-turn sizes (docs/design/68 §4), fed at turn
+    /// close by `Agent::record_capacity_usage_feedback`. The planner uses it
+    /// — floored by the turn-so-far's actually measured size — to reserve
+    /// room for the open turn before budgeting history.
+    #[serde(default = "default_current_turn_reserve")]
+    pub current_turn_reserve: Ewma,
+}
+
+fn default_current_turn_reserve() -> Ewma {
+    Ewma::new(FEEDBACK_EWMA_ALPHA)
 }
 
 impl CapacityProfile {
@@ -217,6 +234,7 @@ impl CapacityProfile {
                 metadata_digest,
             },
             needs_reprobe: false,
+            current_turn_reserve: Ewma::new(FEEDBACK_EWMA_ALPHA),
         }
     }
 
@@ -240,6 +258,7 @@ impl CapacityProfile {
             output_reserve,
             provenance,
             needs_reprobe: false,
+            current_turn_reserve: Ewma::new(FEEDBACK_EWMA_ALPHA),
         }
     }
 
@@ -319,6 +338,45 @@ impl CapacityProfile {
             last_confirmed: SystemTime::now(),
         };
         self.needs_reprobe = true;
+    }
+
+    /// Folds a provider's over-length rejection (`LlmError::Context`) into
+    /// the profile (docs/design/68-context-engine.md §5's over-length →
+    /// replan path): `verified_window` becomes this exact request size
+    /// (feedback, never a guess), and the horizon shrinks to
+    /// `request_tokens × OVER_LENGTH_SHRINK` with `HORIZON_FEEDBACK_CONFIDENCE`
+    /// — never widened, only ever lowered, like every other horizon
+    /// feedback path.
+    pub fn observe_over_length(&mut self, request_tokens: u64) {
+        self.verified_window = Some(match self.verified_window {
+            Some(previous) => previous.min(request_tokens),
+            None => request_tokens,
+        });
+        let shrunk = (request_tokens as f64 * OVER_LENGTH_SHRINK) as u64;
+        self.instruction_horizon = Horizon {
+            tokens: self.instruction_horizon.tokens.min(shrunk),
+            confidence: HORIZON_FEEDBACK_CONFIDENCE,
+            last_confirmed: SystemTime::now(),
+        };
+        self.needs_reprobe = true;
+    }
+
+    /// Folds one closed turn's total size into `current_turn_reserve` (§4),
+    /// so the planner's reserve for the NEXT open turn reflects how large
+    /// this model's turns actually tend to be.
+    pub fn observe_current_turn_tokens(&mut self, tokens: u64) {
+        self.current_turn_reserve.observe(tokens as f64);
+    }
+
+    /// The reserve the planner sets aside for the still-open turn (§4):
+    /// the EWMA of past current-turn sizes, floored by `measured_so_far` —
+    /// the open turn's own measured size can never be estimated as less
+    /// than what it has already spent.
+    pub fn current_turn_reserve(&self, measured_so_far: u64) -> u64 {
+        if self.current_turn_reserve.samples == 0 {
+            return measured_so_far;
+        }
+        (self.current_turn_reserve.value.round() as u64).max(measured_so_far)
     }
 
     /// Whether this profile should be re-probed before being trusted again:
@@ -663,6 +721,35 @@ mod tests {
         profile.observe_instruction_failure(1_000); // well under 0.8 * horizon
         assert_eq!(profile.instruction_horizon.tokens, 10_000);
         assert!(!profile.needs_reprobe);
+    }
+
+    #[test]
+    fn over_length_feedback_shrinks_the_horizon_and_never_widens_it() {
+        let mut profile = flat_profile(10_000);
+        profile.observe_over_length(8_000);
+        assert_eq!(profile.verified_window, Some(8_000));
+        assert_eq!(profile.instruction_horizon.tokens, 7_200); // 8_000 * 0.9
+        assert_eq!(profile.instruction_horizon.confidence, 0.6);
+        assert!(profile.needs_reprobe);
+
+        // A later, larger rejected size must not widen the already-lowered
+        // horizon or verified_window back up.
+        profile.observe_over_length(9_000);
+        assert_eq!(profile.verified_window, Some(8_000));
+        assert_eq!(profile.instruction_horizon.tokens, 7_200);
+    }
+
+    #[test]
+    fn current_turn_reserve_floors_at_the_measured_size_before_and_after_samples() {
+        let mut profile = flat_profile(10_000);
+        // No samples yet: the reserve is exactly the measured-so-far floor.
+        assert_eq!(profile.current_turn_reserve(500), 500);
+        profile.observe_current_turn_tokens(200);
+        // One low sample must not undercut a larger turn-so-far measurement.
+        assert_eq!(profile.current_turn_reserve(500), 500);
+        profile.observe_current_turn_tokens(2_000);
+        // EWMA now exceeds a smaller measured-so-far value and wins.
+        assert!(profile.current_turn_reserve(10) > 10);
     }
 
     #[test]

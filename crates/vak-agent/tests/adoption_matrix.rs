@@ -306,8 +306,9 @@ async fn unattended_budget_denial_fails_even_with_ladder() {
 /// the compaction entry, and receipts still land around it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compaction_partitions_coexist_with_goal_and_receipts() {
-    // NOTE: input_budget floors at 1_000 tokens, so the fixture needs
-    // est comfortably above trigger 800 => >= ~4k chars.
+    // NOTE: a 900-token declared window is dwarfed by this filler's own
+    // estimated size, so `budget` saturates to 0 (no usable horizon) and
+    // the reset-with-handoff rescue fires before the first model turn.
     let filler = "z".repeat(5000);
     let provider = MatrixProvider::new(vec![
         // Over-budget path fires BEFORE the first model turn; the handoff
@@ -320,9 +321,8 @@ async fn compaction_partitions_coexist_with_goal_and_receipts() {
         text_msg("primary-model", PASS_VERDICT),
     ]);
     let mut agent = setup(provider, |_| {});
-    agent.config.context_policy.context_window = 900;
-    agent.config.context_policy.max_output = 64;
-    agent.config.context_policy.keep_recent = 2;
+    agent.config.declared_window = 900;
+    agent.config.max_output = 64;
     agent.set_goal("finish despite compaction", vec!["c1".into()]);
     let outcome = run(&mut agent, &format!("task {filler}")).await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));

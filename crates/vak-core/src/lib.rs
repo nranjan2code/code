@@ -5569,8 +5569,8 @@ impl Core {
         let (context_window, max_output) = self
             .route_context_limits(&turn_primary_leg, &turn_plan.ladder)
             .await;
-        cfg.context_policy.context_window = context_window;
-        cfg.context_policy.max_output = max_output;
+        cfg.declared_window = context_window;
+        cfg.max_output = max_output;
         // Measured capacity (docs/design/68-context-engine.md §1): bound
         // once per process per profile key (cached, TTL'd, re-probed on
         // contradiction), never blocking this turn on more than one probe
@@ -6040,6 +6040,10 @@ impl Core {
                 }
             }
         }
+        // Model-drift detection (docs/design/68-context-engine.md §7) reads
+        // this from the agent loop's own config, mirroring the ledger's
+        // `TurnCapabilitiesBound.tool_domains` below.
+        cfg.tool_domains = tool_domains.clone();
         if let Err(error) =
             session.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
                 epoch: cap_set.epoch,
@@ -6562,24 +6566,56 @@ impl Core {
     /// compaction entry now, regardless of the automatic trigger threshold.
     /// Append-only; a receipt entry audits the summarizer dispatch. The
     /// session always returns; failures land in `CompactOutcome.error`.
+    ///
+    /// Uses the same incremental, card-based mechanism as the agent loop's
+    /// own compaction (docs/design/68-context-engine.md §4): plan the
+    /// working set with a metadata-only `CapacityProfile` (no live route
+    /// leg to probe here), and if the plan finds a packet range, summarize
+    /// its turn cards and append one `Compaction` entry covering it.
     pub async fn compact_session_now(
         &self,
         mut session: SessionLog,
         cancel: tokio_util::sync::CancellationToken,
     ) -> (SessionLog, CompactOutcome) {
-        let policy = vak_agent::context::ContextPolicy {
-            context_window: self.inner.config.context_window,
-            max_output: u64::from(self.inner.config.max_tokens),
-            ..Default::default()
-        };
+        let profile = vak_agent::capacity::CapacityProfile::from_metadata_only(
+            self.inner.config.context_window,
+            u64::from(self.inner.config.max_tokens),
+            "compact-session-now".to_string(),
+            std::time::SystemTime::now(),
+        );
         let system = self.system_prompt();
         let tool_defs = vak_tools::definitions(&self.agent_tools());
-        let before = vak_agent::context::estimate_tokens(
-            &session.derive_messages(),
-            Some(&system),
-            &tool_defs,
-        );
-        let Some(plan) = session.plan_compaction(policy.keep_recent) else {
+        let prefix_chars = (system.len() as u64)
+            + tool_defs
+                .iter()
+                .map(|t| {
+                    (t.name.len() + t.description.len()) as u64
+                        + serde_json::to_string(&t.parameters)
+                            .map(|s| s.len() as u64)
+                            .unwrap_or(0)
+                })
+                .sum::<u64>();
+        let prefix_tokens = profile.estimate_tokens(prefix_chars);
+        let plan_now = |session: &SessionLog| -> vak_session::WorkingSetPlan {
+            let index = vak_session::TurnIndex::from_log(session);
+            let directive = index
+                .turns
+                .last()
+                .map(|turn| turn.directive.text_content())
+                .unwrap_or_default();
+            let reading = session.latest_reading();
+            vak_agent::planner::plan(vak_agent::planner::PlanInput {
+                profile: &profile,
+                index: &index,
+                directive: &directive,
+                reading: reading.as_ref(),
+                prefix_tokens,
+                tail_tokens: 0,
+                current_turn_tokens: 0,
+            })
+        };
+        let plan = plan_now(&session);
+        let Some((first_turn_id, last_turn_id)) = plan.packet_range else {
             return (
                 session,
                 CompactOutcome {
@@ -6588,13 +6624,13 @@ impl Core {
                 },
             );
         };
+        let (transcript, transcript_chars) = session.packet_transcript(&last_turn_id);
+        let before = profile.estimate_tokens(transcript_chars);
         let provider = match self.provider() {
             Ok(p) => p,
             Err(e) => return (session, CompactOutcome::failed(e.to_string())),
         };
         let model = self.effective_model();
-        let summarized = plan.older.len();
-        let transcript = vak_agent::context::render_transcript(&plan.older);
         let req = vak_agent::context::compaction_request(&model, &transcript);
 
         let started = std::time::Instant::now();
@@ -6646,7 +6682,18 @@ impl Core {
                 CompactOutcome::failed("compaction produced an empty summary".into()),
             );
         }
-        if let Err(e) = session.apply_compaction(&plan, summary, before) {
+        let summarized = {
+            let index = vak_session::TurnIndex::from_log(&session);
+            let ids: Vec<&str> = index.turns.iter().map(|t| t.id.as_str()).collect();
+            match (
+                ids.iter().position(|id| *id == first_turn_id),
+                ids.iter().position(|id| *id == last_turn_id),
+            ) {
+                (Some(lo), Some(hi)) => hi.saturating_sub(lo) + 1,
+                _ => 0,
+            }
+        };
+        if let Err(e) = session.append_incremental_compaction(&last_turn_id, summary, before) {
             return (
                 session,
                 CompactOutcome::failed(format!("compaction write failed: {e}")),
@@ -6656,11 +6703,7 @@ impl Core {
         // domain procedural rules, and semantic entities before older history fades.
         let _ = self.consolidate_memory();
         let _ = session.append_receipt(receipt);
-        let after = vak_agent::context::estimate_tokens(
-            &session.derive_messages(),
-            Some(&system),
-            &tool_defs,
-        );
+        let after = plan_now(&session).spent;
         (
             session,
             CompactOutcome {
@@ -7795,10 +7838,14 @@ impl Core {
                 role: vak_llm::Role::User,
                 content: vec![vak_llm::ContentBlock::text(tail.clone())],
             };
-            let est = vak_agent::context::estimate_tokens(
-                &[probe],
-                Some(&reflection::system_prompt()),
-                &[],
+            let est_profile = vak_agent::capacity::CapacityProfile::from_metadata_only(
+                self.inner.config.context_window,
+                u64::from(self.inner.config.max_tokens),
+                "reflection-estimate".to_string(),
+                std::time::SystemTime::now(),
+            );
+            let est = est_profile.estimate_tokens(
+                reflection::system_prompt().len() as u64 + probe.text_content().len() as u64,
             );
             let model = self.effective_model();
             let provider_name = self.effective_provider();

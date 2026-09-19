@@ -388,24 +388,33 @@ async fn compaction_during_long_research_session() {
     )
     .unwrap();
     // Big enough on their own to already be over the trigger threshold
-    // before the real research turn starts, so compaction fires on the
-    // very first budget check — consuming the FIRST scripted response
-    // below (the compaction summary) rather than one meant for the real
-    // turn.
+    // before the real research turn starts, so incremental compaction
+    // (docs/design/68-context-engine.md §4) fires on the very first plan —
+    // consuming the FIRST scripted response below (the compaction summary)
+    // rather than one meant for the real turn. Each seeded turn gets a
+    // real `TurnCard` (as the turn-close hook would write): the planner
+    // only ever collapses carded turns into a packet.
     let seed_filler = "prior research finding ".repeat(220);
     for i in 0..3 {
+        let turn_id = log
+            .append_message(vak_session::types::MessageRecord {
+                message: vak_llm::types::Message::user_text(format!("earlier note {i}")),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        let answer = format!("acknowledged note {i}: {seed_filler}");
         log.append_message(vak_session::types::MessageRecord {
-            message: vak_llm::types::Message::user_text(format!("earlier note {i}")),
+            message: vak_llm::types::Message::assistant(vec![ContentBlock::text(&answer)]),
             meta: None,
         })
         .unwrap();
-        log.append_message(vak_session::types::MessageRecord {
-            message: vak_llm::types::Message::assistant(vec![ContentBlock::text(format!(
-                "acknowledged note {i}: {seed_filler}"
-            ))]),
-            meta: None,
-        })
-        .unwrap();
+        let card = vak_session::TurnIndex::from_log(&log)
+            .turn_by_id(&turn_id)
+            .unwrap()
+            .build_card("completed", answer, &|s| s.len() as u64 / 4);
+        log.append_turn_card(vak_session::types::TurnCardRecord { turn_id, card })
+            .unwrap();
     }
     let provider = Arc::new(Scripted {
         responses: std::sync::Mutex::new(VecDeque::from(vec![
@@ -432,15 +441,13 @@ async fn compaction_during_long_research_session() {
     cfg.mode = Mode::FullAccess;
     cfg.permission = Some(Arc::new(PermissionEngine::default()));
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
-    cfg.context_policy = vak_agent::context::ContextPolicy {
-        context_window: 4000,
-        max_output: 256,
-        compact_threshold: 0.8,
-        keep_recent: 1,
-    };
+    // Small enough that the three heavily-padded seeded turns above cannot
+    // all fit even as cards, forcing a packet on the very first plan.
+    cfg.declared_window = 1500;
+    cfg.max_output = 100;
     // The handoff-reset rescue is a different mechanism (Phase H) from
-    // turn-boundary compaction and would consume its own scripted
-    // response if it fired; keep this test isolated to compaction alone.
+    // incremental compaction and would consume its own scripted response
+    // if it fired; keep this test isolated to compaction alone.
     cfg.handoff_reset = false;
     let mut agent = Agent::new(provider.clone(), log, cfg);
 

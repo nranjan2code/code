@@ -39,16 +39,21 @@ pub enum ControlKind {
     DuplicateCardCheck,
     /// The answer reads as a card but was written as prose.
     PresentationCheck,
+    /// Model drift (docs/design/68-context-engine.md §7): the step served a
+    /// different directive than the current one — a mismatched-domain tool
+    /// call, or a verbatim repeat of a past answer.
+    SteeringDrift,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 6] = [
+    pub const ALL: [ControlKind; 7] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
         ControlKind::FenceCheck,
         ControlKind::DuplicateCardCheck,
         ControlKind::PresentationCheck,
+        ControlKind::SteeringDrift,
     ];
 
     /// The literal the message body begins with, for the model's benefit.
@@ -61,6 +66,7 @@ impl ControlKind {
             ControlKind::FenceCheck => "[fence-check]",
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
             ControlKind::PresentationCheck => "[presentation-check]",
+            ControlKind::SteeringDrift => "[steering-drift]",
         }
     }
 

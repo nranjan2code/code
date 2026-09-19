@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
 
-use crate::turns::{Evidence, TurnCard, TurnIndex};
+use crate::turns::{Evidence, Fidelity, TurnCard, TurnIndex, WorkingSetPlan};
 use crate::types::{
     CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, PresentationRecord,
     SessionError, SessionHeader, TranscriptMessage, TurnCardRecord, WorkEvent,
@@ -1170,31 +1170,48 @@ impl SessionLog {
             .collect()
     }
 
-    /// Like `derive_keyed`, additionally flagging compaction-summary
-    /// pseudo-entries so packet accounting can exclude them from both
-    /// sides of a partition (they were settled by earlier compactions).
-    ///
-    /// The intent note, work contract, and conversation thread used to be
-    /// spliced into this projection as extra messages; they are now rendered
-    /// into the request tail instead (docs/design/68-context-engine.md
-    /// §6/§10), read separately via [`SessionLog::tail_sections`]. This
-    /// function no longer contributes them.
-    ///
-    /// Every closed turn projects as its two-message `full_record`
-    /// (docs/design/68-context-engine.md §10) — no `tool_use`/`tool_result`
-    /// blocks, no character-count trim of historical tool output (deleted:
-    /// `MAX_HISTORICAL_TOOL_RESULT_CHARS`). The still-open turn (if any)
-    /// projects verbatim, exactly as recorded. A turn is never split: the
-    /// only decision left is *which whole turns* survive compaction, decided
-    /// below by the last `Compaction` entry's position in the chain.
+    /// The plan-free projection: every closed turn at `Full` fidelity. Used
+    /// by `derive_messages`/`plan_compaction`, which have no `CapacityProfile`
+    /// to plan against.
     fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
+        self.derive_with_plan_tagged(None)
+    }
+
+    /// Like `derive_keyed_tagged`, but a `WorkingSetPlan` (from
+    /// `vak_agent::planner::plan`) selects each closed turn's fidelity
+    /// instead of defaulting every one to `Full` (docs/design/68-context-
+    /// engine.md §4/§10) — one implementation, the plan just picks what each
+    /// turn contributes:
+    ///
+    /// - `Full` turns project their two-message `full_record` — no
+    ///   `tool_use`/`tool_result` blocks, no character-count trim of
+    ///   historical tool output (deleted: `MAX_HISTORICAL_TOOL_RESULT_CHARS`).
+    /// - `Card` turns contribute one line each to a single `<turns>` block
+    ///   (`TurnCard::line`), inserted once, right after any compaction
+    ///   summary.
+    /// - `Packet` turns, and any closed turn the plan omits entirely,
+    ///   contribute nothing here: they are represented only by an existing
+    ///   `Compaction` entry, which the caller (`Agent`'s incremental
+    ///   compaction, §4) guarantees already covers them before this is
+    ///   called with that plan.
+    /// - The still-open turn (if any) always projects verbatim, regardless
+    ///   of `plan` — it is never planned.
+    ///
+    /// The intent note, work contract, and conversation thread are rendered
+    /// into the request tail instead (§6/§10), read separately via
+    /// [`SessionLog::tail_sections`]; this function never contributes them.
+    /// The current cumulative compaction boundary: the chain position
+    /// before which everything is already summarized, and the existing
+    /// summary text (if any). Shared by `derive_with_plan_tagged` and the
+    /// incremental-compaction helpers below so all three agree on what
+    /// "already covered" means.
+    fn compaction_boundary(&self) -> (usize, HashMap<String, usize>, Option<String>) {
         let chain = self.chain_to_root();
-        let position: HashMap<&str, usize> = chain
+        let position: HashMap<String, usize> = chain
             .iter()
             .enumerate()
-            .map(|(i, entry)| (entry.id.as_str(), i))
+            .map(|(i, entry)| (entry.id.clone(), i))
             .collect();
-
         // Each compaction's boundary is computed from the CURRENT (already
         // compacted) projection, so successive boundaries only ever move
         // forward; the last `Compaction` entry alone describes the steady
@@ -1207,17 +1224,6 @@ impl SessionLog {
                 EntryPayload::Compaction(c) => Some((pos, c.clone())),
                 _ => None,
             });
-
-        let index = TurnIndex::from_log(self);
-        let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
-        if let Some((_, c)) = &last_compaction {
-            let summary_msg = Message::user_text(format!(
-                "<context_summary>\n{}\n</context_summary>",
-                c.summary
-            ));
-            out.push((String::new(), summary_msg, true, false));
-        }
-
         let boundary_pos = match &last_compaction {
             Some((pos, c)) if c.reset_all => *pos,
             Some((_, c)) => position
@@ -1226,22 +1232,206 @@ impl SessionLog {
                 .unwrap_or(0),
             None => 0,
         };
+        let summary = last_compaction.map(|(_, c)| c.summary);
+        (boundary_pos, position, summary)
+    }
 
-        for turn in &index.turns {
+    /// Whether the packet range ending at `last_turn_id` (a `WorkingSetPlan`
+    /// packet range's newer endpoint) still needs an incremental compaction
+    /// (docs/design/68-context-engine.md §4): true when no existing
+    /// `Compaction` entry's boundary already reaches at or past it. `false`
+    /// for an unknown id, since there is nothing to compact.
+    pub fn packet_needs_compaction(&self, last_turn_id: &str) -> bool {
+        let (boundary_pos, position, _) = self.compaction_boundary();
+        position
+            .get(last_turn_id)
+            .is_some_and(|&pos| pos >= boundary_pos)
+    }
+
+    /// The summarizer input for an incremental compaction covering
+    /// everything up through `last_turn_id`: the existing compaction
+    /// summary (if any, so information already folded in survives) followed
+    /// by one `TurnCard` line per newly covered turn — cards, not raw
+    /// history (§4). Also returns a char-count estimate of that input for
+    /// the caller's `tokens_before` reporting.
+    pub fn packet_transcript(&self, last_turn_id: &str) -> (String, u64) {
+        let (boundary_pos, position, existing_summary) = self.compaction_boundary();
+        let mut out = String::new();
+        if let Some(summary) = existing_summary {
+            out.push_str(&summary);
+            out.push_str("\n\n");
+        }
+        let Some(&last_pos) = position.get(last_turn_id) else {
+            let chars = out.chars().count() as u64;
+            return (out, chars);
+        };
+        let index = TurnIndex::from_log(self);
+        for (turn_number, turn) in index.turns.iter().enumerate() {
+            let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
+            if turn_pos < boundary_pos || turn_pos > last_pos {
+                continue;
+            }
+            match &turn.card {
+                Some(card) => {
+                    out.push_str(&card.line(turn_number + 1));
+                    out.push('\n');
+                }
+                None => {
+                    for message in turn.full_record() {
+                        out.push_str(&message.text_content());
+                        out.push('\n');
+                    }
+                }
+            }
+        }
+        let chars = out.chars().count() as u64;
+        (out, chars)
+    }
+
+    fn derive_with_plan_tagged(
+        &self,
+        plan: Option<&WorkingSetPlan>,
+    ) -> Vec<(String, Message, bool, bool)> {
+        let (boundary_pos, position_owned, existing_summary) = self.compaction_boundary();
+        let position: HashMap<&str, usize> = position_owned
+            .iter()
+            .map(|(id, pos)| (id.as_str(), *pos))
+            .collect();
+
+        let index = TurnIndex::from_log(self);
+        let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
+        if let Some(summary) = &existing_summary {
+            let summary_msg =
+                Message::user_text(format!("<context_summary>\n{summary}\n</context_summary>"));
+            out.push((String::new(), summary_msg, true, false));
+        }
+
+        let fidelity_of: HashMap<&str, Fidelity> = plan
+            .map(|p| p.per_turn.iter().map(|(id, f)| (id.as_str(), *f)).collect())
+            .unwrap_or_default();
+        // `plan.per_turn` never carries `Fidelity::Packet` entries (§4): a
+        // packeted turn is identified by falling inside `packet_range`
+        // instead. Resolved once, by position, so membership is an O(1)
+        // range check per turn.
+        let packet_pos_range: Option<(usize, usize)> = plan.and_then(|p| {
+            let (first, last) = p.packet_range.as_ref()?;
+            let lo = position.get(first.as_str()).copied()?;
+            let hi = position.get(last.as_str()).copied()?;
+            Some((lo.min(hi), lo.max(hi)))
+        });
+
+        let mut card_lines: Vec<String> = Vec::new();
+        for (turn_number, turn) in index.turns.iter().enumerate() {
             let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
             if turn_pos < boundary_pos {
                 continue;
             }
-            let messages = if turn.closed {
-                turn.full_record()
-            } else {
-                turn.current_verbatim()
+            if !turn.closed {
+                for message in turn.current_verbatim() {
+                    out.push((turn.id.clone(), message, false, false));
+                }
+                continue;
+            }
+            let selected = match plan {
+                None => Fidelity::Full,
+                Some(_) => {
+                    if let Some(f) = fidelity_of.get(turn.id.as_str()).copied() {
+                        f
+                    } else if packet_pos_range
+                        .is_some_and(|(lo, hi)| turn_pos >= lo && turn_pos <= hi)
+                    {
+                        Fidelity::Packet
+                    } else if turn.card.is_some() {
+                        // Has a card but the plan never classified it (a
+                        // stale plan against a longer chain, or a planner
+                        // bug) — render the cheap, safe form rather than
+                        // silently losing it (no-cut invariant).
+                        Fidelity::Card
+                    } else {
+                        // No card at all (a turn seeded without going
+                        // through the real turn-close hook) — the only
+                        // lossless choice, since there is no card to
+                        // render as a line.
+                        Fidelity::Full
+                    }
+                }
             };
-            for message in messages {
-                out.push((turn.id.clone(), message, false, false));
+            match selected {
+                Fidelity::Full => {
+                    for message in turn.full_record() {
+                        out.push((turn.id.clone(), message, false, false));
+                    }
+                }
+                Fidelity::Card => {
+                    if let Some(card) = &turn.card {
+                        card_lines.push(card.line(turn_number + 1));
+                    }
+                }
+                Fidelity::Packet => {
+                    // Represented only by an existing `Compaction` entry;
+                    // the caller guarantees one covers this turn before
+                    // planning with a packet range (§4).
+                }
             }
         }
+        if !card_lines.is_empty() {
+            let block = format!("<turns>\n{}\n</turns>", card_lines.join("\n"));
+            let insert_at = usize::from(existing_summary.is_some());
+            out.insert(
+                insert_at,
+                (String::new(), Message::user_text(block), true, false),
+            );
+        }
         out
+    }
+
+    /// `derive_keyed_tagged` with a `WorkingSetPlan` applied — the projection
+    /// the request assembler sends once a `CapacityProfile` is available
+    /// (docs/design/68-context-engine.md §4/§10).
+    pub fn derive_with_plan(&self, plan: &WorkingSetPlan) -> Vec<Message> {
+        self.derive_with_plan_tagged(Some(plan))
+            .into_iter()
+            .map(|(_, m, _, _)| m)
+            .collect()
+    }
+
+    /// Appends a `Compaction` entry produced by INCREMENTAL compaction (§4):
+    /// summarizing the turns' CARDS (never raw history) for a packet range
+    /// that a `WorkingSetPlan` just collapsed, rather than the message-level
+    /// `plan_compaction`/`apply_compaction` pair used by `/compact`. The new
+    /// entry's `first_kept_entry_id` is the turn immediately after
+    /// `last_turn_id` — everything at or before `last_turn_id` becomes
+    /// "already compacted" for every future `derive_with_plan` call, exactly
+    /// like the cumulative boundary `apply_compaction` writes.
+    pub fn append_incremental_compaction(
+        &mut self,
+        last_turn_id: &str,
+        summary: String,
+        tokens_before: u64,
+    ) -> Result<(), SessionError> {
+        let index = TurnIndex::from_log(self);
+        let first_kept_entry_id = index
+            .turns
+            .iter()
+            .skip_while(|t| t.id != last_turn_id)
+            .nth(1)
+            .map(|t| t.id.clone())
+            .ok_or_else(|| SessionError::Corrupt {
+                line: 0,
+                message: format!("no turn follows packet range ending at {last_turn_id}"),
+            })?;
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(
+            parent,
+            EntryPayload::Compaction(crate::types::CompactionEntry {
+                summary,
+                first_kept_entry_id,
+                tokens_before,
+                partition: None,
+                reset_all: false,
+            }),
+        ))?;
+        Ok(())
     }
 
     /// Packet accounting for a planned turn boundary: turns before
@@ -1298,6 +1488,43 @@ impl SessionLog {
     /// assembler's tail (docs/design/68-context-engine.md §6/§10). Each
     /// field is `None` when there is nothing to say — the caller renders no
     /// tag for an absent section, never an empty one.
+    /// The current directive's resolved reading, distilled to a
+    /// `ReadingKey` (docs/design/68-context-engine.md §4's `PlanInput`) —
+    /// the newest `Intent` entry on the chain, whether or not its turn has
+    /// closed yet. `None` before the first intent reading of the session.
+    /// The still-open turn's own verbatim messages, respecting the current
+    /// compaction boundary (docs/design/68-context-engine.md §4): after a
+    /// reset-with-handoff, everything before the reset entry is invisible
+    /// to the model even though the open turn technically started before
+    /// it, so planning must size its reserve against what will actually be
+    /// sent — never against text the reset already discarded. Empty when
+    /// there is no open turn, or the open turn itself predates the
+    /// boundary.
+    pub fn open_turn_verbatim(&self) -> Vec<Message> {
+        let (boundary_pos, position, _) = self.compaction_boundary();
+        let index = TurnIndex::from_log(self);
+        let Some(turn) = index.turns.last().filter(|t| !t.closed) else {
+            return Vec::new();
+        };
+        let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
+        if turn_pos < boundary_pos {
+            return Vec::new();
+        }
+        turn.current_verbatim()
+    }
+
+    pub fn latest_reading(&self) -> Option<crate::turns::ReadingKey> {
+        self.chain_to_root()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::Intent(record) => {
+                    Some(crate::turns::ReadingKey::from_reading(&record.reading))
+                }
+                _ => None,
+            })
+    }
+
     pub fn tail_sections(&self) -> TailSections {
         TailSections {
             intent: self.tail_intent(),
@@ -1406,6 +1633,14 @@ impl SessionLog {
             return None;
         }
 
+        // Directive drift (docs/design/68-context-engine.md §7): a listed
+        // directive whose reading shares no domain with the CURRENT
+        // directive's is marked paused rather than dropped — a
+        // re-weighting, not a cut. Turns without a card yet (never closed)
+        // have no reading to compare and are never marked.
+        let current_domains = self.latest_reading().map(|r| r.domains);
+        let index = TurnIndex::from_log(self);
+
         let mut thread = format!(
             "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
             goal.revision,
@@ -1422,7 +1657,17 @@ impl SessionLog {
             } else {
                 req.clone()
             };
-            thread.push_str(&format!("- Turn {num}: {preview}\n"));
+            let paused = current_domains.as_ref().is_some_and(|current| {
+                !current.is_empty()
+                    && index.turn_by_number(*num).is_some_and(|turn| {
+                        turn.card.as_ref().is_some_and(|card| {
+                            !card.reading.domains.is_empty()
+                                && card.reading.domains.iter().all(|d| !current.contains(d))
+                        })
+                    })
+            });
+            let suffix = if paused { " (earlier, now paused)" } else { "" };
+            thread.push_str(&format!("- Turn {num}: {preview}{suffix}\n"));
         }
         thread.push_str(
             "Rules for multi-turn execution:\n\

@@ -11,7 +11,6 @@
 use std::path::Path;
 
 use vak_llm::{ContentBlock, Message, Role};
-use vak_session::types::EntryPayload;
 use vak_session::{SessionLog, SessionPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +149,12 @@ const RECENT: [&str; 2] = ["RECENT-delta", "RECENT-epsilon"];
 
 /// Runs the deterministic gate over a swept fixture. Returns the
 /// scorecard; callers print it and decide pass/fail.
+///
+/// `plan_compaction`/`apply_compaction` account in whole TURNS now, not
+/// messages (docs/design/68-context-engine.md §10: "a turn is never
+/// split"), and a turn's two messages (directive + final answer) share one
+/// partition id — the turn's directive entry id. Every check below reads
+/// through that unit rather than the raw per-message chain.
 pub fn run_context_scorecard() -> Result<ContextScorecard, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
 
@@ -175,44 +180,72 @@ pub fn run_context_scorecard() -> Result<ContextScorecard, String> {
 
     for keep_recent in 2..=6usize {
         let mut log = build_fixture_log(dir.path(), &turns, &format!("sweep-{keep_recent}"))?;
-        let Some(plan) = log.plan_compaction(keep_recent) else {
-            continue;
-        };
-
-        // Entry texts snapshot: keeps accounting checks independent of the
-        // mutable apply below.
-        let texts: std::collections::HashMap<String, String> = log
-            .chain_to_root()
-            .into_iter()
-            .filter_map(|e| match &e.payload {
-                EntryPayload::Message(r) => Some((e.id.clone(), r.message.text_content())),
-                _ => None,
+        let index = vak_session::TurnIndex::from_log(&log);
+        let total_turns = index.turns.len();
+        // Turn id -> the concatenation of its own directive and final-
+        // answer text, so an anchor embedded in EITHER message of a turn
+        // is found through that turn's single partition id.
+        let turn_text: std::collections::HashMap<String, String> = index
+            .turns
+            .iter()
+            .map(|t| {
+                let mut text = t.directive.text_content();
+                if let Some(answer) = &t.final_answer {
+                    text.push(' ');
+                    text.push_str(&answer.text_content());
+                }
+                (t.id.clone(), text)
+            })
+            .collect();
+        // Turn id -> its own RAW message texts individually (not
+        // concatenated), each unique via its "turn-N:" prefix — unlike a
+        // bare marker, which several turns can share — so a leak check
+        // against these can't produce a false positive from an unrelated
+        // KEPT turn that happens to carry the same marker word.
+        let turn_message_texts: std::collections::HashMap<String, Vec<String>> = index
+            .turns
+            .iter()
+            .map(|t| {
+                let mut texts = vec![t.directive.text_content()];
+                if let Some(answer) = &t.final_answer {
+                    texts.push(answer.text_content());
+                }
+                (t.id.clone(), texts)
             })
             .collect();
 
+        let Some(plan) = log.plan_compaction(keep_recent) else {
+            // Nothing to compact at this keep_recent (too few turns): every
+            // invariant below holds trivially since nothing was dropped.
+            partition_ok += 1;
+            recall_ok += 1;
+            exclusion_ok += 1;
+            evidence_visible += 1;
+            continue;
+        };
+
         // Partition integrity: disjoint, and together they cover exactly
-        // the message entries visible in the current projection.
-        let visible_messages = texts.len();
+        // the turns visible in the current projection.
         let p = &plan.partition;
         let disjoint = p
             .selected_entry_ids
             .iter()
             .all(|id| !p.dropped_entry_ids.contains(id));
-        let covers = p.selected_entry_ids.len() + p.dropped_entry_ids.len() == visible_messages;
+        let covers = p.selected_entry_ids.len() + p.dropped_entry_ids.len() == total_turns;
         if disjoint && covers {
             partition_ok += 1;
         }
 
         // Evidence-loss visibility: any old-side required anchor whose
-        // entry got dropped must be LISTED as dropped — never silently
-        // gone. Anchors that stayed selected count as visible too.
+        // turn got dropped must be LISTED as dropped — never silently
+        // gone. Anchors whose turn stayed selected count as visible too.
         let all_accounted = OLD_REQUIRED.iter().all(|anchor| {
             p.selected_entry_ids
                 .iter()
-                .any(|id| texts[id].contains(anchor))
+                .any(|id| turn_text.get(id).is_some_and(|t| t.contains(anchor)))
                 || p.dropped_entry_ids
                     .iter()
-                    .any(|id| texts[id].contains(anchor))
+                    .any(|id| turn_text.get(id).is_some_and(|t| t.contains(anchor)))
         });
         if all_accounted {
             evidence_visible += 1;
@@ -234,67 +267,58 @@ pub fn run_context_scorecard() -> Result<ContextScorecard, String> {
             recall_ok += 1;
         }
 
-        // Exclusion: dropped turns never survive verbatim (their content
-        // may only re-enter through summary text).
-        let dropped_texts_leak = p
-            .dropped_entry_ids
-            .iter()
-            .any(|id| projected.iter().any(|m| m.text_content() == texts[id]));
-        if !dropped_texts_leak {
+        // Exclusion: no DROPPED turn's own raw text survives in the
+        // post-compaction projection (it may only re-enter through the
+        // fixed dummy summary text, which carries none of these turns'
+        // exact wording).
+        let dropped_leak = p.dropped_entry_ids.iter().any(|id| {
+            turn_message_texts
+                .get(id)
+                .is_some_and(|texts| texts.iter().any(|t| joined.contains(t.as_str())))
+        });
+        if !dropped_leak {
             exclusion_ok += 1;
         }
     }
 
-    // Sweep 2 — tool pairs: every user turn is a tool_result paired to the
-    // preceding assistant ToolUse; the boundary must never split a pair,
-    // so the kept region always starts API-valid (assistant or non-result
-    // user turn).
-    let mut pair_ok = 0u32;
+    // Sweep 2 — no-tool-blocks invariant: a closed turn's `full_record`
+    // projection never carries a `ToolUse`/`ToolResult` block, at any
+    // keep_recent (docs/design/68-context-engine.md §10: past turns
+    // project as a directive + trace/answer text, never raw tool pairs —
+    // there is no pair-boundary walk left to get wrong).
+    let mut no_tool_blocks_ok = 0u32;
     let pair_total = 4u32;
-    let mut pair_markers: Vec<&str> = Vec::new();
-    pair_markers.push("PAIR-SEED");
-    for i in 0..6 {
-        pair_markers.push("PAIRED-TURN");
-        let _ = i;
-    }
-    let n_pairs = pair_markers.len();
+    let mut pair_markers: Vec<&str> = vec!["PAIR-SEED"];
+    pair_markers.extend(std::iter::repeat_n("PAIRED-TURN", 6));
     for keep_recent in 1..=4usize {
-        let log = build_fixture_log(
+        let mut log = build_fixture_log(
             dir.path(),
             &plain_turns(&pair_markers),
             &format!("pairs-{keep_recent}"),
         )?;
-        let Some(plan) = log.plan_compaction(keep_recent) else {
-            continue;
-        };
-        // The first KEPT projected element must not be an orphaned result:
-        // walk the tagged projection from the anchor and check the first
-        // real message's role/content shape via the raw chain.
-        let kept_first_is_result = plan
-            .partition
-            .selected_entry_ids
-            .first()
-            .and_then(|id| {
-                log.chain_to_root()
-                    .into_iter()
-                    .find(|e| e.id == *id)
-                    .and_then(|e| match &e.payload {
-                        EntryPayload::Message(r) => Some(matches!(
-                            r.message.content.first(),
-                            Some(ContentBlock::ToolResult { .. })
-                        )),
-                        _ => None,
-                    })
+        if let Some(plan) = log.plan_compaction(keep_recent) {
+            log.apply_compaction(&plan, "PAIR-SWEEP-SUMMARY".into(), 1_000)
+                .map_err(|e| e.to_string())?;
+        }
+        let clean = log.derive_messages().iter().all(|m| {
+            !m.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. }
+                )
             })
-            .unwrap_or(false);
-        if !kept_first_is_result || plan.partition.selected_entry_ids.is_empty() {
-            pair_ok += 1;
+        });
+        if clean {
+            no_tool_blocks_ok += 1;
         }
     }
-    let _ = (n_pairs, pair_total);
 
-    // Sweep 3 — repeated compaction: second pass still partitions cleanly
-    // over a projection that already contains a summary pseudo-entry.
+    // Sweep 3 — repeated compaction: a second pass still partitions
+    // cleanly over a projection that already contains a summary
+    // pseudo-entry. The second pass uses a smaller keep_recent than the
+    // first because only the turns the first pass KEPT remain as real
+    // turn units afterward (docs/design/68 §10: the summary is excluded
+    // from `plan_compaction`'s own turn count).
     let repeat_ok = {
         let mut log = build_fixture_log(dir.path(), &turns, "repeat")?;
         let first_ok = if let Some(p1) = log.plan_compaction(3) {
@@ -304,7 +328,7 @@ pub fn run_context_scorecard() -> Result<ContextScorecard, String> {
             false
         };
         let second_ok = first_ok
-            && log.plan_compaction(3).map(|p2| {
+            && log.plan_compaction(1).map(|p2| {
                 log.apply_compaction(&p2, "SECOND-SUMMARY".into(), 5_000)
                     .is_ok()
                     && p2.partition.selected_entry_ids.len() + p2.partition.dropped_entry_ids.len()
@@ -330,7 +354,11 @@ pub fn run_context_scorecard() -> Result<ContextScorecard, String> {
             metric("recent_recall_floor", recall_ok, total_sweeps),
             metric("dropped_verbatim_exclusion", exclusion_ok, total_sweeps),
             metric("evidence_loss_visible", evidence_visible, total_sweeps),
-            metric("tool_pair_boundary_safe", pair_ok, 4),
+            metric(
+                "no_raw_tool_blocks_in_projection",
+                no_tool_blocks_ok,
+                pair_total,
+            ),
             QualityMetric {
                 name: "repeated_compaction_partition",
                 value: if repeat_ok { 1.0 } else { 0.0 },
