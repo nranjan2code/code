@@ -50,6 +50,16 @@ export interface GenericSpecRendererProps {
   label?: string;
 }
 
+// Chart axis labels are drawn at fixed positions in a fixed-width SVG; a long
+// category ("Week of September 14–18, 2026") otherwise runs off the chart and
+// collides with the label at the other end. The full text stays available as
+// the label's <title> tooltip.
+const AXIS_LABEL_MAX = 14;
+function axisLabel(value: unknown): string {
+  const text = String(value);
+  return text.length > AXIS_LABEL_MAX ? `${text.slice(0, AXIS_LABEL_MAX - 1)}…` : text;
+}
+
 function str(props: Record<string, unknown>, key: string): string | undefined {
   const value = props[key];
   return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
@@ -1042,8 +1052,8 @@ function renderChart(node: AdaptiveRenderNode, surface: RenderSurface) {
               </g>
             )}
           </For>
-          <text x="54" y="249">{String(geometry().keys[0])}</text>
-          <text x="626" y="249" text-anchor="end">{String(geometry().keys.at(-1))}</text>
+          <text x="54" y="249">{axisLabel(geometry().keys[0])}<title>{String(geometry().keys[0])}</title></text>
+          <text x="626" y="249" text-anchor="end">{axisLabel(geometry().keys.at(-1))}<title>{String(geometry().keys.at(-1))}</title></text>
         </svg>
         <p class="semantic-chart-axes">
           {data().x_label ?? "X"}

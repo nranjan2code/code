@@ -301,3 +301,16 @@ does not re-litigate it.
   capabilities.
 - `AGENTS.md`, "Code rules" — the binding one-paragraph version of this
   contract.
+
+## Layout stress check
+
+Short fixtures hide layout bugs: text that escapes its container only shows up
+with real-world lengths (long titles, snippets, URLs). Open the card harness
+with `?stress=1` (`/app/harness.html?stress=1` under `npm run dev:web`) and it
+pads every string in every fixture with long prose plus an unbroken URL. Then
+measure, per element, whether it spills its parent or the card
+(`scrollWidth > clientWidth` with `overflow: visible`, or a bounding box past
+its parent's edge), ignoring intentional scrollers (`.diff-code-area`,
+`.semantic-table-wrap`) and hover-only popovers. Run it at a narrow viewport as
+well. New cards should come out with zero findings. Flex children that hold
+`nowrap` text need `min-width: 0`; headers with actions need `flex-wrap: wrap`.

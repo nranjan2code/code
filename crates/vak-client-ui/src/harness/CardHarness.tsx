@@ -18,6 +18,24 @@ import {
 import type { Category, Fixture, ScenarioFixture, MultiCardFixture } from "./fixtures";
 import type { StructuredOutput } from "../types";
 
+// `?stress=1` pads every string in every fixture with long prose plus a long
+// unbroken token, the shape of real model/tool output (titles, snippets,
+// URLs) that short fixtures never exercise. Layout bugs where text escapes its
+// container only show up with this kind of data.
+const STRESS = new URLSearchParams(globalThis.location?.search ?? "").has("stress");
+const LONG = " — a long descriptive continuation that a real model or tool result would plausibly produce, well past any single line";
+const UNBROKEN = "https://example.com/a/very/long/unbroken/path/segment/that/has/no/spaces/at/all/0123456789";
+function stress(value: unknown): unknown {
+  if (typeof value === "string") {
+    return /^https?:\/\//.test(value) ? value + UNBROKEN.slice(20) : value + LONG;
+  }
+  if (Array.isArray(value)) return value.map(stress);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === "semantic_type" || k === "chart_type" || k === "status" || k === "unit" ? v : stress(v)]));
+  }
+  return value;
+}
+
 function CardCell(props: { semanticType: string; payload: unknown; variantLabel: string }) {
   const [failed, setFailed] = createSignal(false);
   const output = createMemo<StructuredOutput>(() => ({
@@ -25,7 +43,7 @@ function CardCell(props: { semanticType: string; payload: unknown; variantLabel:
     schema_version: 2,
     skill_id: "harness",
     skill_version: "1.0",
-    payload: props.payload as Record<string, unknown>,
+    payload: (STRESS ? stress(props.payload) : props.payload) as Record<string, unknown>,
   }));
   return (
     <div class="harness-cell" classList={{ "harness-cell-failed": failed() }}>
