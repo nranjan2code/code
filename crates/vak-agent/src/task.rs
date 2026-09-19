@@ -450,13 +450,7 @@ impl TaskTool {
             }
         }
 
-        let session_id = format!(
-            "child-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
+        let session_id = next_child_session_id();
         let readonly = args
             .get("readonly")
             .and_then(|r| r.as_bool())
@@ -817,6 +811,25 @@ impl TaskTool {
     }
 }
 
+/// A child session's id, unique by construction.
+///
+/// The id names the child's ledger file, and the file is exclusively locked, so
+/// two children with the same id cannot both exist. The id used to be the
+/// clock's nanoseconds alone; tasks launched in the same wave can read the same
+/// value (clock resolution is coarser than the launch rate), and the second
+/// then failed with "session is locked by another process" — a spurious error
+/// the stop gate turned into an extra parent turn. A process-wide counter makes
+/// a collision impossible whatever the clock does.
+fn next_child_session_id() -> String {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("child-{nanos}-{sequence}")
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod registry_tests {
@@ -900,5 +913,41 @@ mod registry_tests {
         assert_eq!(a[0].id, "c1");
         assert_eq!(reg.active_for("pB")[0].id, "c2");
         assert!(reg.active_for("pC").is_empty());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod child_id_tests {
+    use super::next_child_session_id;
+
+    #[test]
+    fn child_session_ids_never_collide_even_when_generated_in_the_same_instant() {
+        let ids: std::collections::HashSet<String> =
+            (0..10_000).map(|_| next_child_session_id()).collect();
+        assert_eq!(
+            ids.len(),
+            10_000,
+            "ids must be unique regardless of clock resolution"
+        );
+    }
+
+    #[test]
+    fn child_session_ids_are_unique_across_threads() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    (0..2_000)
+                        .map(|_| next_child_session_id())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let all: Vec<String> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
+        let unique: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(unique.len(), all.len());
     }
 }
