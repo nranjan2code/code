@@ -1370,10 +1370,11 @@ impl Agent {
                     session.packet_needs_compaction(&last_turn_id)
                 };
                 if needs_compaction {
-                    let (transcript, tokens_before) = {
+                    let (transcript, transcript_chars) = {
                         let session = self.session.lock().await;
                         session.packet_transcript(&last_turn_id)
                     };
+                    let tokens_before = profile.estimate_tokens(transcript_chars);
                     let _ = events
                         .send(AgentEvent::ContextCompacting {
                             estimated_tokens: tokens_before,
@@ -2422,7 +2423,7 @@ impl Agent {
     /// existing `TurnCard` entry) is left alone, since a card is written
     /// once and never rewritten.
     async fn close_turn(
-        &self,
+        &mut self,
         outcome: &TurnOutcome,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
@@ -2450,23 +2451,29 @@ impl Agent {
             return;
         };
         let narration = self.resolve_narration(&raw_narration, cancel, events).await;
-        let capacity = self.config.capacity.clone();
-        let estimate = move |s: &str| -> u64 {
-            match &capacity {
-                Some(profile) => profile.estimate_tokens(s.chars().count() as u64),
-                None => (s.len() as u64).div_ceil(4),
+        // No profile wired in ⇒ a metadata-only one (never a raw chars/4
+        // literal — docs/design/68-context-engine.md §4).
+        let profile = self.effective_capacity_profile();
+        let estimate = move |s: &str| -> u64 { profile.estimate_tokens(s.chars().count() as u64) };
+        let tokens_full = {
+            let mut session = self.session.lock().await;
+            let index = TurnIndex::from_log(&session);
+            let Some(turn) = index.turn_by_id(&turn_id) else {
+                return;
+            };
+            if turn.card.is_some() {
+                return; // written concurrently between the two locks above
             }
+            let card = turn.build_card(outcome_label, narration, &estimate);
+            let tokens_full = card.tokens_full;
+            let _ = session.append_turn_card(vak_session::types::TurnCardRecord { turn_id, card });
+            tokens_full
         };
-        let mut session = self.session.lock().await;
-        let index = TurnIndex::from_log(&session);
-        let Some(turn) = index.turn_by_id(&turn_id) else {
-            return;
-        };
-        if turn.card.is_some() {
-            return; // written concurrently between the two locks above
+        // Feeds the planner's reserve for the NEXT open turn (§4); a no-op
+        // when no live profile is wired in (nothing to persist it on).
+        if let Some(profile) = self.config.capacity.as_mut() {
+            profile.observe_current_turn_tokens(tokens_full);
         }
-        let card = turn.build_card(outcome_label, narration, &estimate);
-        let _ = session.append_turn_card(vak_session::types::TurnCardRecord { turn_id, card });
     }
 
     /// Resolves the caller-visible narration for a `TurnCard`: verbatim when

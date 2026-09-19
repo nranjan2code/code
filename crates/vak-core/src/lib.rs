@@ -6624,7 +6624,8 @@ impl Core {
                 },
             );
         };
-        let (transcript, before) = session.packet_transcript(&last_turn_id);
+        let (transcript, transcript_chars) = session.packet_transcript(&last_turn_id);
+        let before = profile.estimate_tokens(transcript_chars);
         let provider = match self.provider() {
             Ok(p) => p,
             Err(e) => return (session, CompactOutcome::failed(e.to_string())),
