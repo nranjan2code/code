@@ -107,6 +107,26 @@ pub struct TurnCapabilitiesBound {
     pub system_prompt: String,
     #[serde(default)]
     pub tool_schemas: Vec<serde_json::Value>,
+    /// Tool names sent with full schemas in the stable prefix this turn
+    /// (docs/design/68-context-engine.md §5). Empty on entries written
+    /// before the tool surface split existed.
+    #[serde(default)]
+    pub core_tool_names: Vec<String>,
+    /// Tool names withheld from the prefix this turn — reachable via
+    /// `find_tools`, or via Anthropic `defer_loading` on legs that support
+    /// it. Empty on entries written before the split existed.
+    #[serde(default)]
+    pub deferred_tool_names: Vec<String>,
+    /// The rendered `tool_index` text sent this turn: one line per deferred
+    /// tool, no schemas.
+    #[serde(default)]
+    pub tool_index: String,
+    /// Declared domains (`vak_core::capability::domain::Domain::as_str`)
+    /// per bound tool name, so a later projection can recover "what did this
+    /// tool declare it serves" without re-touching the live capability
+    /// registry (docs/design/68 §9's `SignalContext.domains`).
+    #[serde(default)]
+    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// One layer's contribution to the assembled system prompt.

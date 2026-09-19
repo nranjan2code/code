@@ -334,6 +334,9 @@ pub struct RuntimeSections {
     pub epistemic_stance: String,
     /// Per-turn clock context; calendar reasoning must not rely on stale history.
     pub temporal: String,
+    /// One line per deferred tool (docs/design/68-context-engine.md §5): no
+    /// schemas, just enough to know `find_tools` has more.
+    pub tool_index: String,
 }
 
 /// The assembled prompt plus a record of who contributed each part.

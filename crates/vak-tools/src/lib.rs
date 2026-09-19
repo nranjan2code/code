@@ -9,6 +9,7 @@ pub mod broker;
 pub mod context;
 pub mod contract;
 pub mod edit;
+pub mod find_tools;
 pub mod glob;
 pub mod grep;
 #[cfg(target_os = "linux")]
@@ -26,6 +27,7 @@ use serde_json::Value;
 
 pub use context::{OutputLimits, ToolContext};
 pub use contract::validate_input;
+pub use find_tools::FindToolsTool;
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;

@@ -24,6 +24,7 @@ pub mod registry;
 pub mod report;
 pub mod resolution;
 pub mod snapshot;
+pub mod surface;
 pub mod turn;
 
 pub use domain::{Domain, Serves};
@@ -37,6 +38,7 @@ pub use resolution::{Failure, Resolution};
 pub use snapshot::{
     Binding, Capability, CapabilityDelta, CapabilityId, CapabilitySet, Epoch, Origin,
 };
+pub use surface::{ToolSurface, build_tool_surface};
 pub use turn::{TurnCapabilities, TurnProbe};
 
 /// The MCP inventory: a list of (server name, discovered tools).

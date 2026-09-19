@@ -40,6 +40,9 @@ pub fn render_markdown(msgs: &[Message]) -> String {
                 ContentBlock::Image { source } => {
                     out.push_str(&format!("- image ({})\n", source.media_type));
                 }
+                ContentBlock::Provider { kind, .. } => {
+                    out.push_str(&format!("- provider block `{kind}`\n"));
+                }
             }
         }
         out.push('\n');

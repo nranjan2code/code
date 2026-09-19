@@ -35,6 +35,18 @@ pub enum ContentBlock {
     Image {
         source: ImageSource,
     },
+    /// A provider-native block this build does not interpret: Anthropic's
+    /// `server_tool_use` and `tool_search_tool_result` (docs/design/68
+    /// §5/§11/§12). `raw` is the exact block the provider sent, `"type"`
+    /// included, so the Anthropic adapter can replay it on the wire
+    /// unchanged; `kind` mirrors `raw["type"]` for cheap matching without
+    /// re-parsing. Never executed by the agent loop — persisted and
+    /// replayed verbatim. Every other adapter must skip this variant when
+    /// rendering its own wire format.
+    Provider {
+        kind: String,
+        raw: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +128,12 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "input_schema")]
     pub parameters: Value,
+    /// Anthropic-only scheduling hint (docs/design/68 §5/§11): render
+    /// `defer_loading: true` and keep the schema out of the stable prefix.
+    /// Every other adapter ignores this field entirely — they build their
+    /// tool JSON field-by-field and never read it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defer: bool,
 }
 
 impl ToolDefinition {
@@ -124,7 +142,14 @@ impl ToolDefinition {
             name: name.into(),
             description: description.into(),
             parameters,
+            defer: false,
         }
+    }
+
+    /// Same tool, marked deferred (Anthropic `defer_loading`).
+    pub fn deferred(mut self) -> Self {
+        self.defer = true;
+        self
     }
 }
 

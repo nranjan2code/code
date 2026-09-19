@@ -8,14 +8,17 @@ use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventSink, EventStream, StreamEvent, channel};
 use crate::turn::{current_turn_boundary, strip_thinking};
-use crate::types::{
-    AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition, Usage,
-};
+use crate::types::{AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, Usage};
 
 /// Anthropic accepts at most 4 `cache_control` breakpoints per request. The
 /// stable system prompt always claims one when present, leaving the rest
 /// for message-level breakpoints named by `ChatRequest::cache`.
 const MAX_CACHE_BREAKPOINTS: usize = 4;
+
+/// Anthropic's server-side tool search tool (docs/design/68 §5/§11):
+/// prepended to `tools` whenever any tool in the request is deferred, so the
+/// model can discover a deferred schema without it ever entering the prefix.
+const TOOL_SEARCH_TOOL: &str = "tool_search_tool_regex_20251119";
 
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -68,6 +71,7 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
         };
         let mut value =
             serde_json::to_value(rendered).map_err(|e| LlmError::Parse(e.to_string()))?;
+        unwrap_provider_blocks(&mut value);
         if message_breakpoints.contains(&i) {
             mark_last_block_ephemeral(&mut value);
         }
@@ -94,20 +98,49 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
         body["temperature"] = serde_json::json!(t);
     }
     if !request.tools.is_empty() {
-        let tools: Vec<Value> = request
-            .tools
-            .iter()
-            .map(|t: &ToolDefinition| {
-                serde_json::json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.parameters,
-                })
-            })
-            .collect();
+        let mut tools: Vec<Value> = Vec::with_capacity(request.tools.len() + 1);
+        if request.tools.iter().any(|t| t.defer) {
+            tools.push(serde_json::json!({
+                "type": TOOL_SEARCH_TOOL,
+                "name": "tool_search_tool_regex",
+            }));
+        }
+        for t in &request.tools {
+            let mut tool = serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters,
+            });
+            // A deferred tool never carries `cache_control`: its schema is
+            // never in the stable prefix, so there is nothing to mark
+            // cacheable (docs/design/68 §5/§11).
+            if t.defer {
+                tool["defer_loading"] = serde_json::json!(true);
+            }
+            tools.push(tool);
+        }
         body["tools"] = Value::Array(tools);
     }
     Ok(body)
+}
+
+/// Replaces a serialized `ContentBlock::Provider` (`{"type":"provider",
+/// "kind":"server_tool_use", "raw": {...}}`) with its `raw` value, which
+/// already carries the provider's own `"type"` and every original field —
+/// so a `server_tool_use` / `tool_search_tool_result` block the API sent
+/// round-trips back to it byte-for-byte (docs/design/68 §5/§12). Other
+/// content blocks are left untouched.
+fn unwrap_provider_blocks(message: &mut Value) {
+    let Some(content) = message.get_mut("content").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for block in content.iter_mut() {
+        if block.get("type").and_then(|t| t.as_str()) == Some("provider")
+            && let Some(raw) = block.get("raw").cloned()
+        {
+            *block = raw;
+        }
+    }
 }
 
 /// Picks which message indices get a `cache_control` breakpoint, bounded by
@@ -272,8 +305,21 @@ impl Accumulator {
                         self.index_map.insert(idx, our_idx);
                         Ok(None)
                     }
-                    _ => {
+                    "text" => {
                         self.message.content.push(ContentBlock::text(String::new()));
+                        self.index_map.insert(idx, our_idx);
+                        Ok(None)
+                    }
+                    // A block type this build does not otherwise interpret
+                    // (`server_tool_use`, `tool_search_tool_result`, and any
+                    // future addition) is kept opaque rather than silently
+                    // folded into an empty text block, so it round-trips
+                    // unchanged (docs/design/68 §5/§12).
+                    other => {
+                        self.message.content.push(ContentBlock::Provider {
+                            kind: other.to_string(),
+                            raw: block.clone(),
+                        });
                         self.index_map.insert(idx, our_idx);
                         Ok(None)
                     }
@@ -324,10 +370,20 @@ impl Accumulator {
                         raw.push_str(json);
                         let parsed: Value =
                             serde_json::from_str(raw).unwrap_or(Value::Object(Default::default()));
-                        if let ContentBlock::ToolUse { input, .. } =
-                            &mut self.message.content[our_idx]
-                        {
-                            *input = parsed;
+                        match &mut self.message.content[our_idx] {
+                            ContentBlock::ToolUse { input, .. } => {
+                                *input = parsed;
+                            }
+                            // `server_tool_use` streams its input the same
+                            // way `tool_use` does; keep the opaque block's
+                            // raw JSON in sync so it round-trips complete.
+                            ContentBlock::Provider { raw: block_raw, .. } => {
+                                if let Some(obj) = block_raw.as_object_mut() {
+                                    obj.insert("input".to_string(), parsed);
+                                }
+                                return Ok(None);
+                            }
+                            _ => return Ok(None),
                         }
                         Ok(Some(StreamEvent::ToolInputDelta {
                             index: our_idx,
@@ -340,17 +396,32 @@ impl Accumulator {
             }
             "content_block_stop" => {
                 let idx = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
-                if let Some(&our_idx) = self.index_map.get(&idx)
-                    && let ContentBlock::ToolUse { input, .. } = &mut self.message.content[our_idx]
-                {
-                    let raw = self.raw_json.get(&idx).cloned().unwrap_or_default();
-                    *input = if raw.trim().is_empty() {
-                        Value::Object(Default::default())
-                    } else {
-                        serde_json::from_str(&raw).map_err(|e| {
-                            LlmError::Parse(format!("tool input json invalid at block stop: {e}"))
-                        })?
-                    };
+                if let Some(&our_idx) = self.index_map.get(&idx) {
+                    let raw = self.raw_json.get(&idx).cloned();
+                    match &mut self.message.content[our_idx] {
+                        ContentBlock::ToolUse { input, .. } => {
+                            let raw = raw.unwrap_or_default();
+                            *input = if raw.trim().is_empty() {
+                                Value::Object(Default::default())
+                            } else {
+                                serde_json::from_str(&raw).map_err(|e| {
+                                    LlmError::Parse(format!(
+                                        "tool input json invalid at block stop: {e}"
+                                    ))
+                                })?
+                            };
+                        }
+                        ContentBlock::Provider { raw: block_raw, .. } => {
+                            if let Some(raw) = raw
+                                && !raw.trim().is_empty()
+                                && let Ok(parsed) = serde_json::from_str::<Value>(&raw)
+                                && let Some(obj) = block_raw.as_object_mut()
+                            {
+                                obj.insert("input".to_string(), parsed);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Ok(None)
             }
@@ -544,7 +615,7 @@ async fn drive_stream<S>(
 mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::types::{CacheBreakpoint, CacheHints};
+    use crate::types::{CacheBreakpoint, CacheHints, ToolDefinition};
 
     fn message_with_thinking(text: &str) -> Message {
         Message::assistant(vec![
@@ -674,5 +745,105 @@ mod build_body_tests {
                 .iter()
                 .any(|b| b["type"] == "thinking")
         );
+    }
+
+    #[test]
+    fn deferred_tools_render_defer_loading_and_prepend_the_search_tool() {
+        let mut req = ChatRequest::new("claude-sonnet-4-5");
+        req.messages = vec![Message::user_text("hi")];
+        req.tools = vec![
+            ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
+            ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
+        ];
+        let body = build_body(&req).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["type"], "tool_search_tool_regex_20251119");
+        let core = tools.iter().find(|t| t["name"] == "core_tool").unwrap();
+        assert!(core.get("defer_loading").is_none());
+        assert!(core.get("cache_control").is_none());
+        let rare = tools.iter().find(|t| t["name"] == "rare_tool").unwrap();
+        assert_eq!(rare["defer_loading"], true);
+        assert!(
+            rare.get("cache_control").is_none(),
+            "a deferred tool must never carry cache_control"
+        );
+    }
+
+    #[test]
+    fn no_deferred_tools_means_no_search_tool_is_sent() {
+        let mut req = ChatRequest::new("claude-sonnet-4-5");
+        req.messages = vec![Message::user_text("hi")];
+        req.tools = vec![ToolDefinition::new(
+            "core_tool",
+            "always visible",
+            serde_json::json!({}),
+        )];
+        let body = build_body(&req).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "core_tool");
+    }
+
+    #[test]
+    fn a_provider_block_replays_verbatim_on_the_wire() {
+        let raw = serde_json::json!({
+            "type": "server_tool_use",
+            "id": "srvtoolu_1",
+            "name": "tool_search_tool_regex",
+            "input": {"pattern": "weather"}
+        });
+        let mut req = ChatRequest::new("claude-sonnet-4-5");
+        req.messages = vec![Message::assistant(vec![ContentBlock::Provider {
+            kind: "server_tool_use".into(),
+            raw: raw.clone(),
+        }])];
+        let body = build_body(&req).unwrap();
+        let sent = &body["messages"][0]["content"][0];
+        assert_eq!(sent, &raw, "a provider block must round-trip unchanged");
+        assert_ne!(sent["type"], "provider");
+    }
+
+    #[test]
+    fn a_provider_block_streams_and_finalizes_its_input() {
+        let mut acc = Accumulator::new("claude-sonnet-4-5");
+        acc.convert(
+            &serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "server_tool_use",
+                    "id": "srvtoolu_1",
+                    "name": "tool_search_tool_regex",
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        acc.convert(
+            &serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "{\"pattern\""}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        acc.convert(
+            &serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": ":\"weather\"}"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        acc.convert(&serde_json::json!({"type": "content_block_stop", "index": 0}).to_string())
+            .unwrap();
+        let ContentBlock::Provider { kind, raw } = &acc.message.content[0] else {
+            unreachable!("expected a Provider block");
+        };
+        assert_eq!(kind, "server_tool_use");
+        assert_eq!(raw["input"]["pattern"], "weather");
+        assert_eq!(raw["type"], "server_tool_use");
     }
 }

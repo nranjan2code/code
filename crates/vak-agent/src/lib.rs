@@ -344,6 +344,12 @@ pub struct AgentConfig {
     pub handoff_reset: bool,
     /// Audit blocks per goal before degrading to Unverified.
     pub max_audit_blocks: u32,
+    /// Full schemas `find_tools` has surfaced so far this run
+    /// (docs/design/68-context-engine.md §5). `tool_definitions()` appends
+    /// these after the core set on every call, in discovery order, never
+    /// reordered — so a tool the model asked for by name stays reachable
+    /// for the rest of the turn without re-entering the stable prefix.
+    pub discovered_tools: Arc<StdMutex<Vec<vak_llm::ToolDefinition>>>,
 }
 
 pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync>;
@@ -437,6 +443,7 @@ impl AgentConfig {
             workspace_delta: None,
             handoff_reset: true,
             max_audit_blocks: 2,
+            discovered_tools: Arc::new(StdMutex::new(Vec::new())),
         }
     }
 }
@@ -642,24 +649,25 @@ impl Agent {
                 }),
             ));
         }
-        let aliases = self
+        // MCP tools are reached only through the `mcp` broker
+        // (docs/design/68-context-engine.md §5): `mcp_aliases` still
+        // resolves a call the model addresses by the bare tool name
+        // (`normalize_mcp_alias` in `execute_batch_calls`), but the alias
+        // schema is never advertised directly — advertising it here was the
+        // triplication (inline catalogue, direct tool, broker) the design
+        // deletes. `mcp list` / `find_tools` are how a model discovers one.
+        let discovered = self
             .config
-            .mcp_aliases
+            .discovered_tools
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (name, alias) in aliases.iter() {
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for definition in discovered {
             if !definitions
                 .iter()
-                .any(|definition| definition.name == *name)
+                .any(|existing| existing.name == definition.name)
             {
-                definitions.push(vak_llm::ToolDefinition::new(
-                    name,
-                    format!(
-                        "{} (MCP compatibility alias; routed through mcp/{}/{})",
-                        alias.description, alias.server, alias.tool
-                    ),
-                    alias.schema.clone(),
-                ));
+                definitions.push(definition);
             }
         }
         definitions

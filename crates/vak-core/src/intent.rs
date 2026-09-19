@@ -135,25 +135,35 @@ pub fn resolve_turn(
 /// installed could never be matched — every integration needed a harness
 /// edit, and only got one after somebody reported a confidently wrong answer.
 /// Here a capability that declares `serves` is kept when it serves something
-/// the turn needs, and one that declares nothing is always kept: slicing
-/// saves context, it does not enforce policy, so failing open is correct.
+/// the turn needs, and one that declares nothing is always kept — slicing
+/// saves context, it does not enforce policy, so an unclassified capability
+/// failing open is correct.
+///
+/// **Fails narrow, not open, on an uncertain reading**
+/// (docs/design/68-context-engine.md Principle 6: "when a decision cannot be
+/// made confidently, send less and give the model a way to ask for more;
+/// never send everything"). `required_domains` arrives here already
+/// collapsed by the caller: `vak_intent::engage::derive` only narrows
+/// `Limits::required_domains` away from its unconstrained default when
+/// `Reading::may_slice_capabilities(floor)` said the reading was trustworthy
+/// enough to slice at all. So an unconstrained *or* empty domain set both
+/// mean the same thing here — "no trustworthy domain reading is available"
+/// — and both take every declared tool out of the advertised set rather than
+/// admitting everything on a guess. The orientation floor and any
+/// capability that declares nothing still survive, and `find_tools` is how
+/// the model reaches the rest when it turns out to need it.
 pub fn slice_capabilities(
     admitted: &[CapabilityDescriptor],
     required_domains: &vak_intent::DomainSet,
     declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<CapabilityDescriptor> {
-    if required_domains.is_unconstrained() {
-        return admitted.to_vec();
-    }
     let required: std::collections::BTreeSet<crate::capability::Domain> = required_domains
         .iter()
         .map(|name| crate::capability::Domain::parse(name))
         .collect();
     let narrowed: Vec<CapabilityDescriptor> = admitted
         .iter()
-        .filter(|capability| {
-            keep_capability(capability, &required, required_domains, declared_serves)
-        })
+        .filter(|capability| keep_capability(capability, &required, declared_serves))
         .cloned()
         .collect();
     debug_assert!(
@@ -170,10 +180,13 @@ pub fn slice_capabilities(
 /// MCP server is already lazy, and hooks fire on lifecycle events that have
 /// nothing to do with what the user asked for. Slicing those would spend risk
 /// for no context saving.
+///
+/// `required` is the concrete domain set the caller resolved from
+/// `DomainSet` — empty for both the unconstrained (`All`) and the explicit
+/// `Empty` case, which is what makes both fail narrow identically here.
 fn keep_capability(
     capability: &CapabilityDescriptor,
     required: &std::collections::BTreeSet<crate::capability::Domain>,
-    required_domains: &vak_intent::DomainSet,
     declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> bool {
     use vak_session::types::CapabilityKind;
@@ -190,12 +203,8 @@ fn keep_capability(
         // Undeclared fails open.
         None => true,
         Some(serves) => {
-            if required_domains.is_empty() {
-                false
-            } else {
-                let mine = crate::capability::Domain::parse_list(serves);
-                mine.intersection(required).next().is_some()
-            }
+            let mine = crate::capability::Domain::parse_list(serves);
+            mine.intersection(required).next().is_some()
         }
     }
 }
@@ -406,18 +415,46 @@ mod tests {
         assert!(!narrowed.iter().any(|c| c.name == "bash"));
     }
 
+    /// Fail narrow, not open: an unconstrained domain set is what a
+    /// disabled resolver or a below-floor-confidence reading produces, and
+    /// must not be read as "advertise everything".
     #[test]
-    fn no_required_domains_is_the_identity() {
-        let admitted = vec![tool("read"), skill("review")];
-        assert_eq!(
-            slice_capabilities(
-                &admitted,
-                &vak_intent::DomainSet::All,
-                &std::collections::BTreeMap::new()
-            )
-            .len(),
-            admitted.len()
+    fn unconstrained_domains_fail_narrow_for_declared_tools() {
+        let admitted = vec![tool("webfetch"), tool("bash")];
+        let declared = serves(&[("webfetch", &["web"]), ("bash", &["code-exec"])]);
+        let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::All, &declared);
+        assert!(
+            narrowed.is_empty(),
+            "an unconstrained reading must narrow declared tools away, not admit everything: {:?}",
+            narrowed
         );
+    }
+
+    /// The orientation floor and undeclared capabilities still survive even
+    /// when there is no trustworthy domain reading at all — narrowing must
+    /// never leave the agent blind to its own workspace.
+    #[test]
+    fn unconstrained_domains_still_keep_the_floor_and_undeclared_capabilities() {
+        let admitted = vec![tool("read"), tool("some_installed_thing"), skill("review")];
+        let declared = serves(&[("read", &["filesystem"])]);
+        let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::All, &declared);
+        let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"read"), "orientation floor kept by name");
+        assert!(
+            names.contains(&"some_installed_thing"),
+            "undeclared capabilities still fail open"
+        );
+        assert!(names.contains(&"review"), "skills are never sliced");
+    }
+
+    /// An explicit empty domain set fails narrow the same way an
+    /// unconstrained one does — the two collapse to identical behaviour.
+    #[test]
+    fn explicit_empty_domains_fail_narrow_the_same_way_as_unconstrained() {
+        let admitted = vec![tool("webfetch")];
+        let declared = serves(&[("webfetch", &["web"])]);
+        let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::Empty, &declared);
+        assert!(narrowed.is_empty());
     }
 
     /// The defect this whole mechanism was rebuilt around: a capability the

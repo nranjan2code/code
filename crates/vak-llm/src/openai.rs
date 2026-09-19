@@ -257,6 +257,10 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
                         ));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    // Only the Anthropic adapter understands server-side
+                    // tool search; every other adapter skips this opaque
+                    // block entirely (docs/design/68 §5/§12).
+                    ContentBlock::Provider { .. } => {}
                 }
             }
             for r in tool_results {
@@ -320,7 +324,8 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
                     }
                     ContentBlock::Thinking { .. }
                     | ContentBlock::ToolResult { .. }
-                    | ContentBlock::Image { .. } => {}
+                    | ContentBlock::Image { .. }
+                    | ContentBlock::Provider { .. } => {}
                 }
             }
             let mut msg = serde_json::json!({"role": "assistant"});

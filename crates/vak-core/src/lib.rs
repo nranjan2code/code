@@ -3041,6 +3041,7 @@ impl Core {
             mcp: mcp_config_section(&server_caps),
             standing,
             epistemic_stance,
+            tool_index: String::new(),
             temporal: format!(
                 "\nTemporal context: current UTC instant {}; local date/time {} (system timezone {}). Treat relative dates as ambiguous unless the user's timezone is known.",
                 chrono::Utc::now().to_rfc3339(),
@@ -5479,16 +5480,59 @@ impl Core {
                 None,
             );
         }
-        let mut defs = vak_tools::definitions(&tools);
-        for (tool_name, alias) in &turn_capabilities.mcp_aliases {
-            if !defs.iter().any(|d| d.name == *tool_name) {
-                defs.push(vak_llm::ToolDefinition::new(
-                    tool_name.clone(),
-                    alias.description.clone(),
-                    alias.schema.clone(),
-                ));
-            }
-        }
+        // MCP tools are reached only through the `mcp` broker
+        // (docs/design/68-context-engine.md §5): no alias schema is
+        // injected into the direct tool list any more. `cfg.mcp_aliases`
+        // (set above) still lets the dispatcher resolve a call the model
+        // addresses by the bare tool name; only *advertisement* changes.
+        let base_defs = vak_tools::definitions(&tools);
+        let declared_serves: std::collections::BTreeMap<String, Vec<String>> = cap_set
+            .all()
+            .filter(|capability| capability.id.kind == CapabilityKind::Tool)
+            .filter_map(|capability| {
+                let labels = capability.serves.labels();
+                (!labels.is_empty()).then(|| (capability.id.name.clone(), labels))
+            })
+            .collect();
+        let renders_cards = turn_capabilities.descriptors.iter().any(|descriptor| {
+            descriptor.kind == CapabilityKind::Tool
+                && descriptor.name.starts_with("emit_")
+                && descriptor.name.ends_with("_card")
+        });
+        let surface = capability::build_tool_surface(
+            &turn_capabilities.descriptors,
+            &base_defs,
+            &engagement.limits.required_domains,
+            &declared_serves,
+            renders_cards,
+        );
+        // `find_tools` is a synthetic core primitive, not an admitted
+        // capability: it exists so *something else* can be discovered, so
+        // it is never itself subject to the domain slice (docs/design/68
+        // §5, "core = always: find_tools, ...").
+        let find_tools_tool = Arc::new(
+            vak_tools::FindToolsTool::new(surface.deferred.clone())
+                .with_discovered_sink(cfg.discovered_tools.clone()),
+        );
+        let find_tools_def = vak_llm::ToolDefinition::new(
+            vak_tools::Tool::name(find_tools_tool.as_ref()),
+            vak_tools::Tool::description(find_tools_tool.as_ref()),
+            vak_tools::Tool::schema(find_tools_tool.as_ref()),
+        );
+        tools.push(find_tools_tool);
+        let core_tool_names: Vec<String> =
+            surface.core.iter().map(|def| def.name.clone()).collect();
+        let deferred_tool_names: Vec<String> = surface
+            .deferred
+            .iter()
+            .map(|def| def.name.clone())
+            .collect();
+        let tool_index = surface.index.clone();
+        let mut defs: Vec<vak_llm::ToolDefinition> =
+            Vec::with_capacity(surface.core.len() + surface.deferred.len() + 1);
+        defs.push(find_tools_def);
+        defs.extend(surface.core);
+        defs.extend(surface.deferred.into_iter().map(|def| def.deferred()));
         cfg.tool_definitions = Some(defs);
         cfg.tools = tools;
         if cfg.work_mode == WorkMode::Managed && turn_capabilities.flow_admitted {
@@ -5517,6 +5561,34 @@ impl Core {
                     .collect()
             })
             .unwrap_or_default();
+        // Per-tool declared domains, so a later projection can derive
+        // delivery signals from what the capability declared it serves
+        // rather than from its name (docs/design/68 §9's
+        // `SignalContext.domains` note). Covers MCP servers and their
+        // discovered tool aliases too, not just direct tools.
+        let mut tool_domains: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for capability in cap_set.all() {
+            let labels = capability.serves.labels();
+            if labels.is_empty() {
+                continue;
+            }
+            tool_domains.insert(capability.id.name.clone(), labels.clone());
+            if capability.id.kind == CapabilityKind::McpServer
+                && let Some(inventory) = capability
+                    .configuration
+                    .get("tools")
+                    .and_then(|t| t.as_array())
+            {
+                for tool in inventory {
+                    if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+                        tool_domains
+                            .entry(name.to_string())
+                            .or_insert_with(|| labels.clone());
+                    }
+                }
+            }
+        }
         if let Err(error) =
             session.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
                 epoch: cap_set.epoch,
@@ -5524,6 +5596,10 @@ impl Core {
                 excluded_ids: all_ids.difference(&selected_ids).cloned().collect(),
                 system_prompt: cfg.system_prompt.clone(),
                 tool_schemas,
+                core_tool_names,
+                deferred_tool_names,
+                tool_index,
+                tool_domains,
             })
         {
             return Err(CoreError::Session(error));
@@ -7482,6 +7558,12 @@ fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
 /// their discovered catalog in `configuration.tools` (filled by the
 /// registry's probe), so whatever the packet admits is exactly what the
 /// prompt describes.
+/// Reached only through the `mcp` broker (docs/design/68-context-engine.md
+/// §5): this section names servers and, per server, one line per tool with
+/// no input schema — `mcp list` is where a schema is discovered, right
+/// before the call that needs it. A tool also exposed as a direct capability
+/// is removed from the direct list by the turn-capability pipeline before it
+/// ever reaches here, so nothing is offered both ways.
 fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
     if servers.is_empty() {
         return String::new();
@@ -7492,7 +7574,7 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut section = format!(
-        "\nConfigured MCP servers: {names}. Use the `mcp` tool with action \"list\" to view tools and input schemas, or action \"call\" with parameters `server`, `tool`, and `arguments` to invoke a tool.\n"
+        "\nConfigured MCP servers: {names}. Use the `mcp` tool with action \"list\" to view tools, or action \"call\" with parameters `server`, `tool`, and `arguments` to invoke one.\n"
     );
     let mut catalog = String::new();
     for capability in servers {
@@ -7516,17 +7598,13 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
                 .get("description")
                 .and_then(|d| d.as_str())
                 .unwrap_or_default();
-            let schema = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            catalog.push_str(&format!(
-                "  - {name} — {description}; inputSchema: {schema}\n"
-            ));
+            catalog.push_str(&format!("  - {name} — {description}\n"));
         }
     }
     if !catalog.is_empty() {
-        section.push_str("Discovered MCP catalog (do not invent tool names or argument fields):\n");
+        section.push_str(
+            "Discovered MCP catalog (call `mcp` with action \"list\" for input schemas; do not invent tool names or argument fields):\n",
+        );
         section.push_str(&catalog);
     }
     section
@@ -7596,7 +7674,7 @@ mod mcp_section_tests {
     /// admitted search server attached. One source means the two can no
     /// longer disagree.
     #[test]
-    fn the_catalog_comes_from_the_packet_with_exact_names_and_schemas() {
+    fn the_catalog_comes_from_the_packet_with_exact_names() {
         let caps = [server(
             "tavily",
             serde_json::json!({
@@ -7615,8 +7693,31 @@ mod mcp_section_tests {
         let section = mcp_config_section(&refs);
         assert!(section.contains("Discovered MCP catalog"));
         assert!(section.contains("tavily_search"));
-        assert!(section.contains("inputSchema"));
-        assert!(section.contains("query"));
+        assert!(section.contains("Search the web"));
+    }
+
+    /// Schemas stay out of the prompt (docs/design/68 §5): a model reaches
+    /// one input schema at a time via `mcp list`, never a full inline dump.
+    #[test]
+    fn the_catalog_never_inlines_input_schemas() {
+        let caps = [server(
+            "tavily",
+            serde_json::json!({
+                "tools": [{
+                    "name": "tavily_search",
+                    "description": "Search the web",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                }]
+            }),
+        )];
+        let refs: Vec<_> = caps.iter().collect();
+        let section = mcp_config_section(&refs);
+        assert!(!section.contains("inputSchema"));
+        assert!(!section.contains('{'));
     }
 }
 

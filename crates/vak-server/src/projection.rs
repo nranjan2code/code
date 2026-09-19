@@ -252,6 +252,19 @@ pub(crate) fn sandbox_artifact_markdown(
     (!rows.is_empty()).then(|| format!("\n\nGenerated artifacts\n\n{}", rows.join("\n")))
 }
 
+/// Declared domains for `tool_name`, accumulated from the chain's
+/// `TurnCapabilitiesBound` entries — never guessed from the tool's name
+/// (docs/design/68-context-engine.md §9's `SignalContext.domains` note).
+fn tool_domain_refs<'a>(
+    tool_domains: &'a HashMap<String, Vec<String>>,
+    tool_name: Option<&str>,
+) -> Vec<&'a str> {
+    tool_name
+        .and_then(|name| tool_domains.get(name))
+        .map(|domains| domains.iter().map(String::as_str).collect())
+        .unwrap_or_default()
+}
+
 fn snapshot_inner(
     session_id: &str,
     session: &SessionLog,
@@ -281,6 +294,11 @@ fn snapshot_inner(
     let mut turn_evidence_state: HashMap<usize, String> = HashMap::new();
     let mut turn_human_review: HashMap<usize, String> = HashMap::new();
     let mut turn_review_verdict: HashMap<usize, String> = HashMap::new();
+    // Declared domains per tool name, accumulated from every
+    // `TurnCapabilitiesBound` entry in the chain (docs/design/68-context-
+    // engine.md §9's `SignalContext.domains` note): delivery signals derive
+    // from what a capability declared it serves, never from its name.
+    let mut tool_domains: HashMap<String, Vec<String>> = HashMap::new();
     let mut selected_presentation: Option<(String, u64)> = None;
     let mut successful_runs = std::collections::HashSet::new();
     let mut scan_turn = 0usize;
@@ -375,6 +393,13 @@ fn snapshot_inner(
                     // message that starts the turn. Attach it to that next
                     // turn rather than decorating the previous answer.
                     turn_outcomes.insert(scan_turn + 1, outcome.clone());
+                }
+            }
+            EntryPayload::TurnCapabilitiesBound(bound) => {
+                for (name, domains) in &bound.tool_domains {
+                    tool_domains
+                        .entry(name.clone())
+                        .or_insert_with(|| domains.clone());
                 }
             }
             EntryPayload::Activity(activity)
@@ -527,13 +552,14 @@ fn snapshot_inner(
                                         (Some(name.as_str()), Some(input), output.as_deref(), *err)
                                     })
                                     .unwrap_or((None, None, None, false));
+                            let tool_domain_refs = tool_domain_refs(&tool_domains, tool_name);
                             let ctx = SignalContext {
                                 text,
                                 tool_name,
                                 tool_input,
                                 tool_output,
                                 is_error,
-                                domains: &[],
+                                domains: &tool_domain_refs,
                             };
                             let signals = signals_from_context(&ctx);
                             let plan = planner.plan(&signals, "desktop", &[], &candidates);
@@ -1849,7 +1875,7 @@ fn live_item(
 mod tests {
     use super::activity_item;
     use super::{artifact_from_tool, snapshot};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
     use vak_delivery::{OutputContent, OutputKind, OutputStatus};
     use vak_llm::{ContentBlock, Message, Role};
@@ -2191,6 +2217,110 @@ mod tests {
                 .as_ref()
                 .and_then(|provenance| provenance.tool_call_id.as_deref()),
             Some("tool-failed")
+        );
+    }
+
+    #[test]
+    fn tool_domain_refs_reads_declared_domains_by_tool_name() {
+        let mut domains = HashMap::new();
+        domains.insert(
+            "tavily_search".to_string(),
+            vec!["web".to_string(), "live-data".to_string()],
+        );
+        assert_eq!(
+            super::tool_domain_refs(&domains, Some("tavily_search")),
+            vec!["web", "live-data"]
+        );
+        assert!(super::tool_domain_refs(&domains, Some("bash")).is_empty());
+        assert!(super::tool_domain_refs(&domains, None).is_empty());
+    }
+
+    /// `snapshot` must read back a `TurnCapabilitiesBound` entry's declared
+    /// `tool_domains` without disturbing the rest of the projection — the
+    /// ledger-round-trip half of docs/design/68-context-engine.md §9's
+    /// `SignalContext.domains` note. The signal/recipe consequence of a
+    /// non-empty `domains` slice is covered directly against
+    /// `signals_from_context` in `vak-delivery`.
+    #[test]
+    fn snapshot_reads_declared_tool_domains_from_the_ledger_without_disrupting_projection() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let mut log = SessionLog::create(
+            dir.path().join("presentation.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "session-domains".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
+            epoch: 1,
+            capability_ids: Vec::new(),
+            excluded_ids: Vec::new(),
+            system_prompt: String::new(),
+            tool_schemas: Vec::new(),
+            core_tool_names: Vec::new(),
+            deferred_tool_names: Vec::new(),
+            tool_index: String::new(),
+            tool_domains: BTreeMap::from([(
+                "some_search_tool".to_string(),
+                vec!["web".to_string(), "live-data".to_string()],
+            )]),
+        })
+        .expect("append turn capabilities");
+        log.append_message(MessageRecord {
+            message: Message::user_text("What is happening in the market today?"),
+            meta: None,
+        })
+        .expect("append user");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "some_search_tool".into(),
+                input: serde_json::json!({"query": "market news"}),
+            }]),
+            meta: None,
+        })
+        .expect("append call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::tool_result("call-1", "found three articles")],
+            },
+            meta: None,
+        })
+        .expect("append result");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Markets are up today.")]),
+            meta: None,
+        })
+        .expect("append narration");
+
+        // Must not panic, and the ordinary answer must still project.
+        let timeline = snapshot("session-domains", &log);
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Outcome),
+            "the turn's answer must still project with a declared-domains entry in the chain"
         );
     }
 
