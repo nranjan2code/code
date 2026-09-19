@@ -3693,6 +3693,7 @@ impl Core {
                     )),
                     api_key,
                     base_url,
+                    ..Default::default()
                 })
             }
             "google" => {
@@ -3725,6 +3726,7 @@ impl Core {
                     base_url: vak_config::get_var("VAK_GOOGLE_BASE_URL").or_else(|| {
                         Some("https://generativelanguage.googleapis.com/v1beta".into())
                     }),
+                    ..Default::default()
                 })
             }
             "openai-responses" => {
@@ -3738,6 +3740,7 @@ impl Core {
                     api_key,
                     base_url: vak_config::get_var("VAK_OPENAI_BASE_URL")
                         .or_else(|| Some("https://api.openai.com/v1".into())),
+                    ..Default::default()
                 })
             }
             // get_var (not raw env) so user-level and project secret
@@ -3765,6 +3768,7 @@ impl Core {
                     api_key,
                     base_url: vak_config::get_var(override_env)
                         .or_else(|| Some(default_base.into())),
+                    ..Default::default()
                 })
             }
             "opencode-zen" => {
@@ -3778,18 +3782,33 @@ impl Core {
                     api_key,
                     base_url: vak_config::get_var("VAK_OPENCODE_ZEN_BASE_URL")
                         .or_else(|| Some("https://opencode.ai/zen/v1".into())),
+                    ..Default::default()
                 })
             }
-            "ollama" => Ok(ProviderAuth {
-                api_key: "ollama".into(),
-                base_url: vak_config::get_var("VAK_OLLAMA_BASE_URL")
-                    .or_else(|| Some("http://localhost:11434/v1".into())),
-                credential_id: Some(vak_llm::credential_id(
-                    &vak_config::get_var("VAK_OLLAMA_BASE_URL")
-                        .unwrap_or_else(|| "http://localhost:11434/v1".into()),
-                    "ollama",
-                )),
-            }),
+            "ollama" => {
+                // Threaded through generically (registry.rs::ProviderAuth::options)
+                // rather than a provider-specific auth variant, per invariant
+                // 17 (one configuration contract) and docs/design/68 §8.
+                let mut options = std::collections::BTreeMap::new();
+                options.insert(
+                    "keep_alive".to_string(),
+                    self.inner.config.ollama.keep_alive.clone(),
+                );
+                if let Some(num_ctx) = self.inner.config.ollama.num_ctx {
+                    options.insert("num_ctx".to_string(), num_ctx.to_string());
+                }
+                Ok(ProviderAuth {
+                    api_key: "ollama".into(),
+                    base_url: vak_config::get_var("VAK_OLLAMA_BASE_URL")
+                        .or_else(|| Some("http://localhost:11434/v1".into())),
+                    credential_id: Some(vak_llm::credential_id(
+                        &vak_config::get_var("VAK_OLLAMA_BASE_URL")
+                            .unwrap_or_else(|| "http://localhost:11434/v1".into()),
+                        "ollama",
+                    )),
+                    options,
+                })
+            }
             "bedrock" => {
                 let api_key = required_key("AWS_BEARER_TOKEN_BEDROCK", "bedrock")?;
                 let base_url = vak_config::get_var("VAK_BEDROCK_BASE_URL")
@@ -3801,6 +3820,7 @@ impl Core {
                     )),
                     api_key,
                     base_url,
+                    ..Default::default()
                 })
             }
             other => Err(CoreError::MissingAuth {
@@ -3858,6 +3878,7 @@ impl Core {
                 )),
                 api_key,
                 base_url: base_url.clone(),
+                ..Default::default()
             })
             .collect())
     }
@@ -4387,27 +4408,13 @@ impl Core {
         session: &mut SessionLog,
         cancel: &CancellationToken,
     ) -> vak_agent::capacity::CapacityProfile {
-        let key = vak_agent::capacity::ProfileKey {
-            provider: leg.provider.clone(),
-            model: leg.model.clone(),
-            // Ollama's `/api/show` exposes a quantisation label, but
-            // exposing it here would mean extending vak-llm's model
-            // metadata surface, which is out of this change's scope
-            // (crates/vak-llm: probe-only ToolDefinition helper only, no
-            // adapter changes). Every profile keys on `None` until that
-            // lands.
-            quantisation: None,
-        };
         let now = std::time::SystemTime::now();
         let local = self.is_local_provider(leg);
 
-        let cached = self
-            .inner
-            .capacity_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(&key).cloned());
-
+        // Metadata must be fetched before the key is built: Ollama's
+        // `/api/show` reports the running quantisation, and a requantised
+        // model must key its own profile rather than inheriting a stale one
+        // (docs/design/68-context-engine.md §1).
         let auth = self
             .provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
             .ok();
@@ -4418,6 +4425,18 @@ impl Core {
                 .flatten(),
             None => None,
         };
+        let key = vak_agent::capacity::ProfileKey {
+            provider: leg.provider.clone(),
+            model: leg.model.clone(),
+            quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
+        };
+
+        let cached = self
+            .inner
+            .capacity_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
         let declared_window = metadata
             .as_ref()
             .map(|m| m.input_tokens)

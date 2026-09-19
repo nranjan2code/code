@@ -184,6 +184,10 @@ pub struct FileConfig {
     pub plugins: PluginSettings,
     #[serde(default)]
     pub voice: Option<VoiceSettings>,
+    /// Per-provider tuning knobs (docs/design/68-context-engine.md §8).
+    /// NOT privileged: these only shape a provider's own request body.
+    #[serde(default)]
+    pub providers: ProvidersSettings,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -594,6 +598,91 @@ pub struct ProbeSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeResolved {
     pub hosted: String,
+}
+
+/// Per-provider tuning sections. One field per provider that has knobs
+/// beyond credentials/base-url; a provider with nothing to tune has none.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ProvidersSettings {
+    pub ollama: OllamaSettings,
+}
+
+/// Native Ollama provider tuning (docs/design/68-context-engine.md §8): the
+/// OpenAI-compatible path silently ignores both of these, so the native
+/// `/api/chat` adapter needs them threaded from config.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct OllamaSettings {
+    /// Go-style duration string ("10m", "24h", "0"). Sent on every request
+    /// so the runner does not evict the model under the default 5-minute
+    /// idle unload.
+    pub keep_alive: Option<String>,
+    /// `options.num_ctx`. Must be >= 1024 when set; omitted entirely when
+    /// `None` so the server's own modelfile default applies.
+    pub num_ctx: Option<u64>,
+}
+
+impl OllamaSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(ka) = &self.keep_alive
+            && !is_go_duration(ka)
+        {
+            return Err(format!(
+                "providers.ollama.keep_alive '{ka}' is not a valid Go-style \
+                 duration (e.g. \"10m\", \"24h\", \"0\")"
+            ));
+        }
+        if let Some(n) = self.num_ctx
+            && n < 1024
+        {
+            return Err("providers.ollama.num_ctx must be >= 1024 when set".into());
+        }
+        Ok(())
+    }
+}
+
+/// Minimal Go `time.ParseDuration` shape check: `"0"`, or one or more
+/// `<number><unit>` pairs with no separators, units restricted to the ones
+/// Ollama's own duration parsing accepts.
+fn is_go_duration(s: &str) -> bool {
+    let s = s.trim();
+    if s == "0" {
+        return true;
+    }
+    let mut chars = s.chars().peekable();
+    let mut matched_any = false;
+    while chars.peek().is_some() {
+        let mut num = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() || c == '.' {
+                num.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if num.is_empty() || num == "." {
+            return false;
+        }
+        let mut unit = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_alphabetic() || c == '\u{00b5}' {
+                unit.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if !matches!(
+            unit.as_str(),
+            "ns" | "us" | "\u{00b5}s" | "ms" | "s" | "m" | "h"
+        ) {
+            return false;
+        }
+        matched_any = true;
+    }
+    matched_any
 }
 
 /// Frozen-ladder routing preferences (docs/design/15-reliability.md + Phase R).
@@ -1321,6 +1410,7 @@ pub struct Config {
     pub server: ServerResolved,
     pub plugins: PluginResolved,
     pub voice: VoiceSettings,
+    pub ollama: OllamaResolved,
     pub warnings: Vec<String>,
 }
 
@@ -1542,6 +1632,13 @@ pub struct ToolsResolved {
     pub browse: bool,
 }
 
+/// Resolved native-Ollama tuning (docs/design/68-context-engine.md §8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaResolved {
+    pub keep_alive: String,
+    pub num_ctx: Option<u64>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -1701,6 +1798,10 @@ impl Default for Config {
             },
             plugins: PluginResolved::default(),
             voice: VoiceSettings::default(),
+            ollama: OllamaResolved {
+                keep_alive: "30m".into(),
+                num_ctx: None,
+            },
             warnings: Vec::new(),
         }
     }
@@ -3291,6 +3392,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     };
 
+    // --- providers.ollama (docs/design/68-context-engine.md §8) ---
+    match merged.providers.ollama.validate() {
+        Ok(()) => {
+            if let Some(keep_alive) = merged.providers.ollama.keep_alive.clone() {
+                cfg.ollama.keep_alive = keep_alive;
+            }
+            cfg.ollama.num_ctx = merged.providers.ollama.num_ctx;
+        }
+        Err(msg) => cfg.warnings.push(msg),
+    }
+
     // --- intent kernel (docs/design/47-commitment-kernel.md) ---
     cfg.intent.enabled = merged.intent.enabled.unwrap_or(true);
     // Clamped rather than rejected: a nonsensical threshold should not stop
@@ -3644,6 +3756,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "intent",
     "voice",
     "probe",
+    "providers",
 ];
 const KNOWN_PLUGINS_KEYS: &[&str] = &[
     "enabled",
@@ -3736,6 +3849,8 @@ const KNOWN_HEARTBEAT_KEYS: &[&str] = &[
     "quiet_hours",
     "max_findings",
 ];
+const KNOWN_PROVIDERS_KEYS: &[&str] = &["ollama"];
+const KNOWN_OLLAMA_KEYS: &[&str] = &["keep_alive", "num_ctx"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -3986,6 +4101,26 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                     "{}: unknown plugins key 'plugins.{key}' (ignored)",
                     path.display()
                 ));
+            }
+        }
+    }
+    if let Some(t) = top.get("providers").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_PROVIDERS_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown providers key 'providers.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(t) = t.get("ollama").and_then(toml::Value::as_table) {
+            for key in t.keys() {
+                if !KNOWN_OLLAMA_KEYS.contains(&key.as_str()) {
+                    out.push(format!(
+                        "{}: unknown providers key 'providers.ollama.{key}' (ignored)",
+                        path.display()
+                    ));
+                }
             }
         }
     }
@@ -4248,6 +4383,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.probe.hosted.is_some() {
         base.probe.hosted = over.probe.hosted;
+    }
+    if over.providers.ollama.keep_alive.is_some() {
+        base.providers.ollama.keep_alive = over.providers.ollama.keep_alive;
+    }
+    if over.providers.ollama.num_ctx.is_some() {
+        base.providers.ollama.num_ctx = over.providers.ollama.num_ctx;
     }
     if over.intent.enabled.is_some() {
         base.intent.enabled = over.intent.enabled;
@@ -4532,6 +4673,38 @@ mod tests {
         assert_eq!(decoded.provider.as_deref(), Some("local"));
         assert_eq!(decoded.model.as_deref(), Some("offline-v1"));
         assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn ollama_settings_validate_accepts_go_style_durations() {
+        for keep_alive in ["10m", "24h", "0", "1h30m", "500ms", "90s"] {
+            let settings = OllamaSettings {
+                keep_alive: Some(keep_alive.to_string()),
+                num_ctx: Some(4096),
+            };
+            assert!(settings.validate().is_ok(), "{keep_alive} should be valid");
+        }
+    }
+
+    #[test]
+    fn ollama_settings_validate_rejects_malformed_duration_and_small_num_ctx() {
+        let settings = OllamaSettings {
+            keep_alive: Some("forever".into()),
+            num_ctx: None,
+        };
+        assert!(settings.validate().is_err());
+
+        let settings = OllamaSettings {
+            keep_alive: None,
+            num_ctx: Some(1023),
+        };
+        assert!(settings.validate().is_err());
+
+        let settings = OllamaSettings {
+            keep_alive: None,
+            num_ctx: Some(1024),
+        };
+        assert!(settings.validate().is_ok());
     }
 
     #[test]
@@ -5112,6 +5285,72 @@ mod tests {
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(cfg.probe.hosted, "none");
         assert!(cfg.warnings.iter().any(|w| w.contains("probe.hosted")));
+    }
+
+    #[test]
+    fn ollama_settings_default_to_thirty_minute_keep_alive_and_no_num_ctx() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.ollama.keep_alive, "30m");
+        assert_eq!(cfg.ollama.num_ctx, None);
+    }
+
+    #[test]
+    fn ollama_settings_parse_keep_alive_and_num_ctx() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[providers.ollama]\nkeep_alive = \"10m\"\nnum_ctx = 8192\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.ollama.keep_alive, "10m");
+        assert_eq!(cfg.ollama.num_ctx, Some(8192));
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    #[test]
+    fn ollama_settings_accept_hour_and_zero_durations() {
+        for (input, expected) in [("24h", "24h"), ("0", "0"), ("1h30m", "1h30m")] {
+            let dir = tempfile::tempdir().unwrap();
+            write_project_config(
+                dir.path(),
+                &format!("[providers.ollama]\nkeep_alive = \"{input}\"\n"),
+            );
+            let cfg = load_with_trust(dir.path(), true).unwrap();
+            assert_eq!(cfg.ollama.keep_alive, expected);
+            assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        }
+    }
+
+    #[test]
+    fn ollama_settings_reject_malformed_keep_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[providers.ollama]\nkeep_alive = \"soon\"\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        // Falls back to the default rather than failing config load.
+        assert_eq!(cfg.ollama.keep_alive, "30m");
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("providers.ollama.keep_alive")),
+            "{:?}",
+            cfg.warnings
+        );
+    }
+
+    #[test]
+    fn ollama_settings_reject_num_ctx_below_1024() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[providers.ollama]\nnum_ctx = 512\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.ollama.num_ctx, None);
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("providers.ollama.num_ctx")),
+            "{:?}",
+            cfg.warnings
+        );
     }
 
     #[test]

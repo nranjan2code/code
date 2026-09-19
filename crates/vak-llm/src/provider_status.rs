@@ -176,6 +176,7 @@ mod tests {
                 api_key: "not-a-secret".into(),
                 base_url: None,
                 credential_id: None,
+                options: Default::default(),
             },
         ));
         assert!(matches!(result, Err(LlmError::InvalidRequest(_))));
