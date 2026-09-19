@@ -34,12 +34,12 @@ pub use presentation::{
     SurfaceCapabilities, TableAlignment, compile_markdown, inline_text, safe_link,
 };
 pub use skills::{
-    ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, LinkPreview, MediaOutput, Metric,
-    PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision, PresentationPlan,
-    PresentationPlanner, PresentationRecipe, PresentationSkillManifest, RecipeCatalog,
-    RendererBinding, RendererDecision, SignalContext, SkillError, SkillRegistry, StructuredOutput,
-    built_in_recipes, built_in_skill_registry, link_previews_from_text, parse_fragment,
-    parse_fragment_with, project_structured_fences, project_structured_fences_with,
+    ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, IntendedPresentation, LinkPreview,
+    MediaOutput, Metric, PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision,
+    PresentationPlan, PresentationPlanner, PresentationRecipe, PresentationSkillManifest,
+    RecipeCatalog, RendererBinding, RendererDecision, SignalContext, SkillError, SkillRegistry,
+    StructuredOutput, built_in_recipes, built_in_skill_registry, link_previews_from_text,
+    parse_fragment, parse_fragment_with, project_structured_fences, project_structured_fences_with,
     signals_from_context, signals_from_text, structured_markdown, structured_outputs_from_text,
     structured_outputs_from_text_with,
 };

@@ -240,6 +240,15 @@ impl std::fmt::Display for SkillError {
     }
 }
 
+/// What a set of signals says an answer should be presented as. See
+/// [`RecipeCatalog::intended_outputs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntendedPresentation {
+    pub recipe_id: String,
+    pub matched_signals: Vec<String>,
+    pub primary_types: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipeCatalog {
     pub recipes: Vec<PresentationRecipe>,
@@ -280,6 +289,40 @@ impl RecipeCatalog {
                 let _ = self.register(recipe);
             }
         }
+    }
+
+    /// The semantic types the best-matching non-default recipe composes for
+    /// these signals, whether or not any output of those types exists yet —
+    /// the answer to "what should this have been presented as?". `choose_*`
+    /// answers a different question (which recipe fits the outputs already
+    /// produced), so it cannot be used to notice a missing card.
+    pub fn intended_outputs(
+        &self,
+        signals: &[String],
+        surface: &str,
+    ) -> Option<IntendedPresentation> {
+        self.recipes
+            .iter()
+            .filter(|recipe| !recipe.default_recipe && !recipe.match_signals.is_empty())
+            .filter(|recipe| {
+                recipe
+                    .match_signals
+                    .iter()
+                    .all(|signal| signals.iter().any(|candidate| candidate == signal))
+            })
+            .filter(|recipe| recipe.surfaces.iter().any(|item| item == surface))
+            .max_by(|left, right| {
+                (left.priority, left.match_signals.len(), left.id.as_str()).cmp(&(
+                    right.priority,
+                    right.match_signals.len(),
+                    right.id.as_str(),
+                ))
+            })
+            .map(|recipe| IntendedPresentation {
+                recipe_id: recipe.id.clone(),
+                matched_signals: recipe.match_signals.clone(),
+                primary_types: recipe.primary.clone(),
+            })
     }
 
     pub fn choose(&self, signals: &[String], surface: &str) -> Option<PresentationDecision> {
@@ -450,7 +493,11 @@ pub fn built_in_recipes() -> RecipeCatalog {
         ),
         (
             "data.spreadsheet_grid",
-            vec!["table_data", "tabular"],
+            // A markdown table is structurally unambiguous on its own. The
+            // former second signal (`table_data`, keywords like "dataset" or
+            // "MRR") made a plain table of index levels or prices — no such
+            // word — match nothing, so it was never recognised as a grid.
+            vec!["tabular"],
             vec!["data.grid"],
             vec!["desktop", "terminal"],
         ),

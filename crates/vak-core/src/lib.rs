@@ -4988,6 +4988,12 @@ impl Core {
             builtin_names: self.tool_names(),
         });
         let revoke_registry = registry.clone();
+        {
+            let recipes = vak_delivery::built_in_recipes();
+            cfg.presentation_check = Some(Arc::new(move |text, offered| {
+                presentation_tools::presentation_check_nudge(text, offered, &recipes)
+            }));
+        }
         cfg.revocation_check = Some(Arc::new(move |name, input| {
             let id = if name == "mcp" {
                 input

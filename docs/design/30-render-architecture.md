@@ -196,6 +196,17 @@ constructs the call, so a malformed card never reaches this layer at all.
 The fence path remains the fallback for a turn where no matching
 `emit_*_card` tool is present.
 
+**Presentation check.** Prompt guidance is advisory, and a strong model can
+still answer in prose what the app would have shown as a card. After the
+turn-loop's other repair checks, `Agent::run` asks an optional
+`AgentConfig::presentation_check` (set by `Core`) whether the final text reads
+as a card: `signals_from_text` → `RecipeCatalog::intended_outputs` (the best
+non-default recipe whose signals all match, independent of which outputs exist)
+→ the offered `emit_*_card` tool that carries one of its primary types. If no
+card was emitted this run and no inline fence is present, the model gets one
+`[presentation-check]` nudge; it may decline by resending unchanged. No
+per-type rules live in the loop.
+
 ### 30.2 The Semantic Compiler
 
 `compile_markdown()` in `presentation.rs` uses `pulldown-cmark` with

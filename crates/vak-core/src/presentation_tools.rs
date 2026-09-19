@@ -709,6 +709,43 @@ fn validate_call(
     vak_delivery::parse_fragment_with(&envelope.to_string(), skills).map_err(|e| e.to_string())
 }
 
+/// The `emit_*_card` tool that carries `semantic_type`, if any.
+pub fn emit_tool_for(semantic_type: &str) -> Option<&'static str> {
+    SHAPES
+        .iter()
+        .find(|shape| shape.semantic_types.contains(&semantic_type))
+        .map(|shape| shape.name)
+}
+
+/// The one-shot nudge for an answer that reads as something the app presents
+/// as a card but was written as prose. Driven entirely by the app's own signal
+/// and recipe detection (`signals_from_text` → `RecipeCatalog::intended_outputs`)
+/// — no per-type rules here — and only names a tool that was actually offered.
+pub fn presentation_check_nudge(
+    text: &str,
+    offered_tools: &[String],
+    recipes: &vak_delivery::RecipeCatalog,
+) -> Option<String> {
+    let signals = vak_delivery::signals_from_text(text);
+    let intended = recipes.intended_outputs(&signals, "desktop")?;
+    let (semantic_type, tool) = intended.primary_types.iter().find_map(|semantic_type| {
+        let tool = emit_tool_for(semantic_type)?;
+        offered_tools
+            .iter()
+            .any(|offered| offered == tool)
+            .then_some((semantic_type.as_str(), tool))
+    })?;
+    Some(format!(
+        "[presentation-check]: Your answer reads as `{}` (signals: {}), which the app presents \
+         as a card, but no card was emitted. If a card fits, call `{tool}` with \
+         semantic_type `{semantic_type}` and this content, then add at most one short sentence \
+         and do not restate the data as text. If a card genuinely does not fit, resend your \
+         answer unchanged.",
+        intended.recipe_id,
+        intended.matched_signals.join(", ")
+    ))
+}
+
 /// Whether `name` is one of the `emit_*_card` tools.
 pub fn is_card_tool(name: &str) -> bool {
     SHAPES.iter().any(|shape| shape.name == name)
@@ -883,5 +920,51 @@ mod tests {
             failures.len(),
             failures.join("\n")
         );
+    }
+
+    #[test]
+    fn prose_that_reads_as_a_card_gets_a_nudge_naming_the_offered_tool() {
+        let recipes = vak_delivery::built_in_recipes();
+        let offered: Vec<String> = EmitCardTool::all()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        let table = "Weekly moves:\n\n| Index | Change |\n|---|---|\n| Nifty | -0.22% |\n| Sensex | -0.65% |\n";
+        let nudge = presentation_check_nudge(table, &offered, &recipes)
+            .expect("a markdown table reads as a data grid");
+        assert!(
+            nudge.contains("emit_table_card") && nudge.contains("data.grid"),
+            "{nudge}"
+        );
+        // no offered tool => no nudge (never tell the model to call something it lacks)
+        assert!(presentation_check_nudge(table, &[], &recipes).is_none());
+    }
+
+    #[test]
+    fn ordinary_conversation_gets_no_nudge() {
+        let recipes = vak_delivery::built_in_recipes();
+        let offered: Vec<String> = EmitCardTool::all()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        for text in [
+            "Sure, happy to help. What would you like to do next?",
+            "The capital of France is Paris.",
+            "I renamed the variable and the build passes.",
+        ] {
+            assert!(
+                presentation_check_nudge(text, &offered, &recipes).is_none(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_emit_tool_is_reachable_from_its_types() {
+        for shape in SHAPES {
+            for t in shape.semantic_types {
+                assert_eq!(emit_tool_for(t), Some(shape.name));
+            }
+        }
     }
 }

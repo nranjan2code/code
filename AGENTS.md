@@ -581,7 +581,11 @@ shipped behaviour rather than a proposal.
   (`vak_core::presentation_tools::card_output_from_call`) — never from result
   text, which the tool framework line-truncates at ~2000 characters. A
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
-  `Retry`, which chat views fold away (doc 30-output-engineering).
+  `Retry`, which chat views fold away (doc 30-output-engineering). When a model answers in prose what the
+  app's own signal/recipe detection says is a card, the agent loop gives it one
+  bounded `[presentation-check]` nudge (`AgentConfig::presentation_check`,
+  supplied by `Core` from `RecipeCatalog::intended_outputs`); like the other
+  repair nudges it is scaffolding and never shown as a user message.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

@@ -267,6 +267,7 @@ fn snapshot_inner(
                             text.contains("[fence-check]")
                                 || text.contains("[duplicate-card-check]")
                                 || text.contains("[grounding-check]")
+                                || text.contains("[presentation-check]")
                         }
                         _ => false,
                     })
@@ -1109,6 +1110,7 @@ pub(crate) fn is_scaffolding_line(line: &str) -> bool {
         || trimmed.starts_with("[repair directive]")
         || trimmed.starts_with("[recovery]")
         || trimmed.starts_with("[grounding-check]")
+        || trimmed.starts_with("[presentation-check]")
         || trimmed.starts_with("[fence-check]")
         || trimmed.starts_with("[duplicate-card-check]")
         || trimmed.starts_with("[post-tool-use hook]")
@@ -2806,6 +2808,7 @@ mod tests {
             "[grounding-check]: Your last answer didn't cite the results. Please redo your answer now.",
             "[fence-check]: The vak-fence in your last answer has invalid JSON.",
             "[duplicate-card-check]: You already emitted a `chart` card.",
+            "[presentation-check]: Your answer reads as `data.spreadsheet_grid`.",
         ] {
             assert_eq!(super::clean_scaffolding(nudge), "", "{nudge}");
         }

@@ -290,6 +290,7 @@ pub struct AgentConfig {
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
+    pub presentation_check: Option<PresentationCheck>,
     pub hook_recorder: Option<HookRecorder>,
     pub tool_activity_recorder: Option<ToolActivityRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
@@ -342,6 +343,12 @@ pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync
 pub type ToolActivityRecorder = Arc<dyn Fn(&str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
+/// Given a final answer's text and the names of the tools offered this turn,
+/// returns a nudge when the answer reads as something that should have been
+/// presented as a card. Supplied by `Core` (which owns the presentation
+/// vocabulary) so the agent loop stays free of any card knowledge.
+pub type PresentationCheck = Arc<dyn Fn(&str, &[String]) -> Option<String> + Send + Sync>;
+
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
@@ -366,6 +373,7 @@ impl AgentConfig {
             sandbox: None,
             hooks: None,
             revocation_check: None,
+            presentation_check: None,
             hook_recorder: None,
             tool_activity_recorder: None,
             max_retries: 3,
@@ -771,6 +779,11 @@ impl Agent {
         // pattern as `pending_grounding_check`/`malformed_fence_repair_attempted`.
         let mut pending_duplicate_card_check: Option<Vec<String>> = None;
         let mut duplicate_card_repair_attempted = false;
+        // Whether any `emit_*_card` call succeeded so far in this run (unlike
+        // `pending_duplicate_card_check`, which only covers the last batch),
+        // and the one-shot flag for the presentation check below.
+        let mut cards_emitted_this_run = false;
+        let mut presentation_repair_attempted = false;
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1370,6 +1383,37 @@ impl Agent {
                         continue;
                     }
                 }
+                // Presentation check: the answer reads as something the app
+                // presents as a card (the app's own signal/recipe detection,
+                // supplied by Core), yet no card was emitted and none is
+                // written inline — the model answered in prose. One bounded
+                // nudge; the model may decline by resending unchanged.
+                if !presentation_repair_attempted
+                    && !cards_emitted_this_run
+                    && let Some(check) = &self.config.presentation_check
+                {
+                    let text = response.text_content();
+                    if !text.trim().is_empty() && !text.contains("```vak") {
+                        let offered: Vec<String> = self
+                            .config
+                            .tools
+                            .iter()
+                            .map(|t| t.name().to_string())
+                            .collect();
+                        if let Some(nudge) = check(&text, &offered) {
+                            presentation_repair_attempted = true;
+                            if turn + 1 >= self.config.max_turns {
+                                return TurnOutcome::MaxTurnsReached;
+                            }
+                            let _ = self.session.lock().await.append_message(MessageRecord {
+                                message: Message::user_text(nudge),
+                                meta: None,
+                            });
+                            turn += 1;
+                            continue;
+                        }
+                    }
+                }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
                         .session
@@ -1604,6 +1648,7 @@ impl Agent {
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
+            cards_emitted_this_run |= !emitted_card_types.is_empty();
             pending_duplicate_card_check = if emitted_card_types.is_empty() {
                 None
             } else {
