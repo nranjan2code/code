@@ -268,6 +268,13 @@ impl std::fmt::Display for DispatchCeiling {
 pub struct StepLedger {
     pub budget: DispatchBudget,
     pub receipt: WorkReceipt,
+    /// Wall-clock time from request send to the first `StreamEvent` of the
+    /// winning attempt, measured by the caller's stream-consuming loop
+    /// (docs/design/68-context-engine.md §1 "Feedback": `prefill_tps` needs
+    /// this on providers, like OpenAI/Anthropic, that do not report their
+    /// own prefill duration the way Ollama does). `None` until a dispatch
+    /// succeeds; overwritten by each new attempt, never accumulated.
+    pub last_first_token_ms: Option<u64>,
 }
 
 impl StepLedger {
@@ -275,6 +282,7 @@ impl StepLedger {
         StepLedger {
             budget: DispatchBudget::new(ceiling),
             receipt: WorkReceipt::new(purpose, provider, model),
+            last_first_token_ms: None,
         }
     }
 

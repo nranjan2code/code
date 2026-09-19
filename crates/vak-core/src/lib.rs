@@ -4605,11 +4605,64 @@ impl Core {
             }
         });
 
+        // Cache rung (docs/design/68-context-engine.md §1 point 3): two
+        // identical requests sent back to back at a fixed, modest size —
+        // separate from the horizon ladder, which varies size to find the
+        // instruction-following boundary rather than to probe caching.
+        let cache = if cancel.is_cancelled() {
+            vak_agent::capacity::CacheBehaviour::Unknown
+        } else {
+            let cache_request =
+                vak_agent::capacity::probe_request(4_000, tokens_per_char_hint, &leg.model);
+            let (first_outcome, first_latency_ms) = Self::stream_with_first_token_latency(
+                &provider_client,
+                cache_request.clone(),
+                cancel,
+            )
+            .await;
+            match first_outcome {
+                Ok(_) => {
+                    let (second_outcome, second_latency_ms) =
+                        Self::stream_with_first_token_latency(
+                            &provider_client,
+                            cache_request,
+                            cancel,
+                        )
+                        .await;
+                    match second_outcome {
+                        Ok(second_message) => {
+                            let first_ms = first_latency_ms.unwrap_or(0);
+                            let second_ms = second_latency_ms.unwrap_or(0);
+                            let behaviour = vak_agent::capacity::classify_cache_rung(
+                                first_ms,
+                                second_ms,
+                                &second_message.usage,
+                            );
+                            signals.push(format!(
+                                "cache rung: first={first_ms}ms second={second_ms}ms \
+                                 cache_read_input_tokens={:?} -> {behaviour:?}",
+                                second_message.usage.cache_read_input_tokens
+                            ));
+                            behaviour
+                        }
+                        Err(e) => {
+                            signals.push(format!("cache rung second request failed: {e}"));
+                            vak_agent::capacity::CacheBehaviour::Unknown
+                        }
+                    }
+                }
+                Err(e) => {
+                    signals.push(format!("cache rung first request failed: {e}"));
+                    vak_agent::capacity::CacheBehaviour::Unknown
+                }
+            }
+        };
+
         vak_agent::capacity::CapacityProfile::from_probe(
             declared_window,
             verified_window,
             horizon,
-            vak_agent::capacity::CacheBehaviour::Unknown,
+            cache,
             output_reserve,
             vak_agent::capacity::ProbeProvenance {
                 probed_at,
@@ -4618,6 +4671,34 @@ impl Core {
                 metadata_digest,
             },
         )
+    }
+
+    /// Streams `request` and reports the wall-clock time from just before
+    /// the request is sent to the first `StreamEvent` off the wire,
+    /// alongside the final outcome. Used by the horizon ladder's cache rung
+    /// (docs/design/68-context-engine.md §1) to measure a provider's
+    /// prefix-cache behaviour purely from timing when it reports nothing.
+    async fn stream_with_first_token_latency(
+        provider_client: &Arc<dyn Provider>,
+        request: vak_llm::ChatRequest,
+        cancel: &CancellationToken,
+    ) -> (
+        Result<vak_llm::AssistantMessage, vak_llm::LlmError>,
+        Option<u64>,
+    ) {
+        let started = std::time::Instant::now();
+        match provider_client.stream(request, cancel.clone()).await {
+            Ok(mut stream) => {
+                let mut first_ms = None;
+                while let Some(_event) = futures::StreamExt::next(&mut stream).await {
+                    if first_ms.is_none() {
+                        first_ms = Some(started.elapsed().as_millis() as u64);
+                    }
+                }
+                (stream.result().await, first_ms)
+            }
+            Err(e) => (Err(e), None),
+        }
     }
 
     /// Drop memoised discovery for `provider` (or all of it) so the next
@@ -9426,6 +9507,100 @@ mod capacity_probe_tests {
         assert_eq!(
             hosted_profile.instruction_horizon.tokens, hosted_profile.declared_window,
             "an unprobed hosted profile starts the horizon at the declared window"
+        );
+
+        vak_config::clear_override("VAK_OLLAMA_BASE_URL");
+    }
+
+    /// Always follows the probe instruction; the third call onward (the
+    /// cache rung's second request) reports a cache hit, so the test can
+    /// assert `CacheBehaviour::ProviderReported` end to end through
+    /// `capacity_profile_for` without any network I/O.
+    struct FollowsProbeAndReportsCacheOnThirdCall {
+        calls: std::sync::atomic::AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for FollowsProbeAndReportsCacheOnThirdCall {
+        fn name(&self) -> &str {
+            "ollama"
+        }
+
+        async fn stream(
+            &self,
+            _request: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, LlmError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (mut sink, rx) = vak_llm::stream::channel(4);
+            sink.close_message(AssistantMessage {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("probe-{call}"),
+                    name: "probe_ack".into(),
+                    input: serde_json::json!({"ok": true}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage {
+                    input_tokens: 4_000,
+                    output_tokens: 5,
+                    // the third call overall is the cache rung's second
+                    // (repeat) request.
+                    cache_read_input_tokens: (call == 2).then_some(3_500),
+                    ..Default::default()
+                },
+                model: "fake-ollama-model".into(),
+                response_id: None,
+            })
+            .await;
+            Ok(rx)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cache_rung_detects_a_provider_reported_hit_and_records_both_rungs_in_signals() {
+        super::isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let unused_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        vak_config::set_override(
+            "VAK_OLLAMA_BASE_URL",
+            format!("http://127.0.0.1:{unused_port}/v1"),
+        );
+        core.inner.registry.register("ollama", |_auth| {
+            Ok(Arc::new(FollowsProbeAndReportsCacheOnThirdCall {
+                calls: std::sync::atomic::AtomicU32::new(0),
+            }) as Arc<dyn Provider>)
+        });
+
+        let loopback_leg = vak_llm::RouteLeg {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            dialect: vak_llm::EndpointDialect::default(),
+            credential_id: None,
+        };
+        let session_path = dir.path().join("cache-rung-session.jsonl");
+        let mut session = SessionLog::create(session_path, header()).unwrap();
+        let cancel = CancellationToken::new();
+        let probed = core
+            .capacity_profile_for(&loopback_leg, &mut session, &cancel)
+            .await;
+
+        assert_eq!(
+            probed.cache,
+            vak_agent::capacity::CacheBehaviour::ProviderReported
+        );
+        assert!(
+            probed
+                .provenance
+                .signals
+                .iter()
+                .any(|s| s.contains("cache rung") && s.contains("ProviderReported")),
+            "both cache-rung latencies and the outcome must be recorded as \
+             provenance signals: {:?}",
+            probed.provenance.signals
         );
 
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
