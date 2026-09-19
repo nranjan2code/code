@@ -1246,6 +1246,16 @@ impl SessionLog {
         let fidelity_of: HashMap<&str, Fidelity> = plan
             .map(|p| p.per_turn.iter().map(|(id, f)| (id.as_str(), *f)).collect())
             .unwrap_or_default();
+        // `plan.per_turn` never carries `Fidelity::Packet` entries (§4): a
+        // packeted turn is identified by falling inside `packet_range`
+        // instead. Resolved once, by position, so membership is an O(1)
+        // range check per turn.
+        let packet_pos_range: Option<(usize, usize)> = plan.and_then(|p| {
+            let (first, last) = p.packet_range.as_ref()?;
+            let lo = position.get(first.as_str()).copied()?;
+            let hi = position.get(last.as_str()).copied()?;
+            Some((lo.min(hi), lo.max(hi)))
+        });
 
         let mut card_lines: Vec<String> = Vec::new();
         for (turn_number, turn) in index.turns.iter().enumerate() {
@@ -1261,10 +1271,27 @@ impl SessionLog {
             }
             let selected = match plan {
                 None => Fidelity::Full,
-                Some(_) => fidelity_of
-                    .get(turn.id.as_str())
-                    .copied()
-                    .unwrap_or(Fidelity::Packet),
+                Some(_) => {
+                    if let Some(f) = fidelity_of.get(turn.id.as_str()).copied() {
+                        f
+                    } else if packet_pos_range
+                        .is_some_and(|(lo, hi)| turn_pos >= lo && turn_pos <= hi)
+                    {
+                        Fidelity::Packet
+                    } else if turn.card.is_some() {
+                        // Has a card but the plan never classified it (a
+                        // stale plan against a longer chain, or a planner
+                        // bug) — render the cheap, safe form rather than
+                        // silently losing it (no-cut invariant).
+                        Fidelity::Card
+                    } else {
+                        // No card at all (a turn seeded without going
+                        // through the real turn-close hook) — the only
+                        // lossless choice, since there is no card to
+                        // render as a line.
+                        Fidelity::Full
+                    }
+                }
             };
             match selected {
                 Fidelity::Full => {
@@ -1398,6 +1425,22 @@ impl SessionLog {
     /// assembler's tail (docs/design/68-context-engine.md §6/§10). Each
     /// field is `None` when there is nothing to say — the caller renders no
     /// tag for an absent section, never an empty one.
+    /// The current directive's resolved reading, distilled to a
+    /// `ReadingKey` (docs/design/68-context-engine.md §4's `PlanInput`) —
+    /// the newest `Intent` entry on the chain, whether or not its turn has
+    /// closed yet. `None` before the first intent reading of the session.
+    pub fn latest_reading(&self) -> Option<crate::turns::ReadingKey> {
+        self.chain_to_root()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::Intent(record) => {
+                    Some(crate::turns::ReadingKey::from_reading(&record.reading))
+                }
+                _ => None,
+            })
+    }
+
     pub fn tail_sections(&self) -> TailSections {
         TailSections {
             intent: self.tail_intent(),
