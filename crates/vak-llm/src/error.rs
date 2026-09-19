@@ -22,10 +22,44 @@ pub enum LlmError {
     #[error("context budget exceeded: {0}")]
     Context(String),
     #[error("aborted before completion")]
-    Aborted { partial: Option<AssistantMessage> },
+    // Boxed: `AssistantMessage` grew past the threshold where every
+    // `Result<_, LlmError>` in the crate trips `clippy::result_large_err`
+    // (adding `Usage::prefill_ms`/`load_ms` and `AssistantMessage::response_id`
+    // pushed it from ~104 to ~160 bytes).
+    Aborted {
+        partial: Option<Box<AssistantMessage>>,
+    },
 }
 
+/// Provider phrasing, across every adapter, that means "the prompt does not
+/// fit the model's context window" rather than some other malformed
+/// request. Keyed off the provider's own wording rather than a status code
+/// alone, because 400 also covers unrelated validation failures.
+const OVER_LENGTH_MARKERS: [&str; 4] = [
+    "exceeds the model's maximum context length", // Ollama
+    "context_length_exceeded",                    // OpenAI
+    "maximum context length",                     // OpenAI
+    "prompt is too long",                         // Anthropic
+];
+
 impl LlmError {
+    /// Classify a 400-class rejection: over-length phrasing becomes
+    /// `Context` (recoverable by re-planning the working set and retrying),
+    /// everything else stays `InvalidRequest` (a permanent per-request
+    /// failure). Every adapter's `map_status_error` routes its 400 branch
+    /// through this so the distinction is made once, not per provider.
+    pub fn classify_400(message: String) -> Self {
+        let normalized = message.to_ascii_lowercase();
+        if OVER_LENGTH_MARKERS
+            .iter()
+            .any(|marker| normalized.contains(marker))
+        {
+            LlmError::Context(message)
+        } else {
+            LlmError::InvalidRequest(message)
+        }
+    }
+
     /// Preserve the provider's rejection while adding endpoint-level guidance
     /// when it explicitly identifies an unsupported tools/reasoning pairing.
     ///
@@ -125,5 +159,42 @@ mod tests {
         let error =
             LlmError::invalid_request_for_endpoint("/v1/chat/completions", "model does not exist");
         assert_eq!(error.to_string(), "invalid request: model does not exist");
+    }
+
+    #[test]
+    fn classify_400_detects_ollama_over_length_phrasing() {
+        let error = LlmError::classify_400(
+            "request exceeds the model's maximum context length (8192)".into(),
+        );
+        assert!(matches!(error, LlmError::Context(_)));
+    }
+
+    #[test]
+    fn classify_400_detects_openai_context_length_exceeded_code() {
+        let error = LlmError::classify_400(
+            "This model's maximum context length is 8192 tokens. (context_length_exceeded)".into(),
+        );
+        assert!(matches!(error, LlmError::Context(_)));
+    }
+
+    #[test]
+    fn classify_400_detects_openai_maximum_context_length_phrase() {
+        let error = LlmError::classify_400(
+            "your messages resulted in maximum context length exceeded".into(),
+        );
+        assert!(matches!(error, LlmError::Context(_)));
+    }
+
+    #[test]
+    fn classify_400_detects_anthropic_prompt_too_long_phrase() {
+        let error =
+            LlmError::classify_400("prompt is too long: 220000 tokens > 200000 maximum".into());
+        assert!(matches!(error, LlmError::Context(_)));
+    }
+
+    #[test]
+    fn classify_400_leaves_unrelated_rejections_as_invalid_request() {
+        let error = LlmError::classify_400("model does not exist".into());
+        assert!(matches!(error, LlmError::InvalidRequest(_)));
     }
 }

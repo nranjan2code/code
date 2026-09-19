@@ -13,10 +13,18 @@ use crate::types::{
 
 pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OpenAiConfig {
     pub api_key: String,
     pub base_url: String,
+    /// When true, and the request carries `ChatRequest::cache`, send
+    /// `prompt_cache_key` so the provider can route repeat traffic to the
+    /// same cache-warm backend.
+    pub cache_key: bool,
+    /// When true, also send OpenRouter's `session_id` alongside
+    /// `prompt_cache_key` — OpenRouter accepts both and uses `session_id`
+    /// to pin the upstream that holds the cache.
+    pub openrouter: bool,
 }
 
 /// Batch transcription through the OpenAI-compatible `/audio/transcriptions`
@@ -180,7 +188,11 @@ impl OpenAiCompletionsProvider {
     }
 }
 
-pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
+pub fn build_body(config: &OpenAiConfig, request: &ChatRequest) -> Result<Value, LlmError> {
+    // Chat Completions carries no reasoning-item channel, so `Thinking`
+    // blocks are dropped unconditionally by `append_message` below — there
+    // is no turn boundary to compute here (contrast Anthropic/Google, which
+    // must replay signed thinking within the current turn).
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     if let Some(system) = &request.system {
         messages.push(serde_json::json!({"role": "system", "content": system}));
@@ -195,6 +207,14 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
         "stream": true,
         "stream_options": {"include_usage": true},
     });
+    if let Some(cache) = &request.cache {
+        if config.cache_key {
+            body["prompt_cache_key"] = serde_json::json!(cache.session_key);
+        }
+        if config.openrouter {
+            body["session_id"] = serde_json::json!(cache.session_key);
+        }
+    }
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
             .tools
@@ -330,9 +350,11 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
 
     match status {
         401 | 403 => LlmError::Auth(message),
-        400 | 404 | 413 | 422 => {
-            LlmError::invalid_request_for_endpoint("/v1/chat/completions", message)
-        }
+        400 => match LlmError::classify_400(message.clone()) {
+            over_length @ LlmError::Context(_) => over_length,
+            _ => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
+        },
+        404 | 413 | 422 => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
         429 => LlmError::RateLimit {
             message,
             retry_after_secs: retry_after,
@@ -378,6 +400,7 @@ impl Accumulator {
                     .and_then(|d| d.get("cached_tokens"))
                     .and_then(|x| x.as_u64()),
                 cache_creation_input_tokens: None,
+                ..Default::default()
             };
         }
 
@@ -520,7 +543,7 @@ impl Provider for OpenAiCompletionsProvider {
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
         );
-        let body = build_body(&request)?;
+        let body = build_body(&self.config, &request)?;
         let send_fut = self
             .http
             .post(&url)
@@ -556,7 +579,7 @@ impl Provider for OpenAiCompletionsProvider {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        let partial = (!acc.message.content.is_empty()).then(|| acc.message.clone());
+                        let partial = (!acc.message.content.is_empty()).then(|| Box::new(acc.message.clone()));
                         sink.close_error(LlmError::Aborted { partial }).await;
                         return;
                     }
@@ -628,5 +651,68 @@ impl Provider for OpenAiCompletionsProvider {
         });
 
         Ok(stream_rx.with_guard(provider_permit))
+    }
+}
+
+#[cfg(test)]
+mod build_body_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::types::CacheHints;
+
+    fn req_with_cache() -> ChatRequest {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        req.cache = Some(CacheHints {
+            session_key: "sess-1".into(),
+            breakpoints: Vec::new(),
+        });
+        req
+    }
+
+    #[test]
+    fn cache_key_off_sends_neither_hint() {
+        let config = OpenAiConfig::default();
+        let body = build_body(&config, &req_with_cache()).unwrap();
+        assert!(body.get("prompt_cache_key").is_none());
+        assert!(body.get("session_id").is_none());
+    }
+
+    #[test]
+    fn cache_key_on_sends_prompt_cache_key_only() {
+        let config = OpenAiConfig {
+            cache_key: true,
+            ..Default::default()
+        };
+        let body = build_body(&config, &req_with_cache()).unwrap();
+        assert_eq!(body["prompt_cache_key"], "sess-1");
+        assert!(body.get("session_id").is_none());
+    }
+
+    #[test]
+    fn openrouter_flag_adds_session_id_alongside_prompt_cache_key() {
+        let config = OpenAiConfig {
+            cache_key: true,
+            openrouter: true,
+            ..Default::default()
+        };
+        let body = build_body(&config, &req_with_cache()).unwrap();
+        assert_eq!(body["prompt_cache_key"], "sess-1");
+        assert_eq!(body["session_id"], "sess-1");
+    }
+
+    #[test]
+    fn no_cache_hint_on_request_sends_nothing_even_when_enabled() {
+        let config = OpenAiConfig {
+            api_key: String::new(),
+            base_url: String::new(),
+            cache_key: true,
+            openrouter: true,
+        };
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        let body = build_body(&config, &req).unwrap();
+        assert!(body.get("prompt_cache_key").is_none());
+        assert!(body.get("session_id").is_none());
     }
 }

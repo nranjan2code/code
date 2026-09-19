@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use vak_llm::openai::build_body;
+use vak_llm::openai::{OpenAiConfig, build_body};
 use vak_llm::types::ChatRequest;
 use vak_llm::types::{ContentBlock, ImageSource, Message, Role};
 
@@ -38,7 +38,7 @@ fn openai_body_builds_multimodal_parts_from_images() {
         }],
         ..ChatRequest::new("test-model")
     };
-    let body = build_body(&req).unwrap();
+    let body = build_body(&OpenAiConfig::default(), &req).unwrap();
     let content = body["messages"][0]["content"].as_array().unwrap();
     assert_eq!(content[0]["type"], "text");
     assert_eq!(content[1]["type"], "image_url");
@@ -54,7 +54,7 @@ fn openai_text_only_stays_a_plain_string() {
         messages: vec![Message::user_text("plain")],
         ..ChatRequest::new("test-model")
     };
-    let body = build_body(&req).unwrap();
+    let body = build_body(&OpenAiConfig::default(), &req).unwrap();
     assert_eq!(body["messages"][0]["content"], "plain");
 }
 

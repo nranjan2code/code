@@ -41,7 +41,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_maps_neutral_history_to_openai_shape() {
-    let body = build_body(&sample_request()).unwrap();
+    let body = build_body(&OpenAiConfig::default(), &sample_request()).unwrap();
     assert_eq!(body["model"], "gpt-5.6");
     assert_eq!(body["stream"], true);
     assert_eq!(body["stream_options"]["include_usage"], true);
@@ -93,7 +93,7 @@ fn user_tool_results_become_separate_tool_messages() {
             ContentBlock::tool_result("b", "two"),
         ],
     }];
-    let msgs = build_body(&req).unwrap()["messages"]
+    let msgs = build_body(&OpenAiConfig::default(), &req).unwrap()["messages"]
         .as_array()
         .unwrap()
         .clone();
@@ -127,6 +127,7 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_TOOL_STREAM).await,
+        ..Default::default()
     })
     .unwrap();
 
@@ -175,6 +176,7 @@ async fn finish_stop_maps_to_end_turn() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_STOP_STREAM).await,
+        ..Default::default()
     })
     .unwrap();
     let mut req = ChatRequest::new("m");
@@ -195,6 +197,7 @@ async fn http_error_maps_to_typed_value() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: url,
+        ..Default::default()
     })
     .unwrap();
     let err = provider
@@ -221,6 +224,7 @@ async fn clean_close_with_content_completes_as_end_turn() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_TRUNCATED_WITH_CONTENT).await,
+        ..Default::default()
     })
     .unwrap();
     let mut req = ChatRequest::new("m");
@@ -240,6 +244,7 @@ async fn clean_close_without_content_still_fails_closed() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_TRUNCATED_EMPTY).await,
+        ..Default::default()
     })
     .unwrap();
     let mut req = ChatRequest::new("m");
@@ -322,6 +327,7 @@ async fn nonstandard_finish_reason_with_tool_use_still_yields_tooluse() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_TOOL_STREAM_BAD_FINISH).await,
+        ..Default::default()
     })
     .unwrap();
 
@@ -362,6 +368,7 @@ async fn clean_close_after_tool_calls_yields_tooluse() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_TOOL_STREAM_EOF_NO_FINISH).await,
+        ..Default::default()
     })
     .unwrap();
 
@@ -392,6 +399,7 @@ async fn done_without_finish_reason_still_yields_tooluse() {
     let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
         api_key: "k".into(),
         base_url: mock_url(FIXTURE_DONE_WITHOUT_FINISH).await,
+        ..Default::default()
     })
     .unwrap();
 

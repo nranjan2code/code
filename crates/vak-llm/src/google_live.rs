@@ -328,7 +328,8 @@ async fn speak_inner(
         let next = ws.next();
         let msg = tokio::select! {
             _ = cancel.cancelled() => {
-                let partial = (!pcm.is_empty()).then(|| crate::types::AssistantMessage::empty(&config.model));
+                let partial = (!pcm.is_empty())
+                    .then(|| Box::new(crate::types::AssistantMessage::empty(&config.model)));
                 return Err(LlmError::Aborted { partial });
             }
             m = async {
