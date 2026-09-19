@@ -9,81 +9,86 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v3.2.4 — Agent switching synchronization, active session preservation, and scope clarity release shipped.**
-Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
+The workspace `Cargo.toml` version is the only authoritative version stamp —
+`scripts/check-version.sh` verifies every copy of it, and this document
+deliberately does not carry a second one to drift. The supported baseline is
+`2.0.0` (invariant 29); nothing below it is read, repaired, or migrated. Two
+earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
-above both, so version ordering is meaningful again and every version in `1.x`
-is free; CHANGELOG.md records the history.
-See `docs/design/00-roadmap.md` for the phase history and
-`docs/design/15-reliability.md` for the failure-handling matrix. Security work
-must also follow the threat model and priority order in
-`docs/design/24-agent-security.md`. The always-on platform layer follows
-`docs/design/22-gateway.md` (gateway/approvals), `docs/design/23-memory.md`
-(recall), `docs/design/25-docker-sandbox.md` (execution backends),
-`docs/design/26-learning.md` (learning loop),
-`docs/design/28-operations.md` with docs/hosting.md for running the stack
-as durable services, `docs/design/31-network-resilience.md` for the
-four-plane network contract (loopback-only local, crash-only channels,
-ladder+endurance inference, store-and-forward delivery). The long-horizon
-program is landed (work receipts + dispatch ceiling ✅, context packet
-accounting + deterministic gate ✅, FinOps budget admission ✅,
-loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
-ordering over that ladder (demand objectives, cross-model fallbacks,
-beliefs) ✅ via the vakrouter study Phase R, runs→flows
-adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
-remaining (parked): release supply-chain
-hardening (SBOM/signing), capacity-exhaustion Ask type — skill
-intent-discovery is subsumed by the intent kernel
-(`docs/design/47-commitment-kernel.md`), which selects skills through the
-admitted capability slice rather than a separate discovery path; all three
-original parked items (scenario-harness, planner done-contracts,
-typed tool outputs) have landed). The personal-use completion pass —
-tiered memory (USER.md profile + forget/amend), indexed + cross-project
-search, cron/watchdog/pinned automation with budget alerts,
-doctor/wizard/update-check/backup/digest, SSRF-guarded webfetch +
-headless browse, shared markdown transcript export, duplicate-screened
-skill proposals, inbox attention layer (P6), heartbeat proactive
-check-ins (P7) — is ✅ per `docs/design/29-personal-os.md`
-(enterprise deferred). Channel delivery projection now has a typed contract,
-isolated renderer, templates, semantic adapter envelope, ordered chunks, and
-durable retry outbox per `docs/design/30-output-engineering.md`; the desktop
-presentation layer provides universal outcome-first renderers across coding
-(diff inspector, test matrix), research synthesis (takeaway citations,
-verified sources), telemetry/analytics (interactive SVG crosshair charts,
-sortable data grids), terminal sessions, and lifestyle recipes (dynamic
-servings scaler, step timers) within a single continuous chat canvas; TUI block
-widgets remain presentation-layer extensions.
-The web admin console follows `docs/design/33-admin-console.md`:
-vak-store FTS5 index (rebuildable, JSONL stays source of truth), global
-event hub + SSE, cookie login on the secured router, and an embedded
-SolidJS console at `/admin` covering observation (overview/search/
-security/inbox), operation (approvals/config/cancel), and interaction
-(prompts/steering/best-of-N fan-out) — shipped through Phase 3.
-Design docs above 33 cover the work added since: channel onboarding and
-multi-bot identity (34), out-of-the-box MCP integrations (35), first-run onboarding (36),
-distribution (37), voice and personality (38), the plugin ecosystem (39),
-harness engineering lanes (40), the capability registry (41), managed work
-contracts (42), governed self-evolution (43), and shared/global
-configuration (44), plus the 3.0.8 lifecycle-hardening release, the 3.0.10
-outcome-directed runtime release, the 2026 unified sandboxed execution runtime
-(`bash` execution engine with streaming events, live ANSI terminal rendering with
-`\r` carriage return folding, 500ms process telemetry with RSS memory and duration
-badges, one-click process termination, quarantined scratch isolation in `.vak/scratch/<agent_id>/`
-with live sandboxed iframe/image/code artifact preview, and package installation tracking),
-the distributed event and message fabric (`crates/vak-bus`, docs/design/53-distributed-bus.md:
-NATS Core + JetStream, AES-256-GCM envelope security, W3C/Merkle causal lineage, and Dead-Letter Queues),
-and the adaptive assistant experience (`docs/design/61-adaptive-assistant-experience.md`:
-one calm conversation with contextual task details, unified navigation, clean prose with prompt
-scaffolding scrubbing, typed work objects, theme packs across Dark Obsidian, Quiet Sage, Soft Paper,
-High Contrast, and Light, and sandboxed artifact inspection that opens only when relevant or requested).
-The Agent-owned platform (`docs/design/64-agent-owned-platform.md`) is now authoritative:
-Agents own conversations, dedicated workspaces (`~/vak-home/agents/<agent_id>/`), private session ledgers,
-memory boundaries, lifecycle, channel targets, scheduled work, request admission, and delivery provenance;
-Bots are transport identities and channels are endpoints, while internal tasks remain implementation details
-behind the Agent conversation. Global infrastructure (gateway, operations, FinOps, FTS, tasks) remains shared
-at `~/vak-home/` via `Core::shared_data_home()`. Document 63 is retained as historical context only.
-Each carries its own `Status:` line — read it before assuming a document describes
-shipped behaviour rather than a proposal.
+above both, so version ordering is meaningful again. CHANGELOG.md is the
+release record; this section does not restate it.
+
+### Reading the design docs
+
+`docs/design/` is the architecture record, and **every document carries its own
+`Status:` line — read it before assuming a document describes shipped behaviour
+rather than a proposal.** A few numbers are used twice (`30-output-engineering`
+and `30-render-architecture`, `51-feed-system` and `51-retired-tools`, the two
+`62-universal-delegation-*` files); cite the full filename, never the number
+alone.
+
+Core layers, one document each: 01 LLM · 02 sessions · 03 agent loop ·
+04 tools · 05 config · 07 prompt · 08 permissions · 09 extensibility ·
+10 flows · 11 planner · 12 evals · 13 server · 14 checkpoints · 17 context.
+00-roadmap.md holds the phase history.
+
+Read before changing behaviour in these areas:
+
+- **Failure handling** — `15-reliability.md` (the failure-handling matrix).
+- **Security** — `24-agent-security.md` (threat model and priority order). All
+  security work follows it.
+- **Release** — `32-release-engineering.md`. Never move a version backwards.
+- **Always-on platform** — `22-gateway.md` (gateway/approvals), `23-memory.md`
+  (recall), `25-docker-sandbox.md` and `54-task-environments-and-promotion.md`
+  (execution backends, candidate promotion), `26-learning.md` (learning loop),
+  `28-operations.md` with `docs/hosting.md` (durable services),
+  `31-network-resilience.md` (the four-plane network contract: loopback-only
+  local, crash-only channels, ladder+endurance inference, store-and-forward
+  delivery), `53-distributed-bus.md` (`crates/vak-bus`).
+- **Surfaces** — `33-admin-console.md` (admin), `48-web-client.md` (browser and
+  the `[server]` exposure rules), `20-tauri-desktop.md` (desktop shell),
+  `55-rich-terminal-surface.md` (`vak term`), `34-channel-onboarding.md`
+  (channels, multi-bot identity), `38-voice-personality.md` and
+  `49-live-voice.md` (voice), `29-personal-os.md` (the personal-use surface).
+- **Output and presentation** — `30-output-engineering.md` (the delivery
+  contract), `30-render-architecture.md` (cross-surface rendering),
+  `57-adaptive-presentation-runtime.md` (packs),
+  `67-presentation-renderer-guide.md` (the step-by-step contributor guide, and
+  the one to start from when adding a renderer).
+- **Decision and capability layers** — `41-capability-registry.md`,
+  `42-managed-work-contracts.md`, `45-prompt-layers.md`,
+  `47-commitment-kernel.md` (the intent kernel, which subsumes skill
+  intent-discovery), `50-call-and-evidence-contract.md`,
+  `52-outcome-directed-runtime.md`, `43-governed-self-evolution.md`,
+  `44-shared-config.md`, `39-plugin-ecosystem.md`, `40-harness-engineering.md`.
+- **Install and onboarding** — `46-stabilization-install-and-onboarding.md`,
+  `36-first-run-onboarding.md`, `37-distribution.md`, `35-tavily.md`.
+- **Experience direction** — `61-adaptive-assistant-experience.md` (Phase 1
+  shipped, later journeys phased), `65-universal-adaptive-platform.md` and
+  `66-immersive-artifact-canvas.md` (both implemented and audited),
+  `58-admin-ia-and-ui-goal.md` (goal and guidance),
+  `59-reference-ui-acceptance.md` (an acceptance backlog, not a description of
+  the build), `51-feed-system.md`, `51-retired-tools.md`.
+- **Superseded — read only for history** — `60-modern-presentation-system-2026.md`
+  (by 61), `62-universal-delegation-experience.md` and
+  `62-universal-delegation-prototype.md` (by 64),
+  `63-agent-first-conversations.md` (by 64).
+- **Proposals, not behaviour** — `56-personal-multi-machine-system.md`.
+
+### What is authoritative
+
+**`64-agent-owned-platform.md` is the authoritative product model.** Agents own
+conversations, dedicated workspaces (`~/vak-home/agents/<agent_id>/`), private
+session ledgers, memory boundaries, lifecycle, channel targets, scheduled work,
+request admission, and delivery provenance. Bots are transport identities and
+channels are endpoints; internal tasks are implementation details behind the
+Agent conversation. Global infrastructure (gateway, operations, FinOps, FTS,
+tasks) stays shared at `~/vak-home/` via `Core::shared_data_home()`.
+Invariant 37 states the enforceable half of this.
+
+Parked, and not to be assumed shipped: release supply-chain hardening
+(SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
+completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
 ## Non-negotiable invariants
 
@@ -359,13 +364,12 @@ shipped behaviour rather than a proposal.
     when none is reachable (the common headless case), an encrypted-file
     fallback; no plaintext secret file is ever written
     (docs/design/44-shared-config.md, "Secrets Chain"). An Agent or project secret
-    must never enter a process-global override map where another pooled workspace or agent
-    could observe it. A config write from one process must reach an
-    already-running `Core`/UI in another without a restart
-    (docs/design/44-shared-config.md, "Liveness"). Curated integrations are executable definitions backed by real
-    packages; the product must not advertise mock, placeholder, or TODO
-    capabilities.
-
+    must never enter a process-global override map where another pooled
+    workspace or agent could observe it. A config write from one process must
+    reach an already-running `Core`/UI in another without a restart
+    (docs/design/44-shared-config.md, "Liveness"). Curated integrations are
+    executable definitions backed by real packages; the product must not
+    advertise mock, placeholder, or TODO capabilities.
 28. **The prompt is layered; its safety floor only grows.** The shipped
     prompt is a seed, not a constant (docs/design/45). `identity`,
     `operating_rules`, `guardrails`, and `surface_note` are user-editable and
@@ -392,7 +396,6 @@ shipped behaviour rather than a proposal.
     rotates and records the drift; a session the user named by id fails closed
     until `--accept-drift`. An empty frozen list means *unknown baseline*, not
     *everything changed*. An inbound message may never write a prompt layer.
-
 29. **2.0.0 is the supported baseline.** No code may accept, migrate, or
     special-case state written by an earlier version. A data home, install
     manifest, gateway store, or config file that predates the baseline is
@@ -414,7 +417,6 @@ shipped behaviour rather than a proposal.
     new information is a new entry type and never a changed one. Within a
     major version no migration exists because none can be needed. See
     `docs/design/46-stabilization-install-and-onboarding.md` Part VII.
-
 30. **One canonical way per capability.** A second way to set a token,
     address a chat, name a workspace, or write a setting is not a
     convenience — it is two contracts that must agree forever, and the
@@ -481,62 +483,86 @@ shipped behaviour rather than a proposal.
     just a credential in an access log. The web terminal is off by default
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
-35. **Workspace execution runtimes are scrubbed, quarantined to `.vak/scratch/<agent_id>/`, and observable in Workbench.**
-    Universal execution via `bash` executes in quarantined operational environments
-    strictly confined to the canonical workspace boundary (`<ws>`).
-    Execution processes run with scrubbed environments (`env_clear`), passing only
-    minimal operational paths (`PATH`, `HOME`, virtual environment paths) and zero
-    parent credentials or model API keys. Intermediate execution artifacts, virtual
-    environments, site-packages, compiled bundles, and generated files are
-    strictly quarantined under `.vak/scratch/<agent_id>/<execution-id>/` and must never contaminate workspace
-    project source trees or git-tracked directories unless explicitly copied as an
-    outcome artifact requested by the user. All executions stream live stdout,
-    stderr, package detection events, and status directly to the Workbench panel
-    for full operator observability. Egress and permissions follow the broker
-    security model, failing closed when unapproved.
-    Frontend client preview frames must be sandboxed (`sandbox="allow-scripts"`) within safe error boundaries
-    to protect the client host from untrusted script execution.
-
-36. **Multi-turn continuity and conversational drift are harness-guaranteed, model-agnostic invariants.**
-    The harness guarantees multi-turn execution and conversational drift continuity
-    across both local and cloud models. Turn projection deterministically injects a
-    `<conversation_thread>` summarizing the chronological user request timeline across
-    turns when multiple revisions exist, instructing the model to follow user intent
-    across conversational drifts smoothly without complaint or resistance, resolve
-    references ("the data", "do that", "it", "something") against the timeline, and
-    prohibits using clarification as an exception-handling escape hatch to avoid taking
-    action or calling available tools. Historical tool execution results from prior
-    turns exceeding length limits are pruned to compact summaries in runtime memory
-    projections without modifying the append-only ledger on disk. Provider model context
-    discovery (including native Ollama metadata queries via `/api/show`) must discover
-    the real context window or default conservatively (8,192 tokens) to ensure context
-    compaction triggers reliably on local hardware rather than overflowing context.
-
-37. **Agent ownership is mandatory for new work and isolates workspaces, memory, and execution.**
-    Every newly admitted session, request, scheduled run, child/delegated run, and channel delivery has one
-    resolved Agent identity plus its ConversationKey, audience, origin, and configuration revision.
-    Each top-level agent (the built-in `vak` and user-defined custom agents) owns a dedicated workspace under
-    `~/vak-home/agents/<agent_id>/`, encompassing private append-only session ledgers under `sessions/<cwd-hash>/`,
-    private memory under `memory/`, and private configuration, with quarantined execution scratch partitioned
-    under `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the gateway allowlist, bots,
-    operations incidents, actions receipts, FinOps ledger, FTS search index, and scheduled tasks) remains
-    shared at top-level `~/vak-home/` via `Core::shared_data_home()`. Agent identity is resolved at admission
-    and cannot be supplied by untrusted client text. Bots identify transport credentials; channels identify
-    endpoints; neither is an Agent. Paused, archived, or revoked Agents and endpoints fail closed, cancel
-    affected work, and never fall back to Vak. Internal tasks, tools, flows, and workers inherit or
-    explicitly freeze Agent ownership and are projected back only through authorized Agent conversations
-    (docs/design/64-agent-owned-platform.md). On the client presentation layer, Workbench execution telemetry
-    and artifacts are partitioned per conversation session in `sessionWorkbenchMap`, guaranteeing that
-    executions in background agents are never dropped or cross-contaminated when switching active chats,
-    with serialized admission gates preventing dropped requests.
-
-38. **Universal outcome presentation, polyglot document ingestion, and domain specialist delegation are platform-level contracts.**
-    vak is a universal assistant operating with domain neutrality across engineering,
-    research, writing, operations, and quantitative analysis.
-    - **Document ingestion (`doc_read`)** provides structured, token-bounded, token-efficient extraction across Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, and HTML/XML formats, strictly confined to the canonical workspace root (Invariant 10).
-    - **Outcome presentation** treats all tables and datasets as living interactive surfaces: every markdown table generated in conversation provides client-side column sorting, search filtering, and instant CSV export (`InteractiveTable`).
-    - **Domain archetypes (`researcher`, `writer`, `operator`, `analyst`)** define standard behavioral expectations, epistemic stances, and specialist prompts without fragmenting core execution. Workers spawned via `task` receive specialist archetype instructions and capabilities according to assigned roles.
-    - **Autonomous operations and scheduled executions (`AgentSchedule`, `AgentRunRecord`)** are owned by persistent Agent definitions, recording execution receipts to append-only ledgers (`agents_runs.jsonl`).
+35. **Workspace execution runtimes are scrubbed, quarantined to
+    `.vak/scratch/<agent_id>/`, and observable in Workbench.** Universal
+    execution via `bash` executes in quarantined operational environments
+    strictly confined to the canonical workspace boundary (`<ws>`). Execution
+    processes run with scrubbed environments (`env_clear`), passing only
+    minimal operational paths (`PATH`, `HOME`, virtual environment paths) and
+    zero parent credentials or model API keys. Intermediate execution
+    artifacts, virtual environments, site-packages, compiled bundles, and
+    generated files are strictly quarantined under
+    `.vak/scratch/<agent_id>/<execution-id>/` and must never contaminate
+    workspace project source trees or git-tracked directories unless
+    explicitly copied as an outcome artifact requested by the user. All
+    executions stream live stdout, stderr, package detection events, and
+    status directly to the Workbench panel for full operator observability.
+    Egress and permissions follow the broker security model, failing closed
+    when unapproved. Frontend client preview frames must be sandboxed
+    (`sandbox="allow-scripts"`) within safe error boundaries to protect the
+    client host from untrusted script execution.
+36. **Multi-turn continuity and conversational drift are harness-guaranteed,
+    model-agnostic invariants.** The harness guarantees multi-turn execution
+    and conversational drift continuity across both local and cloud models.
+    Turn projection deterministically injects a `<conversation_thread>`
+    summarizing the chronological user request timeline across turns when
+    multiple revisions exist, instructing the model to follow user intent
+    across conversational drifts smoothly without complaint or resistance,
+    resolve references ("the data", "do that", "it", "something") against the
+    timeline, and prohibits using clarification as an exception-handling
+    escape hatch to avoid taking action or calling available tools. Historical
+    tool execution results from prior turns exceeding length limits are pruned
+    to compact summaries in runtime memory projections without modifying the
+    append-only ledger on disk. Provider model context discovery (including
+    native Ollama metadata queries via `/api/show`) must discover the real
+    context window or default conservatively (8,192 tokens) to ensure context
+    compaction triggers reliably on local hardware rather than overflowing
+    context.
+37. **Agent ownership is mandatory for new work and isolates workspaces,
+    memory, and execution.** Every newly admitted session, request, scheduled
+    run, child/delegated run, and channel delivery has one resolved Agent
+    identity plus its ConversationKey, audience, origin, and configuration
+    revision. Each top-level agent (the built-in `vak` and user-defined custom
+    agents) owns a dedicated workspace under `~/vak-home/agents/<agent_id>/`,
+    encompassing private append-only session ledgers under
+    `sessions/<cwd-hash>/`, private memory under `memory/`, and private
+    configuration, with quarantined execution scratch partitioned under
+    `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the
+    gateway allowlist, bots, operations incidents, actions receipts, FinOps
+    ledger, FTS search index, and scheduled tasks) remains shared at top-level
+    `~/vak-home/` via `Core::shared_data_home()`. Agent identity is resolved
+    at admission and cannot be supplied by untrusted client text. Bots
+    identify transport credentials; channels identify endpoints; neither is an
+    Agent. Paused, archived, or revoked Agents and endpoints fail closed,
+    cancel affected work, and never fall back to Vak. Internal tasks, tools,
+    flows, and workers inherit or explicitly freeze Agent ownership and are
+    projected back only through authorized Agent conversations
+    (docs/design/64-agent-owned-platform.md). On the client presentation
+    layer, Workbench execution telemetry and artifacts are partitioned per
+    conversation session in `sessionWorkbenchMap`, guaranteeing that
+    executions in background agents are never dropped or cross-contaminated
+    when switching active chats, with serialized admission gates preventing
+    dropped requests.
+38. **Universal outcome presentation, polyglot document ingestion, and domain
+    specialist delegation are platform-level contracts.** vak is a universal
+    assistant operating with domain neutrality across engineering, research,
+    writing, operations, and quantitative analysis.
+    - **Document ingestion (`doc_read`)** provides structured, token-bounded,
+      token-efficient extraction across Markdown, plain text, CSV, TSV, JSON,
+      YAML, TOML, INI, ENV, and HTML/XML formats, strictly confined to the
+      canonical workspace root (Invariant 10).
+    - **Outcome presentation** treats all tables and datasets as living
+      interactive surfaces: every markdown table generated in conversation
+      provides client-side column sorting, search filtering, and instant CSV
+      export (`InteractiveTable`).
+    - **Domain archetypes (`researcher`, `writer`, `operator`, `analyst`)**
+      define standard behavioral expectations, epistemic stances, and
+      specialist prompts without fragmenting core execution. Workers spawned
+      via `task` receive specialist archetype instructions and capabilities
+      according to assigned roles.
+    - **Autonomous operations and scheduled executions (`AgentSchedule`,
+      `AgentRunRecord`)** are owned by persistent Agent definitions, recording
+      execution receipts to append-only ledgers (`agents_runs.jsonl`).
 
 ## Code rules
 
@@ -581,8 +607,9 @@ shipped behaviour rather than a proposal.
   (`vak_core::presentation_tools::card_output_from_call`) — never from result
   text, which the tool framework line-truncates at ~2000 characters. A
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
-  `Retry`, which chat views fold away (doc 30-output-engineering). When a model answers in prose what the
-  app's own signal/recipe detection says is a card, the agent loop gives it one
+  `Retry`, which chat views fold away (doc 30-output-engineering). When a
+  model answers in prose what the app's own signal/recipe detection says is a
+  card, the agent loop gives it one
   bounded `[presentation-check]` nudge (`AgentConfig::presentation_check`,
   supplied by `Core` from `RecipeCatalog::intended_outputs`); like the other
   repair nudges it is scaffolding and never shown as a user message.
@@ -703,34 +730,29 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      live model discovery (models.rs), work receipts +
                      dispatch ceiling (work.rs), frozen-ladder ordering:
                      demand-scored objectives, belief demotion,
-                     cross-model fallbacks (route.rs) -- docs/design/42-managed-work-contracts.mdPhases A+B+R + Gemini Live voice synthesis
+                     cross-model fallbacks (route.rs) --
+                     docs/design/42-managed-work-contracts.md Phases A+B+R
+                     + Gemini Live voice synthesis
                      (google_live.rs): BidiGenerateContent WebSocket
                      session, wall-clock timeout + input-length cap since
                      no upstream deadline exists otherwise, WAV wrapping,
                      WorkPurpose::VoiceSynthesis receipts (docs/design/
                      38-voice-personality.md)
-crates/vak-voice      provider-neutral voice contracts, audio framing and
-                      resampling, VAD, streaming protocol, session lifecycle,
-                      discovery registry, and transcription validation
-                      (docs/design/49-live-voice.md)
+crates/vak-voice     provider-neutral voice contracts, audio framing and
+                     resampling, VAD, streaming protocol, session lifecycle,
+                     discovery registry, and transcription validation
+                     (docs/design/49-live-voice.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
-                      receipt entries (audit-only, projection-neutral),
-                      compaction packet partitions (docs/design/17-context.md),
-                      dependency-free cross-session search w/ mtime-indexed
-                      cache + cross-project search_all (docs/design/
-                      23-memory.md)
+                     receipt entries (audit-only, projection-neutral),
+                     compaction packet partitions (docs/design/17-context.md),
+                     dependency-free cross-session search w/ mtime-indexed
+                     cache + cross-project search_all (docs/design/
+                     23-memory.md)
 crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
                      BM25 full-text search (all content blocks incl. tool
                      calls/results/thinking), structured metadata queries,
                      idempotent import, WAL mode — docs/design/23 +
                      33 (JSONL stays source of truth)
-                     Transport vs. formatting: `vak-server/src/surfaces/`
-                     holds the chat-surface TRANSPORT adapters (long-poll /
-                     webhook bridges into POST /gateway/inbound), while
-                     `vak-delivery`'s same-named modules own the MARKUP
-                     projection for each surface. Both used to sit at
-                     `src/telegram.rs` in their own crate and read as
-                     duplication until you opened both.
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      delivery posture (cadence x urgency) deciding WHEN a
                      packet goes out and never what it says; an approval and
@@ -752,6 +774,13 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      primitive is the only part that needs a code change
                      (docs/design/57-adaptive-presentation-runtime.md,
                      docs/design/67-presentation-renderer-guide.md)
+crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
+                     of models, prompts, sessions, approvals and
+                     presentation: environment lifecycle + state machine,
+                     the Seatbelt/Landlock/Docker backends, and the
+                     reviewable boundary between a task candidate and its
+                     destination (docs/design/25-docker-sandbox.md,
+                     54-task-environments-and-promotion.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
                      behind Tool trait, versioned broker-worker protocol,
                      bounded subprocess environment, resource claims,
@@ -785,6 +814,12 @@ crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
                      than defining a second vocabulary for the same idea.
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
+crates/vak-bus       distributed event + message fabric for agent swarms:
+                     CloudEvents envelopes, W3C trace context + Merkle
+                     causal lineage, AES-256-GCM payload encryption,
+                     subject algebra with role-based ACLs, dead-letter
+                     queues, and NATS Core + JetStream alongside an
+                     in-memory engine (docs/design/53-distributed-bus.md)
 crates/vak-agent     loop, steering queues (full user messages: text +
                      image blocks), parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
@@ -803,7 +838,7 @@ crates/vak-config    layered TOML config + atomic persisted workspace
                      paths (paths.rs: data_home, cache_home,
                      logs_dir) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
-                     preferences (docs/design/42-managed-work-contracts.mdPhases D+H+R) +
+                     preferences (docs/design/42-managed-work-contracts.md Phases D+H+R) +
                      [automation]/[update]/[tools] (docs/design/29) +
                      [server] bind/trusted_hosts/public_url/
                      session_ttl_hours/workspace_roots/[server.web] --
@@ -941,6 +976,12 @@ crates/vak-admin-ui  SolidJS + Vite admin console source; the commitment
                      drill-downs, plus a VoiceConfigEditor
                      (inherit-toggle + live Preview button) on the per-bot
                      and per-chat panels (docs/design/38-voice-personality.md)
+crates/vak-terminal  the rich terminal surface behind `vak term`: a ratatui
+                     app that is a CLIENT of a real vak server over HTTP/SSE,
+                     never a second runtime -- health, sessions, routes, MCP
+                     inventory, approvals and telemetry are fetched live and
+                     kept fresh by background watchers
+                     (docs/design/55-rich-terminal-surface.md)
 crates/vak-desktop   Tauri 2 SHELL over an embedded secured_router. The UI
                      itself lives in crates/vak-client-ui (above); this crate
                      is the native half -- window/tray lifecycle,
@@ -965,21 +1006,34 @@ crates/vak-ops       service-control layer over launchd/systemd — status,
 crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications
-crates/vak           binary: exec / plan / flow / serve [--host] [--gateway] /
-                     telegram|discord|slack [--bot-id <id>] / eval /
-                     checkpoints / config dump / sessions / skills /
-                     skills-review / plugins / doctor / backup / digest /
-                     tasks / memory / inbox / intent (explain, show) /
+crates/vak           binary. Run: exec / plan / flow / eval /
+                     serve [--host] [--gateway] /
+                     telegram|discord|slack [--bot-id <id>] /
+                     term (the rich terminal surface, crates/vak-terminal) /
+                     open [app|admin]. Inspect and steer: sessions /
+                     export / checkpoints / memory / entities / agents /
+                     tasks / inbox / intent (explain, show) /
                      commit (list, show, close, supersede, attest) /
-                     user / workspace / self
-                     (install, update, services-sync) (+ first-run wizard,
-                     opt-in update check). There is no `tui` subcommand: the
-                     inline TUI shipped in v0.1.x and was withdrawn in favour
-                     of the desktop and server surfaces.
+                     grant / revoke. Configure: config / prompts / skills /
+                     skills-review / plugins / setup / doctor / backup /
+                     digest / self (state, install, reinstall, verify,
+                     update, uninstall, status, services-sync), plus the
+                     first-run wizard and the opt-in update check.
+                     `user` and `project` are SCOPE arguments on config,
+                     prompts and plugins, never subcommands. There is no
+                     `tui` subcommand: the inline TUI shipped in v0.1.x and
+                     was withdrawn; `term` is its replacement and is a
+                     client of a running server, not a second runtime.
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 ```
+
+Two same-named module sets that are not duplication: `vak-server/src/surfaces/`
+holds the chat-surface TRANSPORT adapters (long-poll and webhook bridges into
+`POST /gateway/inbound`), while `vak-delivery`'s modules of the same names own
+the MARKUP projection for each surface. Both once sat at `src/telegram.rs` in
+their own crate and read as a copy until you opened both.
 
 ## Acceptance-workspace contract
 
@@ -1038,11 +1092,12 @@ see. `.gitignore` has to keep negating each of them out of the blanket
 **A test that builds a `Core` must isolate its home first.** Call
 `vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
 `set_home_override`) before `Core::new`/`Core::new_with_trust`. Without it,
-`load_with_trust` reads the operator's real Shared layer — `~/vak-home/.vak/config.toml`
-and the real Shared secret scope — so the suite exercises whatever that machine happens
-to have configured. Twenty-one test files did exactly that: a real MCP
-server was advertised inside tests, and a personal provider key could make
-an "unconfigured" case pass on one machine and fail in CI. Neither
+`load_with_trust` reads the operator's real Shared layer —
+`~/vak-home/.vak/config.toml` and the real Shared secret scope — so the suite
+exercises whatever that machine happens to have configured. Twenty-one test
+files did exactly that: a real MCP server was advertised inside tests, and a
+personal provider key could make an "unconfigured" case pass on one machine
+and fail in CI. Neither
 `std::env::set_var` nor `unsafe` is needed for this; the override map sits
 above the real environment in `get_var`'s precedence.
 
@@ -1058,7 +1113,8 @@ doc citing a path that no longer exists; docs whose `Status:` line says
 "proposal" are skipped, because their paths are targets rather than
 citations.
 
-Live checks (needs a provider key set via the Settings UI, `PUT /config/key`, or an environment variable):
+Live checks (needs a provider key set via the Settings UI, `PUT /config/key`,
+or an environment variable):
 
 ```
 target/debug/vak eval                    # deterministic suite, ~100ms
@@ -1068,4 +1124,16 @@ target/debug/vak eval --live             # real model benchmark
 ## Parallel agents
 
 Only touch files you changed in this session. Sessions are per-cwd-hashed;
-never edit another session's files under the data home (`~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux).
+never edit another session's files under the data home.
+
+Two homes, easily confused, and `crates/vak-config/src/paths.rs` is the only
+place that decides either:
+
+- **The data home** — application-managed state (sessions, index, install
+  manifest). `~/Library/Application Support/vak` on macOS,
+  `~/.local/share/vak` on Linux, overridden wholesale by `VAK_HOME`. Never a
+  dotdir; a test asserts it.
+- **The default workspace** — `~/vak-home`, a plain directory a person can
+  `cd` into. It is what durable services run from (invariant 18) and what the
+  Shared config layer and Agent workspaces live under (invariants 27 and 37).
+  It must never collide with the data home.
