@@ -10,6 +10,17 @@ use crate::types::{
     SessionError, SessionHeader, TranscriptMessage, WorkEvent,
 };
 
+/// Session-derived content for the request tail (docs/design/68-context-
+/// engine.md §6/§10), rendered by the caller alongside the host-supplied
+/// temporal/stance content instead of being spliced into `derive_messages`.
+/// `None` means there is nothing to say for that section this turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TailSections {
+    pub intent: Option<String>,
+    pub work_contract: Option<String>,
+    pub thread: Option<String>,
+}
+
 pub struct SessionLog {
     path: PathBuf,
     file: File,
@@ -1078,19 +1089,14 @@ impl SessionLog {
     /// Like `derive_keyed`, additionally flagging compaction-summary
     /// pseudo-entries so packet accounting can exclude them from both
     /// sides of a partition (they were settled by earlier compactions).
+    ///
+    /// The intent note, work contract, and conversation thread used to be
+    /// spliced into this projection as extra messages; they are now rendered
+    /// into the request tail instead (docs/design/68-context-engine.md
+    /// §6/§10), read separately via [`SessionLog::tail_sections`]. This
+    /// function no longer contributes them.
     fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
         let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
-        // Only the newest intent note applies. It is emitted in its own
-        // position in the chain — immediately before the turn it belongs to —
-        // rather than prepended, because per-turn operating guidance stranded
-        // at the top of a long conversation is guidance the model has stopped
-        // paying attention to by the time it matters.
-        let latest_intent = self
-            .chain_to_root()
-            .iter()
-            .rev()
-            .find(|entry| matches!(&entry.payload, EntryPayload::Intent(_)))
-            .map(|entry| entry.id.clone());
         for entry in self.chain_to_root() {
             match &entry.payload {
                 EntryPayload::Message(record) => {
@@ -1120,27 +1126,11 @@ impl SessionLog {
                     ));
                     out.insert(0, (entry.id.clone(), summary_msg, true, false));
                 }
-                EntryPayload::Intent(record) => {
-                    // Superseded intent notes contribute nothing: replaying
-                    // five of them wastes context and lets a stale instruction
-                    // argue with the current one.
-                    if latest_intent.as_deref() != Some(entry.id.as_str()) {
-                        continue;
-                    }
-                    if let Some(note) = &record.model_visible {
-                        let mut block = format!("<intent>\n{note}\n</intent>");
-                        block.truncate(4_000);
-                        // Tagged as control: it is runtime-generated guidance
-                        // for the turn in flight, not conversation to be
-                        // summarized into a compaction packet.
-                        out.push((entry.id.clone(), Message::user_text(block), false, true));
-                    }
-                }
-                // Receipts, goal entries, and presentations are audit /
-                // display-channel data, not model-visible input. The
-                // current turn already sees a card through the `tool_use`
-                // input it wrote; a `Presentation` entry is never replayed
-                // raw (docs/design/68-context-engine.md §10).
+                // Receipts, goal entries, presentations, and intent notes are
+                // audit / tail-rendered data, not part of this projection.
+                // The current turn already sees a card through the
+                // `tool_use` input it wrote; a `Presentation` entry is never
+                // replayed raw (docs/design/68-context-engine.md §10).
                 EntryPayload::Header(_)
                 | EntryPayload::Receipt(_)
                 | EntryPayload::Goal(_)
@@ -1149,133 +1139,8 @@ impl SessionLog {
                 | EntryPayload::Work(_)
                 | EntryPayload::TurnCapabilitiesBound(_)
                 | EntryPayload::Presentation(_)
+                | EntryPayload::Intent(_)
                 | EntryPayload::ChildRun { .. } => {}
-            }
-        }
-        if let Ok(Some(work)) = self.work_projection()
-            && !matches!(
-                work.status,
-                crate::types::WorkContractStatus::Completed
-                    | crate::types::WorkContractStatus::Failed
-                    | crate::types::WorkContractStatus::Cancelled
-                    | crate::types::WorkContractStatus::Unverified
-            )
-        {
-            let mut context = format!(
-                "<work_contract id=\"{}\" revision=\"{}\">\nObjective: {}\nStatus: {:?}\nItems:\n",
-                work.contract.contract_id,
-                work.contract.revision,
-                work.contract.objective,
-                work.status,
-            );
-            for item in &work.contract.items {
-                if let Some(state) = work.items.get(&item.item_id) {
-                    context.push_str(&format!(
-                        "- {}: {:?} (owner: {:?})\n",
-                        item.item_id, state.status, item.owner
-                    ));
-                }
-            }
-            context.push_str(
-                "Rules: use this state for progress; do not claim completion before verification.\n</work_contract>",
-            );
-            context.truncate(4_000);
-            let work_entry_id = self
-                .chain_to_root()
-                .iter()
-                .rev()
-                .find(|entry| matches!(entry.payload, EntryPayload::Work(_)))
-                .map(|entry| entry.id.clone())
-                .unwrap_or_else(|| work.contract.contract_id.clone());
-            out.insert(0, (work_entry_id, Message::user_text(context), false, true));
-        } else if let Some(goal) = self.goal_state()
-            && (goal.revision > 1 || !goal.additions.is_empty())
-            && goal.control == vak_intent::GoalControlState::Active
-            && !goal.objective.trim().is_empty()
-            && self.work_projection().ok().flatten().is_none()
-        {
-            // In direct conversation mode, project the multi-turn thread when
-            // multiple user directives exist. This enables the model to trace the
-            // human intent across drifts and resolves anaphoric references
-            // ("the data", "do that", "it", "something") without amnesia.
-            let mut user_directives: Vec<(usize, String)> = Vec::new();
-            let mut turn_counter = 1;
-            for entry in self.chain_to_root() {
-                if let EntryPayload::Message(record) = &entry.payload
-                    && record.message.role == vak_llm::Role::User
-                    && record.control_kind().is_none()
-                {
-                    let text = record.message.text_content();
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() && !trimmed.starts_with('<') {
-                        user_directives.push((turn_counter, trimmed.to_string()));
-                        turn_counter += 1;
-                    }
-                }
-            }
-
-            if user_directives.len() > 1 {
-                let mut thread = format!(
-                    "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
-                    goal.revision,
-                    goal.objective.trim()
-                );
-                let start_idx = user_directives.len().saturating_sub(8);
-                for (num, req) in &user_directives[start_idx..] {
-                    let preview = if req.len() > 200 {
-                        let head = req
-                            .char_indices()
-                            .map(|(idx, _)| idx)
-                            .nth(200)
-                            .unwrap_or_else(|| 200.min(req.len()));
-                        format!("{}...", &req[..head])
-                    } else {
-                        req.clone()
-                    };
-                    thread.push_str(&format!("- Turn {num}: {preview}\n"));
-                }
-                thread.push_str(
-                    "Rules for multi-turn execution:\n\
-                     - Follow the user's intent across conversational drifts without complaint or friction.\n\
-                     - Conversational drift across turns is expected: follow along smoothly and adapt immediately.\n\
-                     - Resolve references (\"the data\", \"do that\", \"it\", \"something\") against the request timeline above.\n\
-                     - If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch to avoid taking action or using available tools.\n\
-                     </conversation_thread>",
-                );
-
-                let latest_turn_entry_id = self
-                    .chain_to_root()
-                    .iter()
-                    .rev()
-                    .find(|entry| {
-                        matches!(
-                            entry.payload,
-                            EntryPayload::GoalUpdate(_) | EntryPayload::Message(_)
-                        )
-                    })
-                    .map(|entry| entry.id.clone())
-                    .unwrap_or_else(|| "thread-anchor".into());
-
-                let insert_pos = out
-                    .iter()
-                    .rposition(|(_, m, _, is_ctrl)| {
-                        !*is_ctrl
-                            && m.role == vak_llm::Role::User
-                            && m.content
-                                .iter()
-                                .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
-                    })
-                    .unwrap_or(out.len());
-
-                out.insert(
-                    insert_pos,
-                    (
-                        latest_turn_entry_id,
-                        Message::user_text(thread),
-                        false,
-                        true,
-                    ),
-                );
             }
         }
 
@@ -1385,6 +1250,148 @@ impl SessionLog {
 
     pub fn derive_messages(&self) -> Vec<Message> {
         self.derive_keyed().into_iter().map(|(_, m)| m).collect()
+    }
+
+    /// The three sections `derive_keyed_tagged` used to splice into the
+    /// model-visible projection, computed separately for the request
+    /// assembler's tail (docs/design/68-context-engine.md §6/§10). Each
+    /// field is `None` when there is nothing to say — the caller renders no
+    /// tag for an absent section, never an empty one.
+    pub fn tail_sections(&self) -> TailSections {
+        TailSections {
+            intent: self.tail_intent(),
+            work_contract: self.tail_work_contract(),
+            thread: self.tail_conversation_thread(),
+        }
+    }
+
+    /// The latest intent note, tagged. Only the newest note applies — it
+    /// otherwise wastes context and lets a stale instruction argue with the
+    /// current one.
+    fn tail_intent(&self) -> Option<String> {
+        let note = self
+            .chain_to_root()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::Intent(record) => Some(record.model_visible.clone()),
+                _ => None,
+            })
+            .flatten()?;
+        let mut block = format!("<intent>\n{note}\n</intent>");
+        block.truncate(4_000);
+        Some(block)
+    }
+
+    /// The active work contract's state, tagged, or `None` once it has
+    /// settled (completed, failed, cancelled, or unverified).
+    fn tail_work_contract(&self) -> Option<String> {
+        let work = self.work_projection().ok().flatten()?;
+        if matches!(
+            work.status,
+            crate::types::WorkContractStatus::Completed
+                | crate::types::WorkContractStatus::Failed
+                | crate::types::WorkContractStatus::Cancelled
+                | crate::types::WorkContractStatus::Unverified
+        ) {
+            return None;
+        }
+        let mut context = format!(
+            "<work_contract id=\"{}\" revision=\"{}\">\nObjective: {}\nStatus: {:?}\nItems:\n",
+            work.contract.contract_id, work.contract.revision, work.contract.objective, work.status,
+        );
+        for item in &work.contract.items {
+            if let Some(state) = work.items.get(&item.item_id) {
+                context.push_str(&format!(
+                    "- {}: {:?} (owner: {:?})\n",
+                    item.item_id, state.status, item.owner
+                ));
+            }
+        }
+        context.push_str(
+            "Rules: use this state for progress; do not claim completion before verification.\n</work_contract>",
+        );
+        context.truncate(4_000);
+        Some(context)
+    }
+
+    /// The multi-turn directive timeline, tagged, restricted to directives
+    /// whose full text is not already verbatim among `derive_messages()` —
+    /// one source per fact (docs/design/68-context-engine.md §6): a
+    /// directive still present in the working set verbatim needs no
+    /// restating here. `None` when there is no active goal spanning
+    /// multiple turns, a managed work contract already covers progress, or
+    /// every directive is already verbatim in the working set.
+    fn tail_conversation_thread(&self) -> Option<String> {
+        let goal = self.goal_state()?;
+        if !(goal.revision > 1 || !goal.additions.is_empty())
+            || goal.control != vak_intent::GoalControlState::Active
+            || goal.objective.trim().is_empty()
+            || self.work_projection().ok().flatten().is_some()
+        {
+            return None;
+        }
+
+        let mut user_directives: Vec<(usize, String)> = Vec::new();
+        let mut turn_counter = 1;
+        for entry in self.chain_to_root() {
+            if let EntryPayload::Message(record) = &entry.payload
+                && record.message.role == vak_llm::Role::User
+                && record.control_kind().is_none()
+            {
+                let text = record.message.text_content();
+                let trimmed = text.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('<') {
+                    user_directives.push((turn_counter, trimmed.to_string()));
+                    turn_counter += 1;
+                }
+            }
+        }
+        if user_directives.len() <= 1 {
+            return None;
+        }
+
+        let verbatim: std::collections::HashSet<String> = self
+            .derive_messages()
+            .iter()
+            .map(|m| m.text_content().trim().to_string())
+            .collect();
+        let start_idx = user_directives.len().saturating_sub(8);
+        let filtered: Vec<&(usize, String)> = user_directives[start_idx..]
+            .iter()
+            .filter(|(_, req)| !verbatim.contains(req.as_str()))
+            .collect();
+        if filtered.is_empty() {
+            return None;
+        }
+
+        let mut thread = format!(
+            "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
+            goal.revision,
+            goal.objective.trim()
+        );
+        for (num, req) in filtered {
+            let preview = if req.len() > 200 {
+                let head = req
+                    .char_indices()
+                    .map(|(idx, _)| idx)
+                    .nth(200)
+                    .unwrap_or_else(|| 200.min(req.len()));
+                format!("{}...", &req[..head])
+            } else {
+                req.clone()
+            };
+            thread.push_str(&format!("- Turn {num}: {preview}\n"));
+        }
+        thread.push_str(
+            "Rules for multi-turn execution:\n\
+             - Follow the user's intent across conversational drifts without complaint or friction.\n\
+             - Conversational drift across turns is expected: follow along smoothly and adapt immediately.\n\
+             - Resolve references (\"the data\", \"do that\", \"it\", \"something\") against the request timeline above.\n\
+             - If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch to avoid taking action or using available tools.\n\
+             </conversation_thread>",
+        );
+        Some(thread)
     }
 
     /// A projection-based compaction plan: `older` is everything before the

@@ -20,7 +20,7 @@ pub mod registry;
 pub mod route;
 pub mod sse;
 pub mod stream;
-pub(crate) mod turn;
+pub mod turn;
 pub mod types;
 pub mod work;
 
@@ -32,6 +32,7 @@ pub use route::{
     ModelEvidence, QualityObjective, RouteLeg, order_ladder_v1, order_ladder_v2, score_demand,
 };
 pub use stream::{EventSink, EventStream, StreamEvent};
+pub use turn::current_turn_boundary;
 pub use types::{
     AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Message, Role,
     StopReason, ToolDefinition, Usage,

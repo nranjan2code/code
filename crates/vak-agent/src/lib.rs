@@ -271,7 +271,18 @@ pub struct AgentConfig {
     pub work_enabled: bool,
     pub max_work_items: usize,
     pub max_work_revisions: u32,
-    pub system_prompt: String,
+    /// The stable prefix: identity, contract, guardrails, tool surface. Byte-
+    /// identical across steps of a turn and across turns for an unchanged
+    /// capability packet, so a provider's prefix cache can key on it
+    /// (docs/design/68-context-engine.md §4/§6). Per-turn content never
+    /// belongs here — see `tail`.
+    pub system_prefix: String,
+    /// Per-turn content rendered into the moving tail instead of the
+    /// prefix: the clock instant and the epistemic stance. Session-derived
+    /// tail content (intent, work contract, conversation thread) is read
+    /// from `SessionLog::tail_sections()` at request-assembly time instead,
+    /// since it is not host-supplied configuration.
+    pub tail: TailInput,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
     /// Discovered MCP tool names accepted as compatibility aliases. Calls
@@ -400,15 +411,29 @@ pub struct PresentationCardInfo {
 pub type PresentationRebuild =
     Arc<dyn Fn(&str, &serde_json::Value) -> Option<PresentationCardInfo> + Send + Sync>;
 
+/// Host-supplied per-turn content for the request tail (docs/design/68-
+/// context-engine.md §6/§10): the clock instant and the epistemic stance,
+/// each rendered under its own tag alongside the session-derived tail
+/// sections. Captured once per turn by the caller, not recomputed per step,
+/// so the tail stays byte-identical across every step of one turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TailInput {
+    /// Raw temporal context sentence, with no wrapping tag.
+    pub temporal: String,
+    /// Raw epistemic-stance text, with no wrapping tag.
+    pub stance: String,
+}
+
 impl AgentConfig {
-    pub fn new(system_prompt: impl Into<String>) -> Self {
+    pub fn new(system_prefix: impl Into<String>) -> Self {
         AgentConfig {
             outcome: None,
             work_mode: WorkMode::Direct,
             work_enabled: true,
             max_work_items: 20,
             max_work_revisions: 8,
-            system_prompt: system_prompt.into(),
+            system_prefix: system_prefix.into(),
+            tail: TailInput::default(),
             model: String::new(),
             tools: Vec::new(),
             mcp_aliases: Arc::new(StdMutex::new(std::collections::HashMap::new())),
@@ -447,6 +472,88 @@ impl AgentConfig {
             capacity: None,
         }
     }
+}
+
+/// Renders the one control block appended to the last user message of a
+/// request (docs/design/68-context-engine.md §6/§10): the host-supplied
+/// per-turn content under its own tag, followed by whichever
+/// session-derived sections `SessionLog::tail_sections()` returned.
+/// Sections absent from `sections` are omitted entirely, never emitted as an
+/// empty tag pair.
+fn compose_tail(tail: &TailInput, sections: &vak_session::TailSections) -> String {
+    let mut out = String::new();
+    let push_block = |out: &mut String, block: &str| {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(block);
+    };
+    if !tail.temporal.trim().is_empty() {
+        push_block(
+            &mut out,
+            &format!("<turn_context>\n{}\n</turn_context>", tail.temporal.trim()),
+        );
+    }
+    if let Some(intent) = &sections.intent {
+        push_block(&mut out, intent);
+    }
+    if !tail.stance.trim().is_empty() {
+        push_block(
+            &mut out,
+            &format!("<stance>\n{}\n</stance>", tail.stance.trim()),
+        );
+    }
+    if let Some(work_contract) = &sections.work_contract {
+        push_block(&mut out, work_contract);
+    }
+    if let Some(thread) = &sections.thread {
+        push_block(&mut out, thread);
+    }
+    out
+}
+
+/// Cache breakpoints per §10: after the stable prefix, after the last
+/// message of any previous turn, and on the last message of the request
+/// being built (which, within a turn, moves forward with every step).
+fn cache_breakpoints(messages: &[Message]) -> Vec<vak_llm::CacheBreakpoint> {
+    use vak_llm::CacheBreakpoint;
+    let mut positions: Vec<Option<usize>> = vec![None];
+    if !messages.is_empty() {
+        let boundary = vak_llm::current_turn_boundary(messages);
+        if boundary > 0 {
+            positions.push(Some(boundary - 1));
+        }
+        positions.push(Some(messages.len() - 1));
+    }
+    positions.dedup();
+    positions
+        .into_iter()
+        .map(|after_message| CacheBreakpoint { after_message })
+        .collect()
+}
+
+/// The most recent Execute-purpose receipt's prefix digest recorded in this
+/// session, or `None` when no receipt has recorded one yet.
+fn last_prefix_digest(session: &SessionLog) -> Option<String> {
+    session
+        .chain_to_root()
+        .into_iter()
+        .rev()
+        .find_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Receipt(receipt) if !receipt.prefix_digest.is_empty() => {
+                Some(receipt.prefix_digest.clone())
+            }
+            _ => None,
+        })
+}
+
+/// Whether any earlier receipt in this session already carries `digest` —
+/// used to measure `prefix_tokens` only on the first request seen with a
+/// given digest.
+fn prefix_digest_seen(session: &SessionLog, digest: &str) -> bool {
+    session.chain_to_root().into_iter().any(|entry| {
+        matches!(&entry.payload, vak_session::EntryPayload::Receipt(receipt) if receipt.prefix_digest == digest)
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -882,6 +989,19 @@ impl Agent {
             }
         }
 
+        // Captured once for the whole turn (docs/design/68-context-engine.md
+        // §6/§10): every step's request must carry byte-identical tail bytes
+        // so the provider's prefix cache serves the growing middle instead
+        // of re-billing it on every step. Session-derived sections (intent,
+        // work contract, conversation thread) are read from the ledger here
+        // rather than supplied by the caller, since they are derived state,
+        // not host configuration.
+        let turn_tail = {
+            let session = self.session.lock().await;
+            let sections = session.tail_sections();
+            compose_tail(&self.config.tail, &sections)
+        };
+
         let mut turn = 0usize;
         let mut outcome_turns = 0usize;
         self.repair.reset();
@@ -1024,7 +1144,7 @@ impl Agent {
             let need = {
                 let session = self.session.lock().await;
                 let policy = &self.config.context_policy;
-                let system = self.config.system_prompt.as_str();
+                let system = self.config.system_prefix.as_str();
                 let tool_defs = self.tool_definitions();
                 let est =
                     context::estimate_tokens(&session.derive_messages(), Some(system), &tool_defs);
@@ -1199,7 +1319,7 @@ impl Agent {
 
                     let est = {
                         let session = self.session.lock().await;
-                        let system = self.config.system_prompt.as_str();
+                        let system = self.config.system_prefix.as_str();
                         let tool_defs = self.tool_definitions();
                         context::estimate_tokens(
                             &session.derive_messages(),
@@ -1273,6 +1393,12 @@ impl Agent {
                 &model,
                 self.config.dispatch_ceiling,
             );
+            let tool_defs = self.tool_definitions();
+            // Recorded on every exit path below, success or failure: the
+            // digest describes what was SENT, not what came back
+            // (docs/design/68-context-engine.md §6/§7).
+            ledger.receipt.prefix_digest =
+                context::prefix_digest(&self.config.system_prefix, &tool_defs);
             let base_request = {
                 let session = self.session.lock().await;
                 // Proactive retrieval results: relevant older turns that were
@@ -1280,14 +1406,30 @@ impl Agent {
                 // context, prepended before the projected (compacted) messages.
                 let mut messages = retrieved_messages.clone();
                 messages.extend(session.derive_messages());
+                // The tail is one final text block on the last user message
+                // (after any tool_result blocks), never a separate consecutive
+                // user message (docs/design/68-context-engine.md §6).
+                if !turn_tail.is_empty()
+                    && let Some(last) = messages.last_mut()
+                {
+                    last.content.push(ContentBlock::text(turn_tail.clone()));
+                }
+                let session_key = session
+                    .header()
+                    .map(|header| header.session_id.clone())
+                    .unwrap_or_default();
+                let cache = (!session_key.is_empty()).then(|| vak_llm::CacheHints {
+                    session_key,
+                    breakpoints: cache_breakpoints(&messages),
+                });
                 ChatRequest {
                     model,
-                    system: Some(self.config.system_prompt.clone()),
+                    system: Some(self.config.system_prefix.clone()),
                     messages,
-                    tools: self.tool_definitions(),
+                    tools: tool_defs,
                     max_tokens: self.config.context_policy.max_output as u32,
                     temperature: None,
-                    cache: None,
+                    cache,
                     previous_response_id: None,
                 }
             };
@@ -1397,8 +1539,48 @@ impl Agent {
                     .header()
                     .map(|h| h.session_id.clone())
                     .unwrap_or_default();
-                let receipt = ledger.take_receipt();
+                let mut receipt = ledger.take_receipt();
                 let settled_provider = receipt.provider.clone();
+                if !receipt.prefix_digest.is_empty() {
+                    // A digest that differs from the immediately preceding
+                    // receipt's is a cache-breaking event, surfaced so a
+                    // regression is visible in the ledger rather than only in
+                    // the bill (docs/design/68-context-engine.md §7).
+                    if let Some(previous) = last_prefix_digest(&session)
+                        .filter(|previous| previous != &receipt.prefix_digest)
+                    {
+                        let now = chrono::Utc::now();
+                        let activity = vak_session::ActivityRecord {
+                            activity_id: format!(
+                                "activity-{}",
+                                now.timestamp_nanos_opt()
+                                    .unwrap_or_else(|| now.timestamp_micros() * 1_000)
+                            ),
+                            turn: None,
+                            kind: vak_session::ActivityKind::Diagnostic,
+                            status: vak_session::ActivityStatus::Succeeded,
+                            label: "prefix-changed".to_string(),
+                            detail: None,
+                            data: [
+                                ("previous".to_string(), previous),
+                                ("current".to_string(), receipt.prefix_digest.clone()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        };
+                        let _ = session.append_activity(activity);
+                    }
+                    // Measured once per digest: the provider's reported input
+                    // tokens minus an estimate of the messages alone. A later
+                    // request with the same digest reuses this measurement
+                    // rather than re-deriving it from a cache-served step.
+                    if !prefix_digest_seen(&session, &receipt.prefix_digest) {
+                        let messages_tokens =
+                            context::estimate_tokens(&request.messages, None, &[]);
+                        receipt.prefix_tokens =
+                            Some(usage.input_tokens.saturating_sub(messages_tokens));
+                    }
+                }
                 let _ = session.append_receipt(receipt);
                 settled_provider_slot.replace(settled_provider);
                 sid

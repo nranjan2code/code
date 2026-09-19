@@ -337,10 +337,23 @@ pub struct RuntimeSections {
 }
 
 /// The assembled prompt plus a record of who contributed each part.
+///
+/// Split in two (docs/design/68-context-engine.md §4/§6): `text` is the
+/// stable prefix — byte-identical for a given layer set and capability
+/// packet, so a provider's prefix cache can key on it — and `tail` is the
+/// per-turn content (the clock instant, the epistemic stance) that the
+/// request assembler renders into the moving tail instead. Nothing in
+/// `tail` is layer-contributed, so it never appears in `descriptors` or the
+/// drift fingerprint.
 #[derive(Debug, Clone, Default)]
 pub struct Resolution {
-    /// Exactly what is sent to the provider as the system prompt.
+    /// Exactly what is sent to the provider as the system prompt prefix.
     pub text: String,
+    /// Per-turn content that must never enter the stable prefix: the
+    /// epistemic stance (with the card-tool clarifier) and the temporal
+    /// context, in that order, blank-line separated. Empty when the caller
+    /// supplied neither.
+    pub tail: String,
     /// One entry per *winning* contribution. A layer shadowed by a narrower
     /// one does not appear: the question a reader has is where the text came
     /// from, not what was considered and discarded.
@@ -572,8 +585,6 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
         &runtime.skills,
         &runtime.mcp,
         &runtime.standing,
-        &runtime.epistemic_stance,
-        &runtime.temporal,
     ] {
         if !section.trim().is_empty() {
             if !section.starts_with('\n') {
@@ -581,6 +592,22 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
             }
             text.push_str(section);
         }
+    }
+
+    // Per-turn content never joins the stable prefix (docs/design/68 §4/§6):
+    // it moves to `tail`, rendered by the request assembler as the moving
+    // control block instead of baked into text the provider would cache.
+    let stance_text = stance_with_card_clarifier(&runtime.epistemic_stance);
+    let temporal_text = runtime.temporal.trim();
+    let mut tail = String::new();
+    if !stance_text.is_empty() {
+        tail.push_str(&stance_text);
+    }
+    if !temporal_text.is_empty() {
+        if !tail.is_empty() {
+            tail.push_str("\n\n");
+        }
+        tail.push_str(temporal_text);
     }
 
     // Order by layer *breadth*, not by the wire name's spelling: for the
@@ -612,8 +639,29 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     }
     Resolution {
         text,
+        tail,
         descriptors,
         blocks,
+    }
+}
+
+/// Fixed clarifier appended once to a non-empty epistemic stance so the
+/// stance's own language (e.g. "avoid unwarranted tool calls") can never be
+/// read as overriding the capability contract's card instruction
+/// (docs/design/68-context-engine.md §6).
+const CARD_STILL_APPLIES: &str =
+    "Still call the matching `emit_*_card` tool when a card type fits the answer.";
+
+/// Renders a raw epistemic-stance section with the card clarifier appended,
+/// or an empty string when there is no stance to render. Shared by
+/// [`resolve`] (which folds it into [`Resolution::tail`]) and by callers
+/// that render the same stance text into their own tail wrapper tag.
+pub fn stance_with_card_clarifier(stance: &str) -> String {
+    let stance = stance.trim();
+    if stance.is_empty() {
+        String::new()
+    } else {
+        format!("{stance}\n{CARD_STILL_APPLIES}")
     }
 }
 
@@ -1292,16 +1340,61 @@ mod tests {
     }
 
     #[test]
-    fn epistemic_stance_splices_cleanly_into_prompt() {
+    fn epistemic_stance_and_temporal_land_in_the_tail_not_the_prefix() {
         let runtime = RuntimeSections {
             epistemic_stance: "\nEpistemic stance: analytical\n- Scrutinize claims objectively. Separate verified facts from inferences.".into(),
+            temporal: "\nTemporal context: current UTC instant 2026-09-19T00:00:00Z.".into(),
             ..Default::default()
         };
         let out = resolve(
             &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
             &runtime,
         );
-        assert!(out.text.contains("Epistemic stance: analytical"));
-        assert!(out.text.contains("Scrutinize claims objectively"));
+        assert!(!out.text.contains("Epistemic stance: analytical"));
+        assert!(!out.text.contains("Scrutinize claims objectively"));
+        assert!(!out.text.contains("Temporal context"));
+        assert!(out.tail.contains("Epistemic stance: analytical"));
+        assert!(out.tail.contains("Scrutinize claims objectively"));
+        assert!(out.tail.contains("Temporal context"));
+        assert!(
+            out.tail
+                .contains("Still call the matching `emit_*_card` tool")
+        );
+    }
+
+    #[test]
+    fn tail_is_empty_when_runtime_supplies_neither_stance_nor_temporal() {
+        let runtime = RuntimeSections::default();
+        let out = resolve(
+            &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
+            &runtime,
+        );
+        assert!(out.tail.is_empty());
+    }
+
+    /// Two resolutions built from otherwise-identical layers but different
+    /// per-turn runtime content differ only in `tail`; the prefix a
+    /// provider would cache stays byte-identical.
+    #[test]
+    fn resolutions_differ_only_in_tail() {
+        let layers = [LayerInput::new(PromptLayer::Seed, None, seed_content())];
+        let a = resolve(
+            &layers,
+            &RuntimeSections {
+                epistemic_stance: "\nEpistemic stance: analytical\n- x".into(),
+                temporal: "\nTemporal context: instant A.".into(),
+                ..Default::default()
+            },
+        );
+        let b = resolve(
+            &layers,
+            &RuntimeSections {
+                epistemic_stance: "\nEpistemic stance: operational\n- y".into(),
+                temporal: "\nTemporal context: instant B.".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(a.text, b.text);
+        assert_ne!(a.tail, b.tail);
     }
 }

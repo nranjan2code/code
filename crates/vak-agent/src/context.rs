@@ -10,7 +10,8 @@
 //! scales with the available budget via `dynamic_retrieval_cap` — validated
 //! by the vakyartha simulation suite.
 
-use vak_llm::{ChatRequest, ContentBlock, Message};
+use sha2::{Digest, Sha256};
+use vak_llm::{ChatRequest, ContentBlock, Message, ToolDefinition};
 
 /// Approximate tokens per conversation turn — used to convert a token budget
 /// into a turn-count retrieval cap. Matches vakyartha's APPROX_TOKENS_PER_TURN.
@@ -146,6 +147,27 @@ pub fn estimate_tokens(
     chars.div_ceil(4)
 }
 
+/// SHA-256 hex digest of the stable prefix — the system prompt plus the
+/// tool schemas in dispatch order — recorded on every `WorkReceipt` so a
+/// change in either is visible in the ledger as a cache-breaking event
+/// (docs/design/68-context-engine.md §6/§7). Tool schemas are hashed via
+/// their serialized JSON form so a reordering or a schema edit changes the
+/// digest exactly when it would change the bytes a provider actually caches.
+pub fn prefix_digest(system_prefix: &str, tools: &[ToolDefinition]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(system_prefix.as_bytes());
+    for tool in tools {
+        hasher.update(tool.name.as_bytes());
+        hasher.update(tool.description.as_bytes());
+        hasher.update(
+            serde_json::to_vec(&tool.parameters)
+                .unwrap_or_default()
+                .as_slice(),
+        );
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 pub const COMPACTION_SYSTEM: &str = "\
 You are a context compactor for an agent session. Produce a dense \
 structured summary of the conversation so far. Keep: the original task, \
@@ -218,6 +240,37 @@ pub fn render_transcript(messages: &[Message]) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefix_digest_is_stable_for_identical_input() {
+        let tools = vec![ToolDefinition::new(
+            "read",
+            "reads a file",
+            serde_json::json!({}),
+        )];
+        assert_eq!(
+            prefix_digest("You are vak.", &tools),
+            prefix_digest("You are vak.", &tools)
+        );
+    }
+
+    #[test]
+    fn prefix_digest_changes_with_prefix_or_tools() {
+        let tools = vec![ToolDefinition::new(
+            "read",
+            "reads a file",
+            serde_json::json!({}),
+        )];
+        let base = prefix_digest("You are vak.", &tools);
+        assert_ne!(base, prefix_digest("You are Bob.", &tools));
+        assert_ne!(base, prefix_digest("You are vak.", &[]));
+        let other_tools = vec![ToolDefinition::new(
+            "write",
+            "writes a file",
+            serde_json::json!({}),
+        )];
+        assert_ne!(base, prefix_digest("You are vak.", &other_tools));
+    }
 
     #[test]
     fn estimate_scales_with_content() {
