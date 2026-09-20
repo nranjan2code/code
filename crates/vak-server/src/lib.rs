@@ -727,6 +727,10 @@ fn router_with_state(state: AppState) -> Router {
             get(read_sandbox_candidate_file),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/files/raw",
+            get(read_sandbox_candidate_file_raw),
+        )
+        .route(
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
@@ -9742,17 +9746,15 @@ async fn export_sandbox_candidate(
     }
 }
 
-async fn read_sandbox_candidate_file(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id)): Path<(String, String)>,
-    axum::extract::Query(q): axum::extract::Query<FileQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
+async fn sandbox_candidate_file_bytes(
+    state: &AppState,
+    session_id: &str,
+    candidate_id: &str,
+    relative_path: &str,
+) -> Result<Vec<u8>, StatusCode> {
     let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
         Ok(records) => records,
-        Err(error) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
-        }
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
     let Some(candidate) = records.iter().rev().find_map(|record| match record {
         vak_sandbox::DurableRecord::Candidate(saved)
@@ -9762,28 +9764,73 @@ async fn read_sandbox_candidate_file(
         }
         _ => None,
     }) else {
-        return (StatusCode::NOT_FOUND, "candidate not found").into_response();
+        return Err(StatusCode::NOT_FOUND);
     };
-    let Some(file) = candidate.files.iter().find(|file| file.path == q.path) else {
-        return (StatusCode::NOT_FOUND, "file not in candidate").into_response();
+    let Some(file) = candidate
+        .files
+        .iter()
+        .find(|file| file.path == relative_path)
+    else {
+        return Err(StatusCode::NOT_FOUND);
     };
     let expected_root = sandbox_candidates_root(&state).join(&candidate_id);
     if candidate.source_root != expected_root {
-        return (StatusCode::FORBIDDEN, "candidate source is not frozen").into_response();
+        return Err(StatusCode::FORBIDDEN);
     }
     let Some(path) = confined_path(&expected_root, &file.path) else {
-        return (StatusCode::FORBIDDEN, "candidate path outside frozen root").into_response();
+        return Err(StatusCode::FORBIDDEN);
     };
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
-        Err(_) => return (StatusCode::NOT_FOUND, "candidate file missing").into_response(),
+        Err(_) => return Err(StatusCode::NOT_FOUND),
     };
     if vak_sandbox::digest(&bytes) != file.candidate_hash {
-        return (StatusCode::CONFLICT, "candidate file changed").into_response();
+        return Err(StatusCode::CONFLICT);
     }
+    Ok(bytes)
+}
+
+async fn read_sandbox_candidate_file(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let bytes =
+        match sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await {
+            Ok(bytes) => bytes,
+            Err(status) => return status.into_response(),
+        };
     let size = bytes.len();
     let content = String::from_utf8(bytes).ok();
-    Json(serde_json::json!({ "path": file.path, "kind": if content.is_some() { "text" } else { "binary" }, "bytes": size, "content": content, "editable": false })).into_response()
+    Json(serde_json::json!({ "path": q.path, "kind": if content.is_some() { "text" } else { "binary" }, "bytes": size, "content": content, "editable": false })).into_response()
+}
+
+async fn read_sandbox_candidate_file_raw(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let bytes =
+        match sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await {
+            Ok(bytes) => bytes,
+            Err(status) => return status.into_response(),
+        };
+    let headers = [
+        (
+            axum::http::header::CONTENT_TYPE,
+            raw_mime_for(std::path::Path::new(&q.path)),
+        ),
+        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (axum::http::header::CACHE_CONTROL, "no-store"),
+        (axum::http::header::CONTENT_DISPOSITION, "attachment"),
+        (
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            "sandbox; default-src 'none'",
+        ),
+    ];
+    (headers, bytes).into_response()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -16826,6 +16873,22 @@ mod sandbox_promotion_tests {
         )
         .unwrap();
         assert_eq!(preview["content"], "reviewed");
+        let raw = read_sandbox_candidate_file_raw(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "result.txt".into(),
+            }),
+        )
+        .await;
+        assert_eq!(raw.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(raw.into_body(), 64 * 1024)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"reviewed"
+        );
         let wrong_session = read_sandbox_candidate_file(
             State(state.clone()),
             Path((

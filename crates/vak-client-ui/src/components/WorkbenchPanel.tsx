@@ -540,6 +540,21 @@ export default function WorkbenchPanel() {
               </div>
               <div class="candidate-review-preview">
                 <h3>{reviewedPath() ?? "Choose a file"}</h3>
+                <Show when={reviewedPath()}>{(path) =>
+                  <button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
+                    const version = prepared();
+                    setReviewOpen(false);
+                    openArtifactCanvas({
+                      id: `${version.candidate.candidate_id}:${path()}`,
+                      title: path().split("/").pop() || path(),
+                      artifactPath: path(),
+                      sessionId: version.session_id,
+                      resultId: version.result_id,
+                      executionId: version.execution_id,
+                      candidateId: version.candidate.candidate_id,
+                    });
+                  }}>Open saved version in Canvas</button>
+                }</Show>
                 <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={reviewedPath() && !reviewFileError()}>

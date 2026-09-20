@@ -983,6 +983,12 @@ export function readSandboxCandidateFile(sessionId: string, candidateId: string,
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
 }
 
+export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
+  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }

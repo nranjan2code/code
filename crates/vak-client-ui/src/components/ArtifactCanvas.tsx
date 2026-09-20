@@ -68,7 +68,8 @@ export default function ArtifactCanvas() {
     const subject = artifact.artifactPath || artifact.title;
     try {
       const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
-      await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
+      const version = artifact.candidateId ? ` (candidate ${artifact.candidateId})` : "";
+      await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}${version}. Feedback: ${note}`);
       setFeedback("");
       setFeedbackState("sent");
     } catch {
@@ -147,6 +148,14 @@ export default function ArtifactCanvas() {
     }
 
     try {
+      if (artifact.candidateId && !artifact.sessionId) throw new Error("Saved draft has no owning conversation.");
+      if (artifact.candidateId && (artifact.serverName || artifact.serverUrl)) throw new Error("Live server previews are not tied to saved draft versions yet.");
+      const readText = () => artifact.candidateId && artifact.sessionId
+        ? api.readSandboxCandidateFile(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
+        : api.readFile(artifact.artifactPath);
+      const readRaw = () => artifact.candidateId && artifact.sessionId
+        ? api.readSandboxCandidateFileRaw(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
+        : api.readFileRaw(artifact.artifactPath);
       // 1. Dev-server handling: if serverName is provided, ensure it is running
       if (artifact.serverName) {
         const sid = artifact.sessionId ?? activeId();
@@ -187,7 +196,7 @@ export default function ArtifactCanvas() {
       // 2. PDF Document handling: load raw bytes into a blob URL
       if (kind === "pdf") {
         if (!artifact.artifactPath) throw new Error("PDF artifact path is missing.");
-        const url = await api.readFileRaw(artifact.artifactPath);
+        const url = await readRaw();
         allocatedMediaUrl = url;
         if (generation !== request) {
           URL.revokeObjectURL(url);
@@ -201,7 +210,7 @@ export default function ArtifactCanvas() {
       // 3. Image handling: load raw bytes into an image blob URL
       if (kind === "image") {
         if (!artifact.artifactPath) throw new Error("Image artifact path is missing.");
-        const url = await api.readFileRaw(artifact.artifactPath);
+        const url = await readRaw();
         allocatedMediaUrl = url;
         if (generation !== request) {
           URL.revokeObjectURL(url);
@@ -214,12 +223,13 @@ export default function ArtifactCanvas() {
 
       // 4. Source / Text-only document handling
       if (kind === "code") {
-        let text = artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
+        let text = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
         if (artifact.artifactPath) {
           try {
-            const fileRes = await api.readFile(artifact.artifactPath);
+            const fileRes = await readText();
             if (fileRes.content !== undefined) text = fileRes.content;
-          } catch {
+          } catch (error) {
+            if (artifact.candidateId) throw error;
             // Keep inline content if disk file was not found
           }
         }
@@ -237,14 +247,15 @@ export default function ArtifactCanvas() {
       }
 
       // 5. Static / HTML preview handling
-      let content = artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
+      let content = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
       if (artifact.artifactPath) {
         try {
-          const fileRes = await api.readFile(artifact.artifactPath);
+          const fileRes = await readText();
           if (fileRes.content !== undefined) {
             content = fileRes.content;
           }
-        } catch {
+        } catch (error) {
+          if (artifact.candidateId) throw error;
           // Keep inline content if disk read fails (e.g. file referenced before save)
         }
       }
@@ -259,12 +270,14 @@ export default function ArtifactCanvas() {
 
       let prepared: string;
       try {
-        prepared = artifact.artifactPath
+        prepared = artifact.candidateId
+          ? sandboxedSrcdoc(content, "'none'")
+          : artifact.artifactPath
           ? await artifactPreviewHtml(artifact.artifactPath, content, artifact.connectSrc)
           : sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
       } catch {
         // If relative asset resolution fails, fall back to pure sandboxed srcdoc
-        prepared = sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
+        prepared = sandboxedSrcdoc(content, artifact.candidateId ? "'none'" : artifact.connectSrc ?? "'none'");
       }
 
       if (generation !== request) return;
@@ -425,6 +438,9 @@ export default function ArtifactCanvas() {
             </Show>
             <Show when={canvasArtifact()?.resultId}>{(resultId) =>
               <span class="artifact-canvas-result" title={resultId()}>From this conversation result</span>
+            }</Show>
+            <Show when={canvasArtifact()?.candidateId}>{(candidateId) =>
+              <span class="artifact-canvas-result" title={candidateId()}>Saved draft version</span>
             }</Show>
           </div>
 

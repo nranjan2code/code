@@ -307,6 +307,8 @@ export interface ActiveComponentPreview {
   sessionId?: string;
   resultId?: string;
   executionId?: string;
+  /** Saved draft version; Canvas reads this candidate instead of mutable scratch. */
+  candidateId?: string;
 }
 export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
 
