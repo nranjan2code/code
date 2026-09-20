@@ -1206,6 +1206,19 @@ impl Agent {
         // very next turn ignored the result instead of grounding on it.
         let mut pending_grounding_check: Option<Vec<String>> = None;
         let mut grounding_repair_attempted = false;
+        // Whether any retrieval-shaped call succeeded at any point in this
+        // run, for the freshness check: a directive whose reading carries
+        // the `live-data` domain (temporal deixis — "current", "right now")
+        // asks for a value retrieved this turn, and an answer or card that
+        // arrives without one is repeating what an earlier turn found.
+        let mut retrieval_succeeded_this_run = false;
+        let mut freshness_repair_attempted = false;
+        let wants_live_data = self
+            .session
+            .lock()
+            .await
+            .latest_reading()
+            .is_some_and(|reading| reading.domains.iter().any(|d| d == "live-data"));
         let mut malformed_fence_repair_attempted = false;
         // `semantic_type`s successfully emitted via an `emit_*_card` tool
         // call in the immediately preceding batch. A tool-emitted card is
@@ -1794,6 +1807,42 @@ impl Agent {
             }
 
             if calls.is_empty() {
+                // Freshness enforcement (docs/design/68 §7): the directive
+                // asked for a current value and nothing was retrieved in
+                // this run, so the answer — prose or card — can only be a
+                // repeat of an earlier turn's data. One bounded redo naming
+                // the gap; the model may decline by saying it has no live
+                // data, which the grounding phrases below already accept.
+                if wants_live_data && !retrieval_succeeded_this_run && !freshness_repair_attempted {
+                    let text = response.text_content();
+                    let lower = text.to_ascii_lowercase();
+                    let admits_no_data = [
+                        "don't have",
+                        "do not have",
+                        "no access to",
+                        "couldn't find",
+                        "could not find",
+                        "no live data",
+                    ]
+                    .iter()
+                    .any(|phrase| lower.contains(phrase));
+                    if !admits_no_data {
+                        freshness_repair_attempted = true;
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
+                        let _ = self.session.lock().await.append_message(MessageRecord::control(
+                            vak_intent::control::ControlKind::FreshnessCheck,
+                            "[freshness-check]: This asks for a value as it stands now, but nothing was \
+                             retrieved on this turn — a number carried over from an earlier answer is \
+                             stale. Call a retrieval tool for a current reading and answer from what it \
+                             returns (a card is fine), or say plainly that you have no live data."
+                                .to_string(),
+                        ));
+                        turn += 1;
+                        continue;
+                    }
+                }
                 // Grounding enforcement: the previous turn ran one or more
                 // retrieval-shaped tool calls, but this final answer neither
                 // emitted a structured (cited) card nor admitted it has no
@@ -2164,6 +2213,9 @@ impl Agent {
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
+            if !retrieval_tool_names.is_empty() {
+                retrieval_succeeded_this_run = true;
+            }
             pending_grounding_check = if retrieval_tool_names.is_empty() {
                 None
             } else {

@@ -6334,13 +6334,41 @@ impl Core {
         // earlier intent record. The outcome contract is append-only: a
         // response may exist without satisfying its evidence requirements.
         if self.inner.config.intent.enabled {
+            // The answer is its presentations plus its narration
+            // (docs/design/68-context-engine.md §10): a turn that emitted a
+            // card and no prose still delivered, so the evaluator sees the
+            // cards' rendered text alongside whatever text the model wrote.
+            let presented_text = {
+                let turn_id = session.latest_directive_entry_id();
+                session
+                    .presentations()
+                    .into_iter()
+                    .filter(|(_, record)| Some(record.turn_id.as_str()) == turn_id.as_deref())
+                    .map(|(_, record)| {
+                        format!(
+                            "{{\"semantic_type\":\"{}\",\"payload\":{}}}",
+                            record.semantic_type, record.payload
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
             let response_text = match &outcome {
                 TurnOutcome::Completed { response } => Some(response.text_content()),
                 TurnOutcome::Aborted { partial } => {
                     partial.as_ref().map(|message| message.text_content())
                 }
                 TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached => None,
-            };
+            }
+            .map(|text| {
+                if presented_text.is_empty() {
+                    text
+                } else if text.trim().is_empty() {
+                    presented_text.clone()
+                } else {
+                    format!("{presented_text}\n{text}")
+                }
+            });
             let turn = session
                 .chain_to_root()
                 .iter()

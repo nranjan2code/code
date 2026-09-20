@@ -277,6 +277,13 @@ engine adds a runtime check, not more prose:
 - **Directive drift** (the user changed subject): the working set is
   re-ranked so the retrieved slice favours the new subject; the thread lists
   the superseded directives as "earlier, now paused". No cut, a re-weighting.
+- **Stale data** (the directive asks for a value as it stands now — temporal
+  deixis such as "current", "right now", "today", "latest" sets the
+  `live-data` domain on the reading — and no retrieval-shaped call succeeded
+  in the run): the answer or card can only repeat an earlier turn's figure.
+  One `[freshness-check]` redo asks for a retrieval this turn or an explicit
+  "no live data". Measured live: five of six replays of a "current weather"
+  question emitted a card carrying a temperature from a previous turn.
 - **Model drift** (the model's step does not serve the current directive:
   wrong domain tool, answering a previous question, restating a card): the
   existing steering nudge fires with the *specific* directive it should
@@ -284,6 +291,11 @@ engine adds a runtime check, not more prose:
   horizon. Three consecutive model-drift events end the turn with the
   system-authored degraded outcome (same shape as tool-repair exhaustion in
   15-reliability.md).
+
+A card-only turn is a complete answer: the outcome evaluator sees the turn's
+presentation entries as response content, so a model that emits a card and
+ends without prose (Gemma finishes inside its thinking channel) is not
+graded "no response content".
 
 ### 8. Ollama specifics (measured on 0.34.2, MLX runner)
 

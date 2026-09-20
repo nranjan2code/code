@@ -334,6 +334,30 @@ const EVIDENCE_WORDS: &[(&str, Evidence, f64)] = &[
     ("acceptance", Evidence::Audited, 0.8),
 ];
 
+/// Temporal deixis: the request asks for a value as it stands *now*, which
+/// no model knows from training and which must therefore be retrieved on
+/// this turn (`live-data` domain, docs/design/68-context-engine.md §7 and
+/// `capability/domain.rs`). These are references to time, not to any topic
+/// — a topic word is never a routing key here.
+const RECENCY_PHRASES: &[(&str, f64)] = &[
+    ("right now", 1.0),
+    ("currently", 0.9),
+    ("current ", 0.8),
+    ("as of today", 1.0),
+    ("as of now", 1.0),
+    ("today", 0.6),
+    ("tonight", 0.7),
+    ("this morning", 0.8),
+    ("this week", 0.5),
+    ("latest", 0.7),
+    ("real-time", 1.0),
+    ("real time", 0.8),
+    ("live ", 0.5),
+    ("at the moment", 0.9),
+    ("up to date", 0.7),
+    ("up-to-date", 0.7),
+];
+
 /// Phrases implying the work outlives this turn.
 const HORIZON_PHRASES: &[(&str, Horizon, f64)] = &[
     ("every day", Horizon::Durable, 1.0),
@@ -864,6 +888,25 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         }
     }
 
+    // Temporal deixis ⇒ the answer must be retrieved now, and sourced.
+    let mut recency: Option<(&str, f64)> = None;
+    for (phrase, weight) in RECENCY_PHRASES {
+        let padded = format!(" {lower} ");
+        if padded.contains(phrase) && recency.is_none_or(|(_, best)| *weight > best) {
+            recency = Some((phrase, *weight));
+        }
+    }
+    if let Some((phrase, weight)) = recency {
+        out.domains.push("live-data".into());
+        out.evidence.add(Evidence::Cited, weight * 0.6);
+        out.signals.push(Signal::new(
+            SignalKind::Lexical,
+            format!("recency:{}", phrase.trim().replace(' ', "-")),
+            weight,
+            format!("`{}` ⇒ a current value, retrieved this turn", phrase.trim()),
+        ));
+    }
+
     // --- structural ----------------------------------------------------
     let length = cleaned_text.trim().len();
     if length <= 24 && !tokens.is_empty() {
@@ -1046,6 +1089,26 @@ mod tests {
             history: HistoryFacts::default(),
             attendance_override: None,
         }
+    }
+
+    #[test]
+    fn temporal_deixis_marks_the_request_as_live_data() {
+        let now = extract(&request("what is the current price of copper"));
+        assert!(
+            now.domains.iter().any(|d| d == "live-data"),
+            "{:?}",
+            now.domains
+        );
+        assert!(now.signals.iter().any(|s| s.name.starts_with("recency:")));
+        assert_eq!(now.evidence.winner().map(|w| w.0), Some(Evidence::Cited));
+
+        let timeless = extract(&request("explain how copper is refined"));
+        assert!(!timeless.domains.iter().any(|d| d == "live-data"));
+
+        // A topic word alone is never a routing key: no temporal reference,
+        // no live-data domain.
+        let topic_only = extract(&request("tell me about the climate of Delhi"));
+        assert!(!topic_only.domains.iter().any(|d| d == "live-data"));
     }
 
     #[test]

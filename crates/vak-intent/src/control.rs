@@ -39,6 +39,9 @@ pub enum ControlKind {
     DuplicateCardCheck,
     /// The answer reads as a card but was written as prose.
     PresentationCheck,
+    /// A current value was asked for and nothing was retrieved this turn
+    /// (docs/design/68-context-engine.md §7).
+    FreshnessCheck,
     /// Model drift (docs/design/68-context-engine.md §7): the step served a
     /// different directive than the current one — a mismatched-domain tool
     /// call, or a verbatim repeat of a past answer.
@@ -46,13 +49,14 @@ pub enum ControlKind {
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 7] = [
+    pub const ALL: [ControlKind; 8] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
         ControlKind::FenceCheck,
         ControlKind::DuplicateCardCheck,
         ControlKind::PresentationCheck,
+        ControlKind::FreshnessCheck,
         ControlKind::SteeringDrift,
     ];
 
@@ -66,6 +70,7 @@ impl ControlKind {
             ControlKind::FenceCheck => "[fence-check]",
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
             ControlKind::PresentationCheck => "[presentation-check]",
+            ControlKind::FreshnessCheck => "[freshness-check]",
             ControlKind::SteeringDrift => "[steering-drift]",
         }
     }
@@ -80,6 +85,7 @@ impl ControlKind {
                 | ControlKind::FenceCheck
                 | ControlKind::DuplicateCardCheck
                 | ControlKind::PresentationCheck
+                | ControlKind::FreshnessCheck
         )
     }
 }
@@ -312,7 +318,8 @@ mod tests {
                 ControlKind::GroundingCheck,
                 ControlKind::FenceCheck,
                 ControlKind::DuplicateCardCheck,
-                ControlKind::PresentationCheck
+                ControlKind::PresentationCheck,
+                ControlKind::FreshnessCheck,
             ]
         );
     }
