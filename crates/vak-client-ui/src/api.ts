@@ -1012,6 +1012,37 @@ export function listSessionSandboxRecords(sessionId: string): Promise<{ records:
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }
 
+export type CoworkingInvitation = {
+  grant_id: string;
+  principal_id: string;
+  display_name: string;
+  conversation_id: string;
+  audience_id: string;
+  capabilities: string[];
+  created_at: string;
+  expires_at: string;
+  status: "active" | "expired" | "revoked";
+  revoked_at?: string;
+};
+
+export function listCoworkingInvitations(sessionId: string): Promise<{ invitations: CoworkingInvitation[] }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`);
+}
+
+export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number): Promise<{ invitation: CoworkingInvitation; token: string }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`, {
+    method: "POST",
+    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours }),
+  });
+}
+
+export function revokeCoworkingInvitation(sessionId: string, grantId: string): Promise<void> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations/${encodeURIComponent(grantId)}/revoke`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 export async function exportSandboxCandidate(sessionId: string, executionId: string, source: string, destination = "."):
   Promise<SandboxCandidateRecord> {
   const response = await req<{ kind: "Candidate"; record: SandboxCandidateRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates`, {

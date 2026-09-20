@@ -30,6 +30,7 @@ import {
 import * as api from "../api";
 import { toggleSplit } from "../App";
 import AgentMark from "./AgentMark";
+import CoworkingShare from "./CoworkingShare";
 import Icon, { type IconName } from "./Icon";
 
 const INBOX_POLL_MS = 20_000;
@@ -69,6 +70,7 @@ export default function WorkspaceHeader() {
     return "Ready";
   });
   const [exporting, setExporting] = createSignal(false);
+  const [sharing, setSharing] = createSignal(false);
 
   const closeMoreMenu = (event: MouseEvent) => {
     event.currentTarget instanceof HTMLElement
@@ -119,7 +121,7 @@ export default function WorkspaceHeader() {
   };
 
   return (
-    <header class="workspace-head">
+    <><header class="workspace-head">
       <div class="workspace-leading">
         <Show when={!sidebarOpen()}>
           <button type="button" class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
@@ -170,6 +172,7 @@ export default function WorkspaceHeader() {
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
         <Show when={activeId()}>
+          <button type="button" class="workspace-details-button" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>
           <button
             type="button"
             class="workspace-details-button"
@@ -204,6 +207,6 @@ export default function WorkspaceHeader() {
           </div>
         </details>
       </div>
-    </header>
+    </header><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
   );
 }
