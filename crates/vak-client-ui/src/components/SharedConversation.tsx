@@ -242,7 +242,7 @@ export default function SharedConversation() {
   return <main class="shared-conversation">
     <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
-      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you` : "You"} can follow this conversation and its saved drafts{canComment() ? ", and leave comments on a draft" : ""}. Agent requests and workspace changes remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
+      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation and its saved drafts{canComment() ? ", and leave comments on a draft" : ""}. Agent requests and workspace changes remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
