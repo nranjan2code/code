@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createContext, createEffect, createMemo, createSignal, onCleanup, useContext } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { safeUrl, sandboxedSrcdoc } from "../../safeUrl";
@@ -49,6 +49,8 @@ export interface GenericSpecRendererProps {
   /** aria-label for the enclosing section; falls back to a generic label. */
   label?: string;
 }
+
+export const PresentationInteractionContext = createContext<{ onOptionSelect(label: string): void }>();
 
 // Chart axis labels are drawn at fixed positions in a fixed-width SVG; a long
 // category ("Week of September 14–18, 2026") otherwise runs off the chart and
@@ -118,35 +120,36 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
 function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
   const title = str(node.props, "title") ?? "Overview";
   const kicker = str(node.props, "kicker") ?? "Plan";
+  const options = str(node.props, "variant") === "options";
+  const interaction = useContext(PresentationInteractionContext);
   const items = Array.isArray(node.children) ? node.children : [];
   const compact = surface === "compact";
+  const list = <For each={items}>
+    {(item, index) => {
+      const itemProps = item && typeof item === "object" && item.props && typeof item.props === "object" ? item.props : {};
+      const label = str(itemProps, "label") ?? str(itemProps, "title") ?? "Item";
+      const detail = str(itemProps, "detail");
+      const status = str(itemProps, "status");
+      return <li classList={{ complete: status === "complete" || status === "done", "is-option": options }}>
+        <Show when={!options}><span class="adaptive-timeline-marker" aria-hidden="true">{index() + 1}</span></Show>
+        <div>
+          <strong>{label}</strong>
+          <Show when={detail && !compact}><p>{detail}</p></Show>
+          <Show when={status}><small>{status}</small></Show>
+        </div>
+        <Show when={options && interaction && !compact}>
+          <button type="button" class="adaptive-option-action" onClick={() => interaction?.onOptionSelect(label)} aria-label={`Discuss ${label}`}>Discuss</button>
+        </Show>
+      </li>;
+    }}
+  </For>;
   return (
-    <section class="adaptive-timeline" classList={{ "adaptive-timeline-compact": compact }} aria-label={title}>
+    <section class="adaptive-timeline" classList={{ "adaptive-timeline-compact": compact, "adaptive-options": options }} aria-label={title}>
       <header class="adaptive-timeline-head">
-        <span class="adaptive-timeline-kicker">{kicker}</span>
+        <Show when={!options}><span class="adaptive-timeline-kicker">{kicker}</span></Show>
         <h3>{title}</h3>
       </header>
-      <ol>
-        <For each={items}>
-          {(item, index) => {
-            const itemProps = item && typeof item === "object" && item.props && typeof item.props === "object" ? item.props : {};
-            const label = str(itemProps, "label") ?? str(itemProps, "title") ?? "Item";
-            const detail = str(itemProps, "detail");
-            const status = str(itemProps, "status");
-            return (
-              <li classList={{ complete: status === "complete" || status === "done" }}>
-                <span class="adaptive-timeline-marker" aria-hidden="true">{index() + 1}</span>
-                <div>
-                  <strong>{label}</strong>
-                  {/* Compact surfaces drop secondary detail text to keep density down. */}
-                  <Show when={detail && !compact}><p>{detail}</p></Show>
-                  <Show when={status}><small>{status}</small></Show>
-                </div>
-              </li>
-            );
-          }}
-        </For>
-      </ol>
+      <Show when={options} fallback={<ol>{list}</ol>}><ul>{list}</ul></Show>
     </section>
   );
 }
@@ -1439,19 +1442,19 @@ interface RawTimelineItem {
   status?: string;
 }
 
+const TIMELINE_ARRAY_FIELDS = ["items", "steps", "milestones", "slots", "agenda", "tasks", "options", "choices", "questions", "qa", "entries"] as const;
+
+function timelineArrayField(record: Record<string, unknown>): string | undefined {
+  return TIMELINE_ARRAY_FIELDS.find((key) => Array.isArray(record[key]));
+}
+
 function normalizeTimelineItems(data: unknown): RawTimelineItem[] {
   if (!data || typeof data !== "object") return [];
   const record = data as Record<string, unknown>;
   let rawItems: unknown[] = [];
   let matchedArrayField = false;
-  const candidates = ["items", "steps", "milestones", "slots", "agenda", "tasks", "options", "choices", "questions", "qa", "entries"];
-  for (const key of candidates) {
-    if (Array.isArray(record[key])) {
-      rawItems = record[key] as unknown[];
-      matchedArrayField = true;
-      break;
-    }
-  }
+  const arrayField = timelineArrayField(record);
+  if (arrayField) { rawItems = record[arrayField] as unknown[]; matchedArrayField = true; }
   if (!matchedArrayField && Array.isArray(data)) {
     rawItems = data as unknown[];
     matchedArrayField = true;
@@ -1489,7 +1492,7 @@ export function buildTimelineSpec(data: unknown, defaultTitle = "Plan", kicker =
   const items = normalizeTimelineItems(data);
   return {
     primitive: "timeline",
-    props: { title, kicker },
+    props: { title, kicker, variant: timelineArrayField(record) === "options" ? "options" : "sequence" },
     children: items.map((item) => ({
       primitive: "section",
       props: { label: item.label, detail: item.detail ?? "", status: item.status ?? "" },

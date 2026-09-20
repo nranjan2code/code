@@ -35,7 +35,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
-import GenericSpecRenderer, { buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
+import GenericSpecRenderer, { PresentationInteractionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -824,14 +824,16 @@ function ResultEvidence(props: { item: OutputItem }) {
 
 function ResultFollowUp(props: { item: OutputItem; sessionId: string }) {
   const revise = () => {
+    const resultId = props.item.outcome?.result_id;
+    if (!resultId) return;
     setReplyTarget({
       sessionId: props.sessionId,
-      resultId: props.item.outcome?.result_id ?? props.item.id,
+      resultId,
       label: "this result",
     });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <div class="primary-result-follow-up"><button type="button" onClick={revise}>Ask for a change</button></div>;
+  return <Show when={props.item.outcome?.result_id}><div class="primary-result-follow-up"><button type="button" onClick={revise}>Ask for a change</button></div></Show>;
 }
 
 function ActivityRow(props: { item: OutputItem }) {
@@ -909,8 +911,17 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string; 
   </section>;
 }
 
-export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; presentationId?: string }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
+  const optionInteraction = () => {
+    const sessionId = props.sessionId;
+    const resultId = props.resultId;
+    if (!sessionId || !resultId) return undefined;
+    return { onOptionSelect: (label: string) => {
+      setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
+      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `I'd like to discuss “${label}”.`, mode: "append" } }));
+    } };
+  };
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
     : <details class="tool-details"><summary>View original result</summary><pre>{props.fallback || JSON.stringify(props.output.payload, null, 2)}</pre></details>;
@@ -918,7 +929,9 @@ export function StructuredView(props: { output: import("../types").StructuredOut
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
-          <StructuredRenderer output={props.output} />
+          <PresentationInteractionContext.Provider value={optionInteraction()}>
+            <StructuredRenderer output={props.output} />
+          </PresentationInteractionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>
             <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />
           </Show>
@@ -1046,7 +1059,14 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "project_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Project Plan", "Project")} />,
   "meeting_notes": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Meeting Notes", "Meeting")} />,
   "contact_log": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Contact Log", "Contact")} />,
-  "travel_options": ({ data }) => (Array.isArray(data?.rows) || Array.isArray(data?.columns)) ? <GenericSpecRenderer node={buildTableSpec(data, "Travel Options")} /> : <GenericSpecRenderer node={buildTimelineSpec(data, "Travel Options", "Travel")} />,
+  "travel_options": ({ data }) => {
+    const tableShape = !Array.isArray(data?.options) && (
+      Array.isArray(data?.rows) || Array.isArray(data?.columns) ||
+      Array.isArray(data?.pros) || Array.isArray(data?.cons) ||
+      (data?.left && data?.right)
+    );
+    return <GenericSpecRenderer node={tableShape ? buildTableSpec(data, "Travel Options") : buildTimelineSpec(data, "Travel Options", "Travel")} />;
+  },
   "home_project": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Home Project", "Project")} />,
   "care_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Care Plan", "Care Plan")} />,
   "event_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Event Plan", "Event")} />,
@@ -1107,6 +1127,10 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
+  const uniqueResultId = () => {
+    const ids = new Set(props.items.map((entry) => entry.outcome?.result_id).filter((id): id is string => Boolean(id)));
+    return ids.size === 1 ? [...ids][0] : undefined;
+  };
   const ordered = () => {
     const seen = new Set<string>();
     const nonProgress = props.items
@@ -1195,7 +1219,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") {
       const isRawJson = item.fallback_text.trim().startsWith("{") || item.fallback_text.includes('"type":');

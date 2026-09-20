@@ -96,9 +96,11 @@ export default function Composer(props: { cwd: string }) {
     window.addEventListener("vak:focus-composer", focus);
     onCleanup(() => window.removeEventListener("vak:focus-composer", focus));
     const onEditPrompt = (ev: Event) => {
-      const custom = ev as CustomEvent<{ text: string }>;
+      const custom = ev as CustomEvent<{ text: string; mode?: "append" }>;
       if (custom.detail?.text) {
-        setText(custom.detail.text);
+        setText((current) => custom.detail.mode === "append" && current.trim()
+          ? `${current.trimEnd()}\n${custom.detail.text}`
+          : custom.detail.text);
         queueMicrotask(() => {
           if (ta) {
             ta.focus();

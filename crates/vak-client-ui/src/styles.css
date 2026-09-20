@@ -984,7 +984,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-timeline-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border-soft); padding-bottom: 9px; }
 .adaptive-timeline-kicker { color: var(--accent); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .adaptive-timeline h3 { margin: 0; color: var(--text); font-size: 15px; font-weight: 620; }
-.adaptive-timeline ol { display: grid; gap: 0; list-style: none; margin: 12px 0 0; padding: 0; }
+.adaptive-timeline :is(ol, ul) { display: grid; gap: 0; list-style: none; margin: 12px 0 0; padding: 0; }
 .adaptive-timeline li { display: grid; grid-template-columns: 24px 1fr; gap: 10px; position: relative; padding: 0 0 14px; }
 .adaptive-timeline li:last-child { padding-bottom: 0; }
 .adaptive-timeline li:not(:last-child)::after { content: ""; position: absolute; left: 11px; top: 24px; bottom: 0; width: 1px; background: var(--border); }
@@ -993,6 +993,11 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-timeline strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .adaptive-timeline p { margin: 3px 0 0; color: var(--text-soft); font-size: 12px; line-height: 1.45; }
 .adaptive-timeline small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.adaptive-options li.is-option { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.adaptive-options li.is-option:last-child { border-bottom: 0; padding-bottom: 0; }
+.adaptive-options li.is-option::after { display: none; }
+.adaptive-option-action { align-self: center; border: 1px solid var(--border-soft); border-radius: 999px; padding: 6px 10px; color: var(--muted); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.adaptive-option-action:hover, .adaptive-option-action:focus-visible { border-color: var(--accent); color: var(--text); }
 
 .assistant-structured-card {
   margin: 12px 0;
