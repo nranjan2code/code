@@ -3564,9 +3564,53 @@ pub(crate) struct AuthPolicy {
     pub(crate) trusted_hosts: Vec<String>,
 }
 
+/// Identity established by the HTTP boundary. Participant grants are kept
+/// distinct from the operator credential so downstream handlers can add
+/// attribution and narrower decisions without ever treating a collaborator
+/// as the workspace owner.
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Read by attributed participant handlers in the next coworking slice.
+pub(crate) enum AuthenticatedPrincipal {
+    Operator,
+    Participant(coworking::VerifiedPrincipal),
+}
+
+fn participant_read_route_allowed(
+    method: &axum::http::Method,
+    path: &str,
+    principal: &coworking::VerifiedPrincipal,
+) -> bool {
+    if method != axum::http::Method::GET
+        || !principal
+            .capabilities
+            .iter()
+            .any(|capability| capability == "read")
+    {
+        return false;
+    }
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let ["sessions", conversation_id, rest @ ..] = segments.as_slice() else {
+        return false;
+    };
+    if *conversation_id != principal.conversation_id {
+        return false;
+    }
+    matches!(
+        *rest,
+        ["transcript"]
+            | ["transcript.md"]
+            | ["presentation"]
+            | ["results", _]
+            | ["sandbox", "records"]
+            | ["sandbox", "candidates", _, "files"]
+            | ["sandbox", "candidates", _, "files", "raw"]
+            | ["sandbox", "candidates", _, "comments"]
+    )
+}
+
 pub(crate) async fn require_bearer(
     State(policy): State<AuthPolicy>,
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let AuthPolicy {
@@ -3686,45 +3730,81 @@ pub(crate) async fn require_bearer(
             })
         })
         .flatten();
-    let provided = header_token.or(cookie_token).or(query_token);
+    let participant_token = header_token.as_deref();
+    let provided = header_token.clone().or(cookie_token).or(query_token);
     let ok = provided
         .as_deref()
         .map(|p| p.as_bytes().ct_eq(token.as_bytes()).into())
         .unwrap_or(false);
     if ok {
+        req.extensions_mut()
+            .insert(AuthenticatedPrincipal::Operator);
         next.run(req).await
-    } else {
-        let ip = req
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let detail = format!(
-            "path={} provided={}",
-            req.uri().path(),
-            provided
-                .as_deref()
-                .map(|p| format!(
-                    "{}...{}",
-                    &p[..4.min(p.len())],
-                    &p[p.len().saturating_sub(4)..]
-                ))
-                .unwrap_or_else(|| "<none>".into())
-        );
-        vak_core::security_events::record(
-            &home,
-            vak_core::security_events::EventKind::AuthFailure,
-            "auth_failure",
-            &detail,
-            ip,
-        );
-        if let Some(hub) = events::global() {
-            hub.emit_security("AuthFailure", req.uri().path());
+    } else if let Some(participant_token) = participant_token {
+        match coworking::verify(
+            &coworking::store_path(&home),
+            participant_token,
+            chrono::Utc::now(),
+        ) {
+            Ok(Some(principal)) => {
+                if !participant_read_route_allowed(req.method(), req.uri().path(), &principal) {
+                    return StatusCode::FORBIDDEN.into_response();
+                }
+                req.extensions_mut()
+                    .insert(AuthenticatedPrincipal::Participant(principal));
+                next.run(req).await
+            }
+            Ok(None) => unauthorized_response(&home, &req, provided.as_deref()),
+            Err(error) => {
+                vak_core::security_events::record(
+                    &home,
+                    vak_core::security_events::EventKind::AuthFailure,
+                    "coworking_grant_store_unavailable",
+                    &format!("path={} error={error}", req.uri().path()),
+                    None,
+                );
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
         }
-        StatusCode::UNAUTHORIZED.into_response()
+    } else {
+        unauthorized_response(&home, &req, provided.as_deref())
     }
+}
+
+fn unauthorized_response(
+    home: &std::path::Path,
+    req: &axum::extract::Request,
+    provided: Option<&str>,
+) -> axum::response::Response {
+    let ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let detail = format!(
+        "path={} provided={}",
+        req.uri().path(),
+        provided
+            .map(|p| format!(
+                "{}...{}",
+                &p[..4.min(p.len())],
+                &p[p.len().saturating_sub(4)..]
+            ))
+            .unwrap_or_else(|| "<none>".into())
+    );
+    vak_core::security_events::record(
+        home,
+        vak_core::security_events::EventKind::AuthFailure,
+        "auth_failure",
+        &detail,
+        ip,
+    );
+    if let Some(hub) = events::global() {
+        hub.emit_security("AuthFailure", req.uri().path());
+    }
+    StatusCode::UNAUTHORIZED.into_response()
 }
 
 fn health_projection(state: &AppState) -> serde_json::Value {
@@ -17280,6 +17360,63 @@ mod sandbox_promotion_tests {
         assert_eq!(found[0].cmd, "python3");
         assert_eq!(found[0].args, vec!["-m", "http.server", "8080"]);
         assert_eq!(found[0].port, Some(8080));
+    }
+
+    fn participant(capabilities: &[&str]) -> coworking::VerifiedPrincipal {
+        coworking::VerifiedPrincipal {
+            grant_id: "grant-1".into(),
+            principal_id: "person-2".into(),
+            display_name: "Asha".into(),
+            conversation_id: "session-1".into(),
+            audience_id: "conversation:session-1".into(),
+            capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
+        }
+    }
+
+    #[test]
+    fn participant_read_scope_is_exact_and_fail_closed() {
+        let principal = participant(&["read"]);
+        for path in [
+            "/sessions/session-1/transcript",
+            "/sessions/session-1/transcript.md",
+            "/sessions/session-1/presentation",
+            "/sessions/session-1/results/result-1",
+            "/sessions/session-1/sandbox/records",
+            "/sessions/session-1/sandbox/candidates/candidate-1/files",
+            "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
+            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+        ] {
+            assert!(participant_read_route_allowed(
+                &axum::http::Method::GET,
+                path,
+                &principal
+            ));
+        }
+        for path in [
+            "/sessions/session-2/transcript",
+            "/sessions/session-1/events",
+            "/sessions/session-1/run",
+            "/sessions/session-1/sandbox/executions",
+            "/sessions/session-1/sandbox/promote",
+            "/fs/file",
+            "/config",
+        ] {
+            assert!(!participant_read_route_allowed(
+                &axum::http::Method::GET,
+                path,
+                &principal
+            ));
+        }
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            &principal
+        ));
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::GET,
+            "/sessions/session-1/transcript",
+            &participant(&["comment"])
+        ));
     }
 
     #[tokio::test]
