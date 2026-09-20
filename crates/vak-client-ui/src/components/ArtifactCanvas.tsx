@@ -47,6 +47,13 @@ export default function ArtifactCanvas() {
   const [isClosing, setIsClosing] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
   const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "error">("idle");
+  const [commentLineStart, setCommentLineStart] = createSignal("");
+  const [commentLineEnd, setCommentLineEnd] = createSignal("");
+  const commentLineInvalid = () => {
+    const start = Number.parseInt(commentLineStart(), 10);
+    const end = Number.parseInt(commentLineEnd(), 10);
+    return commentLineEnd() !== "" && (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start);
+  };
 
   let request = 0;
   let startedServerName: string | null = null;
@@ -57,6 +64,8 @@ export default function ArtifactCanvas() {
     void canvasArtifact()?.id;
     setFeedback("");
     setFeedbackState("idle");
+    setCommentLineStart("");
+    setCommentLineEnd("");
   });
 
   const sendRevision = async () => {
@@ -68,7 +77,13 @@ export default function ArtifactCanvas() {
     const subject = artifact.artifactPath || artifact.title;
     try {
       if (artifact.candidateId) {
-        await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, { path: artifact.artifactPath || undefined });
+        const lineStart = Number.parseInt(commentLineStart(), 10);
+        const lineEnd = Number.parseInt(commentLineEnd(), 10);
+        await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, {
+          path: artifact.artifactPath || undefined,
+          lineStart: Number.isFinite(lineStart) && lineStart > 0 ? lineStart : undefined,
+          lineEnd: Number.isFinite(lineEnd) && lineEnd > 0 ? lineEnd : undefined,
+        });
       } else {
         const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
         await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
@@ -661,6 +676,16 @@ export default function ArtifactCanvas() {
             <span>Tell the Agent what to change in this draft.</span>
           </div>
           <div class="artifact-canvas-feedback-compose">
+            <Show when={canvasArtifact()?.candidateId && viewMode() === "source"}>
+              <div class="artifact-canvas-line-anchor" aria-label="Comment location">
+                <label for="canvas-comment-line-start">Line</label>
+                <input id="canvas-comment-line-start" type="number" min="1" inputmode="numeric" value={commentLineStart()} onInput={(event) => setCommentLineStart(event.currentTarget.value)} placeholder="Start" />
+                <span>to</span>
+                <input type="number" min={commentLineStart() || "1"} inputmode="numeric" disabled={!commentLineStart()} value={commentLineEnd()} onInput={(event) => setCommentLineEnd(event.currentTarget.value)} placeholder="End" aria-label="End line" />
+                <button type="button" class="artifact-canvas-btn" onClick={() => { setCommentLineStart(""); setCommentLineEnd(""); }}>Whole file</button>
+              </div>
+              <Show when={commentLineInvalid()}><small role="alert">End line must be on or after the start line.</small></Show>
+            </Show>
             <textarea
               rows={2}
               value={feedback()}
@@ -674,7 +699,7 @@ export default function ArtifactCanvas() {
               placeholder="What should change?"
               aria-label="Feedback for this draft"
             />
-            <button type="button" disabled={!feedback().trim() || feedbackState() === "sending"} onClick={() => void sendRevision()}>
+            <button type="button" disabled={!feedback().trim() || feedbackState() === "sending" || commentLineInvalid()} onClick={() => void sendRevision()}>
               {feedbackState() === "sending" ? "Sending…" : "Ask for revision"}
             </button>
           </div>

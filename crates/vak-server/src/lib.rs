@@ -9862,6 +9862,7 @@ async fn comment_on_sandbox_candidate(
     }
     if body.line_start.is_some_and(|line| line == 0)
         || body.line_end.is_some_and(|line| line == 0)
+        || (body.line_end.is_some() && body.line_start.is_none())
         || matches!((body.line_start, body.line_end), (Some(start), Some(end)) if end < start)
     {
         return StatusCode::BAD_REQUEST.into_response();
@@ -17057,6 +17058,19 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(invalid_comment.status(), StatusCode::BAD_REQUEST);
+        let invalid_range = comment_on_sandbox_candidate(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            Json(CandidateCommentBody {
+                text: "Change this line".into(),
+                path: Some("result.txt".into()),
+                line_start: None,
+                line_end: Some(2),
+                request_id: Some("invalid-range".into()),
+            }),
+        )
+        .await;
+        assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
         let response = promote_sandbox_candidate(
             State(state),
             Path("session-1".into()),
