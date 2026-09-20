@@ -1076,6 +1076,22 @@ impl Agent {
         let outcome = self
             .run_message_inner(prompt, steering, cancel.clone(), events.clone())
             .await;
+        // A system-authored completion (drift, card-repeat and stale-data
+        // outcomes) is the turn's answer as much as a model-authored one:
+        // it must be on the ledger, or the turn never closes and the next
+        // request would fold this one into it (invariant 1: model-visible
+        // means logged).
+        if let TurnOutcome::Completed { response } = &outcome {
+            let already_logged = {
+                let session = self.session.lock().await;
+                session.message_chain().last().is_some_and(|(_, last)| {
+                    last.role == Role::Assistant && last.content == response.content
+                })
+            };
+            if !already_logged {
+                self.append_assistant(response).await;
+            }
+        }
         // Turn-close hook (docs/design/68-context-engine.md §10): builds and
         // appends the TurnCard once the turn has actually closed. A turn
         // that never got a final assistant text (most `Failed`/aborted

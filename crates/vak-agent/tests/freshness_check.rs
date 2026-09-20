@@ -482,4 +482,17 @@ async fn a_second_stale_card_fails_closed_with_an_honest_answer() {
         presented, 0,
         "no stale card may reach the ledger as a presentation"
     );
+    // The system-authored answer is on the ledger, so the turn is closed
+    // and carded like any other.
+    let (last_is_answer, carded) = futures::executor::block_on(async {
+        let session = agent.session.lock().await;
+        let last = session
+            .message_chain()
+            .last()
+            .map(|(_, m)| m.text_content().contains("carried-over figure"))
+            .unwrap_or(false);
+        (last, session.turn_cards().len())
+    });
+    assert!(last_is_answer, "the fail-closed answer must be logged");
+    assert_eq!(carded, 1, "the turn closes with a TurnCard");
 }
