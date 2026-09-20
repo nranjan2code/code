@@ -10278,19 +10278,23 @@ async fn comment_on_sandbox_candidate(
     }
     data.insert("comment".into(), text.to_string());
     let comment = vak_session::ActivityRecord {
-            activity_id: format!("comment-{request_id}"),
-            turn: None,
-            kind: vak_session::ActivityKind::CandidateComment,
-            status: vak_session::ActivityStatus::Succeeded,
-            label: "Candidate comment".into(),
-            detail: None,
-            data,
-        };
+        activity_id: format!("comment-{request_id}"),
+        turn: None,
+        kind: vak_session::ActivityKind::CandidateComment,
+        status: vak_session::ActivityStatus::Succeeded,
+        label: "Candidate comment".into(),
+        detail: None,
+        data,
+    };
     // A comment receipt must not claim success if its append-only record failed.
     let recorded = match handle.session.lock() {
         Ok(mut session) => match session.as_mut() {
             Some(session) => session.append_activity(comment).is_ok(),
-            None => handle.activity_buffer.lock().map(|mut buffer| buffer.push(comment)).is_ok(),
+            None => handle
+                .activity_buffer
+                .lock()
+                .map(|mut buffer| buffer.push(comment))
+                .is_ok(),
         },
         Err(_) => false,
     };
@@ -10359,11 +10363,14 @@ async fn request_revision_from_candidate_comment(
     let comment = from_log.or_else(|| {
         state.get(&session_id).and_then(|handle| {
             handle.activity_buffer.lock().ok().and_then(|buffer| {
-                buffer.iter().find(|activity| {
-                    activity.activity_id == comment_id
-                        && activity.kind == vak_session::ActivityKind::CandidateComment
-                        && activity.data.get("candidate_id") == Some(&candidate_id)
-                }).cloned()
+                buffer
+                    .iter()
+                    .find(|activity| {
+                        activity.activity_id == comment_id
+                            && activity.kind == vak_session::ActivityKind::CandidateComment
+                            && activity.data.get("candidate_id") == Some(&candidate_id)
+                    })
+                    .cloned()
             })
         })
     });
@@ -10376,7 +10383,11 @@ async fn request_revision_from_candidate_comment(
     let Some(body) = comment.data.get("comment") else {
         return StatusCode::CONFLICT.into_response();
     };
-    let location = match (comment.data.get("path"), comment.data.get("line_start"), comment.data.get("line_end")) {
+    let location = match (
+        comment.data.get("path"),
+        comment.data.get("line_start"),
+        comment.data.get("line_end"),
+    ) {
         (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
         (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
         (Some(path), _, _) => format!(" file {path}"),
@@ -17250,7 +17261,9 @@ mod sandbox_promotion_tests {
                 parent_session_id: None,
                 contract_id: None,
                 work_item_id: None,
-                conversation: None,
+                conversation: Some(vak_session::types::ConversationContext::local(
+                    session_id, "test",
+                )),
                 contract: vak_session::types::FrozenContract {
                     app_version: "test".into(),
                     provider: "test".into(),
@@ -17814,6 +17827,163 @@ mod sandbox_promotion_tests {
             .await
             .unwrap()
             .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn participant_comment_is_shared_and_revocation_blocks_access() {
+        use tower::ServiceExt;
+
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "saved candidate")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let session_path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join("session-1.jsonl");
+        let session = SessionLog::open(session_path).unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            session,
+            core.cwd().to_path_buf(),
+            core.clone(),
+        );
+
+        let token = "participant-comment-token";
+        let grants = coworking::store_path(&core.sessions_home());
+        coworking::invite(
+            &grants,
+            coworking::AudienceGrant {
+                grant_id: "grant-comment".into(),
+                principal_id: "person-2".into(),
+                display_name: "Asha".into(),
+                conversation_id: "session-1".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "comment".into()],
+                token_hash: coworking::token_hash(token),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            },
+        )
+        .unwrap();
+        let comments_path = format!(
+            "/sessions/session-1/sandbox/candidates/{}/comments",
+            candidate.candidate.candidate_id
+        );
+        let app = Router::new()
+            .route(
+                "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
+                get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
+            )
+            .with_state(state)
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: core.sessions_home(),
+                    trusted_hosts: Vec::new(),
+                },
+                require_bearer,
+            ));
+        let request = |method: axum::http::Method, bearer: &str, body: String| {
+            axum::http::Request::builder()
+                .method(method)
+                .uri(&comments_path)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {bearer}"),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap()
+        };
+        let posted = app.clone().oneshot(request(axum::http::Method::POST, token,
+            serde_json::json!({"text":"Please make this clearer", "path":"result.txt", "line_start":1}).to_string()))
+            .await.unwrap();
+        assert_eq!(posted.status(), StatusCode::CREATED);
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(posted.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["intervention"], false);
+        let participant_read = app
+            .clone()
+            .oneshot(request(axum::http::Method::GET, token, String::new()))
+            .await
+            .unwrap();
+        assert_eq!(participant_read.status(), StatusCode::OK);
+        let participant_body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(participant_read.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let owner_read = app
+            .clone()
+            .oneshot(request(
+                axum::http::Method::GET,
+                "operator-secret",
+                String::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(owner_read.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(owner_read.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["comments"][0]["actor_id"], "person-2");
+        assert_eq!(body["comments"][0]["actor_name"], "Asha");
+        assert_eq!(body["comments"][0]["path"], "result.txt");
+        assert_eq!(participant_body["comments"], body["comments"]);
+        coworking::invite(
+            &grants,
+            coworking::AudienceGrant {
+                grant_id: "grant-read-only".into(),
+                principal_id: "person-3".into(),
+                display_name: "Ravi".into(),
+                conversation_id: "session-1".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into()],
+                token_hash: coworking::token_hash("read-only-token"),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::POST,
+                    "read-only-token",
+                    serde_json::json!({"text":"Cannot write"}).to_string()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        coworking::revoke(&grants, "grant-comment", "operator").unwrap();
+        assert_eq!(
+            app.oneshot(request(axum::http::Method::GET, token, String::new()))
+                .await
+                .unwrap()
+                .status(),
             StatusCode::UNAUTHORIZED
         );
     }
