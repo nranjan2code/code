@@ -506,19 +506,32 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     blind** (docs/design/68-context-engine.md). Every number that shapes a
     request — window, usable instruction horizon, tokens per char, prefill
     rate, cache behaviour — comes from a per-model `CapacityProfile` probed
-    at bind time and revised from every receipt; feedback never widens a
+    at bind time (majority-of-three samples per rung, over filler shaped
+    like real turns) and revised from every receipt; feedback never widens a
     horizon. The turn is the unit: a turn is never split, the open turn is
-    verbatim, closed turns project at `Full` (directive + trace lines +
-    presentations + narration, no tool blocks), `Card` (one `TurnCard` line)
-    or `Packet` fidelity chosen by the `WorkingSetPlanner` against the
-    measured budget, and every tool result stays reachable through `recall`
-    by evidence id, presentation id or turn number. No character-count
-    truncation anywhere. The system prefix (identity, contract, card
-    catalogue, tool index) is byte-stable across turns; everything per-turn
-    (temporal context, intent, stance, work contract, conversation thread,
-    nudges) rides in one tail block on the last user message, and cache
-    breakpoints/keys are rendered per provider. Presentations and TurnCards
-    are hash-linked ledger entries, never rebuilt from tool arguments.
+    verbatim, a closed turn projects at `Full` (its real `tool_use`/
+    `tool_result` pairs, thinking dropped, results replaced by a
+    schema-driven digest and cards by their short ack — never a
+    prose-narrated trace, which a small model imitates as prose), `Card`
+    (one `TurnCard` line) or `Packet` fidelity chosen by the
+    `WorkingSetPlanner` against the measured budget by descending
+    `max(recency, relevance, anaphora)` value, never a reserved share. Every
+    tool result stays reachable through `recall` by evidence id,
+    presentation id or turn number. No character-count truncation anywhere.
+    The system prefix (identity, contract, card catalogue, tool index) is
+    byte-stable across turns; everything per-turn (temporal context, intent,
+    stance, work contract, conversation thread, nudges) rides in one tail
+    block on the last user message — placed *before* the user's own words,
+    and never restating the directive, both found live to derail a small
+    model — and cache breakpoints/keys are rendered per provider.
+    Presentations and TurnCards are hash-linked ledger entries, never
+    rebuilt from tool arguments. A directive with temporal deixis
+    ("current", "right now") that gets no retrieval this run is a
+    `[freshness-check]` redo, then fails closed with an honest last-known
+    statement rather than presenting a carried-over figure as current; a
+    thinking-only step is one `[empty-step]` redo unless a card already
+    answered; three consecutive domain-mismatched or answer-repeating steps
+    end the turn via the same degraded outcome as tool-repair exhaustion.
     Vendor and topic names (a search provider, a weather API) are never
     behaviour keys; `vak-eval`'s banned-token gate enforces it.
 37. **Agent ownership is mandatory for new work and isolates workspaces,
@@ -729,12 +742,26 @@ not backticked.
 
 ```
 crates/vak-llm       unified provider API (anthropic / openai-responses /
-                     openai-completions / google), SSE, delta+snapshot events,
-                     live model discovery (models.rs), work receipts +
-                     dispatch ceiling (work.rs), frozen-ladder ordering:
-                     demand-scored objectives, belief demotion,
-                     cross-model fallbacks (route.rs) --
-                     docs/design/42-managed-work-contracts.md Phases A+B+R
+                     openai-completions / google / native ollama), SSE,
+                     delta+snapshot events, live model discovery
+                     (models.rs, incl. quantisation from Ollama's
+                     `/api/show`), work receipts + dispatch ceiling
+                     (work.rs), frozen-ladder ordering: demand-scored
+                     objectives, belief demotion, cross-model fallbacks
+                     (route.rs) -- docs/design/42-managed-work-contracts.md
+                     Phases A+B+R. `ChatRequest.cache` (session key +
+                     per-message breakpoints) and `ToolDefinition.defer`
+                     render per provider: Anthropic `cache_control` (<=4
+                     breakpoints) + `defer_loading` + the server-side tool
+                     search tool with opaque `ContentBlock::Provider`
+                     round-tripping, OpenAI `prompt_cache_key` +
+                     `previous_response_id` chaining, OpenRouter
+                     `session_id`; `turn.rs::current_turn_boundary` decides
+                     what thinking gets replayed. Native Ollama
+                     (`ollama.rs`) speaks `/api/chat` directly with
+                     `keep_alive`/`num_ctx`, fills prefill/load timing into
+                     `Usage`, and never replays thinking (docs/design/
+                     68-context-engine.md §8, §10, §11)
                      + Gemini Live voice synthesis
                      (google_live.rs): BidiGenerateContent WebSocket
                      session, wall-clock timeout + input-length cap since
@@ -785,10 +812,16 @@ crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      reviewable boundary between a task candidate and its
                      destination (docs/design/25-docker-sandbox.md,
                      54-task-environments-and-promotion.md)
-crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
-                     behind Tool trait, versioned broker-worker protocol,
-                     bounded subprocess environment, resource claims,
-                     sandbox backends (Seatbelt/Landlock)
+crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
+                     find_tools/recall behind Tool trait, versioned
+                     broker-worker protocol, bounded subprocess
+                     environment, resource claims, sandbox backends
+                     (Seatbelt/Landlock). `find_tools` ranks the deferred
+                     set by name/description/argument match and returns
+                     full schemas; `recall` is intercepted in the agent
+                     loop (never dispatched to a worker) and answers from
+                     the session by turn number, presentation id, or
+                     evidence id (docs/design/68-context-engine.md §3, §5)
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny. Deny/Ask
                      match existentially (one bad effect gates the call);
                      Allow is UNIVERSAL — every segment of a compound shell
@@ -811,6 +844,14 @@ crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      or a config file. `Limits` is a meet semilattice whose top
                      element reproduces pre-kernel behaviour; `meet` is the only
                      composition operator and there is deliberately no `join`.
+                     Temporal deixis ("current", "right now", "today",
+                     "latest") is a signal that sets the `live-data` domain
+                     without raising the evidence standard -- the vote alone,
+                     tried and measured, stalled a small local model into
+                     silence (docs/design/68-context-engine.md §7).
+                     `control.rs` is the single `ControlKind` vocabulary for
+                     every runtime-authored nudge, including
+                     `FreshnessCheck`/`EmptyStep`/`SteeringDrift`.
 crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
                      satisfaction lattice, the append-only ledger + projection,
                      and the deterministic portfolio scheduler. Reuses
@@ -832,7 +873,20 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset
                      (docs/design/42-managed-work-contracts.md), workers (task tool) +
-                     parent-scoped WorkerRegistry
+                     parent-scoped WorkerRegistry. `capacity.rs`: the
+                     `CapacityProfile` type, the bind-time probe ladder
+                     (turn-shaped filler, majority-of-three samples per
+                     rung) and usage/latency feedback -- Core drives the
+                     probe and records it, this crate owns the math.
+                     `planner.rs`: the pure `WorkingSetPlan` -- per closed
+                     turn, `Full`/`Card` fill by descending
+                     max(recency, relevance, anaphora) value against the
+                     measured budget, overflow collapses into one packet,
+                     never a reserved share. Turn-close hook builds and
+                     appends each turn's `TurnCard`; the freshness, empty-
+                     step, steering-drift and card-repeat gates all live in
+                     the loop itself (docs/design/03-agent-loop.md,
+                     docs/design/68-context-engine.md)
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-engine gate and banned-token gate
@@ -848,7 +902,12 @@ crates/vak-config    layered TOML config + atomic persisted workspace
                      [server] bind/trusted_hosts/public_url/
                      session_ttl_hours/workspace_roots/[server.web] --
                      network exposure, PRIVILEGED in full
-                     (docs/design/48-web-client.md)
+                     (docs/design/48-web-client.md) +
+                     [providers.ollama] keep_alive/num_ctx (Go-duration
+                     validated) threaded to the native Ollama provider +
+                     [probe] hosted = "none"|"full" gating whether a paid
+                     provider's model gets the full horizon-ladder probe
+                     (docs/design/68-context-engine.md §1)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      capability/ (the registry for all five extension kinds:
                      domain.rs is the vocabulary capabilities classify
@@ -864,6 +923,22 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      capability/turn.rs (TurnCapabilities: the single four-stage
                      pipeline for all capability kinds at turn admission:
                      channel → reach → contract → domain slice),
+                     capability/surface.rs (ToolSurface: core tools always
+                     admitted, deferred tools behind a one-line index,
+                     fail-narrow slicing -- a low-confidence reading gets NO
+                     domain tools rather than all of them --
+                     docs/design/68-context-engine.md §5),
+                     capacity_profile_for (the bind-time probe entry point:
+                     ledger-recorded profile wins over the in-process cache
+                     so every prior feedback update is seen; local providers
+                     always probed, hosted ones only with
+                     `[probe] hosted = "full"`),
+                     prompts.rs (`Resolution{text, tail}` -- the stable
+                     prefix and the per-turn tail are two separate strings
+                     since 3.5.0; see docs/design/07-prompt.md),
+                     mcp_config_section (server names + one line per tool,
+                     no inline schemas -- MCP is reached only through the
+                     `mcp` broker),
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no

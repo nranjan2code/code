@@ -49,6 +49,15 @@ three different answers inside one document today.
 | `skills` / `mcp` | **code** | runtime-derived | Live inventories with digests. |
 | Agent instructions | user | additive, authority-capped | Custom Agent guidance is appended within the universal foundation and is frozen with Agent identity provenance. |
 
+Two more runtime-derived, never-user-editable pieces exist but are outside
+this table because they are per-*turn*, not per-*resolution*: the temporal
+instant/epistemic stance and the session's intent/work-contract/conversation-
+thread sections. Since 3.5.0 (docs/design/68-context-engine.md §6) these
+render in a separate **tail** block the request assembler attaches per turn,
+not in the composed prompt text the blocks above produce — `resolve_prompt`'s
+result is a prefix plus a tail, not one fused string, and only the prefix is
+what this document's budget cap and drift fingerprint cover.
+
 This split is what lets the answer to "can I edit the prompt?" be an
 unqualified yes without it also meaning "yes, including the part that
 describes your tools, and yes, including deleting the safety text".

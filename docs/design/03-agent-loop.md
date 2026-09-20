@@ -1,20 +1,45 @@
 # 03 — Agent loop (vak-agent)
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; request assembly and completion gates extended
+in 3.5.0 (docs/design/68-context-engine.md)
 
 ## Shape
 
 ```
-run(prompt, cancel, events) -> TurnOutcome
+run_message(prompt, steering, cancel, events) -> TurnOutcome
+  outcome = run_message_inner(...)      // the loop below
+  if outcome is a system-authored Completed (drift/stale-data/card-repeat
+  exhaustion) and not already the ledger's last message: log it
+  close_turn(outcome)                   // builds and appends this turn's
+                                         // TurnCard once it has closed
+  return outcome
+
+run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
   append user message
   loop turn in 0..max_turns:
     drain steering queue → user messages
-    request = { model: contract.model, system, messages: session.derive_messages(), tools }
+    index = TurnIndex::from_log(session); index.ensure_cards(estimator)
+    plan  = planner::plan(profile, index, directive, reading, prefix_tokens,
+                           tail_tokens, current_turn_tokens)
+    messages = session.derive_with_plan(plan)   // Full/Card/Packet per turn
+    tail  = compose_tail(temporal, stance, intent, work_contract, thread)
+    attach_tail(messages, tail)         // one block, before the user's own
+                                         // words, on the last user message
+    request = { model, system: prefix, messages, tools: core+deferred/index,
+                cache: CacheHints{ session_key, breakpoints } }
     stream = provider.stream(request, cancel)
     forward StreamEvents (delta+snapshot) to consumer
     response = stream.result()          // errors are values
+    record_capacity_usage_feedback(request, usage, first_token_latency)
     append assistant message (+meta)
-    if stop_reason != ToolUse -> Completed
+    calls = extract_tool_calls(response)
+    if model drift detected: steer, maybe end the turn (see below)
+    if calls.is_empty():
+      if response has neither text nor a tool call: one [empty-step] redo
+      if directive wants live data and nothing retrieved: gate/redo/fail-closed
+      if stop_reason != ToolUse -> Completed
+    gate any emit_*_card call against the same freshness rule, before execution
     execute tool batch (parallel by default, source-order results)
+    breaker: N consecutive all-repeat card batches -> close on that card
     append user message of ToolResult blocks
 ```
 
@@ -42,7 +67,44 @@ No panics; session-write failures become `Failed`.
   model call; follow-up is exposed for callers after natural stops.
 - **Cancellation threads everywhere**: checked between turns, before each
   sequential tool, inside every tool via child tokens.
-- **Projection invariant**: requests are built only from `derive_messages()`.
+- **Projection invariant**: requests are built only from `derive_messages()`
+  / `derive_with_plan()` (docs/design/02-sessions.md invariant 3).
+
+## Completion gates added in 3.5.0
+
+Five bounded, system-authored checks run inside the loop, each with its own
+`ControlKind` marker so the nudge is visible on the ledger
+(docs/design/68-context-engine.md §7, §10):
+
+- **`[freshness-check]`**: the directive's reading carries the `live-data`
+  domain (temporal deixis — "current", "right now", "today") and nothing was
+  retrieved this run. A card call is intercepted *before execution* and
+  answered with an error value; a final text answer gets one redo nudge. An
+  explicit "no live data" is accepted. After one repair still nothing
+  retrieved (a second stale card, or another empty step), the turn **fails
+  closed**: `stale_data_outcome()` states plainly that nothing current was
+  retrieved and names the last figure this conversation recorded and when —
+  never a carried-over figure presented as current.
+- **`[empty-step]`**: the response carried neither text nor a tool call (a
+  thinking-only completion). One redo, unless a card was already emitted
+  this run — a card-only turn is a complete answer.
+- **`[steering-drift]`**: a step's tool call serves a different domain than
+  the reading, or its text restates a prior turn's answer verbatim. Three
+  consecutive events end the turn via `degraded_drift_outcome()`, the same
+  shape as the tool-repair exhaustion below.
+- **Identical-card repeat breaker**: an `emit_*_card` call identical to one
+  already shown this run is acknowledged as a no-op (not an error). After
+  three consecutive all-repeat batches, `card_repeat_outcome()` closes the
+  turn on that card as its answer instead of spending the turn budget on
+  acknowledgements.
+- The pre-existing `[grounding-check]`, `[fence-check]`, `[duplicate-card-check]`
+  and `[presentation-check]` nudges are unchanged; all nine `ControlKind`
+  variants are enumerated in `vak-intent/src/control.rs`.
+
+Every one of these was found by replaying a real failing session against a
+live local model (`gemma4:e2b-mlx`) six times per fix and reading the
+resulting ledgers — see docs/design/68-context-engine.md for the measured
+before/after tables.
 
 ## Stop gate (built-in premature-completion policy)
 

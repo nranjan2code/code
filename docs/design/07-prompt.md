@@ -123,12 +123,32 @@ retained.
   grounding-check repairs) since a small local model can't be trusted to
   self-police it from prompt wording alone.
 
+- 3.5.0: **the composed prompt is no longer one string.** `resolve()` now
+  returns a `Resolution` with `text` (the stable prefix: identity, contract,
+  guardrails, surface, card catalogue, skills, mcp, standing) and a separate
+  `tail` carrying `temporal` and `epistemic_stance`, which used to be fused
+  into `text`. The request assembler renders one control block per turn from
+  `tail` plus the session's `<intent>`/`<work_contract>`/`<conversation_thread>`
+  sections and places it **before** the user's own words on the last user
+  message — never after, and never as its own message. Measured live: with
+  the block placed after the directive, a small local model answered the
+  block's own text instead of the question; with it appended after a tool
+  result and echoing the directive, the model read the echo as "the user is
+  asking again" and re-emitted the same card up to nineteen times, so the
+  block never restates the directive either. Rationale, the prefix-stability
+  motivation (a byte-identical prefix is what lets a provider's cache serve
+  it), and the cache-breakpoint mechanics are in
+  docs/design/68-context-engine.md §6. `prompt_drift`/the drift fingerprint
+  covers `text` only, since `tail` is per-turn by definition.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus
 `.vak/SYSTEM.md`" model with user-editable, inherited prompt blocks. Diff
 notes continue here for the shipped seed; layer composition, trust, and the
-editing surfaces are specified there.
+editing surfaces are specified there. Doc 68 supersedes the *runtime*
+per-turn half (temporal context, stance, intent, thread) that doc 45's block
+table does not cover, since those blocks were never user-editable.
 
 ## Policy
 
