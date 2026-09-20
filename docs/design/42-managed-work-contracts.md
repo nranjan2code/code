@@ -315,16 +315,12 @@ indexes or control channels only.
 ## Model projection and compaction
 
 The active work state must be visible to the model after every turn and after
-compaction. Extend the session projection used by
-`SessionLog::derive_messages()` rather than creating a parallel prompt path.
+compaction. It rides in the request tail (`SessionLog::tail_sections`)
+rather than a parallel prompt path.
 
-*(This section describes the phase as originally shipped. Since 3.5.0 the
-`<work_contract>` block below renders in the per-turn tail rather than being
-spliced into history, and compaction operates on whole turns rather than
-individual messages — docs/design/68-context-engine.md §6, §10. The
-projection contract — one bounded control message, survives compaction,
-partition accounting doesn't double-count it — is unchanged; only where and
-how it is assembled moved.)*
+The `<work_contract>` block below renders in the per-turn tail
+(docs/design/68-context-engine.md §6), never spliced into history, so it is
+neither summarised into a compaction packet nor counted as history.
 
 Project only one bounded control message for the latest active state:
 
@@ -350,8 +346,8 @@ The control projection must:
 - disappear from model context after terminal completion;
 - never contain secrets or untrusted raw tool output.
 
-Update compaction partition accounting so control state is neither falsely
-reported as dropped nor duplicated across repeated compactions.
+Because it is tail material, control state is never summarised into a
+packet and never duplicated across repeated compactions.
 
 ## Contract authoring
 

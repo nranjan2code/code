@@ -1,8 +1,8 @@
 //! `WorkingSetPlanner` (docs/design/68-context-engine.md §4, §10): decides,
 //! for one request, which closed turns ride along at `Full` fidelity, which
 //! collapse to a one-line `Card`, and which are pushed into a `Packet` —
-//! from measured costs against a measured budget, never a fixed
-//! `keep_recent` count. Pure: no I/O, no locks, no network. The caller
+//! from measured costs against a measured budget, never a fixed count.
+//! Pure: no I/O, no locks, no network. The caller
 //! (`vak-agent`'s turn loop) supplies the `CapacityProfile`, the
 //! `TurnIndex`, and the incoming directive; `plan()` returns a `WorkingSetPlan`
 //! that `SessionLog::derive_with_plan` turns into messages.

@@ -49,7 +49,7 @@ retained.
   (`vak-core/src/lib.rs`) now pins the identity phrases *and* asserts the
   coding/terminal-only wording never returns. The auxiliary prompts moved with
   it — reflection (`vak-core/src/reflection.rs`), completion audit
-  (`vak-agent/src/goal.rs`), and compaction (`vak-agent/src/context.rs`), whose
+  (`vak-agent/src/goal.rs`), and compaction (`vak-context/src/assemble.rs`), whose
   "files created/modified" retention rule now also keeps non-file effects.
 - v0.2.1: the prompt now *names* the surface instead of telling the model to
   assume nothing. `Core::with_surface` (`vak-core/src/lib.rs`) carries a

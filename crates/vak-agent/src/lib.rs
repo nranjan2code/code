@@ -339,7 +339,7 @@ pub struct AgentConfig {
     pub dispatch_ceiling: u32,
     /// Reserve for the completion (`max_tokens`), subtracted from the
     /// horizon by `CapacityProfile::budget` (docs/design/68-context-engine.md
-    /// §4). Replaces the deleted `ContextPolicy::max_output`.
+    /// §4).
     pub max_output: u64,
     /// Provider-declared context window, used only to build a
     /// metadata-only `CapacityProfile` (`CapacityProfile::from_metadata_only`)
@@ -2700,8 +2700,8 @@ impl Agent {
             return;
         };
         let narration = self.resolve_narration(&raw_narration, cancel, events).await;
-        // No profile wired in ⇒ a metadata-only one (never a raw chars/4
-        // literal — docs/design/68-context-engine.md §4).
+        // No profile wired in ⇒ a metadata-only one
+        // (docs/design/68-context-engine.md §4).
         let profile = self.effective_capacity_profile();
         let estimate = move |s: &str| -> u64 { profile.estimate_tokens(s.chars().count() as u64) };
         let tokens_full = {

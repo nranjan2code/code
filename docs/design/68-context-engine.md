@@ -1,37 +1,29 @@
 # 68 — Context engine: measured capacity, turn working set, recallable evidence
-Status: implemented in 3.5.0 (greenfield replacement of the `derive_messages`
-projection and `ContextPolicy`; supersedes 17-context.md and the history
-parts of 15-reliability.md). Native provider compaction (§12) is not
-implemented; the hosted probe ladder is opt-in via `[probe] hosted`.
+Status: implemented. Crate: `vak-context` (`capacity`, `planner`,
+`assemble`) over the ledger in `vak-session`. Native provider compaction
+(§12) is not implemented; the hosted probe ladder is opt-in via
+`[probe] hosted`.
 
-## Why this document exists
+## Why this design
 
-The findings below describe the tree as it stood on 2026-09-19 (release
-3.4.11), before this design was implemented; the cited locations are
-historical and no longer exist.
+What a model can *use* is a property of that model, not of the window it
+declares. Measured on `gemma4:e2b-mlx` (same system prompt, same 30 tools,
+real session messages): it called a tool 6/6 with ≤13k tokens of context
+and 0/6 at ≥18k, against a declared 131k window. A frontier model on the
+same ledger keeps dozens of turns whole. The only way to serve both from
+one session is to measure each model, keep the session itself complete,
+and compute what each request carries from those two things alone:
 
-A weather question on `gemma4:e2b-mlx` answered in prose instead of a card.
-Tracing it exposed that Vak's context assembly is a set of hard-coded cuts
-applied blindly, and that nothing in it knows what the model in front of it can
-actually do. Findings, all measured against the live ledger
-(`agents/vak/sessions/68fcfec7…/01a0b41f….jsonl`) and Ollama's server log:
+- the **ledger** is the one rich original — every directive, step, tool
+  exchange, thinking block, receipt, presentation and card, append-only,
+  never rewritten or trimmed;
+- the **bound model's `CapacityProfile`** says how much of it this model
+  can actually use;
+- every request is a **projection** of the ledger chosen against that
+  profile, and whatever comes back is written to the ledger in full.
 
-| Finding | Where | Evidence |
-|---|---|---|
-| Every user/assistant message of every turn goes out verbatim until 80% of the *window* | `vak-session/src/log.rs` `derive_keyed_tagged`, `ContextPolicy::compact_threshold` (then in `vak-agent/src/context.rs`) | 130 messages, 0 compactions, 29.9k prompt tokens |
-| Tool results from earlier turns are cut to 300 chars, silently | `log.rs:1147` `MAX_HISTORICAL_TOOL_RESULT_CHARS` | receipt input 46,139 → 22,441 across one turn boundary |
-| The budget is the declared window, so a 5B model and a frontier model get the same history policy | `ContextPolicy` | compaction would first fire at ~98k on a 131k window |
-| `dynamic_history_budget_cap` and intent `ContextProfile` are computed and never consumed | `dynamic_history_budget_cap` in `vak-agent/src/context.rs`, `ContextProfile` in `vak-intent/src/engage.rs` | grep |
-| The system prompt carries per-turn text (UTC instant, epistemic stance, intent), so the provider prefix cache dies at ~2.8k tokens on every new turn | `turn_capabilities_bound.system_prompt` | Ollama `total=32487 matched=2817`, 42s response; within-turn steps match ~100% |
-| Tool surface is triplicated: Tavily schemas inline in the system prompt, as direct tools, and behind the `mcp` broker; slicing fails open on low-confidence intent | `slice_capabilities` in `vak-core/src/intent.rs`, prompt builder | 30 schemas + 5 inline MCP schemas; "question only" already costs 12k tokens |
-| `<conversation_thread>` repeats the last 8 user messages already present verbatim | `log.rs:1060` | inspection |
-| Token estimate is chars/4 with no feedback from provider usage | `context::estimate_tokens` | ledger 286k chars vs 29.9k real tokens |
-| Ollama over-length is a hard 400, mapped to a permanent error; the turn dies instead of compacting | `vak-llm/src/openai.rs`, Ollama 0.34.2 probe | 367k-token prompt → HTTP 400; 115k → accepted, 156s |
-
-The instruction-following experiment (same system prompt, same 30 tools, the
-real messages) showed the model calls a tool 6/6 with ≤13k tokens of context
-and 0/6 at ≥18k. That is a property of *this model*, not of the window it
-declares. Nothing in Vak can learn it today.
+Nothing a weaker model could not fit is ever lost to a stronger one bound
+later, and nothing model-visible is cut by a character count.
 
 ## Principles
 
@@ -103,7 +95,7 @@ pub struct Horizon { pub tokens: u64, pub confidence: f64, pub last_confirmed: I
 when the profile is stale or contradicted), the engine runs a probe *before*
 assembling the user's request:
 
-1. Metadata rung: `model_context()` as today (Ollama `/api/show` incl.
+1. Metadata rung: `model_context()` (Ollama `/api/show` incl.
    `num_ctx`, `/v1/models`, Anthropic/OpenAI catalogues). Sets
    `declared_window`, `output_reserve`.
 2. Horizon ladder: send synthetic histories of geometrically increasing
@@ -188,8 +180,8 @@ receipt/`EvidenceRef::ToolResult` identity). In the request the model sees:
 
 `recall({ id, range? })` is a core tool that returns the full result (or a
 line range). Recalled content is a current-turn result, so it is verbatim for
-the rest of that turn and digested afterwards. This replaces the 300-char trim
-with something the model can reverse.
+the rest of that turn and digested afterwards: every digest is reversible by
+the model.
 
 ### 4. WorkingSetPlanner
 
@@ -218,11 +210,11 @@ Properties:
 - On a small model with a 13k horizon and a 12k prefix, the working set is
   the current turn only, and the model is told so (the summary says what it
   is missing and how to `recall`). That is the correct outcome for that model
-  and it is reached by measurement, not by a `keep_recent` constant.
+  and it is reached by measurement, not by a constant.
 - On a frontier model the same session keeps dozens of turns whole.
-- Compaction is no longer an overflow emergency at 80%; the packet is
-  refreshed incrementally whenever a turn leaves the working set, so the
-  summariser call is amortised and the request never overshoots.
+- Compaction is incremental, never an overflow emergency: the packet is
+  refreshed whenever a turn leaves the working set, so the summariser call
+  is amortised and the request never overshoots.
 - **A packet is a cache, never a boundary.** A `Compaction` entry is keyed
   by the inclusive turn range it summarises (`first_turn_id..=last_turn_id`)
   and records the model whose plan asked for it. The projection renders a
@@ -320,8 +312,8 @@ Use tavily_search…" with nothing executed.
 
 ### 7. Drift management
 
-Drift today is a sentence asking the model to tolerate topic changes. The
-engine adds a runtime check, not more prose:
+Drift is handled by runtime checks, not by a sentence asking the model to
+tolerate topic changes:
 
 - Every turn already produces an intent `Reading` and an `outcome`. The
   planner keeps the active goal (`goal_state`) and the last N directive
@@ -351,8 +343,8 @@ engine adds a runtime check, not more prose:
   existing steering nudge fires with the *specific* directive it should
   serve, and the event lowers horizon confidence if the request was near the
   horizon. Three consecutive model-drift events end the turn with the
-  system-authored degraded outcome (same shape as tool-repair exhaustion in
-  15-reliability.md).
+  system-authored degraded outcome (same shape as tool-repair exhaustion,
+  docs/design/15-reliability.md).
 - **Topic mismatch** (a card's own content is unrelated to both the
   directive and this turn's own retrieval, found in real post-release use:
   asked "what is the current top news in AI", the model correctly called
@@ -456,12 +448,11 @@ presentation  emit_*_card payloads: the answer as the user saw it             �
 narration     the assistant's prose around the cards                          → text
 ```
 
-**Presentations are ledger entries.** Today an emitted card exists only as
-the arguments of an `emit_*_card` `tool_use` block inside a message entry;
-the server rebuilds it from those arguments (`card_output_from_call`) and
-`presentations.json` holds card *definitions*, not instances. The engine
-adds a hash-linked entry written by the runtime at the moment a card call
-validates:
+**Presentations are ledger entries.** An emitted card is never rebuilt
+from the arguments of its `emit_*_card` `tool_use` block, and
+`presentations.json` holds card *definitions*, not instances: the runtime
+writes a hash-linked entry at the moment a card call validates, and the
+server, feedback and selection all key on it:
 
 ```rust
 EntryPayload::Presentation(PresentationRecord)
@@ -589,10 +580,9 @@ Any turn at card or packet fidelity can be reopened by the model with
 evidence ids on every card so it can go one level deeper with
 `recall({ id })`. Nothing is unreachable; the default is just small.
 
-Estimated shape for the failing session (31 past turns): ~2 turns full
-(~500 tokens), ~29 cards (~80 tokens each ≈ 2.3k), no packet. Under 3k
-tokens of history for the whole session, against ~17k today. To be measured
-by the replay test.
+Typical shape for a 31-turn session on a small model: ~2 turns full
+(~500 tokens), ~29 cards (~80 tokens each ≈ 2.3k), no packet — under 3k
+tokens of history for the whole session.
 
 The full record, when used, is the turn as recorded with thinking dropped,
 every evidence result replaced by its digest and every card result by the
@@ -624,20 +614,22 @@ assistant: <narration>           the prose around the card, verbatim, minus
 | Nudges, repair directives, intent notes, stance, thread | never | they were runtime guidance for that turn |
 | Compaction packet | rendered from turn records (directive + trace + answer), not from raw exchanges | the summary is of decisions, not of tool dumps |
 
-Compaction works in whole turns (there is no message-level `keep_recent`
-compaction left; `/compact` runs the same planner and writes the same
-range-keyed packet), and a closed turn's record never changes once
+Compaction works in whole turns (`/compact` runs the same planner through
+`plan_for_session` and writes the same range-keyed packet as the loop's
+incremental compaction), and a closed turn's record never changes once
 written, so the prefix cache survives across turns as well as within them.
 
 #### Cache mechanics per provider
 
 Append-only is necessary but not sufficient: some providers cache nothing
-unless told where. Today the Anthropic adapter places one `cache_control`
-breakpoint on the system prompt (`anthropic.rs:65`) — and because the
-system prompt carries the per-turn UTC instant, that cache is *written* on
-every turn and *read* on none; within a turn, only the prefix is served from
-cache and the growing message log is re-billed on every step. No other
-adapter sets anything.
+unless told where. `ChatRequest.cache` carries the session key and the
+breakpoints `assemble::cache_breakpoints` computes (after the prefix, after
+the previous turn, on the current step); each adapter renders them its own
+way — Anthropic `cache_control` on at most four blocks, OpenAI
+`prompt_cache_key`, OpenRouter `session_id` alongside it, nothing for
+runners that cache by prefix on their own. Because the per-turn material
+rides in the tail and never in the system prompt, the prefix is written
+once and read on every step and every turn.
 
 Every receipt records `cache_read`/`cached_tokens` and the assembler's
 `prefix_digest`. The harness asserts, for every within-turn step,
@@ -654,9 +646,9 @@ still probes cache behaviour and horizon per model, because a provider
 behind OpenRouter or a proxy may not pass any of this through, and a local
 runner may have none of it.
 
-Registry today: `anthropic`, `openai` (chat), `openai-responses`, `google`,
-`openrouter`, `openrouter-responses`, `opencode-zen`, `ollama` (through the
-OpenAI-compat path), `bedrock` (Mantle, OpenAI-compat). Realtime/live voice
+Registry: `anthropic`, `openai` (chat), `openai-responses`, `google`,
+`openrouter`, `openrouter-responses`, `opencode-zen`, `ollama` (native
+`/api/chat`), `bedrock` (Mantle, OpenAI-compat). Realtime/live voice
 providers are out of scope here.
 
 | Provider (Vak name) | Prefix caching | Breakpoints / keys | Thinking across steps | Native deferred tools | Native compaction / context editing | Assembler rules |
@@ -667,7 +659,7 @@ providers are out of scope here.
 | **Google** (`google`) | implicit on Gemini 2.5+, min 2,048 (2.5) / 4,096 (3.x); reported as `usage.total_cached_tokens`; explicit `cachedContents` for long stable prefixes | none per block; explicit cache object with TTL | thinking models require **thought signatures** replayed exactly (stateless) or `store: true` + `previous_interaction_id` (Interactions API, server-managed) | none | none client-visible | keep the prefix identical; replay thought blocks within a turn; explicit cache for a prefix above the minimum when the session is long-lived; `thinking_level` chosen by intent stakes, not fixed |
 | **OpenRouter** (`openrouter`, `-responses`) | pass-through: OpenAI automatic + explicit, Anthropic `cache_control`, Gemini implicit/explicit, DeepSeek/Grok/Groq/Moonshot/Z.AI automatic, Qwen explicit | Anthropic-style `cache_control` on content blocks is translated per upstream; top-level `cache_control` for auto; `session_id` pins the upstream for cache reuse; `usage.prompt_tokens_details.{cached_tokens, cache_write_tokens, cache_discount}` | depends on upstream; treat as stateless replay | none | none | always send `session_id`; place `cache_control` as for Anthropic and let OpenRouter translate; the probe decides whether hits actually occur for the routed upstream |
 | **Bedrock Mantle** (`bedrock`) | GPT-5.6 (Sol/Terra/Luna) explicit caching via the OpenAI-compatible Responses API; Anthropic models via the Messages API with `cache_control` | `cache_control` / `prompt_cache_key` as documented by AWS | as OpenAI Responses | as upstream | as upstream | same rules as the upstream family; the probe verifies pass-through |
-| **Ollama** (`ollama`, 0.34.2) | runner-side prefix cache (`matched=` in the log), independent of context; lost on unload (`OLLAMA_KEEP_ALIVE` default 5m) | none; `/v1/chat/completions` does not accept `keep_alive` or `num_ctx`; `/v1/responses` is stateless only (no `previous_response_id`, no `truncation`); no cache reporting in usage | thinking returned but not required back | 0.34 adds "OpenAI-compatible client tool search"; semantics unverified — probe before relying on it | 0.34 adds "response compaction"; same caveat | move the provider to `/api/chat` to pass `keep_alive` and `num_ctx` explicitly; over-length is a hard 400 (§4); the probe measures prefill tok/s and cache from timing since usage does not report it |
+| **Ollama** (`ollama`, 0.34.2) | runner-side prefix cache (`matched=` in the log), independent of context; lost on unload (`keep_alive`, default 5m) | none in usage; the native `/api/chat` adapter passes `keep_alive` and `options.num_ctx` explicitly and reads prompt-eval timing into `Usage` | thinking returned but not required back | 0.34 adds "OpenAI-compatible client tool search"; semantics unverified — probe before relying on it | 0.34 adds "response compaction"; same caveat | over-length is a hard 400, mapped to `LlmError::Context` and replanned once (§4); the probe measures prefill tok/s and cache from timing since usage does not report it |
 | **OpenCode Zen** (`opencode-zen`) | OpenAI-compatible gateway; caching depends on the routed upstream | unknown | unknown | unknown | unknown | treat as OpenRouter without pass-through guarantees; everything comes from the probe |
 
 **Future providers** (Groq, Mistral, DeepSeek, xAI, Moonshot, Z.AI, Qwen,
@@ -702,34 +694,15 @@ cheaper than doing the same client-side. The rule for using them:
   the ledger and rendered per provider; a fallback leg gets the same turns at
   the same fidelity.
 
-Expected effect on the failing session, to be confirmed by the replay test
-in *Verification*: 31 past turns at roughly 150–300 tokens each is ~7k,
-against ~17k today for the same history; with the tool-surface work the
-prefix drops from ~12k toward ~5k. Both numbers are estimates until measured.
-
-## What is deleted
-
-- `MAX_HISTORICAL_TOOL_RESULT_CHARS` and the trim loop in `derive_keyed_tagged`.
-- `ContextPolicy { compact_threshold, keep_recent }`, `dynamic_history_budget_cap`,
-  `dynamic_retrieval_cap`, `APPROX_TOKENS_PER_TURN`, `MIN_TURN_HEADROOM`,
-  `MAX_RETRIEVAL_CAP`.
-- `estimate_tokens` (chars/4).
-- The inline MCP catalogue and the temporal/stance lines in the system prompt.
-- The `<conversation_thread>` duplication of in-window directives.
-- Compaction-as-overflow-emergency (`CompactionNeed`, `TooShortToCompact`);
-  the handoff reset survives as the recovery for a profile with no horizon.
-- `WeatherApiCurrentAdapter`, the `"tavily"` name match in delivery signals,
-  and the skill-name → domain table (§9).
-
 ## Verification
 
 - **Probe harness** (`vak-eval`): for each configured model, print the
   measured profile and the working-set plan for a fixture session; assert the
   plan never exceeds the horizon and never splits a turn.
-- **Replay test**: the ledger that produced the prose-instead-of-card turn,
-  re-assembled under the new engine for `gemma4:e2b-mlx`, must produce a
-  request ≤ the probed horizon; run it 6× against the live model and require
-  a card in ≥5.
+- **Live replay**: a ledger that once produced a prose-instead-of-card
+  turn, re-assembled for `gemma4:e2b-mlx`, must produce a request ≤ the
+  probed horizon; run it 6× against the live model and require a card in
+  ≥5.
 - **Cache test**: two consecutive turns must share a prefix digest; Ollama
   log `matched` must be ≥ prefix_tokens on the second.
 - **No-cut invariant**: a property test that every tool result present in the
@@ -744,28 +717,3 @@ prefix drops from ~12k toward ~5k. Both numbers are estimates until measured.
 - **Uniqueness invariant**: no tool name appears twice across schemas, index,
   and system prompt; no directive text appears both in a working-set turn and
   in the thread.
-
-## Implementation order
-
-1. Stable prefix + tail, prefix digest in receipts, measured prefix size.
-   (No behaviour change in what history is sent; immediate cache win.)
-2. `CapacityProfile` + bind-time probe + feedback, recorded in the ledger.
-3. `EntryPayload::Presentation` written at card validation (tool and fence
-   paths), server projection and feedback keyed on it; then `TurnIndex`,
-   `TurnCard` at turn close with its index, `EvidenceStore` digests,
-   `recall` (turn, presentation, evidence); delete the 300-char trim.
-4. `WorkingSetPlanner` with incremental compaction; delete `ContextPolicy`
-   constants and chars/4.
-5. Tool surface: core + index + `find_tools`; broker-only MCP; fail-narrow
-   slicing; Anthropic `defer_loading`.
-5b. Provider adapters per §11: Anthropic breakpoints (three positions or
-   top-level `cache_control`) and `clear_thinking`; OpenAI
-   `prompt_cache_key` / explicit breakpoints on GPT-5.6+; Responses
-   `previous_response_id` within a turn; Google thought-signature replay and
-   explicit cache; OpenRouter `session_id`; Ollama `/api/chat`.
-6. Drift checks; Ollama `/api/chat` with `keep_alive`/`num_ctx`.
-7. Remove first-class integrations (§9) and land the banned-token test.
-   This one has no dependency on the others and can go first.
-
-Each step lands with its verification item above and is independently
-shippable; 1 and 2 carry no risk to answer quality.

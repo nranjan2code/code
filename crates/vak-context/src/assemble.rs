@@ -6,9 +6,8 @@
 //!
 //! Budgeting policy lives in `capacity` (`CapacityProfile`) and `planner`
 //! (`WorkingSetPlanner`); this module never decides what to send, only
-//! how the chosen bytes are laid out. `ContextPolicy` and the chars/4
-//! `estimate_tokens` are deleted: every estimate goes through
-//! `CapacityProfile::estimate_tokens`.
+//! how the chosen bytes are laid out; every token estimate goes through
+//! `CapacityProfile::estimate_tokens`, fed by the char counts here.
 
 use sha2::{Digest, Sha256};
 use vak_llm::{
@@ -232,8 +231,8 @@ pub fn messages_chars(messages: &[Message]) -> u64 {
 }
 
 /// Character count of the stable prefix (system prompt + tool schemas),
-/// measured through `CapacityProfile::estimate_tokens` rather than a
-/// chars/4 constant (docs/design/68-context-engine.md §4/§6).
+/// turned into tokens by `CapacityProfile::estimate_tokens`
+/// (docs/design/68-context-engine.md §4/§6).
 pub fn prefix_chars(system: &str, tools: &[ToolDefinition]) -> u64 {
     let mut chars = system.len() as u64;
     for tool in tools {

@@ -1184,8 +1184,8 @@ impl SessionLog {
     }
 
     /// The plan-free projection: every closed turn at `Full` fidelity. Used
-    /// by `derive_messages`/`plan_compaction`, which have no `CapacityProfile`
-    /// to plan against.
+    /// by `derive_messages` (goal audits, search, human-facing views), which
+    /// has no `CapacityProfile` to plan against.
     fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
         self.derive_with_plan_tagged(None)
     }
@@ -1196,9 +1196,9 @@ impl SessionLog {
     /// engine.md §4/§10) — one implementation, the plan just picks what each
     /// turn contributes:
     ///
-    /// - `Full` turns project their two-message `full_record` — no
-    ///   `tool_use`/`tool_result` blocks, no character-count trim of
-    ///   historical tool output (deleted: `MAX_HISTORICAL_TOOL_RESULT_CHARS`).
+    /// - `Full` turns project their `full_record`: real `tool_use` blocks,
+    ///   results as schema-driven digests carrying their evidence id, never
+    ///   a character-count trim.
     /// - `Card` turns contribute one line each to a single `<turns>` block
     ///   (`TurnCard::line`), inserted once, right after any compaction
     ///   summary.
@@ -1520,8 +1520,8 @@ impl SessionLog {
     /// `ReadingKey` (docs/design/68-context-engine.md §4's `PlanInput`) —
     /// the newest `Intent` entry on the chain, whether or not its turn has
     /// closed yet. `None` before the first intent reading of the session.
-    /// The still-open turn's own verbatim messages, respecting the current
-    /// compaction boundary (docs/design/68-context-engine.md §4): after a
+    /// The still-open turn's own verbatim messages, respecting the reset
+    /// boundary (docs/design/68-context-engine.md §4): after a
     /// reset-with-handoff, everything before the reset entry is invisible
     /// to the model even though the open turn technically started before
     /// it, so planning must size its reserve against what will actually be
@@ -1766,7 +1766,7 @@ impl SessionLog {
     /// Scoring uses the same BM25+entity-bonus approach as cross-session
     /// search, but scored against the current query over the in-memory
     /// projection. The result is capped at `cap` entries and excludes the
-    /// `exclude_tail` verbatim tail (e.g. `keep_recent`).
+    /// `exclude_tail` most recent entries.
     pub fn retrieve_relevant_entries(
         &self,
         query: &str,

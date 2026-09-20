@@ -1,9 +1,7 @@
-//! The context-quality scorecard types shared by the deterministic context
-//! gates (`context_engine_gate`): a named metric with a threshold and a
-//! direction, and the card that prints and passes/fails them. The gate
-//! itself lives in `context_engine_gate` (docs/design/68-context-engine.md
-//! "Verification"); the earlier `keep_recent` sweep that lived here went
-//! with the `keep_recent` compaction it exercised.
+//! The scorecard types the deterministic gates report through: a named
+//! metric with a threshold and a direction, and the card that prints and
+//! passes/fails them. The context-engine gate itself lives in
+//! `context_engine_gate` (docs/design/68-context-engine.md "Verification").
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetricDirection {

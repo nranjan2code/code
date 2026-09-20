@@ -16,7 +16,7 @@ use vak_session::types::{
 };
 use vak_session::{SessionLog, SessionPath, TurnIndex, WorkingSetPlan};
 
-use crate::context_gate::{ContextScorecard, MetricDirection, QualityMetric};
+use crate::scorecard::{ContextScorecard, MetricDirection, QualityMetric};
 
 /// The synthetic horizon this harness plans against (docs/design/68 §"Probe
 /// harness"): small enough that a 30-turn fixture cannot all fit at `Full`,

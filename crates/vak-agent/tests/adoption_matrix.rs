@@ -302,8 +302,8 @@ async fn unattended_budget_denial_fails_even_with_ladder() {
     );
 }
 
-/// C×H: a goal run that trips compaction carries partition accounting on
-/// the compaction entry, and receipts still land around it.
+/// C×H: a goal run with no usable horizon takes the reset-with-handoff
+/// rescue, and receipts still land around it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compaction_partitions_coexist_with_goal_and_receipts() {
     // NOTE: a 900-token declared window is dwarfed by this filler's own

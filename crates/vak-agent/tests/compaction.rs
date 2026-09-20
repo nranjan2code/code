@@ -1,11 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Incremental compaction (docs/design/68-context-engine.md §4): unlike the
-//! deleted overflow-emergency mechanism (80% threshold, message-level
-//! `keep_recent`), compaction now fires only when the `WorkingSetPlanner`
-//! collapses real, card-carrying turns into a packet — so these tests drive
-//! the agent through several REAL turns (each producing a genuine
-//! `TurnCard` at close) rather than seeding raw messages directly.
+//! Incremental compaction (docs/design/68-context-engine.md §4): compaction
+//! fires only when the `WorkingSetPlanner` collapses real, card-carrying
+//! turns into a packet — so these tests drive the agent through several
+//! REAL turns (each producing a genuine `TurnCard` at close) rather than
+//! seeding raw messages directly.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};

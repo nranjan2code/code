@@ -496,7 +496,7 @@ impl Turn {
     /// already-resolved narration (verbatim when short, or a side-call gist
     /// when long — docs/design/68 §10); `outcome` is the turn's terminal
     /// state; `estimate_tokens` measures a rendered text (the host's
-    /// `CapacityProfile::estimate_tokens`, or chars/4 with no profile).
+    /// `CapacityProfile::estimate_tokens`).
     pub fn build_card(
         &self,
         outcome: impl Into<String>,

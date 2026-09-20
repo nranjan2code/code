@@ -346,7 +346,7 @@ async fn stop_gate_blocks_premature_report_until_verified() {
 /// projection carries the summary forward, and the run completes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compaction_during_long_research_session() {
-    // `plan_compaction` now works in whole closed turns
+    // Compaction works in whole closed turns
     // (docs/design/68-context-engine.md §10: a turn is never split), so
     // there has to be at least one closed turn for it to summarize away —
     // the still-open research turn below is never itself a compaction

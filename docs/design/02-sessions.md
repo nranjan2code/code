@@ -18,8 +18,11 @@ predecessor (`prev_hash`) and carries a stable `id` + `parent_id`:
   and replays explain every decision from this snapshot, never current state.
 - `message` — neutral `Message` + optional meta (model, stop_reason, usage,
   a `control` tag for a runtime-authored nudge — see below).
-- `compaction` — `{summary, first_kept_entry_id, tokens_before}`, covering a
-  contiguous range of whole **turns**, not individual messages, since 3.5.0.
+- `compaction` — a packet `{summary, first_turn_id, last_turn_id, model,
+  tokens_before}` over a contiguous range of whole **turns**, keyed by that
+  range and rendered only when the current working-set plan asks for
+  exactly it (never a boundary in the chain); or, with `reset_all`, the
+  reset-with-handoff entry that replaces everything before it.
 - `receipt` — one work unit's provider dispatches (`WorkReceipt`:
   purpose, winning attempt, per-attempt reason/domain/settlement/usage,
   `prefix_digest`/`prefix_tokens` since 3.5.0). Audit only — `derive_messages()`
@@ -81,11 +84,13 @@ predecessor (`prev_hash`) and carries a stable `id` + `parent_id`:
    record; they render once, per turn, in the request's **tail** block
    (docs/design/07-prompt.md, docs/design/68-context-engine.md §6) instead of
    inline in history.
-4. **Compaction summarizes turn cards, not raw exchanges.** `plan_compaction`
-   operates on turn boundaries; a packet range is only created when the
-   working-set plan needs it (incremental, not an overflow emergency), and
-   the summariser sees the covered turns' `TurnCard`s, never their tool
-   dumps.
+4. **Compaction summarizes turn cards, not raw exchanges.** A packet is
+   written only when the working-set plan for the bound model needs one
+   (incremental, not an overflow emergency); the summariser sees the
+   covered turns' `TurnCard`s — seeded from any stored packet over the same
+   first turn — never their tool dumps. A packet hides nothing from a plan
+   that does not ask for it, so a larger model bound later sees the turns
+   whole.
 
 ## Why trees, not lists
 
@@ -106,14 +111,3 @@ the handle's lifetime (second process gets `SessionError::Locked`);
 damaged line no longer makes a session unresumable: it is skipped and
 surfaced via `warnings()`. `total_usage` sums the active chain only, so
 abandoned branches stop inflating counts.
-
-## Diff note — context engine (3.5.0)
-
-Four entry kinds were added (`turn_capabilities_bound` predates this but
-gained fields; `presentation` and `turn_card` are new; `activity` gained
-capacity-probe/feedback and prefix-change kinds) and the projection was
-rewritten from a flat message walk with a 300-character historical-result
-trim to the turn-based, budget-planned projection described in invariant 3.
-Full rationale, the measured findings that drove it, and the `CapacityProfile`
-probe are in docs/design/68-context-engine.md, which supersedes
-docs/design/17-context.md.

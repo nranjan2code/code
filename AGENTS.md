@@ -645,7 +645,7 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
   the inline hints, the derived context-block tags) and the single
   implementation of `clean_scaffolding`, shared by `vak-server`, `vak-delivery`
   and every channel. The tag drives the projection, the transcript API, session
-  search, exports, compaction accounting, reflection, and the per-turn state
+  search, exports, compaction packets, reflection, and the per-turn state
   the runtime resets on a user message; none of them count a nudge as a user
   turn. Clients receive only what a person can see (`/transcript` omits nudges,
   context blocks and the frozen contract), each message with its ledger
