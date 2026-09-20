@@ -1,6 +1,7 @@
 import { createSignal, For, onCleanup, Show } from "solid-js";
-import type { Message } from "../types";
+import type { Message, OutputItem, OutputTimeline } from "../types";
 import Icon from "./Icon";
+import { AdaptiveTreeView, StructuredView } from "./PresentationRenderer";
 
 type SharedCandidate = {
   kind: "Candidate" | "Promotion" | "Environment";
@@ -20,6 +21,7 @@ export default function SharedConversation() {
   const [credential, setCredential] = createSignal<{ conversationId: string; token: string } | null>(null);
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [candidates, setCandidates] = createSignal<SharedCandidate[]>([]);
+  const [sharedResults, setSharedResults] = createSignal<OutputItem[]>([]);
   const [error, setError] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
@@ -43,6 +45,7 @@ export default function SharedConversation() {
     setCredential(null);
     setMessages([]);
     setCandidates([]);
+    setSharedResults([]);
     setUpdatedAt(null);
     setVisibleCount(40);
     if (openFile()?.imageUrl) URL.revokeObjectURL(openFile()!.imageUrl!);
@@ -76,15 +79,19 @@ export default function SharedConversation() {
     if (!current || loading()) return;
     setLoading(true);
     try {
-      const [transcript, records] = await Promise.all([
+      const [transcript, records, presentation] = await Promise.all([
         read(current.conversationId, current.token, "/transcript"),
         read(current.conversationId, current.token, "/sandbox/records"),
+        read(current.conversationId, current.token, "/presentation"),
       ]);
       if (credential()?.token !== current.token) return;
       setMessages((transcript.messages ?? []).filter((message: Message) =>
         message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"
       ));
       setCandidates((records.records ?? []).filter((item: SharedCandidate) => item.kind === "Candidate"));
+      setSharedResults(((presentation as OutputTimeline).items ?? []).filter((item) =>
+        item.status !== "running" && (item.content.type === "structured" || item.content.type === "adaptive")
+      ));
       const selected = openFile();
       if (selected) {
         const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(selected.candidateId)}/comments`);
@@ -250,6 +257,7 @@ export default function SharedConversation() {
           {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author">{message.role.toLowerCase() === "assistant" ? "Agent" : "Person"}</span><p>{text()}</p></article>}</Show>}
         </For>
       </section>
+      <Show when={sharedResults().length > 0}><section class="shared-results" aria-label="Shared results"><h2>Results</h2><For each={sharedResults()}>{(item) => <article class="shared-result" data-result-id={item.outcome?.result_id ?? item.id}><Show when={item.content.type === "structured"}>{item.content.type === "structured" && <StructuredView output={item.content.output} fallback={item.fallback_text} />}</Show><Show when={item.content.type === "adaptive"}>{item.content.type === "adaptive" && <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />}</Show></article>}</For></section></Show>
       <Show when={candidates().length > 0}><section class="shared-drafts"><h2>Saved drafts</h2><For each={candidates()}>{(record) => <div class="shared-draft"><strong>Draft {record.record.candidate?.candidate_id.slice(0, 8)}</strong><span>{record.record.candidate?.files.length ?? 0} files</span><ul><For each={record.record.candidate?.files ?? []}>{(file) => <li><button type="button" onClick={() => void showFile(record.record.candidate!.candidate_id, file.path)}><Icon name="file" size={13} />{file.path}</button></li>}</For></ul></div>}</For></section></Show>
       <Show when={fileError()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <Show when={openFile()}>{(file) => <section class="shared-file"><div class="shared-file-head"><h2>{file().path}</h2><span>Saved draft {file().candidateId.slice(0, 8)}</span><button type="button" class="btn" onClick={() => { if (file().imageUrl) URL.revokeObjectURL(file().imageUrl!); setOpenFile(null); }}>Close</button></div><Show when={file().kind === "text"}><pre>{file().content}</pre></Show><Show when={file().kind === "image"}><img src={file().imageUrl} alt={file().path} /></Show><Show when={file().kind === "binary"}><p>This saved file has no inline preview in the shared view.</p></Show><div class="shared-file-comments"><h3>Comments on this draft</h3><For each={comments().filter((comment) => !comment.path || comment.path === file().path)} fallback={<p>No comments on this file yet.</p>}>{(comment) => <div class="shared-file-comment"><strong>{comment.actor_name ?? comment.actor_id}</strong><Show when={comment.line_start}><span>Line {comment.line_start}{comment.line_end ? `–${comment.line_end}` : ""}</span></Show><p>{comment.text}</p></div>}</For><Show when={canComment()}><form class="shared-comment-form" onSubmit={(event) => void postComment(event)}><label for="shared-comment-text">Leave a comment on this saved version</label><textarea id="shared-comment-text" value={commentText()} onInput={(event) => setCommentText(event.currentTarget.value)} maxLength={32768} rows={3} required /><label for="shared-comment-line">Line number (optional)</label><input id="shared-comment-line" type="number" min="1" step="1" value={commentLine()} onInput={(event) => setCommentLine(event.currentTarget.value)} disabled={file().kind !== "text"} /><button type="submit" class="btn primary" disabled={commentBusy() || !commentText().trim()}>{commentBusy() ? "Saving…" : "Save comment"}</button><p>Comments are visible to everyone in this conversation. They do not automatically instruct the Agent.</p></form></Show></div></section>}</Show>

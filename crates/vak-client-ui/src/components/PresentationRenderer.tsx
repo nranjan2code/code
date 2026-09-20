@@ -1340,7 +1340,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   );
 }
 
-function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
+export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
   const render = (node: import("../types").AdaptiveRenderNode): JSX.Element => {
     const text = typeof node.props.text === "string" ? node.props.text : typeof node.props.value === "string" ? String(node.props.value) : "";
     const label = typeof node.props.label === "string" ? node.props.label : "";

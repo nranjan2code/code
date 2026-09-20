@@ -492,6 +492,9 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .shared-message-author { color: var(--muted); font-size: 11px; font-weight: 620; }
 .shared-message p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
 .shared-empty { color: var(--muted); font-size: 13px; }
+.shared-results { display: grid; gap: 14px; margin-top: 34px; }
+.shared-results h2 { margin: 0; font-size: 16px; font-weight: 620; }
+.shared-result { min-width: 0; padding: 18px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
 .shared-drafts { margin-top: 42px; }
 .shared-drafts h2 { font-size: 16px; font-weight: 620; }
 .shared-draft { padding: 15px 0; border-top: 1px solid var(--border-soft); }
