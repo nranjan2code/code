@@ -561,7 +561,7 @@ export function buildWorkflowGraph(
     status: "ok",
   });
 
-  // 2.3: Context Packet & Capabilities (docs/design/17 & 45)
+  // 2.3: Context & Capabilities (docs/design/68 & 45)
   const promptLayers = contract?.prompt_layers ?? [];
   const admittedCaps = contract?.capabilities ?? [];
   const contextNode: WorkflowNode = {
@@ -576,7 +576,7 @@ export function buildWorkflowGraph(
     details: {
       prompt_layers: promptLayers.map((l) => `${l.layer}: ${l.block}`),
       capabilities: admittedCaps.map((c) => `${c.name} (${c.kind})`),
-      context_accounting: "Tokens partition: verbatim window vs compaction summary (doc 17)",
+      context_accounting: "Working set planned per request against the bound model's measured CapacityProfile (doc 68)",
       turn_index: turn.turn_index,
     },
     raw_payload: JSON.stringify(

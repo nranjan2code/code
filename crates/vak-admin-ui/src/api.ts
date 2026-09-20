@@ -58,8 +58,6 @@ import type {
   ActiveWorker,
   SandboxRecordsResponse,
   SandboxExecutionsResponse,
-  CandidateManifest,
-  PromotionReceipt,
 } from "./types";
 
 export class AuthRequired extends Error {
@@ -286,27 +284,6 @@ export const api = {
 
   sessionSandboxExecutions: (sessionId: string): Promise<SandboxExecutionsResponse> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions`).then((r) => handle(r)),
-
-  exportSandboxCandidate: (body: {
-    candidate_id: string;
-    source: string;
-    destination?: string;
-  }): Promise<CandidateManifest> =>
-    fetch("/sandbox/candidates", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => handle(r)),
-
-  promoteSandboxCandidate: (body: {
-    candidate: CandidateManifest;
-    record_id?: string;
-  }): Promise<PromotionReceipt> =>
-    fetch("/sandbox/promote", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => handle(r)),
 
   patchGatewayWorkspace: (workspace: string | null): Promise<{ workspace: string; restart_required: boolean }> =>
     fetch("/admin/api/gateway/workspace", {

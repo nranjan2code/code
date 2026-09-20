@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "./api";
 import { conn, navigate, pushToast, route, selectedAgentId, setSelectedAgentId } from "./store";
-import type { OperationsSnapshot, SandboxEnvironmentRecord, SandboxCandidateRecord, SandboxPromotionRecord } from "./types";
+import type { OperationsSnapshot, SandboxRecord } from "./types";
 import "./focusTrap";
 
 type Section = "overview" | "work" | "runtime" | "channels" | "automations" | "providers" | "incidents" | "sandbox";
@@ -420,16 +420,14 @@ function IncidentDetail(props: { data: OperationsSnapshot; incidentId: string; o
 
 function SandboxView(props: { data: OperationsSnapshot; refresh: () => void | Promise<unknown> }) {
   const [records, { refetch: refetchRecords }] = createResource(() => api.sandboxRecords());
-  const [promoting, setPromoting] = createSignal<string | null>(null);
-
   const environments = createMemo(
-    () => (records()?.records ?? []).filter((r): r is SandboxEnvironmentRecord => r.kind === "environment"),
+    () => (records()?.records ?? []).filter((r): r is Extract<SandboxRecord, { kind: "Environment" }> => r.kind === "Environment"),
   );
   const candidates = createMemo(
-    () => (records()?.records ?? []).filter((r): r is SandboxCandidateRecord => r.kind === "candidate"),
+    () => (records()?.records ?? []).filter((r): r is Extract<SandboxRecord, { kind: "Candidate" }> => r.kind === "Candidate"),
   );
   const promotions = createMemo(
-    () => (records()?.records ?? []).filter((r): r is SandboxPromotionRecord => r.kind === "promotion"),
+    () => (records()?.records ?? []).filter((r): r is Extract<SandboxRecord, { kind: "Promotion" }> => r.kind === "Promotion"),
   );
 
   const refresh = async () => {
@@ -440,55 +438,33 @@ function SandboxView(props: { data: OperationsSnapshot; refresh: () => void | Pr
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Environments</span><h2>Sandbox environments</h2><p class="dim">Quarantined execution environments in <code>.vak/scratch/</code>. Each streams live stdout, stderr, telemetry, and status to the Workbench panel.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
       <Show when={environments().length > 0} fallback={<div class="empty">No sandbox environments have been staged yet.</div>}>
         <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>ID</th><th>State</th><th>Backend</th><th>Image</th><th>Network policy</th><th>Updated</th></tr></thead><tbody><For each={environments()}>{(env) => <tr>
-          <td class="mono dim">{env.record_id}</td>
-          <td><StatusMark value={env.state} /></td>
-          <td><code>{env.plan.backend}</code></td>
-          <td class="mono">{env.plan.image || "—"}</td>
-          <td>{env.plan.network_policy}</td>
-          <td class="mono dim">{time(env.updated_at)}</td>
+          <td class="mono dim">{env.record.record_id}</td>
+          <td><StatusMark value={env.record.state} /></td>
+          <td><code>{env.record.plan.backend}</code></td>
+          <td class="mono">{env.record.plan.image || "—"}</td>
+          <td>{env.record.plan.network_policy}</td>
+          <td class="mono dim">{time(env.record.updated_at)}</td>
         </tr>}</For></tbody></table></div>
       </Show>
     </section>
 
-    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Candidates</span><h2>Exported sandbox candidates</h2><p class="dim">Work products staged in <code>.vak/scratch/</code> and promoted to the workspace via the Promote action. Each candidate records its provenance (hashes before/after) and verification results.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Candidates</span><h2>Exported sandbox candidates</h2><p class="dim">Drafts stay bound to the conversation result that produced them. Review and acceptance happen in that conversation; this view is the evidence ledger.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
       <Show when={candidates().length > 0} fallback={<div class="empty">No exported candidates yet. Run something in the sandbox to produce one.</div>}>
-        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Candidate ID</th><th>Environment</th><th>Verified</th><th>Files</th><th>Updated</th><th /></tr></thead><tbody><For each={candidates()}>{(cand) => <tr>
-          <td class="mono dim">{cand.candidate.candidate_id}</td>
-          <td class="mono dim">{cand.environment_id}</td>
-          <td><StatusMark value={cand.verified ? "pass" : "fail"} /></td>
-          <td class="mono dim">{cand.candidate.files.length}</td>
-          <td class="mono dim">{time(cand.updated_at)}</td>
-          <td>
-            <Show when={cand.verified}>
-              <button
-                class="ghost small"
-                disabled={promoting() === cand.candidate.candidate_id}
-                onClick={async () => {
-                  setPromoting(cand.candidate.candidate_id);
-                  try {
-                    await api.promoteSandboxCandidate({ candidate: cand.candidate, record_id: cand.record_id });
-                    pushToast("info", `Promoted ${cand.candidate.candidate_id.slice(0, 8)} to workspace`);
-                    await refresh();
-                  } catch (err) {
-                    pushToast("alert", `Promotion failed: ${err}`);
-                  } finally {
-                    setPromoting(null);
-                  }
-                }}
-              >
-                {promoting() === cand.candidate.candidate_id ? "Promoting…" : "Promote to workspace"}
-              </button>
-            </Show>
-          </td>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Candidate ID</th><th>Session / result</th><th>Verified</th><th>Files</th><th>Updated</th></tr></thead><tbody><For each={candidates()}>{(cand) => <tr>
+          <td class="mono dim">{cand.record.candidate.candidate_id}</td>
+          <td class="mono dim">{cand.record.session_id.slice(0, 10)} / {cand.record.result_id.slice(0, 10)}</td>
+          <td><StatusMark value={cand.record.verified ? "pass" : "fail"} /></td>
+          <td class="mono dim">{cand.record.candidate.files.length}</td>
+          <td class="mono dim">{time(cand.record.updated_at)}</td>
         </tr>}</For></tbody></table></div>
       </Show>
     </section>
 
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Promotion ledger</span><h2>Promotion receipts</h2><p class="dim">Append-only record of every candidate promoted from sandbox to workspace, with hash verification evidence.</p></div><button class="ghost small" onClick={refresh}>Refresh</button></div>
       <Show when={promotions().length > 0} fallback={<div class="empty">No promotions have been recorded yet.</div>}>
-        <div class="ops-event-list"><For each={promotions()}>{(p) => <article><div><strong>{p.candidate_id.slice(0, 12)}</strong><span class="mono dim"> · {p.receipt.applied.length} files applied</span></div><span class="mono dim">{time(p.updated_at)}</span><p class="mono dim">record: {p.record_id}</p>
-          <Show when={p.receipt.verification.length > 0}>
-            <div class="ops-check-list"><For each={p.receipt.verification}>{(v) => <div class="ops-check-row"><StatusMark value={v.status} /><strong>{v.path}</strong><span>{v.evidence}</span></div>}</For></div>
+        <div class="ops-event-list"><For each={promotions()}>{(p) => <article><div><strong>{p.record.candidate_id.slice(0, 12)}</strong><span class="mono dim"> · {p.record.receipt.applied.length} files applied</span></div><span class="mono dim">{time(p.record.updated_at)}</span><p class="mono dim">session: {p.record.session_id} · result: {p.record.result_id} · record: {p.record.record_id}</p>
+          <Show when={p.record.receipt.verification.length > 0}>
+            <div class="ops-check-list"><For each={p.record.receipt.verification}>{(v) => <div class="ops-check-row"><StatusMark value={v.status} /><strong>{v.path}</strong><span>{v.evidence}</span></div>}</For></div>
           </Show>
         </article>}</For></div>
       </Show>

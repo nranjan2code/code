@@ -662,10 +662,7 @@ export interface BusConfig {
   runtime: BusStatus | null;
 }
 
-export type SandboxRecordKind = "environment" | "candidate" | "promotion";
-
 export interface SandboxEnvironmentRecord {
-  kind: "environment";
   record_id: string;
   environment_id: string;
   state: string;
@@ -683,9 +680,13 @@ export interface SandboxEnvironmentRecord {
 }
 
 export interface SandboxCandidateRecord {
-  kind: "candidate";
   record_id: string;
+  session_id: string;
+  turn_id: string;
+  result_id: string;
+  execution_id: string;
   environment_id: string;
+  candidate_digest: string;
   candidate: {
     candidate_id: string;
     source_root: string;
@@ -697,8 +698,10 @@ export interface SandboxCandidateRecord {
 }
 
 export interface SandboxPromotionRecord {
-  kind: "promotion";
   record_id: string;
+  session_id: string;
+  result_id: string;
+  candidate_digest: string;
   candidate_id: string;
   receipt: {
     candidate_id: string;
@@ -711,40 +714,12 @@ export interface SandboxPromotionRecord {
 }
 
 export type SandboxRecord =
-  | SandboxEnvironmentRecord
-  | SandboxCandidateRecord
-  | SandboxPromotionRecord;
+  | { kind: "Environment"; record: SandboxEnvironmentRecord }
+  | { kind: "Candidate"; record: SandboxCandidateRecord }
+  | { kind: "Promotion"; record: SandboxPromotionRecord };
 
 export interface SandboxRecordsResponse {
   records: SandboxRecord[];
-}
-
-export interface CandidateManifest {
-  candidate_id: string;
-  source_root: string;
-  destination_root: string;
-  files: CandidateFile[];
-}
-
-export interface CandidateFile {
-  path: string;
-  candidate_hash: string;
-  base_hash?: string | null;
-  bytes: number;
-}
-
-export interface PromotionReceipt {
-  candidate_id: string;
-  applied: string[];
-  before_hashes: Array<[string, string | null]>;
-  after_hashes: Array<[string, string]>;
-  verification: VerificationResult[];
-}
-
-export interface VerificationResult {
-  path: string;
-  status: string;
-  evidence: string;
 }
 
 export interface SandboxExecutionEvent {
