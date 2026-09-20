@@ -288,16 +288,36 @@ pub fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error>
     let mut before_hashes = Vec::new();
     for file in &candidate.files {
         let source = confined(&candidate.source_root, &file.path)?;
-        let target = confined(&candidate.destination_root, &file.path)?;
         let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
         if digest(&bytes) != file.candidate_hash {
             return Err(Error::CandidateChanged(file.path.clone()));
         }
-        let before = target
-            .is_file()
-            .then(|| fs::read(&target).ok())
-            .flatten()
-            .map(|b| digest(&b));
+        // Check every destination's shape before the first write. Otherwise a
+        // directory or an obstructed parent in a later file can leave an
+        // earlier file applied even though the request fails.
+        let proposed_target = candidate.destination_root.join(&file.path);
+        let mut parent = proposed_target.parent();
+        while let Some(path) = parent {
+            if path == candidate.destination_root {
+                break;
+            }
+            match fs::metadata(path) {
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(Error::Conflict(file.path.clone()));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::Io(error)),
+            }
+            parent = path.parent();
+        }
+        let target = confined(&candidate.destination_root, &file.path)?;
+        let before = match fs::metadata(&target) {
+            Ok(metadata) if metadata.is_file() => Some(digest(&fs::read(&target)?)),
+            Ok(_) => return Err(Error::Conflict(file.path.clone())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(Error::Io(error)),
+        };
         if before != file.base_hash {
             return Err(Error::Conflict(file.path.clone()));
         }
@@ -366,6 +386,35 @@ mod tests {
         let receipt = promote(&candidate).unwrap();
         assert_eq!(receipt.applied, vec!["assets/chart.csv"]);
         assert_eq!(receipt.verification[0].status, "observed");
+    }
+
+    #[test]
+    fn promotion_preflights_later_destination_types_before_writing() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("a.txt"), "ready").unwrap();
+        fs::write(source.path().join("z.txt"), "blocked").unwrap();
+        let candidate = candidate_manifest("c3", source.path(), target.path()).unwrap();
+        fs::create_dir(target.path().join("z.txt")).unwrap();
+
+        assert!(matches!(promote(&candidate), Err(Error::Conflict(path)) if path == "z.txt"));
+        assert!(!target.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn promotion_preflights_later_parent_collisions_before_writing() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("a.txt"), "ready").unwrap();
+        fs::create_dir(source.path().join("nested")).unwrap();
+        fs::write(source.path().join("nested/z.txt"), "blocked").unwrap();
+        let candidate = candidate_manifest("c4", source.path(), target.path()).unwrap();
+        fs::write(target.path().join("nested"), "user file").unwrap();
+
+        assert!(
+            matches!(promote(&candidate), Err(Error::Conflict(path)) if path == "nested/z.txt")
+        );
+        assert!(!target.path().join("a.txt").exists());
     }
 
     #[cfg(unix)]
