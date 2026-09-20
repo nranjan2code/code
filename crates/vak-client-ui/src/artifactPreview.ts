@@ -1,9 +1,14 @@
 import * as api from "./api";
 import { sandboxedSrcdoc } from "./safeUrl";
 
+export interface ArtifactPreviewReader {
+  readFile(path: string): Promise<api.FileResponse>;
+  readFileRaw(path: string): Promise<string>;
+}
+
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
-export async function artifactPreviewHtml(path: string, html: string, connectSrc?: string): Promise<string> {
+export async function artifactPreviewHtml(path: string, html: string, connectSrc?: string, reader: ArtifactPreviewReader = api): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {
@@ -15,7 +20,7 @@ export async function artifactPreviewHtml(path: string, html: string, connectSrc
     return clean.startsWith("/") ? clean : `${parent.slice(0, parent.lastIndexOf("/") + 1)}${clean}`;
   };
   const dataUrl = async (file: string) => {
-    const url = await api.readFileRaw(file);
+    const url = await reader.readFileRaw(file);
     try {
       const blob = await (await fetch(url)).blob();
       return await new Promise<string>((resolve, reject) => {
@@ -41,7 +46,7 @@ export async function artifactPreviewHtml(path: string, html: string, connectSrc
     const file = resolve(element.getAttribute(attr) ?? "");
     if (!file) continue;
     if (element.tagName === "LINK" || element.tagName === "SCRIPT") {
-      const response = await api.readFile(file);
+      const response = await reader.readFile(file);
       if (response.content === undefined) throw new Error(`Unable to read preview asset: ${file}`);
       if (element.tagName === "LINK") {
         const style = document.createElement("style");

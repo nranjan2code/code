@@ -270,10 +270,18 @@ export default function ArtifactCanvas() {
 
       let prepared: string;
       try {
-        prepared = artifact.candidateId
-          ? sandboxedSrcdoc(content, "'none'")
-          : artifact.artifactPath
-          ? await artifactPreviewHtml(artifact.artifactPath, content, artifact.connectSrc)
+        prepared = artifact.artifactPath
+          ? await artifactPreviewHtml(
+              artifact.artifactPath,
+              content,
+              artifact.candidateId ? "'none'" : artifact.connectSrc,
+              artifact.candidateId && artifact.sessionId
+                ? {
+                    readFile: (path) => api.readSandboxCandidateFile(artifact.sessionId!, artifact.candidateId!, path),
+                    readFileRaw: (path) => api.readSandboxCandidateFileRaw(artifact.sessionId!, artifact.candidateId!, path),
+                  }
+                : api,
+            )
           : sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
       } catch {
         // If relative asset resolution fails, fall back to pure sandboxed srcdoc
