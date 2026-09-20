@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Freshness enforcement (docs/design/68-context-engine.md §7): a directive
+//! Freshness and empty-step enforcement (docs/design/68-context-engine.md
+//! §7). Freshness: a directive
 //! whose reading carries the `live-data` domain asks for a value as it
 //! stands now. If the model answers — in prose or with a card — without any
 //! retrieval-shaped call succeeding in the run, the answer can only repeat
@@ -97,6 +98,19 @@ fn text_msg(t: &str) -> AssistantMessage {
             output_tokens: 1,
             ..Default::default()
         },
+        model: "test-model".into(),
+        response_id: None,
+    }
+}
+
+fn thinking_only() -> AssistantMessage {
+    AssistantMessage {
+        content: vec![ContentBlock::Thinking {
+            text: "Final Plan: 1. Use search to get the current reading. 2. Answer.".into(),
+            signature: None,
+        }],
+        stop_reason: StopReason::EndTurn,
+        usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
     }
@@ -292,5 +306,41 @@ async fn a_timeless_directive_is_never_nudged() {
         !user_texts(&agent)
             .iter()
             .any(|t| t.starts_with("[freshness-check]"))
+    );
+}
+
+#[tokio::test]
+async fn a_thinking_only_step_gets_one_redo_to_act() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "empty-step-redo",
+        vec![
+            thinking_only(),
+            text_msg("Copper is refined by electrolysis."),
+        ],
+        false,
+    )
+    .await;
+    let outcome = agent
+        .run(
+            "explain how copper is refined",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content().contains("electrolysis")),
+        "got {outcome:?}"
+    );
+    let nudges = user_texts(&agent);
+    assert_eq!(
+        nudges
+            .iter()
+            .filter(|t| t.starts_with("[empty-step]"))
+            .count(),
+        1,
+        "exactly one empty-step nudge: {nudges:?}"
     );
 }

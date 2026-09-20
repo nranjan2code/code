@@ -272,6 +272,23 @@ A `prefix_digest` (blake3 of system + tool list) is written with every
 receipt; a turn whose digest differs from the previous turn's is a cache
 break and is surfaced as an `Activity` so regressions are visible.
 
+
+**Placement.** The tail rides the last user message, after any
+`tool_result` blocks (every adapter keeps results first) and *before* any
+text, so the last thing the model reads is the user's own words — the
+directive on the first step, a runtime nudge on a redo. When no user text
+follows (a step continuing from tool results), the tail ends with a
+`<directive>` echo of the current request. Measured live: with the tail
+appended after the directive, `gemma4:e2b-mlx` answered the `<stance>` block
+("As an analytical agent, I can handle tasks…") instead of the question.
+
+**Empty steps.** A response with neither text nor a tool call (a
+thinking-only completion — the model planned an action in its reasoning
+channel and stopped) is not an answer; it gets one `[empty-step]` redo,
+unless a card was already emitted in the run, in which case the card is the
+answer. Measured live: four of six replays ended a step on "Final Plan: 1.
+Use tavily_search…" with nothing executed.
+
 ### 7. Drift management
 
 Drift today is a sentence asking the model to tolerate topic changes. The

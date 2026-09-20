@@ -42,6 +42,9 @@ pub enum ControlKind {
     /// A current value was asked for and nothing was retrieved this turn
     /// (docs/design/68-context-engine.md §7).
     FreshnessCheck,
+    /// The response carried neither text nor a tool call (a thinking-only
+    /// completion): act on the plan, or answer.
+    EmptyStep,
     /// Model drift (docs/design/68-context-engine.md §7): the step served a
     /// different directive than the current one — a mismatched-domain tool
     /// call, or a verbatim repeat of a past answer.
@@ -49,7 +52,7 @@ pub enum ControlKind {
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 8] = [
+    pub const ALL: [ControlKind; 9] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
@@ -57,6 +60,7 @@ impl ControlKind {
         ControlKind::DuplicateCardCheck,
         ControlKind::PresentationCheck,
         ControlKind::FreshnessCheck,
+        ControlKind::EmptyStep,
         ControlKind::SteeringDrift,
     ];
 
@@ -71,6 +75,7 @@ impl ControlKind {
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
             ControlKind::PresentationCheck => "[presentation-check]",
             ControlKind::FreshnessCheck => "[freshness-check]",
+            ControlKind::EmptyStep => "[empty-step]",
             ControlKind::SteeringDrift => "[steering-drift]",
         }
     }
@@ -86,6 +91,7 @@ impl ControlKind {
                 | ControlKind::DuplicateCardCheck
                 | ControlKind::PresentationCheck
                 | ControlKind::FreshnessCheck
+                | ControlKind::EmptyStep
         )
     }
 }
@@ -320,6 +326,7 @@ mod tests {
                 ControlKind::DuplicateCardCheck,
                 ControlKind::PresentationCheck,
                 ControlKind::FreshnessCheck,
+                ControlKind::EmptyStep,
             ]
         );
     }

@@ -504,6 +504,41 @@ impl AgentConfig {
 /// session-derived sections `SessionLog::tail_sections()` returned.
 /// Sections absent from `sections` are omitted entirely, never emitted as an
 /// empty tag pair.
+/// Attaches the turn's tail to the last user message
+/// (docs/design/68-context-engine.md §6): after any `tool_result` blocks and
+/// BEFORE any text, so the last thing the model reads is the user's own
+/// words (the directive, or a runtime nudge) and never the runtime's
+/// context. Observed live: with the tail appended after the directive, a
+/// small model answered the `<stance>` block ("As an analytical agent, I can
+/// handle tasks…") instead of the question. When no text follows the tail
+/// (a step that continues from tool results), the tail ends with a
+/// `<directive>` echo of the current request so the ask is still the
+/// nearest instruction.
+fn attach_tail(messages: &mut [Message], tail: &str, directive: &str) {
+    if tail.is_empty() {
+        return;
+    }
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+    if last.role != Role::User {
+        return;
+    }
+    let first_text = last
+        .content
+        .iter()
+        .position(|block| matches!(block, ContentBlock::Text { .. }));
+    let mut block = tail.to_string();
+    if first_text.is_none() && !directive.trim().is_empty() {
+        block.push_str(&format!(
+            "\n<directive>\n{}\n</directive>",
+            directive.trim()
+        ));
+    }
+    let at = first_text.unwrap_or(last.content.len());
+    last.content.insert(at, ContentBlock::text(block));
+}
+
 fn compose_tail(tail: &TailInput, sections: &vak_session::TailSections) -> String {
     let mut out = String::new();
     let push_block = |out: &mut String, block: &str| {
@@ -1213,6 +1248,7 @@ impl Agent {
         // arrives without one is repeating what an earlier turn found.
         let mut retrieval_succeeded_this_run = false;
         let mut freshness_repair_attempted = false;
+        let mut empty_step_repair_attempted = false;
         let wants_live_data = self
             .session
             .lock()
@@ -1506,11 +1542,7 @@ impl Agent {
                 // The tail is one final text block on the last user message
                 // (after any tool_result blocks), never a separate consecutive
                 // user message (docs/design/68-context-engine.md §6).
-                if !turn_tail.is_empty()
-                    && let Some(last) = messages.last_mut()
-                {
-                    last.content.push(ContentBlock::text(turn_tail.clone()));
-                }
+                attach_tail(&mut messages, &turn_tail, &prompt_owned);
                 let session_key = session
                     .header()
                     .map(|header| header.session_id.clone())
@@ -1611,11 +1643,7 @@ impl Agent {
                             request = {
                                 let session = self.session.lock().await;
                                 let mut messages = session.derive_with_plan(&plan);
-                                if !turn_tail.is_empty()
-                                    && let Some(last) = messages.last_mut()
-                                {
-                                    last.content.push(ContentBlock::text(turn_tail.clone()));
-                                }
+                                attach_tail(&mut messages, &turn_tail, &prompt_owned);
                                 let session_key = session
                                     .header()
                                     .map(|header| header.session_id.clone())
@@ -1807,6 +1835,35 @@ impl Agent {
             }
 
             if calls.is_empty() {
+                // Empty-step enforcement: the response carried neither text
+                // nor a tool call — a thinking-only completion, which a
+                // model with a reasoning channel produces when it plans an
+                // action and then stops (observed live: "Final Plan: 1. Use
+                // tavily_search…" followed by end of turn, four runs out of
+                // six). That is not an answer; one bounded redo asks it to
+                // act on the plan it already made. A card emitted earlier in
+                // the run IS the answer, so a card-only turn is left alone.
+                if response.text_content().trim().is_empty()
+                    && !cards_emitted_this_run
+                    && !empty_step_repair_attempted
+                {
+                    empty_step_repair_attempted = true;
+                    if turn + 1 >= self.config.max_turns {
+                        return TurnOutcome::MaxTurnsReached;
+                    }
+                    let _ = self
+                        .session
+                        .lock()
+                        .await
+                        .append_message(MessageRecord::control(
+                        vak_intent::control::ControlKind::EmptyStep,
+                        "[empty-step]: Your last response had no visible answer and no tool call. \
+                         Act now: make the tool call you planned, or write the answer as text."
+                            .to_string(),
+                    ));
+                    turn += 1;
+                    continue;
+                }
                 // Freshness enforcement (docs/design/68 §7): the directive
                 // asked for a current value and nothing was retrieved in
                 // this run, so the answer — prose or card — can only be a

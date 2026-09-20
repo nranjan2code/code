@@ -156,7 +156,7 @@ async fn run(agent: &mut Agent, prompt: &str) -> TurnOutcome {
 /// never as a separate consecutive user message — and it is byte-identical
 /// across every step of the same turn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tail_appends_to_last_user_message_and_is_stable_within_a_turn() {
+async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     let dir = tempdir().unwrap();
     let provider = Arc::new(Recording::new(vec![
         bash_call("call-1", "echo hi"),
@@ -169,40 +169,46 @@ async fn tail_appends_to_last_user_message_and_is_stable_within_a_turn() {
     let requests = provider.requests();
     assert_eq!(requests.len(), 2, "one step per response");
 
-    let tail_of = |request: &ChatRequest| -> String {
-        let last = request.messages.last().expect("at least one message");
-        assert_eq!(
-            last.role,
-            Role::User,
-            "the tail rides the last USER message"
-        );
-        match last.content.last().expect("at least one content block") {
-            ContentBlock::Text { text } => text.clone(),
-            other => panic!("expected the tail as a trailing text block, got {other:?}"),
-        }
-    };
-
-    let tail_step_1 = tail_of(&requests[0]);
-    let tail_step_2 = tail_of(&requests[1]);
+    // Step 1: the last user message is the directive; the tail sits BEFORE
+    // it so the user's own words are the last thing the model reads
+    // (docs/design/68-context-engine.md §6), and there is no echo because
+    // the directive itself follows.
+    let step1_last = requests[0].messages.last().expect("a message");
+    assert_eq!(step1_last.role, Role::User);
+    let texts: Vec<&str> = step1_last
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts.len(), 2, "tail block then directive: {texts:?}");
+    let tail_step_1 = texts[0].to_string();
     assert!(tail_step_1.contains("<turn_context>"));
     assert!(tail_step_1.contains("current UTC instant 2026-09-19T00:00:00Z"));
     assert!(tail_step_1.contains("<stance>"));
     assert!(tail_step_1.contains("Provide a clear, direct answer."));
-    assert_eq!(
-        tail_step_1, tail_step_2,
-        "the tail must not change across steps of one turn"
-    );
+    assert!(!tail_step_1.contains("<directive>"));
+    assert_eq!(texts[1], "run the check");
 
-    // Step 2's last message carries the tool_result too — the tail rides
-    // alongside it, not in place of it, and not as a separate message.
+    // Step 2: the last user message carries the tool result; the tail rides
+    // after it (tool results stay first for every adapter) and ends with a
+    // `<directive>` echo, since no user text follows it.
     let step2_last = requests[1].messages.last().unwrap();
+    assert!(matches!(
+        step2_last.content.first(),
+        Some(ContentBlock::ToolResult { .. })
+    ));
+    let tail_step_2 = match step2_last.content.last().unwrap() {
+        ContentBlock::Text { text } => text.clone(),
+        other => panic!("expected the tail after the result, got {other:?}"),
+    };
     assert!(
-        step2_last
-            .content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::ToolResult { .. })),
-        "step 2's last user message must still carry the tool result"
+        tail_step_2.starts_with(&tail_step_1),
+        "tail body identical across steps"
     );
+    assert!(tail_step_2.ends_with("<directive>\nrun the check\n</directive>"));
 }
 
 /// Cache breakpoints land after the stable prefix, after the last message of
@@ -409,14 +415,18 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
     let requests = provider.requests();
     assert_eq!(requests.len(), 1);
     let last = requests[0].messages.last().unwrap();
-    let tail = match last.content.last().unwrap() {
-        ContentBlock::Text { text } => text.clone(),
-        other => panic!("expected the tail as a trailing text block, got {other:?}"),
-    };
-
-    let thread_start = tail
-        .find("<conversation_thread")
+    // The tail is the text block before the directive (§6).
+    let tail = last
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .find(|text| text.contains("<conversation_thread"))
         .expect("thread section present for a compacted-away directive");
+
+    let thread_start = tail.find("<conversation_thread").unwrap_or(0);
     let thread_text = &tail[thread_start..];
     assert!(
         thread_text.contains("research on WEF"),

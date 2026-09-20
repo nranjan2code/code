@@ -223,10 +223,17 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         Role::User,
         "the tail rides the child's last USER message"
     );
-    let tail_text = match last.content.last().expect("at least one content block") {
-        ContentBlock::Text { text } => text.clone(),
-        other => panic!("expected the tail as a trailing text block, got {other:?}"),
-    };
+    // The tail precedes the directive text in the last user message
+    // (docs/design/68-context-engine.md §6).
+    let tail_text = last
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .find(|text| text.contains("<turn_context>"))
+        .expect("the tail block on the child's last user message");
     assert!(
         tail_text.contains("<turn_context>"),
         "worker request tail: {tail_text}"
