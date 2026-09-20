@@ -714,6 +714,18 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/sandbox/executions",
             get(session_sandbox_executions),
         )
+        .route(
+            "/sessions/{id}/sandbox/records",
+            get(list_session_sandbox_records),
+        )
+        .route(
+            "/sessions/{id}/sandbox/candidates",
+            post(export_sandbox_candidate),
+        )
+        .route(
+            "/sessions/{id}/sandbox/promote",
+            post(promote_sandbox_candidate),
+        )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route("/sessions/{id}/results/{result_id}", get(session_result))
         .route(
@@ -739,12 +751,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/file/raw", get(read_file_raw))
         .route("/fs/preview/{*path}", get(preview_file))
-        .route(
-            "/sandbox/records",
-            get(list_sandbox_records).post(append_sandbox_record),
-        )
-        .route("/sandbox/candidates", post(export_sandbox_candidate))
-        .route("/sandbox/promote", post(promote_sandbox_candidate))
+        .route("/sandbox/records", get(list_sandbox_records))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/intent/evidence", post(patch_evidence_policy))
@@ -9534,29 +9541,98 @@ async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::
     }
 }
 
-async fn append_sandbox_record(
+async fn list_session_sandbox_records(
     State(state): State<AppState>,
-    Json(record): Json<vak_sandbox::DurableRecord>,
+    Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = sandbox_records_path(&state);
-    match vak_sandbox::append_record(&path, &record) {
-        Ok(()) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "accepted": true })),
-        )
-            .into_response(),
+    match vak_sandbox::load_records(&path) {
+        Ok(records) => {
+            let records = records
+                .into_iter()
+                .filter(|record| match record {
+                    vak_sandbox::DurableRecord::Candidate(value) => value.session_id == id,
+                    vak_sandbox::DurableRecord::Promotion(value) => value.session_id == id,
+                    vak_sandbox::DurableRecord::Environment(_) => false,
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({ "records": records })).into_response()
+        }
         Err(error) => (
-            StatusCode::BAD_REQUEST,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
     }
 }
 
+fn sandbox_result_binding(
+    state: &AppState,
+    session_id: &str,
+    execution_id: &str,
+) -> Result<(String, String), (StatusCode, &'static str)> {
+    let timeline = if let Some(handle) = state.get(session_id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(session) = guard.as_ref() {
+            crate::projection::snapshot(session_id, session)
+        } else {
+            handle
+                .presentation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    } else if let Some(session) = open_historical_session(state, session_id) {
+        crate::projection::snapshot(session_id, &session)
+    } else {
+        return Err((StatusCode::NOT_FOUND, "unknown session"));
+    };
+    let Some(turn_id) = timeline.items.iter().find_map(|item| {
+        item.provenance.as_ref().and_then(|value| {
+            (value.tool_call_id.as_deref() == Some(execution_id)).then(|| item.turn_id.clone())
+        })
+    }) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "execution is not part of this session",
+        ));
+    };
+    let Some(result_id) = timeline.items.iter().rev().find_map(|item| {
+        (item.turn_id == turn_id && item.role == vak_delivery::OutputRole::Assistant)
+            .then(|| item.outcome.as_ref().map(|value| value.result_id.clone()))
+            .flatten()
+    }) else {
+        return Err((StatusCode::CONFLICT, "result is not ready for review"));
+    };
+    Ok((turn_id, result_id))
+}
+
+fn sandbox_execution_scratch(
+    state: &AppState,
+    session_id: &str,
+    execution_id: &str,
+) -> Option<std::path::PathBuf> {
+    let text = std::fs::read_to_string(session_sandbox_events_path(state, session_id)).ok()?;
+    text.lines().find_map(|line| {
+        let event = serde_json::from_str::<vak_tools::SandboxEvent>(line).ok()?;
+        match event {
+            vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: observed,
+                scratch_dir,
+                ..
+            } if observed == execution_id => confined_path(state.core.cwd(), &scratch_dir),
+            _ => None,
+        }
+    })
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct SandboxCandidateBody {
-    candidate_id: String,
+    execution_id: String,
     source: String,
     #[serde(default)]
     destination: String,
@@ -9564,12 +9640,34 @@ struct SandboxCandidateBody {
 
 async fn export_sandbox_candidate(
     State(state): State<AppState>,
+    Path(session_id): Path<String>,
     Json(body): Json<SandboxCandidateBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let (turn_id, result_id) = match sandbox_result_binding(&state, &session_id, &body.execution_id)
+    {
+        Ok(binding) => binding,
+        Err(error) => return error.into_response(),
+    };
     let Some(source) = confined_path(state.core.cwd(), &body.source) else {
         return (StatusCode::FORBIDDEN, "candidate source outside workspace").into_response();
     };
+    let Some(execution_scratch) =
+        sandbox_execution_scratch(&state, &session_id, &body.execution_id)
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            "sandbox execution evidence not found",
+        )
+            .into_response();
+    };
+    if std::fs::canonicalize(&source).ok() != std::fs::canonicalize(&execution_scratch).ok() {
+        return (
+            StatusCode::FORBIDDEN,
+            "candidate source does not belong to this execution",
+        )
+            .into_response();
+    }
     let destination_text = if body.destination.trim().is_empty() {
         ".".to_string()
     } else {
@@ -9582,8 +9680,40 @@ async fn export_sandbox_candidate(
         )
             .into_response();
     };
-    match vak_sandbox::candidate_manifest(&body.candidate_id, &source, &destination) {
-        Ok(candidate) => Json(candidate).into_response(),
+    let id = uuid::Uuid::now_v7().to_string();
+    match vak_sandbox::candidate_manifest(&id, &source, &destination) {
+        Ok(candidate) => {
+            let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
+                Ok(value) => value,
+                Err(error) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": error.to_string()})),
+                    )
+                        .into_response();
+                }
+            };
+            let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+                record_id: format!("candidate-{id}"),
+                session_id,
+                turn_id,
+                result_id,
+                execution_id: body.execution_id,
+                environment_id: source.to_string_lossy().into_owned(),
+                candidate_digest,
+                candidate: candidate.clone(),
+                verified: true,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            });
+            match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+                Ok(()) => Json(record).into_response(),
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -9594,25 +9724,74 @@ async fn export_sandbox_candidate(
 
 #[derive(Debug, serde::Deserialize)]
 struct SandboxPromotionBody {
-    candidate: vak_sandbox::CandidateManifest,
-    #[serde(default)]
-    record_id: Option<String>,
+    candidate_id: String,
+    files: Vec<String>,
 }
 
 async fn promote_sandbox_candidate(
     State(state): State<AppState>,
+    Path(session_id): Path<String>,
     Json(body): Json<SandboxPromotionBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    if body.files.is_empty()
+        || body
+            .files
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != body.files.len()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "select one or more distinct candidate files",
+        )
+            .into_response();
+    }
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    if records.iter().any(|record| matches!(record, vak_sandbox::DurableRecord::Promotion(promoted) if promoted.candidate_id == body.candidate_id)) {
+        return (StatusCode::CONFLICT, "candidate already applied").into_response();
+    }
+    let Some(saved) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.candidate.candidate_id == body.candidate_id
+                && saved.session_id == session_id =>
+        {
+            Some(saved.clone())
+        }
+        _ => None,
+    }) else {
+        return (StatusCode::NOT_FOUND, "candidate not found").into_response();
+    };
+    let mut candidate = saved.candidate.clone();
+    if body
+        .files
+        .iter()
+        .any(|path| !candidate.files.iter().any(|file| &file.path == path))
+    {
+        return (StatusCode::BAD_REQUEST, "selected file is not in candidate").into_response();
+    }
+    candidate
+        .files
+        .retain(|file| body.files.contains(&file.path));
     // Compare canonical paths: macOS temporary directories can be addressed
     // through `/var` or `/private/var`, which are the same workspace but do
     // not satisfy lexical `starts_with` checks.
     let workspace =
         std::fs::canonicalize(state.core.cwd()).unwrap_or_else(|_| state.core.cwd().to_path_buf());
-    let source_root = std::fs::canonicalize(&body.candidate.source_root)
-        .unwrap_or_else(|_| body.candidate.source_root.clone());
-    let destination_root = std::fs::canonicalize(&body.candidate.destination_root)
-        .unwrap_or_else(|_| body.candidate.destination_root.clone());
+    let source_root = std::fs::canonicalize(&candidate.source_root)
+        .unwrap_or_else(|_| candidate.source_root.clone());
+    let destination_root = std::fs::canonicalize(&candidate.destination_root)
+        .unwrap_or_else(|_| candidate.destination_root.clone());
     let source_ok = source_root.starts_with(&workspace);
     let destination_ok = destination_root == workspace;
     if !source_ok || !destination_ok {
@@ -9622,7 +9801,7 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
-    let receipt = match vak_sandbox::promote(&body.candidate) {
+    let receipt = match vak_sandbox::promote(&candidate) {
         Ok(receipt) => receipt,
         Err(error) => {
             return (
@@ -9633,9 +9812,10 @@ async fn promote_sandbox_candidate(
         }
     };
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
-        record_id: body
-            .record_id
-            .unwrap_or_else(|| format!("promotion-{}", receipt.candidate_id)),
+        record_id: format!("promotion-{}", receipt.candidate_id),
+        session_id,
+        result_id: saved.result_id,
+        candidate_digest: saved.candidate_digest,
         candidate_id: receipt.candidate_id.clone(),
         receipt: receipt.clone(),
         updated_at: chrono::Utc::now().to_rfc3339(),
@@ -9647,7 +9827,7 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
-    (StatusCode::OK, Json(receipt)).into_response()
+    (StatusCode::OK, Json(record)).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -16379,12 +16559,100 @@ mod voice_admission_tests {
 mod sandbox_promotion_tests {
     use super::*;
 
+    fn seed_bound_result(core: &Core, session_id: &str, execution_id: &str) {
+        let path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(format!("{session_id}.jsonl"));
+        let mut log = vak_session::SessionLog::create(
+            path,
+            vak_session::types::SessionHeader {
+                agent: None,
+                session_id: session_id.into(),
+                created_at: chrono::Utc::now(),
+                cwd: core.cwd().to_path_buf(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: vak_session::types::FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "workspace-write".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Create the result"),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![
+                vak_llm::ContentBlock::ToolUse {
+                    id: execution_id.into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "create result"}),
+                },
+                vak_llm::ContentBlock::text("The result is ready."),
+            ]),
+            meta: None,
+        })
+        .unwrap();
+    }
+
+    async fn export_candidate(state: &AppState) -> vak_sandbox::CandidateRecord {
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-1".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "bash".into(),
+                code_preview: "create result".into(),
+                language: "bash".into(),
+                scratch_dir: ".vak/scratch/e1".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-1".into(),
+                source: ".vak/scratch/e1".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let vak_sandbox::DurableRecord::Candidate(record) = record else {
+            panic!("candidate response")
+        };
+        record
+    }
+
     #[tokio::test]
     async fn candidate_export_and_promotion_records_observed_verification() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
@@ -16392,37 +16660,31 @@ mod sandbox_promotion_tests {
             .await
             .unwrap();
 
-        let response = export_sandbox_candidate(
-            State(state.clone()),
-            Json(SandboxCandidateBody {
-                candidate_id: "c1".into(),
-                source: ".vak/scratch/e1".into(),
-                destination: ".".into(),
-            }),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
-            .await
-            .unwrap();
-        let candidate: vak_sandbox::CandidateManifest = serde_json::from_slice(&bytes).unwrap();
+        let candidate = export_candidate(&state).await;
+        assert_eq!(candidate.session_id, "session-1");
+        assert_eq!(candidate.execution_id, "exec-1");
+        assert!(!candidate.result_id.is_empty());
 
         let response = promote_sandbox_candidate(
             State(state.clone()),
+            Path("session-1".into()),
             Json(SandboxPromotionBody {
-                candidate,
-                record_id: Some("p1".into()),
+                candidate_id: candidate.candidate.candidate_id,
+                files: vec!["result.txt".into()],
             }),
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
-        let receipt: vak_sandbox::PromotionReceipt = serde_json::from_slice(
+        let promoted: vak_sandbox::DurableRecord = serde_json::from_slice(
             &axum::body::to_bytes(response.into_body(), 64 * 1024)
                 .await
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt.verification.len(), 1);
+        let vak_sandbox::DurableRecord::Promotion(promoted) = promoted else {
+            panic!("promotion response")
+        };
+        assert_eq!(promoted.receipt.verification.len(), 1);
         assert_eq!(
             tokio::fs::read_to_string(dir.path().join("result.txt"))
                 .await
@@ -16433,8 +16695,66 @@ mod sandbox_promotion_tests {
             vak_sandbox::load_records(&dir.path().join(".vak/sandbox/records.jsonl"))
                 .unwrap()
                 .len(),
-            1
+            2
         );
+    }
+
+    #[tokio::test]
+    async fn promotion_rejects_files_outside_the_saved_candidate() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "candidate")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let response = promote_sandbox_candidate(
+            State(state),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: candidate.candidate.candidate_id,
+                files: vec!["unreviewed.txt".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!dir.path().join("unreviewed.txt").exists());
+        assert!(!dir.path().join("result.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn promotion_rejects_a_candidate_changed_after_review() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "reviewed")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        tokio::fs::write(scratch.join("result.txt"), "changed")
+            .await
+            .unwrap();
+        let response = promote_sandbox_candidate(
+            State(state),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: candidate.candidate.candidate_id,
+                files: vec!["result.txt".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(!dir.path().join("result.txt").exists());
     }
 
     #[test]

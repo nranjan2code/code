@@ -26,18 +26,11 @@ fn result_outcome(
     evaluation: Option<&str>,
     evidence_state: Option<&String>,
     human_review: Option<&String>,
-) -> Option<ResultOutcome> {
+) -> ResultOutcome {
     let completion = evaluation
         .and_then(|value| value.split('|').nth(3))
         .map(str::to_owned);
-    if admitted.is_none()
-        && completion.is_none()
-        && evidence_state.is_none()
-        && human_review.is_none()
-    {
-        return None;
-    }
-    Some(ResultOutcome {
+    ResultOutcome {
         result_id: result_id.into(),
         status,
         completion,
@@ -63,10 +56,31 @@ fn result_outcome(
             .unwrap_or_default(),
         evidence: Vec::new(),
         human_review: human_review.cloned(),
-    })
+    }
 }
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
+
+fn sandbox_artifact_actions(execution_id: &str, path: &str) -> Vec<DeliveryAction> {
+    let mut open_data = BTreeMap::new();
+    open_data.insert("path".into(), path.into());
+    let mut review_data = BTreeMap::new();
+    review_data.insert("execution_id".into(), execution_id.into());
+    vec![
+        DeliveryAction {
+            id: format!("open-{execution_id}-{path}"),
+            label: "Open".into(),
+            verb: "open_artifact".into(),
+            data: open_data,
+        },
+        DeliveryAction {
+            id: format!("review-{execution_id}"),
+            label: "Review draft".into(),
+            verb: "review_draft".into(),
+            data: review_data,
+        },
+    ]
+}
 
 /// One tool call as the timeline needs it: name, input, result text, and
 /// whether the result was an error. Named because the inline tuple was wide
@@ -159,6 +173,32 @@ pub(crate) fn append_sandbox_artifacts(
     home: &std::path::Path,
     session_id: &str,
 ) {
+    // A sandbox execution id is the brokered tool-call id. Resolve it back
+    // to the durable turn before appending sidecar artifacts, so the result
+    // stays one coherent turn on reconnect. The old synthetic
+    // `sandbox-{execution_id}` turn forced clients to guess the association
+    // from prose and file paths.
+    let execution_context: HashMap<String, (String, String)> = timeline
+        .items
+        .iter()
+        .filter_map(|item| {
+            item.provenance
+                .as_ref()?
+                .tool_call_id
+                .as_ref()
+                .map(|id| (id.clone(), (item.turn_id.clone(), item.timestamp.clone())))
+        })
+        .collect();
+    let result_by_turn: HashMap<String, ResultOutcome> = timeline
+        .items
+        .iter()
+        .filter(|item| item.role == OutputRole::Assistant)
+        .filter_map(|item| {
+            item.outcome
+                .clone()
+                .map(|outcome| (item.turn_id.clone(), outcome))
+        })
+        .collect();
     let path = home
         .join("sandbox")
         .join("executions")
@@ -188,14 +228,23 @@ pub(crate) fn append_sandbox_artifacts(
             .and_then(|name| name.to_str())
             .unwrap_or(&path)
             .to_string();
+        let (turn_id, timestamp) = execution_context
+            .get(&execution_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                (
+                    format!("sandbox-{execution_id}"),
+                    "1970-01-01T00:00:00+00:00".into(),
+                )
+            });
         timeline.items.push(OutputItem {
             id,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            turn_id: format!("sandbox-{execution_id}"),
+            timestamp,
+            turn_id: turn_id.clone(),
             role: OutputRole::Tool,
             kind: OutputKind::Artifact,
             status: OutputStatus::Succeeded,
-            outcome: None,
+            outcome: result_by_turn.get(&turn_id).cloned(),
             content: OutputContent::Artifact {
                 artifact: ArtifactRef {
                     name,
@@ -209,11 +258,11 @@ pub(crate) fn append_sandbox_artifacts(
             provenance: Some(OutputProvenance {
                 session_id: Some(session_id.to_string()),
                 entry_id: None,
-                tool_call_id: Some(execution_id),
+                tool_call_id: Some(execution_id.clone()),
                 source: Some("sandbox_artifact".into()),
                 presentation_id: None,
             }),
-            actions: Vec::new(),
+            actions: sandbox_artifact_actions(&execution_id, &path),
             fallback_text: format!("Generated artifact: {path}"),
         });
     }
@@ -784,14 +833,14 @@ fn snapshot_inner(
                                         document
                                     },
                                 },
-                                outcome: result_outcome(
+                                outcome: Some(result_outcome(
                                     format!("{}-text-{index}", entry.id),
                                     output_status,
                                     projected_outcome.as_ref(),
                                     turn_evaluations.get(&turn).map(String::as_str),
                                     turn_evidence_state.get(&turn),
                                     turn_human_review.get(&turn),
-                                ),
+                                )),
                                 provenance: Some(OutputProvenance {
                                     session_id: Some(session_id.into()),
                                     entry_id: Some(entry.id.clone()),
@@ -1597,11 +1646,11 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 provenance: Some(OutputProvenance {
                     session_id: Some(session_id.into()),
                     entry_id: None,
-                    tool_call_id: Some(execution_id),
+                    tool_call_id: Some(execution_id.clone()),
                     source: Some("sandbox_artifact".into()),
                     presentation_id: None,
                 }),
-                actions: Vec::new(),
+                actions: sandbox_artifact_actions(&execution_id, &path),
                 fallback_text: format!("Generated artifact: {path}"),
             },
         }),
@@ -1909,7 +1958,10 @@ mod tests {
     use super::{artifact_from_tool, snapshot};
     use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
-    use vak_delivery::{OutputContent, OutputKind, OutputStatus};
+    use vak_delivery::{
+        OutputContent, OutputItem, OutputKind, OutputProvenance, OutputRole, OutputStatus,
+        OutputTimeline, ResultOutcome,
+    };
     use vak_llm::{ContentBlock, Message, Role};
     use vak_session::{
         ActivityKind, ActivityRecord, ActivityStatus, FrozenContract, MessageRecord, SessionHeader,
@@ -1958,6 +2010,94 @@ mod tests {
         .expect("write should produce an artifact");
         assert_eq!(artifact.name, "report.md");
         assert_eq!(artifact.media_type.as_deref(), Some("text/markdown"));
+    }
+
+    #[test]
+    fn sandbox_artifacts_rejoin_their_durable_result_turn() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let events = home.path().join("sandbox/executions");
+        std::fs::create_dir_all(&events).expect("execution directory");
+        let event = vak_tools::SandboxEvent::ArtifactGenerated {
+            execution_id: "call-1".into(),
+            path: ".vak/scratch/call-1/report.html".into(),
+            mime_type: "text/html".into(),
+            size_bytes: 42,
+        };
+        std::fs::write(
+            events.join("session-1.jsonl"),
+            format!("{}\n", serde_json::to_string(&event).expect("event json")),
+        )
+        .expect("event sidecar");
+
+        let mut timeline = OutputTimeline::empty("session-1");
+        timeline.items.push(OutputItem {
+            id: "tool-call-1".into(),
+            timestamp: "2026-09-20T10:00:00+00:00".into(),
+            turn_id: "turn-7".into(),
+            role: OutputRole::Tool,
+            kind: OutputKind::Progress,
+            status: OutputStatus::Succeeded,
+            outcome: None,
+            content: OutputContent::Progress {
+                label: "bash".into(),
+                detail: None,
+                percent: None,
+            },
+            provenance: Some(OutputProvenance {
+                session_id: Some("session-1".into()),
+                entry_id: Some("entry-1".into()),
+                tool_call_id: Some("call-1".into()),
+                source: Some("bash".into()),
+                presentation_id: None,
+            }),
+            actions: Vec::new(),
+            fallback_text: String::new(),
+        });
+        timeline.items.push(OutputItem {
+            id: "result-1".into(),
+            timestamp: "2026-09-20T10:00:01+00:00".into(),
+            turn_id: "turn-7".into(),
+            role: OutputRole::Assistant,
+            kind: OutputKind::Outcome,
+            status: OutputStatus::Succeeded,
+            outcome: Some(ResultOutcome {
+                result_id: "result-1".into(),
+                status: OutputStatus::Succeeded,
+                completion: None,
+                evidence_state: None,
+                requirement_ids: Vec::new(),
+                evidence_receipt_ids: Vec::new(),
+                evidence: Vec::new(),
+                human_review: None,
+            }),
+            content: OutputContent::Information {
+                label: "Result".into(),
+                detail: None,
+            },
+            provenance: None,
+            actions: Vec::new(),
+            fallback_text: "Result".into(),
+        });
+
+        super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
+        let artifact = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Artifact)
+            .expect("projected artifact");
+        assert_eq!(artifact.turn_id, "turn-7");
+        assert_eq!(artifact.timestamp, "2026-09-20T10:00:00+00:00");
+        assert_eq!(
+            artifact
+                .outcome
+                .as_ref()
+                .map(|outcome| outcome.result_id.as_str()),
+            Some("result-1")
+        );
+        assert!(artifact.actions.iter().any(|action| {
+            action.verb == "review_draft"
+                && action.data.get("execution_id").map(String::as_str) == Some("call-1")
+        }));
     }
 
     #[test]
@@ -2353,6 +2493,16 @@ mod tests {
                 .iter()
                 .any(|item| item.kind == OutputKind::Outcome),
             "the turn's answer must still project with a declared-domains entry in the chain"
+        );
+        assert!(
+            timeline.items.iter().any(|item| {
+                item.role == OutputRole::Assistant
+                    && item.kind == OutputKind::Outcome
+                    && item.outcome.as_ref().is_some_and(|outcome| {
+                        !outcome.result_id.is_empty() && outcome.status == OutputStatus::Succeeded
+                    })
+            }),
+            "every ordinary assistant result needs a stable address in an unbounded timeline"
         );
     }
 

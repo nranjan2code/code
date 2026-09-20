@@ -125,7 +125,12 @@ pub struct EnvironmentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CandidateRecord {
     pub record_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub result_id: String,
+    pub execution_id: String,
     pub environment_id: String,
+    pub candidate_digest: String,
     pub candidate: CandidateManifest,
     pub verified: bool,
     pub updated_at: String,
@@ -134,6 +139,9 @@ pub struct CandidateRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PromotionRecord {
     pub record_id: String,
+    pub session_id: String,
+    pub result_id: String,
+    pub candidate_digest: String,
     pub candidate_id: String,
     pub receipt: PromotionReceipt,
     pub updated_at: String,
@@ -196,6 +204,12 @@ pub enum Error {
 
 pub fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+pub fn candidate_digest(candidate: &CandidateManifest) -> Result<String, Error> {
+    let bytes = serde_json::to_vec(candidate)
+        .map_err(|error| Error::InvalidPlan(format!("candidate serialization failed: {error}")))?;
+    Ok(digest(&bytes))
 }
 
 fn confined(root: &Path, relative: &str) -> Result<PathBuf, Error> {
