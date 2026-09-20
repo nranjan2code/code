@@ -82,6 +82,7 @@ mod bus;
 mod channels;
 mod client_ui;
 mod core_pool;
+mod coworking;
 mod delivery;
 mod embedded_ui;
 mod events;
