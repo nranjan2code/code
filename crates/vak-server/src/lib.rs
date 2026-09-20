@@ -170,6 +170,8 @@ pub(crate) struct SessionHandle {
     /// Live events for the MAIN transcript, with replay so a dropped
     /// connection can resume rather than lose the gap (events::EventBus).
     pub(crate) events_tx: events::EventBus,
+    /// Content-free wakeup for shared candidate comments.
+    pub(crate) coworking_comments_tx: tokio::sync::broadcast::Sender<()>,
     /// Pending approval gates scoped to THIS session — a client holding
     /// session A can never resolve session B's approvals.
     pub(crate) pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
@@ -764,6 +766,7 @@ fn router_with_state(state: AppState) -> Router {
             get(list_coworking_invitations).post(create_coworking_invitation),
         )
         .route("/sessions/{id}/coworking/me", get(coworking_me))
+        .route("/sessions/{id}/coworking/updates", get(coworking_updates))
         .route(
             "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
             post(revoke_coworking_invitation),
@@ -3629,6 +3632,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "candidates", _, "files", "raw"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
+            | ["coworking", "updates"]
     )
 }
 
@@ -3955,6 +3959,7 @@ pub(crate) fn register_handle(
         steering: Arc::new(SteeringQueues::new()),
         cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
         events_tx,
+        coworking_comments_tx: tokio::sync::broadcast::channel(32).0,
         pending: Arc::new(Mutex::new(HashMap::new())),
         activity_buffer: presentation_activities.clone(),
         presentation,
@@ -7077,6 +7082,78 @@ async fn coworking_me(
         }
         AuthenticatedPrincipal::Participant(_) => StatusCode::FORBIDDEN.into_response(),
     }
+}
+
+/// A content-free refresh signal. Participant credentials never reach the
+/// general Agent SSE route, and each signal rechecks the durable grant.
+async fn coworking_updates(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let AuthenticatedPrincipal::Participant(participant) = principal else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    if participant.conversation_id != conversation_id
+        || conversation_audience(&state, &conversation_id).as_deref()
+            != Some(participant.audience_id.as_str())
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(ToOwned::to_owned)
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let Some(handle) = state.get(&conversation_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let grant_path = coworking::store_path(&state.core.sessions_home());
+    let grant_id = participant.grant_id;
+    let stream = futures::stream::unfold(
+        (
+            handle.events_tx.subscribe(),
+            handle.coworking_comments_tx.subscribe(),
+            tokio::time::interval(std::time::Duration::from_secs(2)),
+            true,
+        ),
+        move |(mut events, mut comments, mut tick, active)| {
+            let grant_path = grant_path.clone();
+            let token = token.clone();
+            let grant_id = grant_id.clone();
+            async move {
+                if !active {
+                    return None;
+                }
+                let changed = tokio::select! {
+                    _ = tick.tick() => false,
+                    _ = events.recv() => true,
+                    _ = comments.recv() => true,
+                };
+                let valid = matches!(
+                    coworking::verify(&grant_path, &token, chrono::Utc::now()),
+                    Ok(Some(current)) if current.grant_id == grant_id
+                );
+                let event = if valid {
+                    Event::default()
+                        .event(if changed { "refresh" } else { "heartbeat" })
+                        .data("{}")
+                } else {
+                    Event::default().event("revoked").data("{}")
+                };
+                Some((
+                    Ok::<_, std::convert::Infallible>(event),
+                    (events, comments, tick, valid),
+                ))
+            }
+        },
+    );
+    Sse::new(stream).into_response()
 }
 
 async fn list_coworking_invitations(
@@ -10301,6 +10378,7 @@ async fn comment_on_sandbox_candidate(
     if !recorded {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    let _ = handle.coworking_comments_tx.send(());
     if matches!(principal, AuthenticatedPrincipal::Participant(_)) {
         return (
             StatusCode::CREATED,
@@ -17696,6 +17774,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            "/sessions/session-1/coworking/updates",
         ] {
             assert!(participant_read_route_allowed(
                 &axum::http::Method::GET,
@@ -17833,6 +17912,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn participant_comment_is_shared_and_revocation_blocks_access() {
+        use futures::StreamExt;
         use tower::ServiceExt;
 
         crate::pin_test_data_home();
@@ -17887,6 +17967,7 @@ mod sandbox_promotion_tests {
                 "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
                 get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
             )
+            .route("/sessions/{id}/coworking/updates", get(coworking_updates))
             .with_state(state)
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
@@ -17978,7 +18059,68 @@ mod sandbox_promotion_tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
+        let updates = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/sessions/session-1/coworking/updates")
+                    .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updates.status(), StatusCode::OK);
+        let mut events = updates.into_body().into_data_stream();
+        let heartbeat = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&heartbeat)
+                .unwrap()
+                .contains("event: heartbeat")
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::POST,
+                    token,
+                    serde_json::json!({"text":"One more note", "path":"result.txt"}).to_string()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+        let refresh = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&refresh)
+                .unwrap()
+                .contains("event: refresh")
+        );
         coworking::revoke(&grants, "grant-comment", "operator").unwrap();
+        let revoked = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&revoked)
+                .unwrap()
+                .contains("event: revoked")
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             app.oneshot(request(axum::http::Method::GET, token, String::new()))
                 .await

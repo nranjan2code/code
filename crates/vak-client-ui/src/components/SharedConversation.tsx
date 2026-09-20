@@ -33,10 +33,13 @@ export default function SharedConversation() {
   const [commentLine, setCommentLine] = createSignal("");
   const [commentBusy, setCommentBusy] = createSignal(false);
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let updatesAbort: AbortController | undefined;
 
   const stop = () => {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = undefined;
+    updatesAbort?.abort();
+    updatesAbort = undefined;
     setCredential(null);
     setMessages([]);
     setCandidates([]);
@@ -97,6 +100,49 @@ export default function SharedConversation() {
     }
   };
 
+  const watchUpdates = async (conversationId: string, token: string) => {
+    const controller = new AbortController();
+    updatesAbort = controller;
+    while (!controller.signal.aborted && credential()?.token === token) {
+      try {
+        const response = await fetch(`/sessions/${encodeURIComponent(conversationId)}/coworking/updates`, {
+          headers: { Authorization: `Bearer ${token}` }, credentials: "omit", cache: "no-store",
+          referrerPolicy: "no-referrer", signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          stop();
+          setError("This invitation has expired or access was revoked. Ask the owner for a new invitation.");
+          return;
+        }
+        // A historical conversation has no live handle; the periodic read remains available.
+        if (response.status === 404) return;
+        if (!response.ok || !response.body) throw new Error("Shared updates unavailable");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, { stream: true });
+          const frames = pending.split(/\r?\n\r?\n/);
+          pending = frames.pop() ?? "";
+          for (const frame of frames) {
+            if (frame.includes("event: revoked")) {
+              stop();
+              setError("This invitation has expired or access was revoked. Ask the owner for a new invitation.");
+              return;
+            }
+            if (frame.includes("event: refresh")) void refresh();
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      if (controller.signal.aborted || credential()?.token !== token) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+    }
+  };
+
   const showFile = async (candidateId: string, path: string) => {
     const current = credential();
     if (!current) return;
@@ -153,7 +199,11 @@ export default function SharedConversation() {
       return;
     }
     await refresh();
-    if (credential()) refreshTimer = setInterval(() => void refresh(), 10_000);
+    const current = credential();
+    if (current) {
+      refreshTimer = setInterval(() => void refresh(), 10_000);
+      void watchUpdates(current.conversationId, current.token);
+    }
   };
 
   const postComment = async (event: SubmitEvent) => {
