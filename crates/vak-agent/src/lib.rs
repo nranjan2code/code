@@ -1400,9 +1400,30 @@ impl Agent {
         // work contract, conversation thread) are read from the ledger here
         // rather than supplied by the caller, since they are derived state,
         // not host configuration.
+        //
+        // The conversation thread section depends on the working-set plan
+        // (it lists only directives the projection leaves out), and the
+        // plan's budget depends on the tail's size — so the tail is sized
+        // from a preliminary plan built against the thread-less sections,
+        // then composed from the plan-aware ones. The per-step plans below
+        // may differ from this one by at most the thread's own few lines;
+        // a turn that demotes to `Card` as a result still carries its
+        // directive on its card line.
         let turn_tail = {
+            let profile = self.effective_capacity_profile();
+            let tool_defs = self.tool_definitions();
+            let prefix_tokens =
+                profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
+            let base_tail = {
+                let session = self.session.lock().await;
+                compose_tail(&self.config.tail, &session.tail_sections(None))
+            };
+            let base_tail_tokens = profile.estimate_tokens(base_tail.chars().count() as u64);
+            let preliminary_plan = self
+                .build_working_set_plan(&profile, prefix_tokens, base_tail_tokens)
+                .await;
             let session = self.session.lock().await;
-            let sections = session.tail_sections();
+            let sections = session.tail_sections(Some(&preliminary_plan));
             compose_tail(&self.config.tail, &sections)
         };
 
@@ -1616,15 +1637,15 @@ impl Agent {
             // `Compaction` entry covers yet. Summarize their CARDS (never
             // raw history) and append one, then re-plan — the packet
             // disappears from the new plan once it is covered.
-            if let Some((_, last_turn_id)) = plan.packet_range.clone() {
+            if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone() {
                 let needs_compaction = {
                     let session = self.session.lock().await;
-                    session.packet_needs_compaction(&last_turn_id)
+                    session.packet_needs_compaction(&first_turn_id, &last_turn_id)
                 };
                 if needs_compaction {
                     let (transcript, transcript_chars) = {
                         let session = self.session.lock().await;
-                        session.packet_transcript(&last_turn_id)
+                        session.packet_transcript(&first_turn_id, &last_turn_id)
                     };
                     let tokens_before = profile.estimate_tokens(transcript_chars);
                     let _ = events
@@ -1692,7 +1713,9 @@ impl Agent {
                     {
                         let mut session = self.session.lock().await;
                         if let Err(e) = session.append_incremental_compaction(
+                            &first_turn_id,
                             &last_turn_id,
+                            &model,
                             summary,
                             tokens_before,
                         ) {

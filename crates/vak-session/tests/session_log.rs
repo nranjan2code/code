@@ -10,7 +10,9 @@ use vak_session::types::{
     EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, TurnCapabilitiesBound,
     WorkContract, WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
 };
-use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog, SessionPath};
+use vak_session::{
+    ActivityKind, ActivityRecord, ActivityStatus, Fidelity, SessionLog, SessionPath, WorkingSetPlan,
+};
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -271,7 +273,7 @@ fn active_work_is_reconstructed_into_the_tail() {
         "work state must not be spliced into the projection"
     );
     let work_contract = log
-        .tail_sections()
+        .tail_sections(None)
         .work_contract
         .expect("active work contract present in the tail");
     assert!(work_contract.contains("preserve active work"));
@@ -309,11 +311,11 @@ fn active_work_survives_compaction() {
         kind: WorkEventKind::ContractCreated { contract },
     })
     .unwrap();
-    let boundary = log.append_message(user_msg("keep this")).unwrap();
-    log.compact("old summary".into(), boundary.id, 9000)
+    log.append_message(user_msg("keep this")).unwrap();
+    log.append_handoff_reset("old summary".into(), 9000)
         .unwrap();
     assert!(
-        log.tail_sections()
+        log.tail_sections(None)
             .work_contract
             .expect("active work contract present in the tail")
             .contains("survive compaction")
@@ -482,29 +484,45 @@ fn branching_derives_only_active_path() {
     assert_eq!(texts, vec!["a", "a-reply", "b", "b-reply", "d", "d-reply"]);
 }
 
+/// A packet is rendered only when the plan's `packet_range` is exactly the
+/// range it covers (docs/design/68-context-engine.md §4): the packet is a
+/// cache of summariser work, never a boundary in the ledger.
 #[test]
-fn compaction_replaces_prefix_keeps_suffix() {
+fn packet_is_rendered_only_for_the_exact_range_the_plan_asks_for() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
-    log.append_message(user_msg("old-1")).unwrap();
+    let old1 = log.append_message(user_msg("old-1")).unwrap().id;
     log.append_message(assistant_msg("old-1-reply")).unwrap();
-    log.append_message(user_msg("old-2")).unwrap();
+    let old2 = log.append_message(user_msg("old-2")).unwrap().id;
     log.append_message(assistant_msg("old-2-reply")).unwrap();
-    let e3 = log.append_message(user_msg("kept")).unwrap();
+    let kept = log.append_message(user_msg("kept")).unwrap().id;
     log.append_message(assistant_msg("kept-reply")).unwrap();
-
-    log.compact("summary of old turns".into(), e3.id.clone(), 9000)
-        .unwrap();
-    log.append_message(user_msg("after")).unwrap();
+    log.append_packet(
+        &old1,
+        &old2,
+        "small-model",
+        "summary of old turns".into(),
+        9000,
+    )
+    .unwrap();
+    let after = log.append_message(user_msg("after")).unwrap().id;
     log.append_message(assistant_msg("after-reply")).unwrap();
 
-    let texts: Vec<String> = log
-        .derive_messages()
-        .iter()
-        .map(|m| m.text_content())
-        .collect();
+    let texts = |messages: Vec<vak_llm::Message>| -> Vec<String> {
+        messages.iter().map(|m| m.text_content()).collect()
+    };
+
+    // The plan that asked for this packet sees it in place of the turns.
+    let packeting = WorkingSetPlan {
+        per_turn: vec![
+            (kept.clone(), Fidelity::Full),
+            (after.clone(), Fidelity::Full),
+        ],
+        packet_range: Some((old1.clone(), old2.clone())),
+        ..WorkingSetPlan::default()
+    };
     assert_eq!(
-        texts,
+        texts(log.derive_with_plan(&packeting)),
         vec![
             "<context_summary>\nsummary of old turns\n</context_summary>",
             "kept",
@@ -513,37 +531,55 @@ fn compaction_replaces_prefix_keeps_suffix() {
             "after-reply",
         ]
     );
-}
 
-#[test]
-fn compaction_keeps_entries_between_marker_and_compaction_point() {
-    let dir = tempdir().unwrap();
-    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
-    log.append_message(user_msg("dropped")).unwrap();
-    log.append_message(assistant_msg("dropped-reply")).unwrap();
-    let e2 = log.append_message(user_msg("kept-mid")).unwrap();
-    log.append_message(assistant_msg("kept-mid-reply")).unwrap();
-    log.append_message(user_msg("kept-late")).unwrap();
-    log.append_message(assistant_msg("kept-late-reply"))
-        .unwrap();
-
-    log.compact("s".into(), e2.id.clone(), 100).unwrap();
-
-    let texts: Vec<String> = log
-        .derive_messages()
-        .iter()
-        .map(|m| m.text_content())
-        .collect();
+    // A plan that wants every turn at Full gets every turn at Full: the
+    // packet hides nothing.
+    let everything = WorkingSetPlan {
+        per_turn: [&old1, &old2, &kept, &after]
+            .into_iter()
+            .map(|id| (id.clone(), Fidelity::Full))
+            .collect(),
+        ..WorkingSetPlan::default()
+    };
     assert_eq!(
-        texts,
+        texts(log.derive_with_plan(&everything)),
         vec![
-            "<context_summary>\ns\n</context_summary>",
-            "kept-mid",
-            "kept-mid-reply",
-            "kept-late",
-            "kept-late-reply",
+            "old-1",
+            "old-1-reply",
+            "old-2",
+            "old-2-reply",
+            "kept",
+            "kept-reply",
+            "after",
+            "after-reply",
         ]
     );
+    // ...and so does the plan-free projection.
+    assert_eq!(texts(log.derive_messages()).len(), 8);
+
+    // A plan that packets a different range finds no packet: those turns
+    // render as cards rather than vanishing (no-cut), and no stale summary
+    // is substituted.
+    let narrower = WorkingSetPlan {
+        per_turn: vec![
+            (old2.clone(), Fidelity::Full),
+            (kept.clone(), Fidelity::Full),
+            (after.clone(), Fidelity::Full),
+        ],
+        packet_range: Some((old1.clone(), old1.clone())),
+        ..WorkingSetPlan::default()
+    };
+    let rendered = texts(log.derive_with_plan(&narrower));
+    assert!(
+        !rendered.iter().any(|t| t.contains("<context_summary>")),
+        "{rendered:?}"
+    );
+    assert!(
+        rendered[0].starts_with("<turns>") && rendered[0].contains("old-1"),
+        "{rendered:?}"
+    );
+    assert!(log.packet_needs_compaction(&old1, &old1));
+    assert!(!log.packet_needs_compaction(&old1, &old2));
 }
 
 #[test]
@@ -556,53 +592,54 @@ fn unknown_parent_rejected() {
     assert!(log.append(entry).is_err());
 }
 
+/// Growing a packet reuses the stored one as its seed (docs/design/68
+/// §4): the summariser input for a wider range starts with the longest
+/// stored packet over the same first turn and continues with the cards of
+/// the turns after it — raw pre-packet history is never re-read — and the
+/// wider packet, once stored, is what the wider plan renders.
 #[test]
-fn second_compaction_summarizes_the_prior_summary() {
+fn a_wider_packet_seeds_from_the_stored_prefix_packet() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
 
-    // Seed 8 closed turns (a directive plus its reply each); compact down
-    // to the last 2 TURNS — `keep_recent` is now a turn count, not a
-    // message count (docs/design/68-context-engine.md §10).
+    let mut ids = Vec::new();
     for i in 0..8 {
-        log.append_message(user_msg(&format!("m{i}"))).unwrap();
+        ids.push(log.append_message(user_msg(&format!("m{i}"))).unwrap().id);
         log.append_message(assistant_msg(&format!("m{i}-reply")))
             .unwrap();
     }
-    let plan1 = log.plan_compaction(2).expect("plan 1");
-    // Older segment = the first 6 turns' full records (2 messages each).
-    assert_eq!(plan1.older.len(), 12);
-    log.apply_compaction(&plan1, "summary-one".into(), 9000)
+    log.append_packet(&ids[0], &ids[5], "m", "summary-one".into(), 9000)
         .unwrap();
 
-    // Projection: [summary-one, m6, m6-reply, m7, m7-reply].
-    let msgs = log.derive_messages();
-    assert_eq!(msgs.len(), 5);
-    assert!(msgs[0].text_content().contains("summary-one"));
-
-    // Second cycle: grow past again, then compact once more.
-    log.append_message(user_msg("m8")).unwrap();
-    log.append_message(assistant_msg("m8-reply")).unwrap();
-    let plan2 = log.plan_compaction(2).expect("plan 2");
-    // The new older segment must START with the prior summary message —
-    // raw pre-compaction history must NOT reappear.
+    // The plan now wants m0..=m6 packeted: the transcript is seeded from
+    // summary-one and adds only m6.
+    let (transcript, _) = log.packet_transcript(&ids[0], &ids[6]);
+    assert!(transcript.starts_with("summary-one"), "{transcript}");
+    assert!(transcript.contains("m6"), "{transcript}");
     assert!(
-        plan2.older[0].text_content().contains("<context_summary>"),
-        "repeated compaction must summarize the prior summary"
+        !transcript.contains("m0-reply"),
+        "raw history re-read: {transcript}"
     );
-    assert_eq!(plan2.older.len(), 3); // summary-one, m6, m6-reply (m7/m8 stay verbatim)
+    assert!(log.packet_needs_compaction(&ids[0], &ids[6]));
 
-    log.apply_compaction(&plan2, "summary-two".into(), 400)
+    log.append_packet(&ids[0], &ids[6], "m", "summary-two".into(), 400)
         .unwrap();
-    let final_msgs = log.derive_messages();
+    let plan = WorkingSetPlan {
+        per_turn: vec![(ids[7].clone(), Fidelity::Full)],
+        packet_range: Some((ids[0].clone(), ids[6].clone())),
+        ..WorkingSetPlan::default()
+    };
+    let final_msgs = log.derive_with_plan(&plan);
     assert!(
         final_msgs[0].text_content().contains("summary-two"),
-        "latest summary wins"
+        "the packet for the asked range wins"
     );
     assert!(
         !serde_like_contains(&final_msgs, "summary-one"),
-        "old summary must be folded away"
+        "the narrower packet is not rendered alongside"
     );
+    // The narrower packet is still there for a plan that asks for it.
+    assert!(!log.packet_needs_compaction(&ids[0], &ids[5]));
 }
 
 #[test]
@@ -840,17 +877,22 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
         "the thread must never be spliced into the projection"
     );
     assert!(
-        log.tail_sections().thread.is_none(),
+        log.tail_sections(None).thread.is_none(),
         "nothing is dropped from the working set yet, so the thread has nothing to add"
     );
 
-    // Compact turns 1 and 2 away; only turn 3's directive stays verbatim.
-    let plan = log.plan_compaction(1).expect("a plan over five messages");
-    log.apply_compaction(&plan, "summary of turns 1-2".into(), 999)
+    // Packet turns 1 and 2 away; only turn 3's directive stays verbatim.
+    let index = vak_session::TurnIndex::from_log(&log);
+    let (t1, t2) = (index.turns[0].id.clone(), index.turns[1].id.clone());
+    log.append_packet(&t1, &t2, "m", "summary of turns 1-2".into(), 999)
         .unwrap();
+    let plan = WorkingSetPlan {
+        packet_range: Some((t1, t2)),
+        ..WorkingSetPlan::default()
+    };
 
     let joined = log
-        .derive_messages()
+        .derive_with_plan(&plan)
         .iter()
         .map(|m| m.text_content())
         .collect::<Vec<_>>()
@@ -861,9 +903,9 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
     );
 
     let thread_text = log
-        .tail_sections()
+        .tail_sections(Some(&plan))
         .thread
-        .expect("compacted-away directives surface in the thread");
+        .expect("packeted-away directives surface in the thread");
     assert!(thread_text.contains("revision=\"3\""));
     assert!(thread_text.contains("initial research on WEF"));
     assert!(thread_text.contains("use python sandbox"));

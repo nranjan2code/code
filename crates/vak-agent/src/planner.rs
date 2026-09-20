@@ -93,11 +93,13 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     // Only closed turns with a written card are plannable at all — the
     // still-open turn (last, uncarded) is never planned; it is always sent
     // verbatim by the caller.
+    // Turns behind a reset-with-handoff are invisible to the model: not
+    // candidates for any tier, and never the start of a packet range.
     let closed: Vec<&vak_session::Turn> = input
         .index
         .turns
         .iter()
-        .filter(|turn| turn.closed && turn.card.is_some())
+        .filter(|turn| turn.closed && turn.card.is_some() && !turn.behind_reset)
         .collect();
 
     let mut spent: u64 = 0;
@@ -438,6 +440,64 @@ mod tests {
             result
         );
         assert!(result.spent <= result.budget);
+    }
+
+    /// A turn behind a reset-with-handoff is invisible to the model and
+    /// therefore never a candidate: not Full, not Card, and never the
+    /// start of a packet range (which would otherwise trigger a
+    /// summariser call over turns the model cannot see).
+    #[test]
+    fn turns_behind_a_reset_are_never_planned() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, ids) = fixture(
+            dir.path(),
+            &[("turn one", 400, 40, &[]), ("turn two", 400, 40, &[])],
+        );
+        log.append_handoff_reset("handoff".into(), 1_000).unwrap();
+        let id3 = log
+            .append_message(MessageRecord {
+                message: M::user_text("turn three"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        log.append_message(MessageRecord {
+            message: M::assistant(vec![vak_llm::ContentBlock::text("answer for turn three")]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_turn_card(TurnCardRecord {
+            turn_id: id3.clone(),
+            card: card(&id3, "turn three", 400, 40, &[]),
+        })
+        .unwrap();
+
+        let index = TurnIndex::from_log(&log);
+        assert!(index.turns[0].behind_reset && index.turns[1].behind_reset);
+        assert!(!index.turns[2].behind_reset);
+
+        // Tiny budget: only a packet could hold the pre-reset turns, and
+        // even that must not happen.
+        let profile = profile(200);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "turn one again",
+            reading: None,
+            prefix_tokens: 100,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        let planned: Vec<&str> = result.per_turn.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(!planned.contains(&ids[0].as_str()) && !planned.contains(&ids[1].as_str()));
+        assert!(
+            result
+                .packet_range
+                .as_ref()
+                .is_none_or(|(first, last)| first != &ids[0] && last != &ids[1]),
+            "{:?}",
+            result.packet_range
+        );
     }
 
     #[test]

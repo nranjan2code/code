@@ -217,6 +217,23 @@ Properties:
 - Compaction is no longer an overflow emergency at 80%; the packet is
   refreshed incrementally whenever a turn leaves the working set, so the
   summariser call is amortised and the request never overshoots.
+- **A packet is a cache, never a boundary.** A `Compaction` entry is keyed
+  by the inclusive turn range it summarises (`first_turn_id..=last_turn_id`)
+  and records the model whose plan asked for it. The projection renders a
+  stored packet only when the current plan's `packet_range` is exactly that
+  range; a plan that wants those turns at `Full` or `Card` gets them from
+  the ledger, whatever packets exist. So the ledger stays the one rich
+  original, and every request is a function of `(ledger, bound model's
+  profile)` alone: a session that ran on a 5B model and packeted its first
+  25 turns re-projects those 25 turns whole the moment a frontier model is
+  bound, and re-projects the stored packet — with no second summariser
+  call — when the small model is bound again. Growing a packet (the same
+  first turn, a later last turn) seeds the summariser with the longest
+  stored packet over that first turn and adds only the newly covered cards.
+  The one true boundary is the reset-with-handoff entry (`reset_all`,
+  docs/design/42), the rescue for a profile with no usable horizon: turns
+  behind it are marked `behind_reset` in the `TurnIndex`, never planned and
+  never listed as covered, though `recall({ turn })` still reaches them.
 - If a request is still rejected as over-length (provider 400 / context
   error), that is a `CapacityProfile` contradiction: `verified_window` is set
   to the rejected size, the working set is re-planned, and the turn retries
@@ -601,9 +618,10 @@ assistant: <narration>           the prose around the card, verbatim, minus
 | Nudges, repair directives, intent notes, stance, thread | never | they were runtime guidance for that turn |
 | Compaction packet | rendered from turn records (directive + trace + answer), not from raw exchanges | the summary is of decisions, not of tool dumps |
 
-Compaction works in whole turns, so `plan_compaction`'s pair-boundary walk
-is gone, and a closed turn's record never changes once written, so the
-prefix cache survives across turns as well as within them.
+Compaction works in whole turns (there is no message-level `keep_recent`
+compaction left; `/compact` runs the same planner and writes the same
+range-keyed packet), and a closed turn's record never changes once
+written, so the prefix cache survives across turns as well as within them.
 
 #### Cache mechanics per provider
 
@@ -711,6 +729,12 @@ prefix drops from ~12k toward ~5k. Both numbers are estimates until measured.
 - **No-cut invariant**: a property test that every tool result present in the
   ledger is either verbatim, a digest carrying its evidence id, or named in a
   compaction packet — never absent and never cut.
+- **Two-model replay** (`context_engine_gate`): the fixture session planned
+  under a small profile writes a packet; re-planned under a large profile,
+  the packeted turns must come back at `Full` in the plan *and* in the
+  projection, with no `<context_summary>`; re-planned under the small
+  profile again, the stored packet must be reused with no compaction needed
+  and a byte-identical projection.
 - **Uniqueness invariant**: no tool name appears twice across schemas, index,
   and system prompt; no directive text appears both in a working-set turn and
   in the thread.

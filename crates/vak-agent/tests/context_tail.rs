@@ -339,11 +339,12 @@ async fn prefix_changed_activity_recorded_only_when_digest_changes() {
     );
 }
 
-/// The conversation thread in the assembled request lists only directives no
-/// longer verbatim in the working set (docs/design/68-context-engine.md
-/// §6/§10): a directive dropped by compaction resurfaces there, but one
-/// still present verbatim — including the turn's own new directive — is
-/// never repeated.
+/// The conversation thread in the assembled request lists only directives
+/// the projection leaves out (docs/design/68-context-engine.md §6/§10): a
+/// directive hidden behind a reset-with-handoff resurfaces there, but one
+/// still present — including the turn's own new directive — is never
+/// repeated. (The plan-driven case, a packeted turn, is covered at the
+/// session level: `tail_sections(Some(&plan))` in vak-session's tests.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
     let dir = tempdir().unwrap();
@@ -369,6 +370,11 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         meta: None,
     })
     .unwrap();
+    // Reset-with-handoff after the first turn: everything before it is
+    // invisible to the model; the second turn, appended after, stays
+    // verbatim.
+    log.append_handoff_reset("summary of the WEF research turn".into(), 999)
+        .unwrap();
     log.append_goal_update(vak_intent::GoalUpdate {
         revision: 2,
         relation: vak_intent::GoalRelation::AddsTo,
@@ -386,13 +392,6 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         meta: None,
     })
     .unwrap();
-
-    // Compact the first turn away; the second turn stays verbatim.
-    // `keep_recent` is a TURN count now (docs/design/68-context-engine.md
-    // §10), and there are two turns here.
-    let plan = log.plan_compaction(1).expect("a plan over two turns");
-    log.apply_compaction(&plan, "summary of the WEF research turn".into(), 999)
-        .unwrap();
 
     let provider = Arc::new(Recording::new(vec![text_msg(
         "the global economy grew modestly",
@@ -421,13 +420,13 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
             _ => None,
         })
         .find(|text| text.contains("<conversation_thread"))
-        .expect("thread section present for a compacted-away directive");
+        .expect("thread section present for a reset-hidden directive");
 
     let thread_start = tail.find("<conversation_thread").unwrap_or(0);
     let thread_text = &tail[thread_start..];
     assert!(
         thread_text.contains("research on WEF"),
-        "the compacted-away directive must resurface: {thread_text}"
+        "the reset-hidden directive must resurface: {thread_text}"
     );
     assert!(
         !thread_text.contains("use python sandbox"),

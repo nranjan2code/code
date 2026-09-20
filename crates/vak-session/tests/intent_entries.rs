@@ -97,7 +97,7 @@ fn an_intent_note_reaches_the_model_through_the_tail_not_the_projection() {
         "user turn present"
     );
 
-    let tail = log.tail_sections();
+    let tail = log.tail_sections(None);
     let intent = tail.intent.expect("intent tail section present");
     assert!(intent.contains("Cite your sources."));
     assert!(intent.starts_with("<intent>"));
@@ -160,7 +160,7 @@ fn only_the_newest_intent_note_is_projected() {
         assert!(joined.contains(turn), "lost turn `{turn}`");
     }
 
-    let intent = log.tail_sections().intent.expect("newest note present");
+    let intent = log.tail_sections(None).intent.expect("newest note present");
     assert!(intent.contains("THIRD directive"));
     assert!(!intent.contains("FIRST directive"));
     assert!(!intent.contains("SECOND directive"));
@@ -194,31 +194,43 @@ fn replaying_a_ledger_reproduces_the_recorded_note_verbatim() {
 
     let reopened = SessionLog::open(path.clone()).unwrap();
     let intent = reopened
-        .tail_sections()
+        .tail_sections(None)
         .intent
         .expect("intent tail section present after reopening");
     assert!(intent.contains("a rule this build would never generate"));
 }
 
 /// An intent note is runtime guidance for the turn in flight, not
-/// conversation. It must not be swept into a compaction summary as though the
-/// user had said it.
+/// conversation. It must not be swept into a compaction packet's
+/// summariser input as though the user had said it.
 #[test]
 fn intent_notes_are_control_and_stay_out_of_the_compaction_packet() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
+    let mut ids = Vec::new();
     for index in 0..6 {
         log.append_intent(record(Some(&format!("directive {index}"))))
             .unwrap();
-        log.append_message(user(&format!("turn {index}"))).unwrap();
+        ids.push(
+            log.append_message(user(&format!("turn {index}")))
+                .unwrap()
+                .id,
+        );
+        log.append_message(vak_session::types::MessageRecord {
+            message: Message::assistant(vec![vak_llm::ContentBlock::text(format!(
+                "answer {index}"
+            ))]),
+            meta: None,
+        })
+        .unwrap();
     }
-    let plan = log.plan_compaction(2).expect("a plan over six turns");
-    let older: Vec<String> = plan.older.iter().map(|m| m.text_content()).collect();
+    let (older, _) = log.packet_transcript(&ids[0], &ids[3]);
     assert!(
-        !older.iter().any(|text| text.contains("<intent>")),
-        "an intent note was queued for summarization: {older:?}"
+        !older.contains("<intent>"),
+        "an intent note was queued for summarization: {older}"
     );
-    assert!(older.iter().any(|text| text.contains("turn 0")));
+    assert!(older.contains("turn 0"), "{older}");
+    assert!(!older.contains("turn 4"), "{older}");
 }
 
 #[test]

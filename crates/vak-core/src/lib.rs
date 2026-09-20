@@ -6706,7 +6706,8 @@ impl Core {
                 },
             );
         };
-        let (transcript, transcript_chars) = session.packet_transcript(&last_turn_id);
+        let (transcript, transcript_chars) =
+            session.packet_transcript(&first_turn_id, &last_turn_id);
         let before = profile.estimate_tokens(transcript_chars);
         let provider = match self.provider() {
             Ok(p) => p,
@@ -6775,7 +6776,13 @@ impl Core {
                 _ => 0,
             }
         };
-        if let Err(e) = session.append_incremental_compaction(&last_turn_id, summary, before) {
+        if let Err(e) = session.append_incremental_compaction(
+            &first_turn_id,
+            &last_turn_id,
+            &model,
+            summary,
+            before,
+        ) {
             return (
                 session,
                 CompactOutcome::failed(format!("compaction write failed: {e}")),

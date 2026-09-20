@@ -12,7 +12,7 @@ use vak_llm::{ContentBlock, Message, Role};
 use vak_session::types::{
     EntryPayload, FrozenContract, MessageRecord, SessionHeader, TurnCardRecord,
 };
-use vak_session::{SessionLog, TurnIndex};
+use vak_session::{Fidelity, SessionLog, TurnIndex, WorkingSetPlan};
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -150,14 +150,14 @@ fn every_tool_result_is_verbatim_traced_or_covered_by_a_packet() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
 
-    // Turn A: closed, will be compacted away.
-    log.append_message(user_msg("turn a")).unwrap();
+    // Turn A: closed, will be packeted away.
+    let a = log.append_message(user_msg("turn a")).unwrap().id;
     log.append_message(tool_call("ev-a", "search")).unwrap();
     log.append_message(tool_result("ev-a", "result a")).unwrap();
     log.append_message(assistant_msg("a done")).unwrap();
 
     // Turn B: closed, stays in the working set as a full record.
-    log.append_message(user_msg("turn b")).unwrap();
+    let b = log.append_message(user_msg("turn b")).unwrap().id;
     log.append_message(tool_call("ev-b", "search")).unwrap();
     log.append_message(tool_result("ev-b", "result b")).unwrap();
     log.append_message(assistant_msg("b done")).unwrap();
@@ -167,12 +167,16 @@ fn every_tool_result_is_verbatim_traced_or_covered_by_a_packet() {
     log.append_message(tool_call("ev-c", "search")).unwrap();
     log.append_message(tool_result("ev-c", "result c")).unwrap();
 
-    // Compact turn A away, keeping the last 2 turns (B and the open C).
-    let plan = log.plan_compaction(2).expect("a plan over three turns");
-    log.apply_compaction(&plan, "turn a summarized".into(), 100)
+    // Packet turn A away; B rides at Full and the open C is verbatim.
+    log.append_packet(&a, &a, "m", "turn a summarized".into(), 100)
         .unwrap();
+    let plan = WorkingSetPlan {
+        per_turn: vec![(b, Fidelity::Full)],
+        packet_range: Some((a.clone(), a)),
+        ..WorkingSetPlan::default()
+    };
 
-    let messages = log.derive_messages();
+    let messages = log.derive_with_plan(&plan);
     let joined: String = messages
         .iter()
         .map(|m| m.text_content())
@@ -191,8 +195,8 @@ fn every_tool_result_is_verbatim_traced_or_covered_by_a_packet() {
         })
     };
 
-    // ev-a: dropped by compaction — covered by the packet summary, never
-    // present as a block and never digested.
+    // ev-a: packeted — covered by the packet summary, never present as a
+    // block and never digested.
     assert!(result_content("ev-a").is_none());
     assert!(!joined.contains("evidence:ev-a"));
     assert!(joined.contains("<context_summary>"));

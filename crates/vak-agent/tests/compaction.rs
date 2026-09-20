@@ -169,22 +169,50 @@ async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
     );
 
     let session = agent.session.lock().await;
+    let packet = session
+        .chain_to_root()
+        .iter()
+        .find_map(|e| match &e.payload {
+            EntryPayload::Compaction(c) if !c.reset_all => Some(c.clone()),
+            _ => None,
+        })
+        .expect("a packet entry must be on the ledger");
+    assert!(
+        !packet.first_turn_id.is_empty() && !packet.last_turn_id.is_empty(),
+        "a packet is keyed by the turn range it covers: {packet:?}"
+    );
     assert!(
         session
-            .chain_to_root()
-            .iter()
-            .any(|e| matches!(&e.payload, EntryPayload::Compaction(_))),
-        "a Compaction entry must be on the ledger"
+            .packet_for(&packet.first_turn_id, &packet.last_turn_id)
+            .is_some()
     );
-    let joined: String = session
+
+    // The packet is a cache for the plan that asked for it, not a boundary:
+    // the plan-free (all-Full) projection carries every turn and no
+    // summary, while a plan asking for exactly that range renders it.
+    let plan_free: String = session
         .derive_messages()
         .iter()
         .map(|m| m.text_content())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        joined.contains("<context_summary>"),
-        "the summary must be in the plan-free projection: {joined}"
+        !plan_free.contains("<context_summary>") && plan_free.contains("padded question number 0"),
+        "a packet must not hide turns from the plan-free projection: {plan_free}"
+    );
+    let plan = vak_session::WorkingSetPlan {
+        packet_range: Some((packet.first_turn_id.clone(), packet.last_turn_id.clone())),
+        ..vak_session::WorkingSetPlan::default()
+    };
+    let planned: String = session
+        .derive_with_plan(&plan)
+        .iter()
+        .map(|m| m.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        planned.contains("<context_summary>"),
+        "the plan that asked for the packet must see it: {planned}"
     );
 }
 

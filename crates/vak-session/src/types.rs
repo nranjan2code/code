@@ -282,31 +282,33 @@ pub struct MessageMeta {
     pub control: Option<vak_intent::control::ControlKind>,
 }
 
+/// A compaction packet (docs/design/68-context-engine.md §4): the summary
+/// of one contiguous range of closed turns, keyed by that range. A packet
+/// is a cache of summariser work, never a boundary. The `WorkingSetPlanner`
+/// decides per request, from the bound model's measured profile, whether a
+/// packet is needed at all and over which range; the projection reuses a
+/// stored packet only when its range is exactly the one the plan asks for.
+/// So a packet written while a small model was bound never hides those
+/// turns from a larger model bound later: the ledger stays the one rich
+/// original, and every projection is a function of (ledger, bound model).
+///
+/// `reset_all` is the one true boundary: the reset-with-handoff rescue
+/// (docs/design/42-managed-work-contracts.md) for a profile with no usable
+/// horizon replaces everything before the entry with `summary`; the range
+/// fields are empty on such an entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionEntry {
     pub summary: String,
-    pub first_kept_entry_id: String,
+    /// Oldest covered turn's directive entry id (inclusive).
+    pub first_turn_id: String,
+    /// Newest covered turn's directive entry id (inclusive).
+    pub last_turn_id: String,
+    /// The model whose plan asked for this packet and whose summariser
+    /// wrote it — provenance for forensics, not a lookup key.
+    pub model: String,
     pub tokens_before: u64,
-    /// Packet accounting (docs/design/17-context.md): which visible message entries
-    /// stayed verbatim vs became summary material. `None` for entries
-    /// written before accounting existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partition: Option<ContextPartition>,
-    /// Full-context reset (docs/design/42-managed-work-contracts.md): when true, the projection
-    /// replaces EVERYTHING with this summary — the reset-with-handoff
-    /// rescue. Default false; older ledgers parse unchanged.
     #[serde(default)]
     pub reset_all: bool,
-}
-
-/// The compaction-time packet partition: every message entry visible in
-/// the current projection appears exactly once — verbatim (`selected`) or
-/// summarized away (`dropped`). Prior compaction pseudo-entries appear in
-/// neither list; they were settled by earlier compactions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ContextPartition {
-    pub selected_entry_ids: Vec<String>,
-    pub dropped_entry_ids: Vec<String>,
 }
 
 /// A durable objective with acceptance criteria (docs/design/42-managed-work-contracts.md).
@@ -871,15 +873,4 @@ pub enum SessionError {
     Exists(std::path::PathBuf),
     #[error("session is locked by another process: {0}")]
     Locked(std::path::PathBuf),
-}
-
-/// Projection-based compaction plan (see SessionLog::plan_compaction).
-#[derive(Debug, Clone)]
-pub struct CompactionPlan {
-    pub older: Vec<vak_llm::Message>,
-    /// Id of the FIRST KEPT projected entry — the new compaction's
-    /// first_kept_entry_id anchor.
-    pub first_kept_entry_id: String,
-    /// Where each visible message entry lands (docs/design/17-context.md).
-    pub partition: ContextPartition,
 }

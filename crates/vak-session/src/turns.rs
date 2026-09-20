@@ -50,6 +50,11 @@ pub struct Turn {
     /// `false` only for the last turn when the chain ends without a final
     /// assistant text after the directive.
     pub closed: bool,
+    /// `true` when a reset-with-handoff entry (docs/design/42) follows this
+    /// turn on the chain: the turn is invisible to the model, so it is
+    /// never planned, never packeted and never listed as covered — though
+    /// it stays in the index for `recall({ turn })` and turn numbering.
+    pub behind_reset: bool,
     /// Full presentation records parallel to `presentations`, kept alongside
     /// the id list so `full_record`/`build_card` never re-walk the ledger.
     presentation_records: Vec<PresentationRecord>,
@@ -66,11 +71,16 @@ pub struct Turn {
     raw_tail: Vec<Message>,
 }
 
-/// A compaction summary over a range of turns (docs/design/68 §2: "Compaction
-/// packets become `TurnIndex.packets`").
-#[derive(Debug, Clone)]
+/// A stored compaction packet: the summary of one inclusive range of closed
+/// turns (docs/design/68 §2: "Compaction packets become
+/// `TurnIndex.packets`"), keyed by that range and reused only by a plan
+/// asking for exactly it. Reset-with-handoff entries are not packets and
+/// never appear here.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
-    pub first_kept_entry_id: String,
+    pub first_turn_id: String,
+    pub last_turn_id: String,
+    pub model: String,
     pub summary: String,
 }
 
@@ -163,6 +173,7 @@ impl TurnIndex {
                                     presentations: Vec::new(),
                                     card: None,
                                     closed: true,
+                                    behind_reset: false,
                                     presentation_records: Vec::new(),
                                     reading: None,
                                     raw_tail: Vec::new(),
@@ -212,9 +223,16 @@ impl TurnIndex {
                         turn.reading = Some(ReadingKey::from_reading(&record.reading));
                     }
                 }
+                EntryPayload::Compaction(c) if c.reset_all => {
+                    for turn in &mut turns {
+                        turn.behind_reset = true;
+                    }
+                }
                 EntryPayload::Compaction(c) => {
                     packets.push(Packet {
-                        first_kept_entry_id: c.first_kept_entry_id.clone(),
+                        first_turn_id: c.first_turn_id.clone(),
+                        last_turn_id: c.last_turn_id.clone(),
+                        model: c.model.clone(),
                         summary: c.summary.clone(),
                     });
                 }
@@ -1365,9 +1383,10 @@ mod tests {
             log.tail_id().cloned(),
             EntryPayload::Compaction(CompactionEntry {
                 summary: "summary text".into(),
-                first_kept_entry_id: t1,
+                first_turn_id: t1.clone(),
+                last_turn_id: t1,
+                model: "fixture-model".into(),
                 tokens_before: 100,
-                partition: None,
                 reset_all: false,
             }),
         ))

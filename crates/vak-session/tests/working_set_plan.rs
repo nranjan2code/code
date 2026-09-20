@@ -137,15 +137,15 @@ fn card_fidelity_collapses_into_one_turns_block() {
 }
 
 #[test]
-fn packet_turns_and_omitted_turns_contribute_nothing_directly() {
+fn a_packet_range_with_no_stored_packet_renders_as_cards_never_as_nothing() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
     let ids = three_closed_turns(&mut log);
 
     // Only the newest turn is planned; the older two are a packet range
-    // (no Compaction entry written yet in this test, exercising that
-    // `derive_with_plan` renders nothing for them rather than leaking raw
-    // text under a missing-fidelity default).
+    // that no packet covers yet (the agent normally writes it before
+    // projecting). The no-cut invariant still holds: those turns ride as
+    // card lines, never as their raw records and never as nothing.
     let plan = WorkingSetPlan {
         per_turn: vec![(ids[2].clone(), Fidelity::Full)],
         packet_range: Some((ids[0].clone(), ids[1].clone())),
@@ -159,44 +159,78 @@ fn packet_turns_and_omitted_turns_contribute_nothing_directly() {
         .map(Message::text_content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(!joined.contains("first question"));
-    assert!(!joined.contains("second question"));
+    assert!(!joined.contains("<context_summary>"));
+    // One <turns> block carries both, and neither turn's own two-message
+    // record is present: "first question" appears only inside that block.
+    assert_eq!(joined.matches("<turns>").count(), 1);
+    assert!(
+        joined.contains("#1 asked:") && joined.contains("#2 asked:"),
+        "{joined}"
+    );
+    let standalone: Vec<&Message> = messages
+        .iter()
+        .filter(|m| !m.text_content().starts_with("<turns>"))
+        .collect();
+    assert!(
+        standalone
+            .iter()
+            .all(|m| !m.text_content().contains("first question")),
+        "{joined}"
+    );
     assert!(joined.contains("third question") && joined.contains("third answer"));
 }
 
+/// A packet never moves a boundary: the plan-free projection (all-Full)
+/// is untouched by it, and the plan that asked for it renders it — before
+/// and after a reopen from disk.
 #[test]
-fn incremental_compaction_extends_the_boundary_and_the_summary_survives_reopen() {
+fn incremental_compaction_writes_a_packet_that_survives_reopen_and_hides_nothing() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("s.jsonl");
     let mut log = SessionLog::create(path.clone(), header()).unwrap();
     let ids = three_closed_turns(&mut log);
 
-    log.append_incremental_compaction(&ids[1], "summary of turns 1-2".to_string(), 1_234)
-        .unwrap();
+    log.append_incremental_compaction(
+        &ids[0],
+        &ids[1],
+        "small-model",
+        "summary of turns 1-2".to_string(),
+        1_234,
+    )
+    .unwrap();
 
-    // The plan-free projection (all-Full) must now skip the two compacted
-    // turns and carry the summary instead.
     let joined: String = log
         .derive_messages()
         .iter()
         .map(Message::text_content)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(joined.contains("<context_summary>"));
-    assert!(joined.contains("summary of turns 1-2"));
-    assert!(!joined.contains("first question"));
-    assert!(!joined.contains("second question"));
+    assert!(!joined.contains("<context_summary>"), "{joined}");
+    assert!(joined.contains("first question") && joined.contains("second question"));
     assert!(joined.contains("third question") && joined.contains("third answer"));
 
+    let plan = WorkingSetPlan {
+        per_turn: vec![(ids[2].clone(), Fidelity::Full)],
+        packet_range: Some((ids[0].clone(), ids[1].clone())),
+        retrieved: Vec::new(),
+        budget: 100,
+        spent: 50,
+    };
     drop(log);
     let reopened = SessionLog::open(path).unwrap();
     let joined_after_reopen: String = reopened
-        .derive_messages()
+        .derive_with_plan(&plan)
         .iter()
         .map(Message::text_content)
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined_after_reopen.contains("summary of turns 1-2"));
+    assert!(!joined_after_reopen.contains("first question"));
+    assert!(joined_after_reopen.contains("third question"));
+    let packet = reopened
+        .packet_for(&ids[0], &ids[1])
+        .expect("packet stored");
+    assert_eq!(packet.model, "small-model");
 }
 
 #[test]
@@ -206,21 +240,35 @@ fn packet_needs_compaction_until_an_incremental_entry_covers_it() {
     let ids = three_closed_turns(&mut log);
 
     assert!(
-        log.packet_needs_compaction(&ids[1]),
+        log.packet_needs_compaction(&ids[0], &ids[1]),
         "nothing compacted yet, so the range still needs it"
     );
-    let (transcript, _) = log.packet_transcript(&ids[1]);
+    let (transcript, _) = log.packet_transcript(&ids[0], &ids[1]);
     assert!(transcript.contains("#1 asked:") && transcript.contains("#2 asked:"));
     assert!(
         !transcript.contains("third question"),
         "the transcript must stop at last_turn_id, not run to the end"
     );
 
-    log.append_incremental_compaction(&ids[1], "summary of turns 1-2".to_string(), 999)
-        .unwrap();
+    log.append_incremental_compaction(
+        &ids[0],
+        &ids[1],
+        "m",
+        "summary of turns 1-2".to_string(),
+        999,
+    )
+    .unwrap();
     assert!(
-        !log.packet_needs_compaction(&ids[1]),
-        "an incremental Compaction entry now covers this range"
+        !log.packet_needs_compaction(&ids[0], &ids[1]),
+        "a packet now covers exactly this range"
+    );
+    assert!(
+        log.packet_needs_compaction(&ids[0], &ids[2]),
+        "a different range is a different packet"
+    );
+    assert!(
+        log.packet_needs_compaction(&ids[1], &ids[1]),
+        "a packet is matched on its whole range, never on a sub-range"
     );
 }
 
@@ -229,28 +277,29 @@ fn packet_transcript_carries_the_prior_summary_forward() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
     let ids = three_closed_turns(&mut log);
-    log.append_incremental_compaction(&ids[0], "FIRST-SUMMARY".to_string(), 100)
+    log.append_incremental_compaction(&ids[0], &ids[0], "m", "FIRST-SUMMARY".to_string(), 100)
         .unwrap();
 
-    assert!(log.packet_needs_compaction(&ids[1]));
-    let (transcript, _) = log.packet_transcript(&ids[1]);
+    assert!(log.packet_needs_compaction(&ids[0], &ids[1]));
+    let (transcript, _) = log.packet_transcript(&ids[0], &ids[1]);
     assert!(
         transcript.contains("FIRST-SUMMARY"),
         "the prior summary must carry forward: {transcript}"
+    );
+    assert!(
+        !transcript.contains("#1 asked:"),
+        "seeded turn re-read: {transcript}"
     );
     assert!(transcript.contains("#2 asked:"));
 }
 
 #[test]
-fn incremental_compaction_rejects_a_range_with_no_following_turn() {
+fn a_packet_over_an_unknown_turn_is_rejected() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
     let ids = three_closed_turns(&mut log);
-    // The newest turn has no turn after it (only the ledger's end) — must
-    // fail rather than silently compact everything, which would drop the
-    // still-open turn's own history out from under it.
     assert!(
-        log.append_incremental_compaction(&ids[2], "bad".to_string(), 0)
+        log.append_incremental_compaction(&ids[0], "no-such-turn", "m", "bad".to_string(), 0)
             .is_err()
     );
 }

@@ -517,7 +517,13 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     prose-narrated trace, which a small model imitates as prose), `Card`
     (one `TurnCard` line) or `Packet` fidelity chosen by the
     `WorkingSetPlanner` against the measured budget by descending
-    `max(recency, relevance, anaphora)` value, never a reserved share. Every
+    `max(recency, relevance, anaphora)` value, never a reserved share. A
+    compaction packet is a cache keyed by the turn range it summarises,
+    never a boundary: the projection renders it only when the current plan
+    asks for exactly that range, so a packet written under a small model
+    hides nothing from a larger model bound later and every request is a
+    function of (ledger, bound model's profile) alone; the reset-with-
+    handoff entry is the one true boundary. Every
     tool result stays reachable through `recall` by evidence id,
     presentation id or turn number. No character-count truncation anywhere.
     The system prefix (identity, contract, card catalogue, tool index) is

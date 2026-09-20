@@ -2031,9 +2031,10 @@ async fn run_eval(
             );
             reports.push(r);
         }
-        // Deterministic context-quality gate (docs/design/17-context.md) — no model
-        // calls; packet-accounting properties over real compaction.
-        let card = match vak_eval::run_context_scorecard() {
+        // Deterministic context-engine gate (docs/design/68-context-engine.md
+        // "Verification") — no model calls; planner, projection and
+        // two-model replay properties over a fixture ledger.
+        let card = match vak_eval::run_context_engine_scorecard() {
             Ok(card) => card,
             Err(e) => {
                 eprintln!("context scorecard harness error: {e}");

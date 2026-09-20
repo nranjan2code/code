@@ -13,7 +13,19 @@ use vak_llm::{ContentBlock, Message};
 use vak_session::types::{
     FrozenContract, IntentRecord, MessageRecord, SessionHeader, TurnCardRecord,
 };
-use vak_session::{SessionLog, TurnIndex};
+use vak_session::{SessionLog, TurnIndex, WorkingSetPlan};
+
+/// A plan that packets exactly `turn_id` (and nothing else), with the
+/// packet already written — the state in which the thread has an earlier
+/// directive to list.
+fn packet_only(log: &mut SessionLog, turn_id: &str, summary: &str) -> WorkingSetPlan {
+    log.append_packet(turn_id, turn_id, "fixture-model", summary.into(), 999)
+        .unwrap();
+    WorkingSetPlan {
+        packet_range: Some((turn_id.to_string(), turn_id.to_string())),
+        ..WorkingSetPlan::default()
+    }
+}
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -117,15 +129,12 @@ fn a_domain_disjoint_directive_is_marked_paused_not_removed() {
     log.append_intent(intent_record(reading_with_domains(&["cooking"])))
         .unwrap();
 
-    // Force turn 1's directive out of the verbatim working set (this
-    // mechanism, `plan_compaction`, is independent of the fidelity planner)
-    // so the thread has something to list.
-    let plan = log.plan_compaction(1).expect("a plan over the turns");
-    log.apply_compaction(&plan, "summary of turn 1".into(), 999)
-        .unwrap();
+    // Packet turn 1 away under the plan so the thread has something to
+    // list.
+    let plan = packet_only(&mut log, &t1, "summary of turn 1");
 
     let thread = log
-        .tail_sections()
+        .tail_sections(Some(&plan))
         .thread
         .expect("thread must list the dropped finance directive");
     assert!(thread.contains("look up the sensex"), "{thread}");
@@ -178,11 +187,12 @@ fn a_domain_overlapping_directive_is_never_marked_paused() {
     log.append_intent(intent_record(reading_with_domains(&["finance"])))
         .unwrap();
 
-    let plan = log.plan_compaction(1).expect("a plan over the turns");
-    log.apply_compaction(&plan, "summary of turn 1".into(), 999)
-        .unwrap();
+    let plan = packet_only(&mut log, &t1, "summary of turn 1");
 
-    let thread = log.tail_sections().thread.expect("thread present");
+    let thread = log
+        .tail_sections(Some(&plan))
+        .thread
+        .expect("thread present");
     assert!(
         !thread.contains("(earlier, now paused)"),
         "same-domain directives must not be marked paused: {thread}"

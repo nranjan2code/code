@@ -23,6 +23,12 @@ use crate::context_gate::{ContextScorecard, MetricDirection, QualityMetric};
 /// so the planner's Card/Packet tiers are actually exercised.
 const HORIZON_TOKENS: u64 = 13_000;
 
+/// The "small model" horizon for the two-model replay: tight enough that
+/// the 30-turn fixture cannot even fit every card, so the plan packets the
+/// oldest turns and writes a `Compaction` entry — the state the replay
+/// then re-projects under a large model.
+const REPLAY_SMALL_HORIZON_TOKENS: u64 = 1_500;
+
 fn header(cwd: &Path, session_id: &str) -> SessionHeader {
     SessionHeader {
         agent: None,
@@ -437,6 +443,150 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
         .all(|(a, b)| a.text_content() == b.text_content()))
 }
 
+/// A profile with the given usable horizon, for the two-model replay.
+fn profile_with_horizon(horizon: u64) -> CapacityProfile {
+    CapacityProfile::from_probe(
+        horizon,
+        None,
+        Horizon {
+            tokens: horizon,
+            confidence: 0.9,
+            last_confirmed: std::time::SystemTime::now(),
+        },
+        CacheBehaviour::Unknown,
+        512,
+        ProbeProvenance {
+            probed_at: std::time::SystemTime::now(),
+            rungs: Vec::new(),
+            signals: Vec::new(),
+            metadata_digest: format!("context-engine-gate-{horizon}"),
+            quantisation: None,
+        },
+    )
+}
+
+/// The two-model replay (docs/design/68-context-engine.md, principle 1 and
+/// §4): the projection is a function of `(ledger, the bound model's
+/// profile)` and nothing else. A session that ran on a small model —
+/// whose plan packeted the oldest turns and wrote a `Compaction` entry for
+/// them — is then bound to a model with a horizon large enough to hold
+/// every turn at `Full`. The large model's plan says `Full` for the turns
+/// the small model packeted, so its projection must carry those turns'
+/// real records, not the small model's packet summary. Then bound back to
+/// the small model, the stored packet is reused (no second summariser
+/// call) and the projection is the same as before the switch. Nothing in
+/// the ledger is ever cut; only the projection changes with the model.
+///
+/// Returns one flag per property so the scorecard can name which one
+/// broke.
+struct ReplayVerdict {
+    /// The large model's plan puts the small model's packeted turns at
+    /// `Full` (the planner is model-driven, not boundary-driven).
+    large_plan_promotes_packeted_turns: bool,
+    /// The large model's projection carries those turns' directives
+    /// verbatim and no `<context_summary>` at all.
+    large_projection_follows_its_plan: bool,
+    /// Bound back to the small model, the packet already stored is reused:
+    /// no compaction is needed and the projection matches the pre-switch
+    /// one byte for byte.
+    small_model_reuses_its_packet: bool,
+}
+
+fn two_model_replay(dir: &Path) -> Result<ReplayVerdict, String> {
+    let (mut log, _open_result) = build_fixture(dir, "gate-two-model-replay")?;
+    let small = profile_with_horizon(REPLAY_SMALL_HORIZON_TOKENS);
+    // Large enough that every closed turn fits at Full with room to spare.
+    let large = profile_with_horizon(2_000_000);
+
+    // 1) The small model runs: its plan packets the oldest turns, and the
+    //    agent loop writes the packet (a stand-in summary here; the
+    //    summariser's wording is irrelevant to the property).
+    let small_plan = plan_now(&log, &small);
+    let Some((first_packeted, last_packeted)) = small_plan.packet_range.clone() else {
+        return Err(
+            "the small profile must packet at least one turn for the replay to mean anything"
+                .into(),
+        );
+    };
+    if !log.packet_needs_compaction(&first_packeted, &last_packeted) {
+        return Err("a fresh ledger cannot already carry a packet".into());
+    }
+    log.append_incremental_compaction(
+        &first_packeted,
+        &last_packeted,
+        "small-model",
+        "SMALL-MODEL-PACKET".into(),
+        1_000,
+    )
+    .map_err(|e| e.to_string())?;
+    let small_messages_before = log.derive_with_plan(&plan_now(&log, &small));
+    let small_joined_before = small_messages_before
+        .iter()
+        .map(Message::text_content)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !small_joined_before.contains("SMALL-MODEL-PACKET") {
+        return Err("the small model's own projection must carry its packet".into());
+    }
+
+    let index = TurnIndex::from_log(&log);
+    let position: std::collections::HashMap<&str, usize> = index
+        .turns
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.id.as_str(), i))
+        .collect();
+    let lo = position[first_packeted.as_str()];
+    let hi = position[last_packeted.as_str()];
+    let packeted: Vec<&vak_session::Turn> = index.turns[lo..=hi].iter().collect();
+
+    // 2) The same session, now bound to the large model.
+    let large_plan = plan_now(&log, &large);
+    let large_fidelity: std::collections::HashMap<&str, Fidelity> = large_plan
+        .per_turn
+        .iter()
+        .map(|(id, f)| (id.as_str(), *f))
+        .collect();
+    let large_plan_promotes_packeted_turns = large_plan.packet_range.is_none()
+        && packeted
+            .iter()
+            .all(|t| large_fidelity.get(t.id.as_str()) == Some(&Fidelity::Full));
+
+    let large_messages = log.derive_with_plan(&large_plan);
+    let large_joined = large_messages
+        .iter()
+        .map(Message::text_content)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let large_projection_follows_its_plan = !large_joined.contains("<context_summary>")
+        && !large_joined.contains("SMALL-MODEL-PACKET")
+        && packeted
+            .iter()
+            .all(|t| large_joined.contains(&t.directive.text_content()));
+
+    // 3) Back to the small model: the stored packet covers exactly the
+    //    range its plan needs again, so nothing is re-summarised and the
+    //    projection is unchanged.
+    let small_plan_after = plan_now(&log, &small);
+    let reuses = small_plan_after
+        .packet_range
+        .as_ref()
+        .is_some_and(|(first, last)| !log.packet_needs_compaction(first, last));
+    let small_messages_after = log.derive_with_plan(&small_plan_after);
+    let same_projection = small_messages_before.len() == small_messages_after.len()
+        && small_messages_before
+            .iter()
+            .zip(small_messages_after.iter())
+            .all(|(a, b)| a.text_content() == b.text_content());
+    let small_model_reuses_its_packet = reuses && same_projection;
+
+    Ok(ReplayVerdict {
+        large_plan_promotes_packeted_turns,
+        large_projection_follows_its_plan,
+        small_model_reuses_its_packet,
+    })
+}
+
 /// Runs the planner-verification gate. Zero model calls: every property is
 /// structural, over a fixed 30-turn-plus-open fixture and a synthetic
 /// 13k-token profile (docs/design/68-context-engine.md "Verification").
@@ -451,6 +601,7 @@ pub fn run_context_engine_scorecard() -> Result<ContextScorecard, String> {
     let accounted_ok = every_turn_accounted_exactly_once(&index, &plan);
     let no_cut_ok = no_cut_invariant_holds(&log, &index, &plan);
     let append_only_ok = steps_are_append_only_with_a_stable_prefix(dir.path())?;
+    let replay = two_model_replay(dir.path())?;
 
     let metric = |name: &'static str, ok: bool| QualityMetric {
         name,
@@ -465,6 +616,18 @@ pub fn run_context_engine_scorecard() -> Result<ContextScorecard, String> {
             metric("every_turn_accounted_exactly_once", accounted_ok),
             metric("no_cut_invariant_holds", no_cut_ok),
             metric("steps_append_only_with_stable_prefix", append_only_ok),
+            metric(
+                "replay_large_plan_promotes_packeted_turns",
+                replay.large_plan_promotes_packeted_turns,
+            ),
+            metric(
+                "replay_large_projection_follows_its_plan",
+                replay.large_projection_follows_its_plan,
+            ),
+            metric(
+                "replay_small_model_reuses_its_packet",
+                replay.small_model_reuses_its_packet,
+            ),
         ],
     })
 }
@@ -479,5 +642,25 @@ mod tests {
         let card = run_context_engine_scorecard().expect("harness");
         println!("{card}");
         assert!(card.passed(), "scorecard failed: {card}");
+    }
+
+    /// The two-model replay on its own, so a regression names the exact
+    /// property instead of failing the whole scorecard.
+    #[test]
+    fn projection_is_a_function_of_the_bound_model_not_of_earlier_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let verdict = two_model_replay(dir.path()).expect("replay harness");
+        assert!(
+            verdict.large_plan_promotes_packeted_turns,
+            "the large model's plan must put the small model's packeted turns at Full"
+        );
+        assert!(
+            verdict.large_projection_follows_its_plan,
+            "the large model's projection must carry the packeted turns' records, not the small model's packet"
+        );
+        assert!(
+            verdict.small_model_reuses_its_packet,
+            "bound back to the small model, the stored packet must be reused and the projection unchanged"
+        );
     }
 }

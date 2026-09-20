@@ -523,10 +523,27 @@ async fn compaction_during_long_research_session() {
         "original history must never be deleted from the ledger"
     );
 
+    // The packet reached the model: every request after the compaction
+    // call led with the summary. The plan-free projection, by contrast,
+    // still carries the raw history — a packet is a cache for the plan
+    // that asked for it, never a boundary in the ledger.
+    {
+        let reqs = provider.requests.lock().unwrap();
+        for req in &reqs[1..] {
+            assert!(
+                req.messages[0]
+                    .text_content()
+                    .starts_with("<context_summary>"),
+                "every request after compaction must lead with the packet"
+            );
+        }
+    }
     let projected = agent.session.lock().await.derive_messages();
     assert!(
-        projected[0].text_content().starts_with("<context_summary>"),
-        "projection must lead with the summary"
+        projected
+            .iter()
+            .any(|m| m.text_content().contains("prior research finding")),
+        "the packet must not hide history from the plan-free projection"
     );
 
     let digest = std::fs::read_to_string(dir.path().join("digest.txt")).unwrap();
