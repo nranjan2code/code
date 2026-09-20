@@ -37,6 +37,16 @@ pub enum HilMode {
 }
 
 impl HilMode {
+    /// How much a human is pulled in, least first. `meet` takes the larger.
+    pub fn caution_rank(self) -> u8 {
+        match self {
+            HilMode::Review => 0,
+            HilMode::Envelope => 1,
+            HilMode::Defer => 2,
+            HilMode::Interrupt => 3,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             HilMode::Interrupt => "interrupt",
@@ -62,6 +72,14 @@ pub enum ClarifyPolicy {
 }
 
 impl ClarifyPolicy {
+    pub fn caution_rank(self) -> u8 {
+        match self {
+            ClarifyPolicy::Proceed => 0,
+            ClarifyPolicy::StateAssumption => 1,
+            ClarifyPolicy::Ask => 2,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             ClarifyPolicy::Proceed => "proceed",
@@ -122,6 +140,16 @@ pub enum Cadence {
 }
 
 impl Cadence {
+    /// Least batched first. Composition takes the *least* batched, because
+    /// a held packet is the one that can be lost.
+    pub fn immediacy_rank(self) -> u8 {
+        match self {
+            Cadence::Digest => 0,
+            Cadence::OnCompletion => 1,
+            Cadence::Live => 2,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Cadence::Live => "live",
@@ -144,6 +172,14 @@ pub enum Urgency {
 }
 
 impl Urgency {
+    pub fn rank(self) -> u8 {
+        match self {
+            Urgency::Quiet => 0,
+            Urgency::Notify => 1,
+            Urgency::Interrupt => 2,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Urgency::Interrupt => "interrupt",
@@ -175,10 +211,11 @@ pub struct DemandHint {
 }
 
 /// When the loop may stop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StopProfile {
     /// One message is a complete answer.
+    #[default]
     Message,
     /// Stopping is fine once something was looked at.
     Inspection,
@@ -190,6 +227,16 @@ pub enum StopProfile {
 }
 
 impl StopProfile {
+    /// Strictest last. Composition takes the strictest.
+    pub fn rank(self) -> u8 {
+        match self {
+            StopProfile::Message => 0,
+            StopProfile::Inspection => 1,
+            StopProfile::Effect => 2,
+            StopProfile::Verification => 3,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             StopProfile::Message => "message",
@@ -215,6 +262,17 @@ pub enum ContextProfile {
 }
 
 impl ContextProfile {
+    /// Widest last. Composition takes the widest, since a strand that needs
+    /// the workspace delta needs it whatever its neighbours need.
+    pub fn rank(self) -> u8 {
+        match self {
+            ContextProfile::Minimal => 0,
+            ContextProfile::Recall => 1,
+            ContextProfile::Working => 2,
+            ContextProfile::Full => 3,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             ContextProfile::Minimal => "minimal",
@@ -287,56 +345,136 @@ impl Engagement {
         }
     }
 
+    /// The engagement for a request the kernel could not read confidently.
+    ///
+    /// Posture is the general one, but the tool surface is narrowed to the
+    /// orientation floor (docs/design/68-context-engine.md, Principle 6:
+    /// "when a decision cannot be made confidently, send less and give the
+    /// model a way to ask for more"). This is an *explicit* decision rather
+    /// than an ambiguous top element: `Limits::unrestricted` keeps meaning
+    /// "everything", which is what a disabled kernel produces.
+    pub fn orienting() -> Self {
+        let mut engagement = Engagement::general();
+        engagement.limits.required_domains =
+            crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied());
+        engagement
+    }
+
     /// Compose with another engagement, narrowing only.
     ///
-    /// Limits meet; posture takes the *more* cautious of each selection, which
-    /// keeps composition monotone in the safe direction without pretending the
-    /// posture fields form a lattice.
+    /// Limits meet. Posture takes the more cautious of each selection under
+    /// an explicit per-field order, so the operation is commutative and
+    /// never less cautious than either operand — the earlier version took
+    /// `self`'s stop and context profiles unconditionally and could turn
+    /// `verification` into `message` depending on argument order. Notes are
+    /// kept from both sides: a model-visible instruction one strand needed
+    /// is not dropped because another had none.
     pub fn meet(&self, other: &Engagement) -> Engagement {
+        let a = &self.posture;
+        let b = &other.posture;
         Engagement {
             limits: self.limits.meet(&other.limits),
             posture: Posture {
-                managed: self.posture.managed || other.posture.managed,
-                open_commitment: self.posture.open_commitment || other.posture.open_commitment,
-                checkpoint_before_effect: self.posture.checkpoint_before_effect
-                    || other.posture.checkpoint_before_effect,
-                hil: if other.posture.hil == HilMode::Interrupt {
-                    HilMode::Interrupt
+                managed: a.managed || b.managed,
+                open_commitment: a.open_commitment || b.open_commitment,
+                checkpoint_before_effect: a.checkpoint_before_effect || b.checkpoint_before_effect,
+                hil: if b.hil.caution_rank() > a.hil.caution_rank() {
+                    b.hil
                 } else {
-                    self.posture.hil
+                    a.hil
                 },
-                gate_fallback: if self.posture.gate_fallback == GateFallback::Deny
-                    || other.posture.gate_fallback == GateFallback::Deny
+                gate_fallback: if a.gate_fallback == GateFallback::Deny
+                    || b.gate_fallback == GateFallback::Deny
                 {
                     GateFallback::Deny
                 } else {
                     GateFallback::Defer
                 },
-                clarify: if other.posture.clarify == ClarifyPolicy::Ask {
-                    ClarifyPolicy::Ask
+                clarify: if b.clarify.caution_rank() > a.clarify.caution_rank() {
+                    b.clarify
                 } else {
-                    self.posture.clarify
+                    a.clarify
                 },
-                delivery: self.posture.delivery,
+                delivery: DeliveryPosture {
+                    // The primary strand's shape; shapes have no order.
+                    shape: a.delivery.shape,
+                    cadence: if b.delivery.cadence.immediacy_rank()
+                        > a.delivery.cadence.immediacy_rank()
+                    {
+                        b.delivery.cadence
+                    } else {
+                        a.delivery.cadence
+                    },
+                    urgency: if b.delivery.urgency.rank() > a.delivery.urgency.rank() {
+                        b.delivery.urgency
+                    } else {
+                        a.delivery.urgency
+                    },
+                },
                 demand: DemandHint {
-                    reasoning_required: self.posture.demand.reasoning_required
-                        || other.posture.demand.reasoning_required,
-                    evidence_required: self.posture.demand.evidence_required
-                        || other.posture.demand.evidence_required,
-                    structured_output: self.posture.demand.structured_output
-                        || other.posture.demand.structured_output,
+                    reasoning_required: a.demand.reasoning_required || b.demand.reasoning_required,
+                    evidence_required: a.demand.evidence_required || b.demand.evidence_required,
+                    structured_output: a.demand.structured_output || b.demand.structured_output,
                 },
-                stop: self.posture.stop,
-                context: self.posture.context,
-                epistemic_stance: if other.posture.epistemic_stance != EpistemicStance::DirectAnswer
-                {
-                    other.posture.epistemic_stance
+                stop: if b.stop.rank() > a.stop.rank() {
+                    b.stop
                 } else {
-                    self.posture.epistemic_stance
+                    a.stop
                 },
-                note: self.posture.note.clone().or(other.posture.note.clone()),
+                context: if b.context.rank() > a.context.rank() {
+                    b.context
+                } else {
+                    a.context
+                },
+                // The primary strand's stance. Stances have no order either;
+                // the strand-aware note carries the rest.
+                epistemic_stance: a.epistemic_stance,
+                note: match (&a.note, &b.note) {
+                    (None, None) => None,
+                    (Some(n), None) | (None, Some(n)) => Some(n.clone()),
+                    (Some(x), Some(y)) if x == y => Some(x.clone()),
+                    (Some(x), Some(y)) => Some(format!("{x}\n{y}")),
+                },
             },
         }
+    }
+
+    /// The engagement for a turn made of several strands.
+    ///
+    /// Everything authority-bearing meets: the strictest strand governs
+    /// approval, permission, spend, closure evidence, modalities, and the
+    /// posture. Two kinds of field are the turn's *capacity* rather than its
+    /// authority and take the most demanding strand instead — the domain
+    /// requirement is the **union** (a turn that is "search the web, then
+    /// run the tests" needs both toolsets), and the ladder, worker and turn
+    /// allowances are the largest (a greeting's "no workers" must not cap
+    /// the migration beside it). Both are still at most the unrestricted
+    /// baseline, which is the invariant that matters.
+    pub fn compose(strands: &[Engagement]) -> Engagement {
+        let Some((first, rest)) = strands.split_first() else {
+            return Engagement::general();
+        };
+        let mut out = first.clone();
+        let mut domains = first.limits.required_domains.clone();
+        let mut ladder_limit = first.limits.ladder_limit;
+        let mut worker_budget = first.limits.worker_budget;
+        let mut max_turns = first.limits.max_turns;
+        let widest = |a: Option<usize>, b: Option<usize>| match (a, b) {
+            (Some(x), Some(y)) => Some(x.max(y)),
+            _ => None,
+        };
+        for next in rest {
+            domains = domains.union(&next.limits.required_domains);
+            ladder_limit = widest(ladder_limit, next.limits.ladder_limit);
+            worker_budget = widest(worker_budget, next.limits.worker_budget);
+            max_turns = widest(max_turns, next.limits.max_turns);
+            out = out.meet(next);
+        }
+        out.limits.required_domains = domains;
+        out.limits.ladder_limit = ladder_limit;
+        out.limits.worker_budget = worker_budget;
+        out.limits.max_turns = max_turns;
+        out
     }
 }
 
@@ -430,7 +568,12 @@ pub const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
 /// misread is a small annoyance, while removing a tool the task needed looks
 /// to the user like the agent is broken. Callers therefore gate slicing on a
 /// higher bar, and low confidence still tightens risk.
-pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool) -> Engagement {
+pub fn derive(
+    reading: &Reading,
+    authority: &Authority,
+    slice_capabilities: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Engagement {
     let mut limits = Limits::unrestricted();
 
     // --- capabilities --------------------------------------------------
@@ -456,6 +599,12 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
             domains.insert("web".into());
         }
         limits.required_domains = crate::limits::DomainSet::only(domains);
+    } else {
+        // Not confident enough to say what the turn needs: send the
+        // orientation floor and let `find_tools` reach the rest (design 68,
+        // Principle 6). Stated explicitly so `DomainSet::All` keeps its one
+        // meaning — "everything", the disabled-kernel behaviour.
+        limits.required_domains = crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied());
     }
 
     // --- modality ------------------------------------------------------
@@ -474,16 +623,19 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
     // The envelope question is answered per action at dispatch time; here we
     // take the conservative branch, because an engagement is computed before
     // anyone knows which paths a turn will touch.
-    limits.approval_ceiling = authority.approval_ceiling(reading.stakes, chrono::Utc::now(), false);
-    limits.permission_ceiling = authority.permission_ceiling(chrono::Utc::now());
+    // `now` is a recorded input rather than a clock read: three separate
+    // `Utc::now()` calls here could straddle an envelope's expiry and answer
+    // the approval and permission questions from different worlds, and a
+    // decision that depends on an unrecorded instant is not reproducible.
+    limits.approval_ceiling = authority.approval_ceiling(reading.stakes, now, false);
+    limits.permission_ceiling = authority.permission_ceiling(now);
 
     // --- budget --------------------------------------------------------
-    limits.spend_ceiling_usd = authority.spend_limit_usd(chrono::Utc::now());
+    limits.spend_ceiling_usd = authority.spend_limit_usd(now);
 
     // --- concurrency and length ----------------------------------------
     limits.worker_budget = match reading.act {
         Act::Converse | Act::Answer => Some(0),
-        Act::Orchestrate => None,
         _ => None,
     };
     limits.max_turns = match reading.horizon {
@@ -496,20 +648,23 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
 
     // --- posture -------------------------------------------------------
     let managed = reading.horizon.opens_commitment();
-    let hil = derive_hil(reading, authority);
+    let hil = derive_hil(reading, authority, now);
+    let delivery = derive_delivery(reading);
     let posture = Posture {
         managed,
         open_commitment: reading.horizon.opens_commitment(),
         // Any act the reading covers, not just the primary one. "migrate …
         // and verify … before deploying" resolves `verify` as primary, and
         // gating on that alone skipped the checkpoint for a turn that plainly
-        // modifies and deploys.
-        checkpoint_before_effect: reading.acts().iter().any(|act| act.is_effectful())
+        // modifies and deploys. `requires_execution` rather than
+        // `is_effectful`: authoring a new file is a workspace mutation too,
+        // and a checkpoint is how it is reversed.
+        checkpoint_before_effect: reading.acts().iter().any(|act| act.requires_execution())
             && reading.stakes.wants_checkpoint(),
         hil,
         gate_fallback: authority.gate_fallback(reading.horizon),
         clarify: derive_clarify(reading),
-        delivery: derive_delivery(reading),
+        delivery,
         demand: DemandHint {
             reasoning_required: matches!(
                 reading.act,
@@ -517,7 +672,7 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
             ) || reading.horizon.opens_commitment(),
             evidence_required: reading.evidence.rank() >= Evidence::Cited.rank(),
             structured_output: matches!(
-                derive_delivery(reading).shape,
+                delivery.shape,
                 OutputShape::Matrix | OutputShape::Table | OutputShape::Diff
             ),
         },
@@ -559,23 +714,33 @@ pub fn derive_epistemic_stance(reading: &Reading) -> EpistemicStance {
     }
 }
 
-fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
-    // Irreversible stakes always interrupt — even when nobody is available
-    // to answer (Unattended + Durable), the work must stop and escalate.
-    // The Defer check below must not shadow this.
+fn derive_hil(
+    reading: &Reading,
+    authority: &Authority,
+    now: chrono::DateTime<chrono::Utc>,
+) -> HilMode {
+    let needs_a_human = reading.stakes.rank() >= Stakes::Costly.rank();
+    // Nobody to ask and somewhere to park the question: wait rather than
+    // fail. This covers irreversible work too — an irreversible step with
+    // nobody present must reach the inbox, not raise a gate that can only
+    // time out. "Interrupt" is what happens when someone is here to be
+    // interrupted.
+    if needs_a_human && authority.gate_fallback(reading.horizon) == GateFallback::Defer {
+        return HilMode::Defer;
+    }
+    // Irreversible stakes always interrupt whatever was delegated.
     if reading.stakes == Stakes::Irreversible {
         return HilMode::Interrupt;
     }
-    // Nobody to ask and somewhere to park the question: wait rather than fail.
-    if authority.gate_fallback(reading.horizon) == GateFallback::Defer
-        && reading.stakes == Stakes::Costly
-    {
-        return HilMode::Defer;
+    // Manual autonomy is "propose only": nothing is done first and shown
+    // afterwards, so `Review` is never the right mode for it.
+    if authority.autonomy == Autonomy::Manual {
+        return HilMode::Interrupt;
     }
     let envelope_live = authority
         .envelope
         .as_ref()
-        .is_some_and(|envelope| envelope.is_live(chrono::Utc::now()));
+        .is_some_and(|envelope| envelope.is_live(now));
     if authority.autonomy == Autonomy::Delegated && envelope_live {
         return HilMode::Envelope;
     }
@@ -583,7 +748,9 @@ fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
         return HilMode::Review;
     }
     // Reversible work under a checkpoint is better reviewed than pre-approved.
-    if reading.stakes.rank() <= Stakes::Reversible.rank() && reading.act.is_effectful() {
+    if reading.stakes.rank() <= Stakes::Reversible.rank()
+        && reading.acts().iter().any(|act| act.is_effectful())
+    {
         return HilMode::Review;
     }
     HilMode::Interrupt
@@ -645,10 +812,14 @@ fn derive_stop(reading: &Reading) -> StopProfile {
     if reading.evidence.rank() >= Evidence::Verified.rank() {
         return StopProfile::Verification;
     }
-    // Same reasoning as the checkpoint: if any act this reading covers changes
-    // something, an episode that changed nothing did not finish, whatever the
-    // model says about it.
-    if reading.acts().iter().any(|act| act.is_effectful()) {
+    // The *primary* act, not every contender: a contender is a noun that
+    // happens to be a verb somewhere ("what do we know about deploys?"
+    // carries an `operate` contender), and gating the stop on it demanded
+    // an effect from a question. A request that genuinely has an effectful
+    // part is a strand of its own, and the composite stop is the strictest
+    // strand's. If the act changes something, an episode that changed
+    // nothing did not finish, whatever the model says about it.
+    if reading.act.is_effectful() {
         return StopProfile::Effect;
     }
     match reading.act {
@@ -671,7 +842,6 @@ fn derive_context(reading: &Reading) -> ContextProfile {
     match reading.act {
         // A greeting does not need last Tuesday's session searched.
         Act::Converse => ContextProfile::Minimal,
-        Act::Modify | Act::Verify | Act::Operate => ContextProfile::Working,
         _ => ContextProfile::Recall,
     }
 }
@@ -714,11 +884,16 @@ fn derive_note(reading: &Reading, hil: HilMode) -> Option<String> {
         );
     }
     if reading.stakes == Stakes::Irreversible {
-        lines.push(
+        lines.push(if hil == HilMode::Defer {
+            "At least one step here cannot be undone and nobody is available to \
+             confirm it. Do everything up to that step, then stop and say what \
+             needs confirming."
+                .to_string()
+        } else {
             "At least one step here cannot be undone. Confirm before that step, \
              not after."
-                .to_string(),
-        );
+                .to_string()
+        });
     }
     if lines.is_empty() {
         None
@@ -737,6 +912,12 @@ pub fn required_modalities(reading: &Reading) -> BTreeSet<Modality> {
 mod tests {
     use super::*;
     use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Stakes};
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
 
     fn reading(act: Act, horizon: Horizon, stakes: Stakes, evidence: Evidence) -> Reading {
         Reading {
@@ -772,7 +953,7 @@ mod tests {
                                             attendance,
                                             envelope: None,
                                         };
-                                        let engagement = derive(&r, &authority, slice);
+                                        let engagement = derive(&r, &authority, slice, now());
                                         assert!(
                                             engagement.limits.is_at_most(&baseline),
                                             "widened: {act:?}/{horizon:?}/{stakes:?}/\
@@ -796,7 +977,7 @@ mod tests {
             Stakes::Inert,
             Evidence::None,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         // A greeting asks for nothing beyond the floor that lets it look at
         // what is in front of it.
         assert_eq!(
@@ -813,7 +994,7 @@ mod tests {
     fn every_act_keeps_the_orientation_floor() {
         for act in Act::ALL {
             let r = reading(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true);
+            let engagement = derive(&r, &Authority::default(), true, now());
             for domain in FLOOR_DOMAINS {
                 assert!(
                     engagement.limits.required_domains.contains(domain),
@@ -833,7 +1014,7 @@ mod tests {
         // there, connected and admitted.
         for act in [Act::Answer, Act::Locate] {
             let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true);
+            let engagement = derive(&r, &Authority::default(), true, now());
             assert!(
                 engagement.limits.required_domains.contains("live-data"),
                 "{act:?} cannot reach a live source"
@@ -846,7 +1027,7 @@ mod tests {
         // The general form of the weather failure: it was never specific to
         // `Answer`. A turn obliged to cite cannot satisfy that from memory.
         let r = reading(Act::Verify, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(engagement.limits.required_domains.contains("live-data"));
     }
 
@@ -879,7 +1060,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Verified,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(engagement.posture.managed);
         assert!(engagement.posture.open_commitment);
         assert_eq!(engagement.posture.context, ContextProfile::Full);
@@ -898,7 +1079,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Audited,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(
             engagement.limits.min_satisfaction,
             crate::Satisfaction::Attested
@@ -912,7 +1093,9 @@ mod tests {
         let mut low = reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
         low.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&low, &Authority::default(), true).posture.clarify,
+            derive(&low, &Authority::default(), true, now())
+                .posture
+                .clarify,
             ClarifyPolicy::StateAssumption
         );
 
@@ -924,7 +1107,9 @@ mod tests {
         );
         high.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&high, &Authority::default(), true).posture.clarify,
+            derive(&high, &Authority::default(), true, now())
+                .posture
+                .clarify,
             ClarifyPolicy::Ask
         );
     }
@@ -942,7 +1127,7 @@ mod tests {
             attendance: Attendance::Unattended,
             envelope: None,
         };
-        let engagement = derive(&r, &authority, true);
+        let engagement = derive(&r, &authority, true, now());
         assert_eq!(engagement.posture.hil, HilMode::Defer);
         assert_eq!(engagement.posture.gate_fallback, GateFallback::Defer);
     }
@@ -951,7 +1136,9 @@ mod tests {
     fn unattended_work_rolls_up_instead_of_pinging() {
         let mut r = reading(Act::Verify, Horizon::Durable, Stakes::Inert, Evidence::None);
         r.attendance = Attendance::Unattended;
-        let delivery = derive(&r, &Authority::default(), true).posture.delivery;
+        let delivery = derive(&r, &Authority::default(), true, now())
+            .posture
+            .delivery;
         assert_eq!(delivery.cadence, Cadence::Digest);
         assert_eq!(delivery.urgency, Urgency::Quiet);
     }
@@ -964,7 +1151,7 @@ mod tests {
             Stakes::Irreversible,
             Evidence::None,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.posture.hil, HilMode::Interrupt);
         assert_eq!(engagement.posture.delivery.urgency, Urgency::Interrupt);
         assert!(
@@ -984,16 +1171,18 @@ mod tests {
             Stakes::Inert,
             Evidence::Cited,
         );
-        let demand = derive(&r, &Authority::default(), true).posture.demand;
+        let demand = derive(&r, &Authority::default(), true, now())
+            .posture
+            .demand;
         assert!(demand.reasoning_required);
         assert!(demand.evidence_required);
     }
 
-    /// A reading whose contenders include an effectful act must checkpoint
-    /// and must require an effect to stop, even when the argmax act is not
-    /// itself effectful.
+    /// A reading whose contenders include an effectful act must checkpoint;
+    /// the stop rule follows the primary act, and a compound request with a
+    /// genuinely effectful part carries it as a strand of its own.
     #[test]
-    fn any_effectful_contender_forces_a_checkpoint_and_an_effect_stop() {
+    fn any_effectful_contender_forces_a_checkpoint_but_not_an_effect_stop() {
         let mut r = reading(
             Act::Verify,
             Horizon::Session,
@@ -1001,9 +1190,9 @@ mod tests {
             Evidence::None,
         );
         r.alternate_acts.insert(Act::Modify);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(engagement.posture.checkpoint_before_effect);
-        assert_eq!(engagement.posture.stop, StopProfile::Effect);
+        assert_eq!(engagement.posture.stop, StopProfile::Inspection);
 
         // And a reading with no effectful act does neither.
         let inert = reading(
@@ -1012,7 +1201,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::None,
         );
-        let engagement = derive(&inert, &Authority::default(), true);
+        let engagement = derive(&inert, &Authority::default(), true, now());
         assert!(!engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Message);
     }
@@ -1028,11 +1217,13 @@ mod tests {
             ),
             &Authority::default(),
             true,
+            now(),
         );
         let b = derive(
             &reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None),
             &Authority::default(),
             true,
+            now(),
         );
         let met = a.meet(&b);
         assert!(met.limits.is_at_most(&a.limits));

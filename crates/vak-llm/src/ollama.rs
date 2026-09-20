@@ -88,6 +88,9 @@ pub fn build_body(config: &OllamaConfig, request: &ChatRequest) -> Result<Value,
         "keep_alive": config.keep_alive,
         "options": options,
     });
+    if let Some(think) = request.think {
+        body["think"] = Value::Bool(think);
+    }
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
             .tools

@@ -345,6 +345,10 @@ pub enum CoreError {
     InvalidConfig(String),
     #[error("internal: permission engine missing")]
     MissingEngine,
+    #[error(
+        "this request needs a model that can serve {modalities}, and no leg on the route (primary: {model}) is declared able to; set [route] modality_hints or choose a capable model"
+    )]
+    UnsupportedModality { modalities: String, model: String },
 }
 
 /// Stats reported by a successful manual compaction.
@@ -4949,6 +4953,7 @@ impl Core {
             &vak_intent::Declared::default(),
             &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
+            chrono::Utc::now(),
         );
         let demand = resolution.peek().engagement.posture.demand;
         let route_limit = resolution.peek().engagement.limits.ladder_limit;
@@ -5255,15 +5260,25 @@ impl Core {
 
     /// Resolve this turn's intent from the prompt and the session so far.
     ///
-    /// Free tiers only. A paid classification is a provider dispatch and
-    /// belongs on the dispatch path with a receipt, a spend-gate admission and
-    /// a watchdog; when the cascade recommends escalation this returns the
-    /// partial, which is never worse than the general engagement.
+    /// Free tiers only; the surfaces that preview a reading (`vak intent
+    /// explain`, `GET /intent/explain`, the composer strip) use this. The
+    /// turn path uses [`Core::resolve_turn_intent_with_escalation`], which
+    /// may spend a classification dispatch on a weak reading.
     pub fn resolve_turn_intent(
         &self,
         session: &SessionLog,
         prompt: &vak_llm::Message,
     ) -> vak_intent::Intent {
+        self.resolve_turn_free_tiers(session, prompt, chrono::Utc::now())
+            .intent()
+    }
+
+    fn resolve_turn_free_tiers(
+        &self,
+        session: &SessionLog,
+        prompt: &vak_llm::Message,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> vak_intent::Resolution {
         let text = prompt.text_content();
         let attachments: Vec<vak_intent::Attachment> = prompt
             .content
@@ -5293,9 +5308,10 @@ impl Core {
                 .header()
                 .and_then(|header| header.contract_id.as_ref())
                 .is_some(),
+            open_threads: intent::open_threads(session),
         };
 
-        let resolution = intent::resolve_turn(
+        intent::resolve_turn(
             &text,
             self.surface(),
             &attachments,
@@ -5309,8 +5325,249 @@ impl Core {
                     .and_then(|header| header.contract_id.as_deref()),
             ),
             &intent::resolver_config(&self.inner.config),
+            now,
+        )
+    }
+
+    /// Resolve this turn's intent, spending a classification dispatch when
+    /// the free tiers were not confident and `[intent] escalate` allows it.
+    ///
+    /// The dispatch is a dispatch like any other: a `Classify` work receipt
+    /// on the session, spend-gate admission under `max_classify_usd`, a
+    /// short watchdog, the run's cancellation token — and **fail-open** to
+    /// the free-tier reading on any failure. A classifier outage must never
+    /// block work, and the partial is never worse than the orienting
+    /// engagement.
+    pub async fn resolve_turn_intent_with_escalation(
+        &self,
+        session: &mut SessionLog,
+        prompt: &vak_llm::Message,
+        cancel: &CancellationToken,
+    ) -> vak_intent::Intent {
+        let now = chrono::Utc::now();
+        let resolution = self.resolve_turn_free_tiers(session, prompt, now);
+        let (partial, reason) = match resolution {
+            vak_intent::Resolution::Settled(intent) => return intent,
+            vak_intent::Resolution::Escalate { partial, reason } => (partial, reason),
+        };
+        let escalate = self.inner.config.intent.escalate.as_str();
+        if escalate == "none" {
+            return partial;
+        }
+        let cloud = escalate == "cloud";
+        let mut partial = partial;
+        let give_up = |partial: &mut vak_intent::Intent, why: String| {
+            partial.provenance.escalation_note = Some(format!(
+                "{}; escalation ({reason}) skipped: {why}",
+                partial
+                    .provenance
+                    .escalation_note
+                    .clone()
+                    .unwrap_or_default()
+            ));
+        };
+
+        // --- which leg ------------------------------------------------------
+        // `classify_model` may be `provider/model` or a bare model name. Local
+        // escalation runs on the keyless `ollama` provider; cloud escalation
+        // on the effective provider unless a provider was named.
+        let configured = self.inner.config.intent.classify_model.clone();
+        let (provider_name, model) = match (cloud, configured) {
+            (_, Some(spec)) if spec.contains('/') => {
+                let (p, m) = spec.split_once('/').unwrap_or(("", ""));
+                (p.to_string(), m.to_string())
+            }
+            (true, Some(model)) => (self.effective_provider(), model),
+            (true, None) => (self.effective_provider(), self.effective_model()),
+            (false, Some(model)) => ("ollama".to_string(), model),
+            (false, None) => {
+                if self.effective_provider() == "ollama" {
+                    ("ollama".to_string(), self.effective_model())
+                } else {
+                    give_up(
+                        &mut partial,
+                        "escalate = \"local\" needs [intent] classify_model or an ollama route"
+                            .into(),
+                    );
+                    return partial;
+                }
+            }
+        };
+        let provider = match self
+            .provider_auth_for_leg(&provider_name, None)
+            .and_then(|auth| {
+                self.inner
+                    .registry
+                    .get(&provider_name, &auth)
+                    .map_err(CoreError::from)
+            }) {
+            Ok(provider) => provider,
+            Err(error) => {
+                give_up(
+                    &mut partial,
+                    format!("no usable {provider_name} provider: {error}"),
+                );
+                return partial;
+            }
+        };
+
+        // --- the request ------------------------------------------------------
+        let user_prompt = vak_intent::classification_prompt(&partial);
+        let digest = vak_intent::prompt_digest(&user_prompt);
+        let mut request = vak_llm::ChatRequest::new(&model);
+        request.system =
+            Some("You classify requests for an agent runtime. Answer with JSON only.".to_string());
+        request.messages = vec![vak_llm::Message::user_text(user_prompt.clone())];
+        request.max_tokens = 400;
+        // A strict-JSON answer, not a deliberation: measured live on a
+        // thinking model, the default spent the whole budget in its thinking
+        // channel and returned nothing.
+        request.think = Some(false);
+
+        // --- admission ----------------------------------------------------------
+        use vak_agent::SpendGate as _;
+        let session_id = session
+            .header()
+            .map(|header| header.session_id.clone())
+            .unwrap_or_default();
+        let gate = self.spend_gate_for(&session_id);
+        let planned = vak_llm::Usage {
+            input_tokens: (user_prompt.len() / 4) as u64 + 64,
+            output_tokens: 400,
+            ..Default::default()
+        };
+        let cap = self.inner.config.intent.max_classify_usd;
+        match gate.estimate_usd(&model, &planned) {
+            Some(est) if est > cap => {
+                give_up(
+                    &mut partial,
+                    format!("estimated ${est:.4} exceeds max_classify_usd ${cap:.4}"),
+                );
+                return partial;
+            }
+            None if cloud => {
+                give_up(&mut partial, format!("no price known for {model}"));
+                return partial;
+            }
+            _ => {}
+        }
+        if let Err(denied) = gate
+            .authorize(&vak_agent::SpendCheck {
+                model: &model,
+                provider: provider.name(),
+                session_id: &session_id,
+                est_input_tokens: planned.input_tokens,
+                planned_output_tokens: planned.output_tokens,
+            })
+            .await
+        {
+            give_up(&mut partial, format!("spend gate refused: {denied}"));
+            return partial;
+        }
+
+        // --- dispatch -----------------------------------------------------------
+        let watchdog =
+            std::time::Duration::from_secs(self.inner.config.intent.classify_timeout_secs);
+        let started = std::time::Instant::now();
+        let mut receipt =
+            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Classify, provider.name(), &model);
+        let child = cancel.child_token();
+        let outcome = tokio::time::timeout(watchdog, async {
+            provider.stream(request, child).await?.result().await
+        })
+        .await;
+        let answer = match outcome {
+            Ok(Ok(message)) => {
+                receipt.record(
+                    vak_llm::AttemptReason::Initial,
+                    vak_llm::FailureDomain::Unknown,
+                    vak_llm::Settlement::Ok,
+                    started.elapsed().as_millis() as u64,
+                    Some(message.usage.clone()),
+                    None,
+                );
+                gate.record_settled_with_latency(
+                    provider.name(),
+                    &model,
+                    &session_id,
+                    &message.usage,
+                    started.elapsed().as_millis() as u64,
+                );
+                let _ = session.append_receipt(receipt);
+                message.text_content()
+            }
+            Ok(Err(error)) => {
+                receipt.record(
+                    vak_llm::AttemptReason::Initial,
+                    vak_llm::FailureDomain::Unknown,
+                    vak_llm::Settlement::Failed,
+                    started.elapsed().as_millis() as u64,
+                    None,
+                    Some(error.to_string()),
+                );
+                let _ = session.append_receipt(receipt);
+                give_up(&mut partial, format!("classifier failed: {error}"));
+                return partial;
+            }
+            Err(_) => {
+                receipt.record(
+                    vak_llm::AttemptReason::Initial,
+                    vak_llm::FailureDomain::Unknown,
+                    vak_llm::Settlement::Cancelled,
+                    started.elapsed().as_millis() as u64,
+                    None,
+                    Some(format!("watchdog {}s", watchdog.as_secs())),
+                );
+                let _ = session.append_receipt(receipt);
+                give_up(&mut partial, "classifier exceeded its watchdog".into());
+                return partial;
+            }
+        };
+
+        // --- fold in ------------------------------------------------------------
+        let classifications = match vak_intent::parse_classifications(&answer) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                give_up(
+                    &mut partial,
+                    format!("unparseable classifier answer: {error}"),
+                );
+                return partial;
+            }
+        };
+        let authority = self.turn_authority_for_commitment(
+            self.surface(),
+            session
+                .header()
+                .and_then(|header| header.contract_id.as_deref()),
         );
-        resolution.intent()
+        let mut applied = vak_intent::apply_classification(
+            partial,
+            &classifications,
+            &format!("{provider_name}/{model}"),
+            &digest,
+            &authority,
+            &intent::resolver_config(&self.inner.config),
+            cloud,
+            now,
+        );
+        if !matches!(
+            applied.provenance.tier,
+            vak_intent::Tier::LocalModel | vak_intent::Tier::CloudModel
+        ) {
+            // The answer parsed but set nothing: keep an excerpt so the
+            // ledger says what the classifier actually said.
+            let excerpt: String = answer.chars().take(200).collect();
+            applied.provenance.escalation_note = Some(format!(
+                "{}; answer: {excerpt:?}",
+                applied
+                    .provenance
+                    .escalation_note
+                    .clone()
+                    .unwrap_or_default()
+            ));
+        }
+        applied
     }
 
     /// Takes `self` by value (an `Arc` bump plus a few small per-turn
@@ -5391,19 +5648,18 @@ impl Core {
         // from it narrows: the projections in `crate::intent` take a baseline
         // and return something no wider, so a misread can make this turn less
         // capable or more cautious and never the reverse.
-        let resolved_intent = self.resolve_turn_intent(&session, &prompt);
+        let resolved_intent = self
+            .resolve_turn_intent_with_escalation(&mut session, &prompt, &cancel)
+            .await;
         let engagement = resolved_intent.engagement.clone();
         debug_assert!(
             intent::projection_is_narrowing(&engagement.limits),
             "a derived engagement widened the baseline"
         );
-        let mut admitted_outcome = vak_intent::OutcomeSpec::from_reading(
-            prompt.text_content(),
-            &resolved_intent.reading,
-            resolved_intent.provenance.resolver_version,
-        );
+        let mut admitted_outcome =
+            vak_intent::OutcomeSpec::from_intent(prompt.text_content(), &resolved_intent);
         admitted_outcome.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
-        cfg.outcome = Some(admitted_outcome);
+        cfg.outcome = Some(admitted_outcome.clone());
 
         // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----
         // One pipeline for all five kinds. MCP aliases, hooks, frozen skills,
@@ -5411,19 +5667,29 @@ impl Core {
         // CapabilitySet, through the same four-stage filter (channel → reach →
         // contract → domain slice). Previously each kind had its own assembly
         // path, and MCP aliases bypassed the domain slice entirely.
-        let required_domains: std::collections::BTreeSet<capability::Domain> =
-            if self.inner.config.intent.enabled
-                && !engagement.limits.required_domains.is_unconstrained()
-            {
-                engagement
-                    .limits
-                    .required_domains
-                    .iter()
-                    .map(|d| capability::Domain::parse(d))
-                    .collect()
-            } else {
-                std::collections::BTreeSet::new()
-            };
+        // Stage 4 is an *exclusion* for this turn: a capability it removes
+        // is not callable until a wider reading restores it, which is what
+        // makes a model asking for it a measured misread (I8). That is only
+        // fair to a reading confident enough to slice. An uncertain reading
+        // excludes nothing here; its orientation floor still shapes the tool
+        // *surface* below, so the turn sees less and reaches the rest through
+        // `find_tools` (design 68, Principle 6).
+        let confident_slice = self.inner.config.intent.slice_capabilities
+            && resolved_intent.provenance.tier != vak_intent::Tier::General
+            && resolved_intent
+                .reading
+                .may_slice_capabilities(self.inner.config.intent.accept_confidence);
+        let required_domains: Option<std::collections::BTreeSet<capability::Domain>> =
+            (confident_slice && !engagement.limits.required_domains.is_unconstrained()).then(
+                || {
+                    engagement
+                        .limits
+                        .required_domains
+                        .iter()
+                        .map(|d| capability::Domain::parse(d))
+                        .collect()
+                },
+            );
         let cap_set = registry.current().await;
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
@@ -5444,7 +5710,7 @@ impl Core {
             session_contract: None,
             channel_policy: &channel_policy,
             reach_standings: &reach_standings,
-            required_domains: &required_domains,
+            required_domains: required_domains.as_ref(),
             mcp_inventory: mcp_inventory.as_deref(),
             orientation_floor: vak_intent::ORIENTATION_FLOOR,
             builtin_names: self.tool_names(),
@@ -5613,8 +5879,46 @@ impl Core {
             ),
             credential_id: turn_primary_credential_id,
         };
-        let turn_plan =
+        let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
+        // The engagement's ladder prefix (a greeting does not need a deep
+        // fallback chain) and its modality constraint: a leg that cannot see
+        // is not a valid fallback for a vision turn. With no operator hints
+        // every leg is assumed capable; with hints and no capable leg, the
+        // turn fails typed rather than quietly dropping the image
+        // (invariant 10).
+        turn_plan.ladder = intent::limit_ladder(&turn_plan.ladder, engagement.limits.ladder_limit);
+        let modality_hints = self.inner.config.route.modality_hints.clone();
+        if !engagement.limits.required_modalities.is_empty() && !modality_hints.is_empty() {
+            let supports = |model: &str| {
+                intent::leg_supports_modalities(
+                    model,
+                    &engagement.limits.required_modalities,
+                    &modality_hints,
+                )
+            };
+            // The primary leg is dispatched first whatever the ladder says,
+            // so it has to be capable itself; fallbacks are then filtered.
+            if !supports(&turn_primary_leg.model) {
+                let wanted: Vec<&str> = engagement
+                    .limits
+                    .required_modalities
+                    .iter()
+                    .map(|m| m.as_str())
+                    .collect();
+                return Err(CoreError::UnsupportedModality {
+                    modalities: wanted.join(", "),
+                    model: turn_primary_leg.model.clone(),
+                });
+            }
+            turn_plan.ladder = turn_plan
+                .ladder
+                .iter()
+                .enumerate()
+                .filter(|(index, leg)| *index == 0 || supports(&leg.model))
+                .map(|(_, leg)| leg.clone())
+                .collect();
+        }
         let (context_window, max_output) = self
             .route_context_limits(&turn_primary_leg, &turn_plan.ladder)
             .await;
@@ -5670,7 +5974,13 @@ impl Core {
             .header()
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
-        cfg.spend_gate = Some(self.spend_gate_for(&sid));
+        let turn_gate = self.spend_gate_for(&sid);
+        // An envelope's lifetime spend limit meets the configured run cap;
+        // the smaller governs.
+        if let Some(ceiling) = engagement.limits.spend_ceiling_usd {
+            turn_gate.narrow_run_cap(ceiling);
+        }
+        cfg.spend_gate = Some(turn_gate);
 
         // MEA substrate (Phase H): auditor sees the workspace delta between
         // this run's start checkpoint and the live tree.
@@ -5685,7 +5995,12 @@ impl Core {
                 cwd,
             }));
         }
-        cfg.mode = match self.effective_permission_mode() {
+        // An envelope's permission ceiling narrows the mode through the same
+        // door a gateway channel override uses; it can never raise it.
+        cfg.mode = match intent::permission_mode(
+            self.effective_permission_mode(),
+            engagement.limits.permission_ceiling,
+        ) {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
@@ -6224,16 +6539,38 @@ impl Core {
             }
         }
 
-        // Checkpoint the workspace before any mutation of this run.
+        // Checkpoint the workspace before any mutation of this run. Skipped
+        // only when the engagement is confident nothing will be executed or
+        // written (a greeting, a question): a wrong reading there costs a
+        // missed checkpoint, so the skip needs the acceptance bar, not the
+        // provisional one.
+        let expects_effect = engagement.posture.checkpoint_before_effect
+            || resolved_intent.provenance.tier == vak_intent::Tier::General
+            || !resolved_intent
+                .reading
+                .may_slice_capabilities(self.inner.config.intent.accept_confidence)
+            || resolved_intent
+                .reading
+                .acts()
+                .iter()
+                .any(|act| act.requires_execution());
         if let Some(h) = session.header() {
             let seq = self.next_checkpoint_seq(&h.session_id);
-            if let Ok(cp) = checkpoints::capture(
-                &self.inner.cwd,
-                &h.session_id,
-                seq,
-                &format!("turn: {}", prompt.text_content()),
-            ) {
-                let _ = checkpoints::store(&self.sessions_home(), &cp);
+            // The session's first checkpoint is always taken: it is the
+            // baseline "what has this session changed" is measured against
+            // (`ContextProfile::Working`), whatever the first turn was.
+            let first_of_session = seq == 0;
+            if !expects_effect && !first_of_session {
+                // Nothing will be executed or written; skip the capture.
+            } else {
+                if let Ok(cp) = checkpoints::capture(
+                    &self.inner.cwd,
+                    &h.session_id,
+                    seq,
+                    &format!("turn: {}", prompt.text_content()),
+                ) {
+                    let _ = checkpoints::store(&self.sessions_home(), &cp);
+                }
             }
         }
 
@@ -6247,12 +6584,18 @@ impl Core {
         let mut session = session;
 
         let active_goal_revision = session.active_goal_revision();
-        let relation =
-            vak_intent::classify_goal_update(&prompt.text_content(), active_goal_revision);
+        // Only an explicit command corrects or replaces the goal; ordinary
+        // text adds to it (docs/design/47, control plane).
+        let goal_command = vak_intent::parse_command(&prompt.text_content());
+        let relation = vak_intent::goal_relation(goal_command.as_ref(), active_goal_revision);
         let goal_update = vak_intent::GoalUpdate {
             revision: active_goal_revision.unwrap_or(0).saturating_add(1),
             relation,
-            request: prompt.text_content(),
+            request: goal_command
+                .as_ref()
+                .and_then(|command| command.text())
+                .map(str::to_string)
+                .unwrap_or_else(|| prompt.text_content()),
             supersedes_revision: matches!(
                 relation,
                 vak_intent::GoalRelation::Corrects | vak_intent::GoalRelation::Replaces
@@ -6264,42 +6607,156 @@ impl Core {
             eprintln!("[goal] could not record this request relationship: {error}");
         }
 
+        // A request restated verbatim right after the previous turn is the
+        // user saying the previous reading did the wrong thing. That counts
+        // against the *previous* reading (misread ledger, I8), not this one.
+        if self.inner.config.intent.enabled {
+            let chain = session.chain_to_root();
+            let previous_user_text = chain.iter().rev().find_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Message(record)
+                    if record.message.role == vak_llm::Role::User && record.meta.is_none() =>
+                {
+                    Some(record.message.text_content())
+                }
+                _ => None,
+            });
+            let previous_intent = chain.iter().rev().find_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Intent(record) => Some(record.as_ref().clone()),
+                _ => None,
+            });
+            let same = |a: &str, b: &str| {
+                let norm = |t: &str| {
+                    t.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_ascii_lowercase()
+                };
+                !a.trim().is_empty() && norm(a) == norm(b)
+            };
+            if let (Some(previous_text), Some(previous)) = (previous_user_text, previous_intent)
+                && same(&previous_text, &prompt_text)
+                && previous.provenance.tier != vak_intent::Tier::General
+            {
+                misread::MisreadLedger::new(&self.sessions_home()).record(
+                    &previous.reading,
+                    previous.provenance.tier,
+                    previous.provenance.resolver_version,
+                    misread::Outcome::Restated,
+                    None,
+                );
+            }
+        }
+
         // Durable work earns a commitment of its own before the turn runs, so
         // the episode brackets the work rather than being reconstructed from
         // it afterwards. A ledger failure is logged and dropped: losing the
         // audit row must never cost the user their turn.
-        let episode = session.header().and_then(|header| {
-            commitments::begin_episode(
-                &self.sessions_home(),
-                &self.inner.config,
-                &resolved_intent,
-                &prompt.text_content(),
-                &header.session_id,
-                &self.inner.cwd,
-                header.contract_id.as_deref(),
-            )
-        });
+        let episodes = session
+            .header()
+            .map(|header| {
+                commitments::begin_episodes(
+                    &self.sessions_home(),
+                    &self.inner.config,
+                    &resolved_intent,
+                    &prompt.text_content(),
+                    &header.session_id,
+                    &self.inner.cwd,
+                    header.contract_id.as_deref(),
+                )
+            })
+            .unwrap_or_default();
+        // The turn's primary commitment: the first durable strand's.
+        let episode = episodes.first().cloned();
 
         if self.inner.config.intent.enabled {
-            let mut outcome_spec = vak_intent::OutcomeSpec::from_reading(
-                prompt.text_content(),
-                &resolved_intent.reading,
-                resolved_intent.provenance.resolver_version,
-            );
-            outcome_spec.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
+            // `ContextProfile::Full`: durable work sees its obligations
+            // rendered from the commitment ledger, appended to the intent
+            // note so the ledger row carries exactly what the model saw.
+            let model_visible = match (
+                engagement.posture.context,
+                commitments::prompt_projection(&self.sessions_home(), &episodes),
+            ) {
+                (vak_intent::ContextProfile::Full, Some(projection)) => {
+                    Some(match resolved_intent.model_visible() {
+                        Some(note) => format!("{note}\n{projection}"),
+                        None => projection,
+                    })
+                }
+                _ => resolved_intent.model_visible(),
+            };
             let record = vak_session::types::IntentRecord {
                 reading: resolved_intent.reading.clone(),
+                strands: resolved_intent.strands.clone(),
                 engagement: resolved_intent.engagement.clone(),
                 provenance: resolved_intent.provenance.clone(),
-                outcome: Some(outcome_spec),
-                model_visible: resolved_intent.model_visible(),
+                outcome: Some(admitted_outcome.clone()),
+                model_visible,
                 commitment_id: episode
                     .as_ref()
                     .map(|episode| episode.commitment_id.clone()),
+                strand_commitments: episodes
+                    .iter()
+                    .map(|episode| (episode.strand_id.clone(), episode.commitment_id.clone()))
+                    .collect(),
             };
             if let Err(error) = session.append_intent(record) {
                 return Err(CoreError::Session(error));
             }
+
+            // `ContextProfile::Working` / `Full`: what this session has
+            // changed in the workspace so far, rendered into the tail. It
+            // is a filesystem observation, so the bytes go into the ledger
+            // as an activity first (model-visible means logged) and the
+            // tail reads them from there. Measured against the session's
+            // first checkpoint; a first turn has nothing to compare.
+            if matches!(
+                engagement.posture.context,
+                vak_intent::ContextProfile::Working | vak_intent::ContextProfile::Full
+            ) && let Some(header) = session.header()
+                && let Ok(list) = checkpoints::list(&self.sessions_home(), &header.session_id)
+                && let Some(first) = list.iter().map(|cp| cp.seq).min()
+                && let Ok(delta) = checkpoints::delta_summary(
+                    &self.inner.cwd,
+                    &self.sessions_home(),
+                    &header.session_id,
+                    first,
+                    8_192,
+                )
+                && !delta.contains("workspace unchanged since checkpoint")
+            {
+                let _ = session.append_activity(vak_session::ActivityRecord {
+                    activity_id: format!("workspace-delta-{}", uuid_like()),
+                    turn: None,
+                    kind: vak_session::ActivityKind::Diagnostic,
+                    status: vak_session::ActivityStatus::Succeeded,
+                    label: "Workspace changes since the session began".into(),
+                    detail: Some(delta),
+                    data: std::collections::BTreeMap::from([(
+                        "section".to_string(),
+                        SessionLog::WORKSPACE_DELTA_SECTION.to_string(),
+                    )]),
+                });
+            }
+        }
+
+        // `Defer`: a gate nobody here can answer is parked in the inbox and
+        // suspends the commitment instead of merely failing the run.
+        if engagement.posture.gate_fallback == vak_intent::GateFallback::Defer
+            && let Some(episode) = &episode
+        {
+            let escalation = self
+                .turn_authority_for_commitment(self.surface(), Some(&episode.commitment_id))
+                .envelope
+                .map(|envelope| envelope.escalation)
+                .unwrap_or_default();
+            cfg.approver = Some(std::sync::Arc::new(intent::DeferringApprover::new(
+                cfg.approver.clone(),
+                self.shared_data_home(),
+                self.sessions_home(),
+                sid.clone(),
+                episode.commitment_id.clone(),
+                escalation,
+            )));
         }
 
         let steering = match steering {
@@ -6311,9 +6768,9 @@ impl Core {
         if let Some((objective, criteria)) = goal {
             agent.set_goal(objective, criteria);
         }
-        let receipts_before = {
+        let (receipts_before, entries_before) = {
             let s = agent.session.lock().await;
-            s.receipts().len()
+            (s.receipts().len(), s.chain_to_root().len())
         };
         let run_cancel = cancel.child_token();
         let outcome = {
@@ -6522,9 +6979,14 @@ impl Core {
         if self.inner.config.intent.enabled
             && resolved_intent.provenance.tier != vak_intent::Tier::General
         {
+            // Only this turn's own tool calls count. Scanning the whole
+            // chain recorded a tool used three turns ago as an escalation
+            // against today's reading, and biased every cell downward with
+            // session length.
             let attempted: Vec<String> = session
                 .chain_to_root()
                 .iter()
+                .skip(entries_before)
                 .flat_map(|entry| match &entry.payload {
                     vak_session::EntryPayload::Message(record) => record
                         .message
@@ -6560,7 +7022,7 @@ impl Core {
         // `Stalled` are deliberately different: a turn that answered
         // substantively but moved no criterion reduced uncertainty and must
         // not count against the stall breaker.
-        if let Some(episode) = &episode {
+        if !episodes.is_empty() {
             let tool_calls = session
                 .chain_to_root()
                 .iter()
@@ -6591,12 +7053,17 @@ impl Core {
                     vak_config::finops::estimate_cost_usd(&model, usage, prices)
                 })
                 .sum::<f64>();
-            commitments::end_episode(
-                &self.sessions_home(),
-                episode,
-                commitments::classify(&outcome, tool_calls, Vec::new()),
-                spend,
-            );
+            // Spend is attributed to the primary strand's commitment; the
+            // others record the advancement at zero cost rather than
+            // double-counting one turn's dispatches.
+            for (index, episode) in episodes.iter().enumerate() {
+                commitments::end_episode(
+                    &self.sessions_home(),
+                    episode,
+                    commitments::classify(&outcome, tool_calls, Vec::new()),
+                    if index == 0 { spend } else { 0.0 },
+                );
+            }
         }
 
         // Phase B: fold this run's dispatches into the routing evidence

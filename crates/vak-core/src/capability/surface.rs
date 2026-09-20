@@ -6,7 +6,7 @@
 //! pipeline already admitted for the turn — it never widens what was
 //! admitted, and it never re-derives domain membership on its own: the
 //! domain match comes from [`crate::intent::slice_capabilities`], the same
-//! fail-narrow selector `crate::intent` exposes for any other caller.
+//! selector `crate::intent` exposes for any other caller.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -47,10 +47,11 @@ pub struct ToolSurface {
 /// `mcp` broker (docs/design/68 §5). `tool_defs` are the corresponding
 /// schemas, already built for the turn (e.g. by `vak_tools::definitions`).
 /// `required_domains` and `declared_serves` are passed straight through to
-/// [`crate::intent::slice_capabilities`], which fails narrow: an
-/// unconstrained or empty domain set selects no *declared* tool, only the
-/// orientation floor and undeclared tools survive by that mechanism, and the
-/// `ALWAYS_CORE` set survives independently of it.
+/// [`crate::intent::slice_capabilities`]: `All` (a disabled kernel) puts
+/// every admitted tool in core, an explicit domain set keeps what serves it,
+/// and the orientation floor — what a reading too weak to slice arrives as —
+/// keeps only floor and undeclared tools in core. The `ALWAYS_CORE` set
+/// survives independently of all of that.
 pub fn build_tool_surface(
     admitted: &[CapabilityDescriptor],
     tool_defs: &[ToolDefinition],
@@ -206,8 +207,10 @@ mod tests {
         assert_eq!(without_cards.deferred.len(), 1);
     }
 
+    /// A disabled kernel (`All`) reproduces the pre-kernel surface: every
+    /// admitted tool in the stable prefix.
     #[test]
-    fn fail_narrow_on_unconstrained_domains_defers_declared_tools() {
+    fn unconstrained_domains_put_every_tool_in_core() {
         let admitted = vec![tool_cap("bash"), tool_cap("webfetch")];
         let defs = vec![
             def("bash", "Run a command."),
@@ -221,11 +224,29 @@ mod tests {
             &declared,
             false,
         );
-        assert!(
-            surface.core.is_empty(),
-            "an unconstrained reading must not put declared tools in core: {:?}",
-            surface.core
-        );
+        assert_eq!(surface.core.len(), 2, "{:?}", surface.core);
+        assert!(surface.deferred.is_empty());
+    }
+
+    /// An uncertain reading arrives as the orientation floor and defers
+    /// every declared tool outside it (design 68, Principle 6).
+    #[test]
+    fn the_orientation_floor_defers_declared_tools() {
+        let admitted = vec![tool_cap("bash"), tool_cap("webfetch"), tool_cap("read")];
+        let defs = vec![
+            def("bash", "Run a command."),
+            def("webfetch", "Fetch a URL."),
+            def("read", "Read a file."),
+        ];
+        let declared = serves(&[
+            ("bash", &["code-exec"]),
+            ("webfetch", &["web"]),
+            ("read", &["filesystem"]),
+        ]);
+        let floor = vak_intent::Engagement::orienting().limits.required_domains;
+        let surface = build_tool_surface(&admitted, &defs, &floor, &declared, false);
+        let core: Vec<&str> = surface.core.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(core, vec!["read"]);
         assert_eq!(surface.deferred.len(), 2);
     }
 

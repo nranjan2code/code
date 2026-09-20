@@ -17,6 +17,9 @@ pub enum WorkPurpose {
     Summarize,
     /// Completion-audit judge call (Phase H).
     Verify,
+    /// An intent-classification call (docs/design/47-commitment-kernel.md,
+    /// resolver tiers 2 and 3).
+    Classify,
     /// A Gemini Live API text-to-speech dispatch (voice/personality).
     VoiceSynthesis,
     /// Streaming or batch speech-to-text dispatch.

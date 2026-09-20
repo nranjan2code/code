@@ -20,6 +20,11 @@ pub struct TailSections {
     pub intent: Option<String>,
     pub work_contract: Option<String>,
     pub thread: Option<String>,
+    /// What this session has changed in the workspace so far, for a turn
+    /// whose context profile is `working` or `full`. Read from the
+    /// `workspace_delta` activity the host recorded for this turn, so the
+    /// bytes the model saw are the bytes in the ledger.
+    pub workspace: Option<String>,
 }
 
 pub struct SessionLog {
@@ -1546,9 +1551,7 @@ impl SessionLog {
             .into_iter()
             .rev()
             .find_map(|entry| match &entry.payload {
-                EntryPayload::Intent(record) => {
-                    Some(crate::turns::ReadingKey::from_reading(&record.reading))
-                }
+                EntryPayload::Intent(record) => Some(crate::turns::ReadingKey::from_record(record)),
                 _ => None,
             })
     }
@@ -1567,7 +1570,52 @@ impl SessionLog {
             intent: self.tail_intent(),
             work_contract: self.tail_work_contract(),
             thread: self.tail_conversation_thread(plan),
+            workspace: self.tail_workspace_delta(),
         }
+    }
+
+    /// The `data.section = "workspace_delta"` activity this turn recorded.
+    ///
+    /// The value used by the `workspace_delta` activity's `data` key.
+    pub const WORKSPACE_DELTA_SECTION: &'static str = "workspace_delta";
+
+    /// The workspace delta recorded for the current turn, tagged — only
+    /// when the turn's reading asked for it (`working` / `full`), and only
+    /// the activity written after this turn's intent entry, so a previous
+    /// turn's delta is never shown as current.
+    fn tail_workspace_delta(&self) -> Option<String> {
+        let chain = self.chain_to_root();
+        let intent_position = chain
+            .iter()
+            .rposition(|entry| matches!(entry.payload, EntryPayload::Intent(_)))?;
+        let wants = match &chain[intent_position].payload {
+            EntryPayload::Intent(record) => {
+                crate::turns::ReadingKey::from_record(record).wants_workspace_delta()
+            }
+            _ => false,
+        };
+        if !wants {
+            return None;
+        }
+        let delta = chain[intent_position + 1..]
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::Activity(activity)
+                    if activity.data.get("section").map(String::as_str)
+                        == Some(Self::WORKSPACE_DELTA_SECTION) =>
+                {
+                    activity.detail.clone()
+                }
+                _ => None,
+            })?;
+        let trimmed = delta.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut block = format!("<workspace_delta>\n{trimmed}\n</workspace_delta>");
+        block.truncate(8_000);
+        Some(block)
     }
 
     /// The latest intent note, tagged. Only the newest note applies — it

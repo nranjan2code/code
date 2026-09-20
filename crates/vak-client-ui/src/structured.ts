@@ -168,6 +168,7 @@ export const CONTEXT_BLOCK_TAGS = [
   "system_reminder",
   "runtime_guidance",
   "scratchpad",
+  "workspace_delta",
 ] as const;
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

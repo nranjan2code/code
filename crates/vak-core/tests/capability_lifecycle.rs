@@ -380,7 +380,7 @@ async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
     };
     let inventory = current.mcp_inventory();
     let empty_policy = vak_config::ChannelPolicy::default();
-    let required = BTreeSet::new();
+    let required: BTreeSet<vak_core::capability::Domain> = BTreeSet::new();
     let probe = vak_core::capability::TurnProbe {
         capabilities: &current,
         capability_epoch: current.epoch,
@@ -388,7 +388,7 @@ async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
         session_contract: Some(&contract),
         channel_policy: &empty_policy,
         reach_standings: &[],
-        required_domains: &required,
+        required_domains: (!required.is_empty()).then_some(&required),
         mcp_inventory: Some(&inventory),
         orientation_floor: &["read", "glob", "grep", "skill"],
         builtin_names: vec!["read".into(), "glob".into()],

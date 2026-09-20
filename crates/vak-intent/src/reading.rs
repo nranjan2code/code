@@ -230,7 +230,18 @@ impl Reading {
 /// A reading paired with everything the runtime derived from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Intent {
+    /// The composite reading: the most consequential strand, widened by the
+    /// others (every act they cover, the highest level on each ordered axis,
+    /// the union of modalities and domains). Everything that wants one
+    /// answer for the turn — the misread ledger, the session index, a
+    /// commitment's spec — reads this; everything that cares which part of
+    /// the request said what reads `strands`.
     pub reading: Reading,
+    /// The parts of the request, in textual order. Never empty; a request
+    /// that is one thing has one strand whose reading equals `reading`.
+    #[serde(default)]
+    pub strands: Vec<crate::strand::Strand>,
+    /// `Engagement::compose` over the strands.
     pub engagement: crate::Engagement,
     pub provenance: Provenance,
 }
@@ -240,9 +251,47 @@ impl Intent {
     pub fn general(resolver_version: u32) -> Self {
         Intent {
             reading: Reading::general(),
+            strands: Vec::new(),
             engagement: crate::Engagement::general(),
             provenance: Provenance::new(Tier::General, resolver_version, Vec::new()),
         }
+    }
+
+    /// The strand the composite reading was built around.
+    pub fn primary(&self) -> Option<&crate::strand::Strand> {
+        self.strands.iter().max_by_key(|strand| {
+            (
+                strand.reading.stakes.rank(),
+                strand.reading.acts().iter().any(|act| act.is_effectful()),
+                (strand.reading.confidence * 1000.0) as u32,
+            )
+        })
+    }
+
+    /// Strands that open (or continue) a durable thread of their own.
+    pub fn durable_strands(&self) -> impl Iterator<Item = &crate::strand::Strand> {
+        self.strands
+            .iter()
+            .filter(|strand| strand.engagement.posture.open_commitment)
+    }
+
+    /// The strands, or the composite reading as a single strand when none
+    /// were recorded — an intent built by hand, or one from a ledger row
+    /// written before strands existed. Consumers that work per strand use
+    /// this so the one-strand case needs no special path.
+    pub fn strands_or_composite(&self) -> Vec<crate::strand::Strand> {
+        if !self.strands.is_empty() {
+            return self.strands.clone();
+        }
+        vec![crate::strand::Strand {
+            strand_id: "s0.0".into(),
+            thread_id: "s0.0".into(),
+            text: String::new(),
+            reading: self.reading.clone(),
+            relation: crate::strand::StrandRelation::Independent,
+            lineage: crate::strand::Lineage::New,
+            engagement: self.engagement.clone(),
+        }]
     }
 
     /// The block of text this intent contributes to the model's context, if

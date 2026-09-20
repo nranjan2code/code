@@ -1,6 +1,65 @@
-//! The outcome contract carried by a turn and, when needed, durable work.
+//! The outcome contract carried by a turn and, when needed, durable work —
+//! and the control plane that can change it while it runs.
+//!
+//! # Control plane
+//!
+//! A running turn can be steered, paused, cancelled, re-planned or approved.
+//! **Authority for any of that comes from the channel, never from the
+//! text.** The transport stamps every request with a [`ControlSource`] —
+//! a human on a surface, an agent in the same process, or an external
+//! system — and [`evaluate_intervention`] decides from the source and the
+//! kind alone. A body cannot claim to be a person.
+//!
+//! Text carries control only in one narrow form: an explicit [`Command`] from
+//! a human — a leading slash command, or a whole message that is exactly one
+//! of the short words `stop`, `cancel`, `pause`, `resume`, `status`. Anything
+//! else a human types while a run is busy is steering text and reaches the
+//! model between steps. "Stop using semicolons in the output" is a steer;
+//! before this module it cancelled the run.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+
+use crate::axes::Act;
+
+/// Who is asking. Set by the transport that received the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ControlSource {
+    /// A person on a surface the runtime serves: CLI, desktop, web, a chat
+    /// gateway. `principal` is whatever identity the surface has (a chat
+    /// sender, a login), for the audit row.
+    Human {
+        surface: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        principal: Option<String>,
+    },
+    /// Another agent in this runtime — a parent steering a worker, a worker
+    /// reporting to its parent, the commitment upkeep tick.
+    Agent {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_session_id: Option<String>,
+    },
+    /// An external system with no human behind it: an HTTP client that did
+    /// not authenticate as a person, a cron trigger, a webhook.
+    System { origin: String },
+}
+
+impl ControlSource {
+    pub fn is_human(&self) -> bool {
+        matches!(self, ControlSource::Human { .. })
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ControlSource::Human { .. } => "human",
+            ControlSource::Agent { .. } => "agent",
+            ControlSource::System { .. } => "system",
+        }
+    }
+}
 
 /// A request that arrives after execution has begun. It is classified before
 /// it can affect the plan; free-form text is never treated as an authority
@@ -39,6 +98,128 @@ impl InterventionKind {
     }
 }
 
+/// An explicit command a human typed. The only way text becomes control.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Command {
+    Status,
+    Pause,
+    Resume,
+    Cancel,
+    Replan {
+        text: String,
+    },
+    AddRequirement {
+        text: String,
+    },
+    RemoveRequirement {
+        text: String,
+    },
+    Reprioritize {
+        text: String,
+    },
+    /// `/goal replace …`: the active goal is superseded by `text`.
+    GoalReplace {
+        text: String,
+    },
+    /// `/goal fix …`: the active goal is amended by `text`.
+    GoalFix {
+        text: String,
+    },
+    /// `/approve <gate>` — matched to a raised gate by id, never by prose.
+    Approve {
+        gate_id: String,
+    },
+    Reject {
+        gate_id: String,
+    },
+}
+
+impl Command {
+    pub fn intervention_kind(&self) -> InterventionKind {
+        match self {
+            Command::Status => InterventionKind::Status,
+            Command::Pause => InterventionKind::Pause,
+            Command::Resume => InterventionKind::Resume,
+            Command::Cancel => InterventionKind::Cancel,
+            Command::Replan { .. } => InterventionKind::Replan,
+            Command::AddRequirement { .. } => InterventionKind::AddRequirement,
+            Command::RemoveRequirement { .. } => InterventionKind::RemoveRequirement,
+            Command::Reprioritize { .. } => InterventionKind::Reprioritize,
+            // Goal edits ride the same re-plan path.
+            Command::GoalReplace { .. } | Command::GoalFix { .. } => InterventionKind::Replan,
+            Command::Approve { .. } => InterventionKind::Approve,
+            Command::Reject { .. } => InterventionKind::Reject,
+        }
+    }
+
+    /// The text the command carries, for the parts that become a request.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Command::Replan { text }
+            | Command::AddRequirement { text }
+            | Command::RemoveRequirement { text }
+            | Command::Reprioritize { text }
+            | Command::GoalReplace { text }
+            | Command::GoalFix { text } => Some(text),
+            _ => None,
+        }
+    }
+}
+
+/// Recognise an explicit command in a human message.
+///
+/// Slash commands are matched on the first token, case-insensitively.
+/// Bare words are matched only when the *whole* message, less trailing
+/// punctuation, is exactly one of `stop`, `cancel`, `pause`, `resume`,
+/// `status` — so "stop" and "Stop!" cancel, and "stop using semicolons"
+/// is steering text. Everything else is `None`.
+pub fn parse_command(text: &str) -> Option<Command> {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed.strip_prefix('/') {
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let verb = parts.next()?.to_ascii_lowercase();
+        let arg = parts.next().map(str::trim).unwrap_or("").to_string();
+        let needs_arg = |arg: &str| (!arg.is_empty()).then(|| arg.to_string());
+        return match verb.as_str() {
+            "status" => Some(Command::Status),
+            "pause" | "hold" => Some(Command::Pause),
+            "resume" | "continue" => Some(Command::Resume),
+            "stop" | "cancel" | "abort" => Some(Command::Cancel),
+            "replan" => needs_arg(&arg).map(|text| Command::Replan { text }),
+            "add" => needs_arg(&arg).map(|text| Command::AddRequirement { text }),
+            "drop" | "remove" => needs_arg(&arg).map(|text| Command::RemoveRequirement { text }),
+            "prioritize" | "prioritise" | "reprioritize" => {
+                needs_arg(&arg).map(|text| Command::Reprioritize { text })
+            }
+            "goal" => {
+                let mut sub = arg.splitn(2, char::is_whitespace);
+                let which = sub.next().unwrap_or("").to_ascii_lowercase();
+                let text = sub.next().map(str::trim).unwrap_or("");
+                match (which.as_str(), needs_arg(text)) {
+                    ("replace", Some(text)) => Some(Command::GoalReplace { text }),
+                    ("fix", Some(text)) => Some(Command::GoalFix { text }),
+                    _ => None,
+                }
+            }
+            "approve" => needs_arg(&arg).map(|gate_id| Command::Approve { gate_id }),
+            "reject" => needs_arg(&arg).map(|gate_id| Command::Reject { gate_id }),
+            _ => None,
+        };
+    }
+    let bare = trimmed
+        .trim_end_matches(['.', '!', '?'])
+        .trim()
+        .to_ascii_lowercase();
+    match bare.as_str() {
+        "status" => Some(Command::Status),
+        "pause" => Some(Command::Pause),
+        "resume" => Some(Command::Resume),
+        "stop" | "cancel" => Some(Command::Cancel),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterventionDecision {
@@ -64,8 +245,12 @@ pub struct InterventionRequest {
     pub request_id: String,
     pub kind: InterventionKind,
     pub text: String,
-    pub source: String,
+    pub source: ControlSource,
     pub target_revision: Option<u64>,
+    /// For an agent source: the session the intervention is aimed at, so
+    /// "own children only" can be checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,100 +261,99 @@ pub struct InterventionEvaluation {
     pub creates_revision: bool,
 }
 
-/// Evaluate the control-plane handling of an intervention. This deliberately
-/// does not inspect or grant permissions; effectful changes still go through
-/// the permission engine and approval gates.
+/// Evaluate the control-plane handling of an intervention.
+///
+/// | kind | human | agent | system |
+/// |---|---|---|---|
+/// | status | accepted | accepted | accepted |
+/// | resume | accepted | own subtree | accepted |
+/// | pause / cancel | accepted | own children only | rejected |
+/// | steer | queued | queued (typed message) | rejected |
+/// | replan / add / drop / prioritize | queued, new revision | requires human | rejected |
+/// | approve / reject | accepted | rejected | rejected |
+///
+/// This deliberately does not inspect or grant permissions; effectful changes
+/// still go through the permission engine and approval gates.
 pub fn evaluate_intervention(request: InterventionRequest) -> InterventionEvaluation {
-    let human = request.source == "human" || request.source == "operator";
-    let (decision, reason, creates_revision) = match request.kind {
-        InterventionKind::Status => (
-            InterventionDecision::Accepted,
-            "status is observational",
-            false,
-        ),
-        InterventionKind::Cancel => (
-            InterventionDecision::Accepted,
-            "cancellation is fail-safe",
-            false,
-        ),
-        InterventionKind::Pause => (
-            InterventionDecision::Accepted,
-            "pause preserves partial work",
-            false,
-        ),
-        InterventionKind::Resume => (
-            InterventionDecision::Accepted,
-            "resume continues at the next safe boundary",
-            false,
-        ),
-        InterventionKind::Approve | InterventionKind::Reject if human => (
-            InterventionDecision::Accepted,
-            "human control-plane decision recorded",
-            false,
-        ),
-        InterventionKind::Replan
-        | InterventionKind::Reprioritize
-        | InterventionKind::AddRequirement
-        | InterventionKind::RemoveRequirement
-            if human =>
-        {
+    use InterventionDecision as D;
+    use InterventionKind as K;
+    let own_subtree = match &request.source {
+        ControlSource::Agent { session_id, .. } => request
+            .target_session_id
+            .as_deref()
+            .is_some_and(|target| target != session_id),
+        _ => false,
+    };
+    let (decision, reason, creates_revision): (D, &str, bool) =
+        match (&request.kind, &request.source) {
+            (K::Status, _) => (D::Accepted, "status is observational", false),
+            (K::Resume, ControlSource::Human { .. } | ControlSource::System { .. }) => (
+                D::Accepted,
+                "resume continues at the next safe boundary",
+                false,
+            ),
+            (K::Resume, ControlSource::Agent { .. }) if own_subtree => {
+                (D::Accepted, "an agent may resume work it dispatched", false)
+            }
+            (K::Pause, ControlSource::Human { .. }) => {
+                (D::Accepted, "pause preserves partial work", false)
+            }
+            (K::Cancel, ControlSource::Human { .. }) => {
+                (D::Accepted, "cancellation is fail-safe", false)
+            }
+            (K::Pause | K::Cancel, ControlSource::Agent { .. }) if own_subtree => (
+                D::Accepted,
+                "an agent may pause or cancel work it dispatched",
+                false,
+            ),
+            (K::Pause | K::Cancel | K::Resume, ControlSource::Agent { .. }) => (
+                D::Rejected,
+                "an agent may only control its own children",
+                false,
+            ),
+            (K::Pause | K::Cancel, ControlSource::System { .. }) => (
+                D::Rejected,
+                "an external system cannot stop a human's run",
+                false,
+            ),
+            (K::Steer, ControlSource::Human { .. } | ControlSource::Agent { .. }) => (
+                D::Queued,
+                "steering queued at the next safe boundary",
+                false,
+            ),
+            (K::Steer, ControlSource::System { .. }) => {
+                (D::Rejected, "an external system cannot steer a run", false)
+            }
             (
-                InterventionDecision::Queued,
+                K::Replan | K::Reprioritize | K::AddRequirement | K::RemoveRequirement,
+                ControlSource::Human { .. },
+            ) => (
+                D::Queued,
                 "scope change is queued for a new plan revision",
                 true,
-            )
-        }
-        InterventionKind::Approve | InterventionKind::Reject => (
-            InterventionDecision::RequiresHuman,
-            "only a human can resolve this control-plane decision",
-            false,
-        ),
-        InterventionKind::Replan
-        | InterventionKind::Reprioritize
-        | InterventionKind::AddRequirement
-        | InterventionKind::RemoveRequirement => (
-            InterventionDecision::RequiresHuman,
-            "scope changes proposed by an agent require human review",
-            false,
-        ),
-        InterventionKind::Steer => (
-            InterventionDecision::Queued,
-            "steering queued at the next safe boundary",
-            false,
-        ),
-    };
+            ),
+            (
+                K::Replan | K::Reprioritize | K::AddRequirement | K::RemoveRequirement,
+                ControlSource::Agent { .. },
+            ) => (
+                D::RequiresHuman,
+                "scope changes proposed by an agent require human review",
+                false,
+            ),
+            (
+                K::Replan | K::Reprioritize | K::AddRequirement | K::RemoveRequirement,
+                ControlSource::System { .. },
+            ) => (D::Rejected, "an external system cannot change scope", false),
+            (K::Approve | K::Reject, ControlSource::Human { .. }) => {
+                (D::Accepted, "human control-plane decision recorded", false)
+            }
+            (K::Approve | K::Reject, _) => (D::Rejected, "only a human can resolve a gate", false),
+        };
     InterventionEvaluation {
         request,
         decision,
         reason: reason.into(),
         creates_revision,
-    }
-}
-
-/// Conservative classification for UI and audit purposes. Authorization and
-/// plan mutation remain runtime responsibilities.
-pub fn classify_intervention(text: &str) -> InterventionKind {
-    let normalized = text.trim().to_ascii_lowercase();
-    if normalized == "status" || normalized.starts_with("status ") {
-        InterventionKind::Status
-    } else if normalized == "cancel" || normalized.starts_with("stop ") {
-        InterventionKind::Cancel
-    } else if normalized == "pause" || normalized.starts_with("pause ") {
-        InterventionKind::Pause
-    } else if normalized == "resume" || normalized.starts_with("resume ") {
-        InterventionKind::Resume
-    } else if normalized.starts_with("replan") || normalized.starts_with("change plan") {
-        InterventionKind::Replan
-    } else if normalized.starts_with("prioritize") || normalized.starts_with("reprioritize") {
-        InterventionKind::Reprioritize
-    } else if normalized.starts_with("remove requirement")
-        || normalized.starts_with("drop requirement")
-    {
-        InterventionKind::RemoveRequirement
-    } else if normalized.starts_with("add requirement") || normalized.starts_with("also ") {
-        InterventionKind::AddRequirement
-    } else {
-        InterventionKind::Steer
     }
 }
 
@@ -237,6 +421,18 @@ pub struct OutcomeSpec {
     /// resolver derived a cap.
     #[serde(default)]
     pub max_turns: Option<usize>,
+    /// The primary act of every part of the request, typed. What the stop
+    /// gate reasons from — never the requirement descriptions, which are
+    /// prose for people and, for merged requirements, prose from extensions.
+    /// Contender acts are not here: a contender is a noun that is a verb
+    /// somewhere ("deploys" in a question), and gating completion on it
+    /// demanded an execution receipt from an answer.
+    #[serde(default)]
+    pub acts: BTreeSet<Act>,
+    /// When the loop may stop, from the engagement. The stop gate reads this
+    /// first and the acts second.
+    #[serde(default)]
+    pub stop: crate::StopProfile,
 }
 
 /// Runtime status of the primary deliverable. Produced output is not itself
@@ -659,6 +855,14 @@ pub fn evaluate_requirements_with_receipt(
     evaluate_requirements_with_state(spec, response, state)
 }
 
+/// An `Evidence` requirement is never `Met` here, by design: this function
+/// can see that a source reference exists and whether a retrieval receipt is
+/// fresh, but not whether the source *supports the claim*. That is a
+/// judgement, and the runtime does not make it structurally — so a turn
+/// held to `cited` or stronger evidence closes at best `Unknown` from this
+/// evaluator, with review recommended, until a linked criterion (a
+/// `Shell`/`FileContains` check, an external receipt, a human attestation)
+/// establishes it through the commitment ledger.
 pub fn evaluate_requirements_with_state(
     spec: &OutcomeSpec,
     response: Option<&str>,
@@ -805,26 +1009,38 @@ impl OutcomeSpec {
                 Evidence::Verified | Evidence::Audited => Some(3_600),
             },
             max_turns: None,
+            acts: BTreeSet::from([reading.act]),
+            stop: crate::StopProfile::default(),
         }
+    }
+
+    /// The baseline contract with the engagement's own stop rule.
+    ///
+    /// The engagement's `max_turns` is deliberately *not* projected here:
+    /// the agent loop's turn counter includes tool round-trips, so a cap
+    /// meant as "one reply" would end a short request that legitimately
+    /// needs two tool calls and an answer. That cap governs worker budgets
+    /// through `Limits::max_turns` instead.
+    pub fn from_intent(objective: impl Into<String>, intent: &crate::Intent) -> Self {
+        let mut spec = Self::from_reading(
+            objective,
+            &intent.reading,
+            intent.provenance.resolver_version,
+        );
+        spec.stop = intent.engagement.posture.stop;
+        spec.acts
+            .extend(intent.strands.iter().map(|strand| strand.reading.act));
+        spec
     }
 
     /// Whether this outcome requires execution or file modifications.
     pub fn requires_execution(&self) -> bool {
-        self.requirements.iter().any(|r| {
-            r.kind == RequirementKind::Deliverable
-                && (r.description.contains("modify")
-                    || r.description.contains("author")
-                    || r.description.contains("operate")
-                    || r.description.contains("govern")
-                    || r.description.contains("orchestrate"))
-        })
+        self.acts.iter().any(|act| act.requires_execution())
     }
 
     /// Whether this outcome requires inspection, search, or enumeration.
     pub fn requires_inspection(&self) -> bool {
-        self.requirements
-            .iter()
-            .any(|r| r.kind == RequirementKind::Deliverable && r.description.contains("locate"))
+        self.acts.iter().any(|act| act.requires_inspection())
     }
 
     /// Whether this outcome requires real tool execution or evidence receipts.
@@ -837,24 +1053,18 @@ impl OutcomeSpec {
                 .any(|r| r.kind == RequirementKind::Evidence)
     }
 
-    /// Extract the primary act description for logging and nudges.
+    /// The act to name in logs and nudges: the most demanding one.
     pub fn deliverable_act(&self) -> Option<&str> {
-        self.requirements.iter().find_map(|r| {
-            if r.kind == RequirementKind::Deliverable {
-                let prefix = "produce an ";
-                let suffix = " result";
-                if let Some(act) = r
-                    .description
-                    .strip_prefix(prefix)
-                    .and_then(|rest| rest.strip_suffix(suffix))
-                {
-                    return Some(act);
-                }
-                Some(r.description.as_str())
-            } else {
-                None
-            }
-        })
+        self.acts
+            .iter()
+            .max_by_key(|act| {
+                (
+                    act.is_effectful(),
+                    act.requires_execution(),
+                    act.requires_inspection(),
+                )
+            })
+            .map(|act| act.as_str())
     }
 
     /// Merge an extension-provided requirement without allowing it to alter
@@ -1162,41 +1372,104 @@ mod tests {
     }
 
     #[test]
-    fn intervention_classification_is_conservative_and_auditable() {
+    fn only_explicit_commands_are_control() {
+        assert_eq!(parse_command("/status"), Some(Command::Status));
+        assert_eq!(parse_command("/stop"), Some(Command::Cancel));
+        assert_eq!(parse_command("Stop!"), Some(Command::Cancel));
+        assert_eq!(parse_command("pause"), Some(Command::Pause));
         assert_eq!(
-            classify_intervention("status please"),
-            InterventionKind::Status
+            parse_command("/replan around the new constraint"),
+            Some(Command::Replan {
+                text: "around the new constraint".into()
+            })
         );
         assert_eq!(
-            classify_intervention("replan around the new constraint"),
-            InterventionKind::Replan
+            parse_command("/goal replace ship the index only"),
+            Some(Command::GoalReplace {
+                text: "ship the index only".into()
+            })
         );
         assert_eq!(
-            classify_intervention("also include a CSV"),
-            InterventionKind::AddRequirement
+            parse_command("/approve gate-7"),
+            Some(Command::Approve {
+                gate_id: "gate-7".into()
+            })
         );
-        assert_eq!(
-            classify_intervention("remove requirement intervention-1"),
-            InterventionKind::RemoveRequirement
-        );
-        assert_eq!(
-            classify_intervention("use a shorter answer"),
-            InterventionKind::Steer
-        );
+        // Natural language is steering, whatever word it starts with.
+        for text in [
+            "stop using semicolons in the output",
+            "pause the music service before deploying",
+            "also include a CSV",
+            "status of the migration please",
+            "replace the deprecated API call",
+            "use a shorter answer",
+        ] {
+            assert_eq!(parse_command(text), None, "{text}");
+        }
+        // A slash command without its argument is not a command either.
+        assert_eq!(parse_command("/replan"), None);
+        assert_eq!(parse_command("/goal replace"), None);
     }
 
-    #[test]
-    fn intervention_policy_requires_humans_for_agent_scope_changes() {
-        let request = InterventionRequest {
+    fn intervention(kind: InterventionKind, source: ControlSource) -> InterventionRequest {
+        InterventionRequest {
             request_id: "i-1".into(),
-            kind: InterventionKind::Replan,
-            text: "replan".into(),
-            source: "agent".into(),
+            kind,
+            text: String::new(),
+            source,
             target_revision: Some(1),
+            target_session_id: Some("child".into()),
+        }
+    }
+
+    fn human() -> ControlSource {
+        ControlSource::Human {
+            surface: "desktop".into(),
+            principal: None,
+        }
+    }
+
+    fn agent(session_id: &str) -> ControlSource {
+        ControlSource::Agent {
+            session_id: session_id.into(),
+            parent_session_id: None,
+        }
+    }
+
+    fn system() -> ControlSource {
+        ControlSource::System {
+            origin: "webhook".into(),
+        }
+    }
+
+    /// The authority matrix: humans may do anything, agents only their own
+    /// children, systems only observe.
+    #[test]
+    fn intervention_authority_comes_from_the_source() {
+        use InterventionDecision as D;
+        use InterventionKind as K;
+        let decide = |kind: K, source: ControlSource| {
+            evaluate_intervention(intervention(kind, source)).decision
         };
-        let evaluation = evaluate_intervention(request);
-        assert_eq!(evaluation.decision, InterventionDecision::RequiresHuman);
-        assert!(!evaluation.creates_revision);
+
+        assert_eq!(decide(K::Cancel, human()), D::Accepted);
+        assert_eq!(decide(K::Replan, human()), D::Queued);
+        assert_eq!(decide(K::Approve, human()), D::Accepted);
+        assert!(evaluate_intervention(intervention(K::Replan, human())).creates_revision);
+
+        // An agent controlling a child it dispatched.
+        assert_eq!(decide(K::Cancel, agent("parent")), D::Accepted);
+        // An agent trying to control the session it lives in — or one that
+        // is not its child — is refused.
+        assert_eq!(decide(K::Cancel, agent("child")), D::Rejected);
+        assert_eq!(decide(K::Replan, agent("parent")), D::RequiresHuman);
+        assert_eq!(decide(K::Approve, agent("parent")), D::Rejected);
+
+        assert_eq!(decide(K::Status, system()), D::Accepted);
+        assert_eq!(decide(K::Resume, system()), D::Accepted);
+        assert_eq!(decide(K::Cancel, system()), D::Rejected);
+        assert_eq!(decide(K::Steer, system()), D::Rejected);
+        assert_eq!(decide(K::Approve, system()), D::Rejected);
     }
 
     #[test]

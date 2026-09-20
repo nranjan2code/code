@@ -28,6 +28,8 @@ use vak_session::types::{CriterionKind, CriterionResult, WorkCriterion};
 pub struct EpisodeHandle {
     pub commitment_id: String,
     pub episode_id: String,
+    /// The strand this episode serves.
+    pub strand_id: String,
 }
 
 /// Economics from configuration, resolved once.
@@ -81,12 +83,19 @@ pub fn objective_from(prompt: &str) -> String {
     }
 }
 
-/// Open a commitment for this turn, or attach to the session's existing one.
+/// Open or continue a commitment for every durable strand of this turn.
 ///
-/// Returns `None` when the reading does not call for one, when commitments
-/// are disabled, or when the ledger is unwritable — a failure to record a
-/// commitment must never cost the user their turn.
-pub fn begin_episode(
+/// One commitment per *thread*, not per turn: a strand that continues an
+/// open thread attaches an episode to that thread's commitment; a strand
+/// that replaces one supersedes it; a new durable strand opens its own. A
+/// session that already carries a contract id (`existing`) attaches to it
+/// when a strand names no thread of its own — the pre-strand behaviour.
+///
+/// Returns nothing when the reading does not call for a commitment, when
+/// commitments are disabled, or when the ledger is unwritable — a failure to
+/// record a commitment must never cost the user their turn. Episodes come
+/// back in strand order; the first is the turn's primary.
+pub fn begin_episodes(
     sessions_home: &Path,
     config: &vak_config::Config,
     intent: &Intent,
@@ -94,82 +103,216 @@ pub fn begin_episode(
     session_id: &str,
     cwd: &Path,
     existing: Option<&str>,
-) -> Option<EpisodeHandle> {
-    if !config.commitment.enabled || !intent.engagement.posture.open_commitment {
-        return None;
+) -> Vec<EpisodeHandle> {
+    if !config.commitment.enabled {
+        return Vec::new();
     }
-    // A weak horizon reading must not manufacture a durable obligation: a
-    // stray "then" should not leave a month-long commitment behind.
-    if !intent
-        .reading
-        .may_open_commitment(config.intent.accept_confidence)
-    {
-        return None;
-    }
-
     let ledger = CommitmentLedger::new(sessions_home);
-    let commitment_id = match existing {
-        Some(id) => {
-            let id = id.to_string();
-            // A resumed session may have crashed after EpisodeStarted but
-            // before EpisodeEnded. Close that exact orphan as blocked before
-            // opening the new episode; never replay its effects implicitly.
-            if let Ok(Some(commitment)) = ledger.get(&id)
-                && let Some(episode) =
-                    commitment.episodes.iter().rev().find(|episode| {
-                        episode.ended_at.is_none() && episode.session_id == session_id
-                    })
-            {
-                let _ = ledger.append(&Event::new(
-                    &id,
-                    EventKind::EpisodeEnded {
-                        episode_id: episode.episode_id.clone(),
-                        advancement: Advancement::Blocked {
-                            blocker: "recovered after an interrupted process; review before retry"
-                                .into(),
-                        },
-                        spend_usd: 0.0,
-                    },
-                ));
-            }
-            id
-        }
-        None => {
-            let objective = objective_from(prompt);
-            let spec = CommitmentSpec {
-                criteria: seed_criteria(intent, &objective),
-                min_satisfaction: intent.reading.evidence.min_satisfaction(),
-                economics: economics(config),
-                cwd: cwd.to_path_buf(),
-                supersedes: None,
-                objective,
-                reading: intent.reading.clone(),
-            };
-            match ledger.open_commitment(spec) {
-                Ok(id) => id,
-                Err(error) => {
-                    eprintln!("[commit] could not open a commitment: {error}");
-                    return None;
+    let mut handles = Vec::new();
+    let all_strands = intent.strands_or_composite();
+    let strands: Vec<&vak_intent::Strand> = all_strands
+        .iter()
+        .filter(|strand| strand.engagement.posture.open_commitment)
+        // A weak horizon reading must not manufacture a durable obligation.
+        .filter(|strand| {
+            strand
+                .reading
+                .may_open_commitment(config.intent.accept_confidence)
+        })
+        .collect();
+    if strands.is_empty() {
+        return Vec::new();
+    }
+    let open = ledger.open();
+    for (index, strand) in strands.iter().enumerate() {
+        let by_thread = open
+            .iter()
+            .find(|c| c.spec.thread_id.as_deref() == Some(strand.thread_id.as_str()))
+            .map(|c| c.commitment_id.clone());
+        let commitment_id = match (&strand.lineage, by_thread) {
+            (vak_intent::Lineage::Replaces { .. }, Some(old)) => {
+                match open_for_strand(&ledger, config, strand, prompt, cwd, Some(old.clone())) {
+                    Some(new_id) => {
+                        let _ = ledger.append(&Event::new(
+                            &old,
+                            EventKind::Superseded {
+                                by: new_id.clone(),
+                                reason: "replaced by an explicit /goal replace".into(),
+                            },
+                        ));
+                        new_id
+                    }
+                    None => continue,
                 }
             }
+            (_, Some(id)) => id,
+            (_, None) => {
+                // A session with a contract and a strand with no thread of
+                // its own: the pre-strand behaviour, attach to the session's
+                // commitment.
+                let inherited = existing
+                    .filter(|_| index == 0 && all_strands.len() == 1)
+                    .map(str::to_string);
+                match inherited {
+                    Some(id) => id,
+                    None => match open_for_strand(&ledger, config, strand, prompt, cwd, None) {
+                        Some(id) => id,
+                        None => continue,
+                    },
+                }
+            }
+        };
+        close_orphan_episode(&ledger, &commitment_id, session_id);
+        let episode_id = format!(
+            "ep-{session_id}-{}-{}",
+            strand.strand_id,
+            chrono::Utc::now().timestamp_millis()
+        );
+        if let Err(error) = ledger.append(&Event::new(
+            &commitment_id,
+            EventKind::EpisodeStarted {
+                episode_id: episode_id.clone(),
+                session_id: session_id.to_string(),
+            },
+        )) {
+            eprintln!("[commit] could not start an episode: {error}");
+            continue;
         }
-    };
+        handles.push(EpisodeHandle {
+            commitment_id,
+            episode_id,
+            strand_id: strand.strand_id.clone(),
+        });
+    }
+    handles
+}
 
-    let episode_id = format!("ep-{session_id}-{}", chrono::Utc::now().timestamp_millis());
-    if let Err(error) = ledger.append(&Event::new(
-        &commitment_id,
-        EventKind::EpisodeStarted {
-            episode_id: episode_id.clone(),
-            session_id: session_id.to_string(),
-        },
-    )) {
-        eprintln!("[commit] could not start an episode: {error}");
+/// Open a commitment for one strand.
+fn open_for_strand(
+    ledger: &CommitmentLedger,
+    config: &vak_config::Config,
+    strand: &vak_intent::Strand,
+    prompt: &str,
+    cwd: &Path,
+    supersedes: Option<String>,
+) -> Option<String> {
+    let objective = objective_from(if strand.text.is_empty() {
+        prompt
+    } else {
+        &strand.text
+    });
+    let seed = Intent {
+        reading: strand.reading.clone(),
+        strands: Vec::new(),
+        engagement: strand.engagement.clone(),
+        provenance: vak_intent::Provenance::new(
+            vak_intent::Tier::Signals,
+            vak_intent::RESOLVER_VERSION,
+            Vec::new(),
+        ),
+    };
+    let spec = CommitmentSpec {
+        criteria: seed_criteria(&seed, &objective),
+        min_satisfaction: strand.reading.evidence.min_satisfaction(),
+        economics: economics(config),
+        cwd: cwd.to_path_buf(),
+        supersedes,
+        thread_id: Some(strand.thread_id.clone()),
+        objective,
+        reading: strand.reading.clone(),
+    };
+    match ledger.open_commitment(spec) {
+        Ok(id) => Some(id),
+        Err(error) => {
+            eprintln!("[commit] could not open a commitment: {error}");
+            None
+        }
+    }
+}
+
+/// A resumed session may have crashed after EpisodeStarted but before
+/// EpisodeEnded. Close that exact orphan as blocked before opening the new
+/// episode; never replay its effects implicitly.
+fn close_orphan_episode(ledger: &CommitmentLedger, commitment_id: &str, session_id: &str) {
+    if let Ok(Some(commitment)) = ledger.get(commitment_id)
+        && let Some(episode) = commitment
+            .episodes
+            .iter()
+            .rev()
+            .find(|episode| episode.ended_at.is_none() && episode.session_id == session_id)
+    {
+        let _ = ledger.append(&Event::new(
+            commitment_id,
+            EventKind::EpisodeEnded {
+                episode_id: episode.episode_id.clone(),
+                advancement: Advancement::Blocked {
+                    blocker: "recovered after an interrupted process; review before retry".into(),
+                },
+                spend_usd: 0.0,
+            },
+        ));
+    }
+}
+
+/// The commitment ledger rendered for the model: `ContextProfile::Full`.
+///
+/// One block per commitment this turn serves — objective, criteria and
+/// their standing, an open question if the work is suspended on one. Terse
+/// and factual, like the intent note it is appended to; the model reads the
+/// state of its obligations instead of reconstructing them from history.
+pub fn prompt_projection(sessions_home: &Path, episodes: &[EpisodeHandle]) -> Option<String> {
+    if episodes.is_empty() {
         return None;
     }
-    Some(EpisodeHandle {
-        commitment_id,
-        episode_id,
-    })
+    let ledger = CommitmentLedger::new(sessions_home);
+    let mut lines = Vec::new();
+    for episode in episodes {
+        let Ok(Some(commitment)) = ledger.get(&episode.commitment_id) else {
+            continue;
+        };
+        let met = commitment
+            .criteria
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.result,
+                    Some(vak_session::types::CriterionResult::Passed { .. })
+                )
+            })
+            .count();
+        lines.push(format!(
+            "Commitment {} ({}): {} — {} of {} criteria met, {} episode(s) so far, closes at {} evidence.",
+            commitment.commitment_id,
+            commitment.phase.as_str(),
+            commitment.spec.objective,
+            met,
+            commitment.criteria.len(),
+            commitment.episodes.len(),
+            commitment.spec.min_satisfaction.as_str()
+        ));
+        for criterion in &commitment.criteria {
+            let result = match &criterion.result {
+                Some(vak_session::types::CriterionResult::Passed { .. }) => "passed",
+                Some(vak_session::types::CriterionResult::Failed { .. }) => "failed",
+                Some(vak_session::types::CriterionResult::Unknown { .. }) => "unknown",
+                None => "not yet evaluated",
+            };
+            let standing = match criterion.strength {
+                Some(strength) if criterion.result.is_some() => {
+                    format!("{result} ({})", strength.as_str())
+                }
+                _ => result.to_string(),
+            };
+            lines.push(format!("  - {}: {standing}", criterion.statement));
+        }
+        if let Some(vak_commit::Suspension::Human { question, .. }) = &commitment.suspension {
+            lines.push(format!("  open question: {question}"));
+        }
+        if let Some(blocker) = &commitment.blocker {
+            lines.push(format!("  blocked: {blocker}"));
+        }
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// What a finished turn did for its commitment.
@@ -587,9 +730,35 @@ mod tests {
             },
             ..Reading::general()
         };
-        intent.engagement =
-            vak_intent::derive(&intent.reading, &vak_intent::Authority::default(), false);
+        intent.engagement = vak_intent::derive(
+            &intent.reading,
+            &vak_intent::Authority::default(),
+            false,
+            chrono::Utc::now(),
+        );
         intent
+    }
+
+    fn begin_episode(
+        sessions_home: &Path,
+        config: &vak_config::Config,
+        intent: &Intent,
+        prompt: &str,
+        session_id: &str,
+        cwd: &Path,
+        existing: Option<&str>,
+    ) -> Option<EpisodeHandle> {
+        begin_episodes(
+            sessions_home,
+            config,
+            intent,
+            prompt,
+            session_id,
+            cwd,
+            existing,
+        )
+        .into_iter()
+        .next()
     }
 
     fn config() -> vak_config::Config {

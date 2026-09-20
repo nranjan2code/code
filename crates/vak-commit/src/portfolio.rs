@@ -225,6 +225,7 @@ mod tests {
                 economics: Economics::default(),
                 cwd: std::path::PathBuf::from("/tmp"),
                 supersedes: None,
+                thread_id: None,
             },
             phase: Phase::Active,
             criteria: Vec::new(),

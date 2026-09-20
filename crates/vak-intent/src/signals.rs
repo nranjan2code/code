@@ -179,6 +179,9 @@ pub struct HistoryFacts {
     pub turn_index: usize,
     /// A commitment is already open and this request may belong to it.
     pub commitment_open: bool,
+    /// Threads from earlier turns that are still open, for strand lineage.
+    #[serde(default)]
+    pub open_threads: Vec<crate::strand::ThreadFact>,
 }
 
 /// Everything tier 1 is allowed to look at.
@@ -191,6 +194,9 @@ pub struct Request<'a> {
     pub history: HistoryFacts,
     /// Attendance the host knows for certain, overriding the surface's guess.
     pub attendance_override: Option<Attendance>,
+    /// Set when the request arrived under an explicit `/goal fix` or
+    /// `/goal replace` command. The resolver never infers these.
+    pub lineage_hint: Option<crate::strand::LineageHint>,
 }
 
 // ------------------------------------------------------------- lexicon ---
@@ -298,7 +304,14 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("settings", Act::Govern, 0.6),
 ];
 
-/// Words that raise stakes regardless of the act.
+/// Words that raise stakes when the act touches something.
+///
+/// Like the environment-derived votes, these apply only to effectful acts
+/// (see [`Extraction::stakes_from_words`]): "where does this config live"
+/// and "explain the customer model" are questions, and a question about
+/// production has no blast radius. Before this gate they read as
+/// `irreversible`, capped approval at `ask`, and told the model to confirm
+/// a step that cannot be undone.
 const STAKES_WORDS: &[(&str, Stakes, f64)] = &[
     ("production", Stakes::Irreversible, 1.0),
     ("prod", Stakes::Irreversible, 0.8),
@@ -320,19 +333,27 @@ const EVIDENCE_WORDS: &[(&str, Evidence, f64)] = &[
     ("cite", Evidence::Cited, 1.0),
     ("cites", Evidence::Cited, 0.9),
     ("citation", Evidence::Cited, 1.0),
+    // Matched exactly (see `EXACT_EVIDENCE_WORDS`): inflection would fold
+    // "source code" into it.
     ("sources", Evidence::Cited, 0.8),
-    ("source", Evidence::Cited, 0.4),
+    // `source` alone is not here: "source code", "the source file" and
+    // "open source" are everyday phrases with no evidentiary meaning, and
+    // a 0.4 vote that only ever won by default read every one of them as
+    // a citation requirement.
     ("evidence", Evidence::Cited, 0.6),
     ("prove", Evidence::Verified, 0.8),
     ("proof", Evidence::Verified, 0.7),
     ("make sure", Evidence::Verified, 0.8),
     ("ensure", Evidence::Verified, 0.7),
     ("passing", Evidence::Verified, 0.7),
-    ("green", Evidence::Verified, 0.4),
     ("audited", Evidence::Audited, 1.0),
     ("sign off", Evidence::Audited, 0.9),
     ("acceptance", Evidence::Audited, 0.8),
 ];
+
+/// Evidence words whose inflections mean something else. `sources` must not
+/// match `source` — "the source code" is not a citation request.
+const EXACT_EVIDENCE_WORDS: &[&str] = &["sources"];
 
 /// Temporal deixis: the request asks for a value as it stands *now*, which
 /// no model knows from training and which must therefore be retrieved on
@@ -342,7 +363,7 @@ const EVIDENCE_WORDS: &[(&str, Evidence, f64)] = &[
 const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("right now", 1.0),
     ("currently", 0.9),
-    ("current ", 0.8),
+    ("current", 0.8),
     ("as of today", 1.0),
     ("as of now", 1.0),
     ("today", 0.6),
@@ -352,7 +373,7 @@ const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("latest", 0.7),
     ("real-time", 1.0),
     ("real time", 0.8),
-    ("live ", 0.5),
+    ("live", 0.5),
     ("at the moment", 0.9),
     ("up to date", 0.7),
     ("up-to-date", 0.7),
@@ -372,6 +393,15 @@ const HORIZON_PHRASES: &[(&str, Horizon, f64)] = &[
     ("whenever", Horizon::Durable, 0.7),
     ("every week", Horizon::Durable, 1.0),
     ("every hour", Horizon::Durable, 1.0),
+    ("every monday", Horizon::Durable, 1.0),
+    ("every tuesday", Horizon::Durable, 1.0),
+    ("every wednesday", Horizon::Durable, 1.0),
+    ("every thursday", Horizon::Durable, 1.0),
+    ("every friday", Horizon::Durable, 1.0),
+    ("every saturday", Horizon::Durable, 1.0),
+    ("every sunday", Horizon::Durable, 1.0),
+    ("every weekday", Horizon::Durable, 1.0),
+    ("every weekend", Horizon::Durable, 1.0),
     ("daily", Horizon::Durable, 0.9),
     ("weekly", Horizon::Durable, 0.9),
     ("hourly", Horizon::Durable, 0.9),
@@ -389,8 +419,15 @@ const HORIZON_PHRASES: &[(&str, Horizon, f64)] = &[
     ("finally", Horizon::Session, 0.4),
 ];
 
+/// Recurrence words that are adjectives after a determiner ("the nightly
+/// job") and adverbs otherwise ("check it nightly"). Only the adverb votes.
+const RECURRENCE_ADJECTIVES: &[&str] = &["nightly", "daily", "weekly", "monthly", "hourly"];
+const DETERMINERS: &[&str] = &[
+    "the", "a", "an", "this", "that", "our", "my", "your", "its", "their", "each", "of",
+];
+
 /// Deictic markers: the request points at something it does not contain.
-const DEICTIC_WORDS: &[&str] = &[
+pub(crate) const DEICTIC_WORDS: &[&str] = &[
     "this", "that", "it", "these", "those", "here", "there", "again", "same",
 ];
 
@@ -498,7 +535,7 @@ impl<T: AxisValue> Votes<T> {
     /// Minimum weight before a signal may escalate an ordered axis. Filters
     /// out the incidental 0.3-weight hints so a stray conjunction cannot
     /// promote a one-liner to durable multi-day work.
-    const ESCALATION_FLOOR: f64 = 0.5;
+    pub(crate) const ESCALATION_FLOOR: f64 = 0.5;
 
     /// Every value scoring within `band` of the winner, strongest first.
     ///
@@ -548,15 +585,19 @@ impl<T: AxisValue> Votes<T> {
             return None;
         }
         if best.axis_rank().is_some() {
+            // Everything below the escalation floor abstains. The previous
+            // rule fell back to the strongest sub-floor vote and then
+            // scored it from a 0.7 baseline, so a lone 0.3 `then` produced a
+            // `session` horizon at 0.76 confidence — above the acceptance
+            // bar — and opened a durable commitment for "fix the
+            // authentication bug". A vote too weak to escalate on its own
+            // is not evidence of the level it names; the axis default
+            // (and its honest 0.5 confidence) applies instead.
             let (highest, weight) = ranked
                 .iter()
                 .filter(|(_, weight)| *weight >= Self::ESCALATION_FLOOR)
                 .max_by_key(|(value, _)| value.axis_rank().unwrap_or(0))
-                .copied()
-                // Everything was below the escalation floor: fall back to the
-                // strongest signal rather than abstaining, since weak evidence
-                // is still evidence.
-                .unwrap_or((best, best_score));
+                .copied()?;
             let mass = (weight / 1.5).min(1.0);
             return Some((highest, (0.7 + mass * 0.3).clamp(0.0, 1.0)));
         }
@@ -580,7 +621,9 @@ pub struct Extraction {
     pub signals: Vec<Signal>,
     pub act: Votes<Act>,
     pub horizon: Votes<Horizon>,
-    pub stakes: Votes<Stakes>,
+    /// Stakes stated by the request's own words. Applied only to effectful
+    /// acts, for the reason given on [`STAKES_WORDS`].
+    pub stakes_from_words: Votes<Stakes>,
     /// Stakes implied by the *environment* rather than by the request.
     ///
     /// Kept separate because it is only relevant to acts that actually touch
@@ -595,6 +638,24 @@ pub struct Extraction {
     pub output_modalities: Vec<Modality>,
     pub attendance: Attendance,
     pub domains: Vec<String>,
+    /// The clause points at something it does not contain ("it", "that").
+    pub deictic: bool,
+}
+
+/// Whether `phrase` occurs in `tokens` as a run of whole words.
+///
+/// Every multi-word lexicon entry goes through this rather than a raw
+/// `contains`: `lower.contains("then")` matched inside *authentication*,
+/// *strengthen* and *lengthen*, and `"first"` inside *firstname*, which is
+/// how a bug-fix request grew a session horizon.
+fn phrase_present(tokens: &[String], phrase: &str) -> bool {
+    let needle = words(phrase);
+    if needle.is_empty() || needle.len() > tokens.len() {
+        return false;
+    }
+    tokens
+        .windows(needle.len())
+        .any(|window| window.iter().zip(&needle).all(|(a, b)| a == b))
 }
 
 /// Split into lowercase alphanumeric words, preserving order.
@@ -757,32 +818,12 @@ fn strip_conversational_preamble(mut text: &str) -> &str {
 }
 
 /// Strip prompt scaffolding and runner control blocks before extracting intent.
-fn clean_request_text(raw: &str) -> String {
-    let mut text = raw.to_string();
-    let tags = [
-        "conversation_thread",
-        "context_summary",
-        "intent",
-        "work_contract",
-        "managed_work",
-        "context_packet",
-        "system_reminder",
-        "runtime_guidance",
-        "scratchpad",
-    ];
-    for tag in tags {
-        let open_pattern = format!("<{tag}");
-        let close_pattern = format!("</{tag}>");
-        while let Some(start) = text.find(&open_pattern) {
-            if let Some(end_offset) = text[start..].find(&close_pattern) {
-                let end = start + end_offset + close_pattern.len();
-                text.replace_range(start..end, "");
-            } else {
-                text.truncate(start);
-                break;
-            }
-        }
-    }
+///
+/// Delegates to [`crate::control`], which owns the tag vocabulary. This used
+/// to carry its own copy of the tag list — exactly the drift `control.rs`
+/// exists to prevent.
+pub(crate) fn clean_request_text(raw: &str) -> String {
+    let mut text = crate::control::strip_control_blocks(raw);
     while let Some(start) = text.find("[Scheduled-run context:") {
         if let Some(end_offset) = text[start..].find(']') {
             let end = start + end_offset + 1;
@@ -794,6 +835,47 @@ fn clean_request_text(raw: &str) -> String {
     }
     let stripped = strip_conversational_preamble(text.trim());
     stripped.to_string()
+}
+
+/// A digest of every table tier 1 reads, so a lexicon change that forgets
+/// to bump [`crate::RESOLVER_VERSION`] fails a test rather than silently
+/// invalidating every ledger row that claims `reproducible: true`.
+///
+/// Scoring constants are deliberately part of it too: a changed weight is
+/// as much a new resolver as a new word.
+pub fn lexicon_digest() -> String {
+    use sha2::{Digest, Sha256};
+    let mut out = String::new();
+    for (word, act, weight) in ACT_VERBS {
+        out.push_str(&format!("act:{word}:{}:{weight}\n", act.as_str()));
+    }
+    for (word, stakes, weight) in STAKES_WORDS {
+        out.push_str(&format!("stakes:{word}:{}:{weight}\n", stakes.as_str()));
+    }
+    for (word, evidence, weight) in EVIDENCE_WORDS {
+        out.push_str(&format!("evidence:{word}:{}:{weight}\n", evidence.as_str()));
+    }
+    for word in EXACT_EVIDENCE_WORDS {
+        out.push_str(&format!("evidence-exact:{word}\n"));
+    }
+    for (phrase, weight) in RECENCY_PHRASES {
+        out.push_str(&format!("recency:{phrase}:{weight}\n"));
+    }
+    for (phrase, horizon, weight) in HORIZON_PHRASES {
+        out.push_str(&format!("horizon:{phrase}:{}:{weight}\n", horizon.as_str()));
+    }
+    for word in DEICTIC_WORDS {
+        out.push_str(&format!("deictic:{word}\n"));
+    }
+    for word in RECURRENCE_ADJECTIVES {
+        out.push_str(&format!("recurrence-adjective:{word}\n"));
+    }
+    for word in DETERMINERS {
+        out.push_str(&format!("determiner:{word}\n"));
+    }
+    out.push_str(&format!("floor:{}\n", Votes::<Act>::ESCALATION_FLOOR));
+    crate::strand::segmentation_fingerprint(&mut out);
+    format!("{:x}", Sha256::digest(out.as_bytes()))
 }
 
 /// Tier 1. A pure function of `request`.
@@ -851,7 +933,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     }
     for (word, stakes, weight) in STAKES_WORDS {
         if token_position(&tokens, word).is_some() {
-            out.stakes.add(*stakes, *weight);
+            out.stakes_from_words.add(*stakes, *weight);
             out.signals.push(Signal::new(
                 SignalKind::Lexical,
                 format!("stakes:{word}"),
@@ -862,7 +944,9 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     }
     for (phrase, evidence, weight) in EVIDENCE_WORDS {
         let hit = if phrase.contains(' ') {
-            lower.contains(phrase)
+            phrase_present(&tokens, phrase)
+        } else if EXACT_EVIDENCE_WORDS.contains(phrase) {
+            tokens.iter().any(|t| t == phrase)
         } else {
             tokens.iter().any(|t| token_matches(t, phrase))
         };
@@ -877,7 +961,20 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         }
     }
     for (phrase, horizon, weight) in HORIZON_PHRASES {
-        if lower.contains(phrase) {
+        // A recurrence adjective names a thing, not a schedule: "the nightly
+        // job", "our daily report". Only the adverb ("run this nightly")
+        // says the work recurs.
+        if RECURRENCE_ADJECTIVES.contains(phrase)
+            && tokens
+                .windows(2)
+                .any(|pair| DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
+            && !tokens
+                .windows(2)
+                .any(|pair| !DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
+        {
+            continue;
+        }
+        if phrase_present(&tokens, phrase) {
             out.horizon.add(*horizon, *weight);
             out.signals.push(Signal::new(
                 SignalKind::Lexical,
@@ -897,8 +994,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     // request under `direct-answer` produced a card six times out of six.
     let mut recency: Option<(&str, f64)> = None;
     for (phrase, weight) in RECENCY_PHRASES {
-        let padded = format!(" {lower} ");
-        if padded.contains(phrase) && recency.is_none_or(|(_, best)| *weight > best) {
+        if phrase_present(&tokens, phrase) && recency.is_none_or(|(_, best)| *weight > best) {
             recency = Some((phrase, *weight));
         }
     }
@@ -983,6 +1079,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         .copied()
         .filter(|w| tokens.iter().any(|t| t == w))
         .collect();
+    out.deictic = !deictic.is_empty();
     if !deictic.is_empty() {
         // Pointing at something is only ambiguous when there is no history to
         // point at. Mid-conversation it is ordinary and clear.
@@ -1093,6 +1190,7 @@ mod tests {
             workspace: WorkspaceFacts::default(),
             history: HistoryFacts::default(),
             attendance_override: None,
+            lineage_hint: None,
         }
     }
 
@@ -1141,7 +1239,7 @@ mod tests {
         let extraction = extract(&request("deploy the service to production"));
         assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Operate));
         assert_eq!(
-            extraction.stakes.winner().map(|w| w.0),
+            extraction.stakes_from_words.winner().map(|w| w.0),
             Some(Stakes::Irreversible)
         );
     }

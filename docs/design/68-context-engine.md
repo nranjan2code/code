@@ -241,7 +241,11 @@ Properties:
 
 - **Core set**, always present: `recall`, `find_tools`, `skill`, `mcp`, and
   the domain tools the intent reading selected. When the reading's confidence
-  is below the slice floor, the domain set is *empty*, not everything.
+  is below the slice floor, the reading arrives as the explicit *orientation
+  floor* (`Engagement::orienting`, docs/design/47-commitment-kernel.md): the
+  filesystem and memory tools are core, everything else is in the index. An
+  unconstrained domain set (`DomainSet::All`) means everything and is what a
+  *disabled* kernel produces — never a fallback for uncertainty.
 - **Index**, one line per remaining tool (`name — description`), in the
   stable prefix. No schemas.
 - **`find_tools({ query })`** returns full schemas for matching tools; they

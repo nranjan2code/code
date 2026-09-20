@@ -370,9 +370,25 @@ impl StopPolicy {
             });
         }
 
-        // Intent-driven gate: when outcome specification is available.
+        // Intent-driven gate: when outcome specification is available. The
+        // engagement's stop profile (docs/design/47-commitment-kernel.md)
+        // decides first; the typed acts refine it.
         if let Some(spec) = outcome {
-            if spec.requires_execution() {
+            use vak_intent::StopProfile;
+            // `Verification`: a checkable result was demanded. An execution
+            // receipt is required, and it must not be stale.
+            if spec.stop == StopProfile::Verification {
+                if !receipts.has_execution_receipt() {
+                    return Some(BlockReason::ExecutionReceiptMissing {
+                        act: spec.deliverable_act().unwrap_or("verification").to_string(),
+                        hint: "run the check that proves this is done".into(),
+                    });
+                }
+                if verification_stale && receipts.code_files_modified > 0 {
+                    return Some(BlockReason::VerificationStale);
+                }
+            }
+            if spec.stop == StopProfile::Effect || spec.requires_execution() {
                 if !receipts.has_execution_receipt() {
                     let act = spec.deliverable_act().unwrap_or("execution").to_string();
                     return Some(BlockReason::ExecutionReceiptMissing {
@@ -387,6 +403,10 @@ impl StopPolicy {
                 {
                     return Some(BlockReason::VerificationStale);
                 }
+            // `Inspection` on its own gates nothing: "something was looked
+            // at" includes the material the request carried (an attachment,
+            // pasted text), which leaves no receipt. Only a `locate` act
+            // demands an inspection receipt.
             } else if spec.requires_inspection() {
                 let direct_substantive = final_text.trim().len() >= 80
                     && !Self::demands_code_execution(prompt)

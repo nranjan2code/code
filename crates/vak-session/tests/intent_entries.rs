@@ -52,6 +52,8 @@ fn record(note: Option<&str>) -> IntentRecord {
         outcome: None,
         model_visible: note.map(str::to_string),
         commitment_id: None,
+        strands: Vec::new(),
+        strand_commitments: Default::default(),
     }
 }
 
@@ -101,6 +103,53 @@ fn an_intent_note_reaches_the_model_through_the_tail_not_the_projection() {
     let intent = tail.intent.expect("intent tail section present");
     assert!(intent.contains("Cite your sources."));
     assert!(intent.starts_with("<intent>"));
+}
+
+/// `ContextProfile::Working` / `Full`: the workspace delta the host recorded
+/// for this turn reaches the model through the tail, from the ledger bytes,
+/// and only when the turn's reading asked for it.
+#[test]
+fn a_workspace_delta_reaches_the_tail_only_for_a_working_reading() {
+    let dir = tempdir().unwrap();
+    let mut log = open(dir.path());
+    let delta = |id: &str| vak_session::ActivityRecord {
+        activity_id: id.into(),
+        turn: None,
+        kind: vak_session::ActivityKind::Diagnostic,
+        status: vak_session::ActivityStatus::Succeeded,
+        label: "Workspace changes since the session began".into(),
+        detail: Some("M src/parser.rs (+12 -3)".into()),
+        data: std::collections::BTreeMap::from([(
+            "section".to_string(),
+            SessionLog::WORKSPACE_DELTA_SECTION.to_string(),
+        )]),
+    };
+
+    // A recall reading: the delta is in the ledger but not in the tail.
+    log.append_intent(record(None)).unwrap();
+    log.append_activity(delta("wd-1")).unwrap();
+    log.append_message(user("explain the parser")).unwrap();
+    assert!(log.tail_sections(None).workspace.is_none());
+
+    // A working reading on the next turn, with its own delta activity.
+    let mut working = record(None);
+    working.engagement.posture.context = vak_intent::ContextProfile::Working;
+    log.append_intent(working).unwrap();
+    log.append_activity(delta("wd-2")).unwrap();
+    log.append_message(user("now fix the failing test"))
+        .unwrap();
+    let tail = log.tail_sections(None);
+    let workspace = tail.workspace.expect("workspace section present");
+    assert!(workspace.starts_with("<workspace_delta>"), "{workspace}");
+    assert!(workspace.contains("src/parser.rs"));
+
+    // A working reading whose turn recorded no delta shows nothing — a
+    // previous turn's delta is never presented as current.
+    let mut working = record(None);
+    working.engagement.posture.context = vak_intent::ContextProfile::Working;
+    log.append_intent(working).unwrap();
+    log.append_message(user("and run it")).unwrap();
+    assert!(log.tail_sections(None).workspace.is_none());
 }
 
 #[test]

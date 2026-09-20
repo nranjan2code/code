@@ -487,9 +487,12 @@ impl Attendance {
         Attendance::Unattended,
     ];
 
-    /// Ranked by how much supervision is available, most first. Used as a
-    /// ceiling on effective authority: you can never act on more delegation
-    /// than there is oversight to correct.
+    /// Ranked by how much supervision is available, most first.
+    ///
+    /// An ordering for reporting and for choosing the more cautious of two
+    /// observations — deliberately *not* a cap on [`crate::Autonomy`]:
+    /// delegation and oversight are independent facts, and their
+    /// interaction lives in [`crate::Authority::gate_fallback`].
     pub fn rank(self) -> u8 {
         match self {
             Attendance::Unattended => 0,

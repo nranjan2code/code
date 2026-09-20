@@ -730,7 +730,12 @@ pub enum ActivityStatus {
 /// the decision auditable — including whether it was reproducible at all.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntentRecord {
+    /// The composite reading for the turn.
     pub reading: vak_intent::Reading,
+    /// The parts of the request, each with its own reading, relation and
+    /// thread lineage (docs/design/47-commitment-kernel.md, strands).
+    #[serde(default)]
+    pub strands: Vec<vak_intent::Strand>,
     pub engagement: vak_intent::Engagement,
     pub provenance: vak_intent::Provenance,
     /// The requested outcome captured for this turn, when the host could
@@ -741,9 +746,14 @@ pub struct IntentRecord {
     /// engagement had nothing worth spending tokens to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_visible: Option<String>,
-    /// The durable commitment this turn serves, when one is open.
+    /// The durable commitment this turn serves, when one is open: the
+    /// primary strand's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commitment_id: Option<String>,
+    /// Every strand's commitment, by strand id, when more than one durable
+    /// thread is served by this turn.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub strand_commitments: std::collections::BTreeMap<String, String>,
 }
 
 /// Durable terminal marker for a child-agent run. Presence of a child ledger

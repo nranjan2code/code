@@ -1323,9 +1323,17 @@ impl Agent {
                             };
                         }
                     };
-                    let request = message.text_content();
+                    let raw = message.text_content();
                     let active_revision = session.active_goal_revision();
-                    let relation = vak_intent::classify_goal_update(&request, active_revision);
+                    // Only an explicit command changes the goal's shape; free
+                    // text adds to it (docs/design/47, control plane).
+                    let command = vak_intent::parse_command(&raw);
+                    let relation = vak_intent::goal_relation(command.as_ref(), active_revision);
+                    let request = command
+                        .as_ref()
+                        .and_then(|c| c.text())
+                        .map(str::to_string)
+                        .unwrap_or(raw);
                     let update = vak_intent::GoalUpdate {
                         revision: session
                             .latest_goal_update()
@@ -1571,6 +1579,7 @@ impl Agent {
                     temperature: None,
                     cache,
                     previous_response_id: None,
+                    think: None,
                 }
             };
             let mut request = base_request.clone();
@@ -1673,6 +1682,7 @@ impl Agent {
                                     temperature: None,
                                     cache,
                                     previous_response_id: None,
+                                    think: None,
                                 }
                             };
                             continue;
@@ -2885,6 +2895,7 @@ impl Agent {
             temperature: None,
             cache: None,
             previous_response_id: None,
+            think: None,
         };
         let mut ledger = StepLedger::new(
             WorkPurpose::Plan,

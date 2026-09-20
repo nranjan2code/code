@@ -158,6 +158,8 @@ command = "echo admitted"
         requirements: Vec::new(),
         resolver_version: 1,
         evidence_max_age_secs: Some(3600),
+        acts: Default::default(),
+        stop: Default::default(),
         max_turns: Some(2),
     };
     let provider = Arc::new(TaggedScripted {

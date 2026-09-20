@@ -220,7 +220,7 @@ impl TurnIndex {
                 }
                 EntryPayload::Intent(record) => {
                     if let Some(turn) = turns.last_mut() {
-                        turn.reading = Some(ReadingKey::from_reading(&record.reading));
+                        turn.reading = Some(ReadingKey::from_record(record));
                     }
                 }
                 EntryPayload::Compaction(c) if c.reset_all => {
@@ -826,9 +826,31 @@ pub struct ReadingKey {
     pub act: String,
     pub domains: Vec<String>,
     pub modalities: Vec<String>,
+    /// The engagement's context profile (`minimal` | `recall` | `working`
+    /// | `full`), which steers the working-set planner
+    /// (docs/design/47-commitment-kernel.md). Empty means `recall`.
+    #[serde(default)]
+    pub context: String,
 }
 
 impl ReadingKey {
+    /// From a full intent entry: the reading plus the context profile.
+    pub fn from_record(record: &crate::types::IntentRecord) -> Self {
+        let mut key = Self::from_reading(&record.reading);
+        key.context = record.engagement.posture.context.as_str().to_string();
+        key
+    }
+
+    /// Whether the planner should keep history to the bare minimum.
+    pub fn is_minimal(&self) -> bool {
+        self.context == "minimal"
+    }
+
+    /// Whether the turn wants the workspace delta since the session began.
+    pub fn wants_workspace_delta(&self) -> bool {
+        matches!(self.context.as_str(), "working" | "full")
+    }
+
     pub fn from_reading(reading: &vak_intent::Reading) -> Self {
         let mut modalities: Vec<String> = reading
             .input_modalities
@@ -842,6 +864,7 @@ impl ReadingKey {
             act: reading.act.as_str().to_string(),
             domains: reading.domains.iter().cloned().collect(),
             modalities,
+            context: String::new(),
         }
     }
 }
@@ -1342,6 +1365,8 @@ mod tests {
             outcome: None,
             model_visible: None,
             commitment_id: None,
+            strands: Vec::new(),
+            strand_commitments: Default::default(),
         })
         .unwrap();
         log.append_message(assistant_text("it is sunny")).unwrap();

@@ -144,6 +144,17 @@ pub enum LedgerError {
     Closure(#[from] ClosureRefusal),
 }
 
+/// Held while one check-and-append runs; removes the lock file on drop.
+struct LedgerLock {
+    path: std::path::PathBuf,
+}
+
+impl Drop for LedgerLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Append-only JSONL of commitment events, one file per home.
 ///
 /// Sits beside `routing-evidence.jsonl` in the sessions home for the same
@@ -168,8 +179,12 @@ impl CommitmentLedger {
     ///
     /// The check happens here rather than in a caller because there are many
     /// callers and exactly one ledger: a rule enforced at the write boundary
-    /// cannot be bypassed by a surface that forgot about it.
+    /// cannot be bypassed by a surface that forgot about it. The check and
+    /// the append happen under a lock file, so two writers — a running turn
+    /// and `vak commit close`, or the upkeep tick — cannot both read
+    /// "not closed" and both close it.
     pub fn append(&self, event: &Event) -> Result<(), LedgerError> {
+        let _guard = self.lock()?;
         let current = self
             .get(&event.commitment_id)?
             .ok_or_else(|| LedgerError::UnknownCommitment(event.commitment_id.clone()))?;
@@ -181,6 +196,39 @@ impl CommitmentLedger {
             current.may_close(*verdict)?;
         }
         self.append_unchecked(event)
+    }
+
+    /// A cross-process lock on the ledger, held for one check-and-append.
+    /// `create_new` is atomic on every filesystem vak runs on; a stale lock
+    /// from a crashed process is broken after the wait.
+    fn lock(&self) -> Result<LedgerLock, LedgerError> {
+        let path = self.path.with_extension("lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let try_lock = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+        };
+        for _ in 0..400u32 {
+            match try_lock() {
+                Ok(_) => return Ok(LedgerLock { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => return Err(LedgerError::Io(error)),
+            }
+        }
+        // Two seconds is far longer than any append takes; a lock held that
+        // long belongs to a process that died holding it. Break it and try
+        // once more.
+        let _ = std::fs::remove_file(&path);
+        match try_lock() {
+            Ok(_) => Ok(LedgerLock { path }),
+            Err(error) => Err(LedgerError::Io(error)),
+        }
     }
 
     /// Append without the closure check. Used by the projector's own tests and
@@ -464,5 +512,6 @@ pub fn spec_from_reading(
         economics,
         cwd,
         supersedes: None,
+        thread_id: None,
     }
 }

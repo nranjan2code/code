@@ -289,6 +289,13 @@ pub struct ChatRequest {
     /// response instead of replaying the full history: only messages after
     /// the last assistant message are sent, alongside this id.
     pub previous_response_id: Option<String>,
+    /// Whether the model may spend tokens in a thinking channel before
+    /// answering. `None` leaves the provider's default; `Some(false)` asks
+    /// for a direct answer (Ollama `think`), which a strict-JSON
+    /// classification needs — measured live, a thinking model spent its
+    /// whole output budget deliberating and returned no JSON at all.
+    /// Adapters without such a switch ignore it.
+    pub think: Option<bool>,
 }
 
 impl ChatRequest {
@@ -302,6 +309,7 @@ impl ChatRequest {
             temperature: None,
             cache: None,
             previous_response_id: None,
+            think: None,
         }
     }
 }

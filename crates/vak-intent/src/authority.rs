@@ -485,7 +485,19 @@ impl Authority {
         };
         let by_autonomy = match self.autonomy {
             Autonomy::Manual => ApprovalCeiling::Ask,
-            Autonomy::Assisted => ApprovalCeiling::ApproveSafe,
+            // "Act on reversible things; ask before anything costly or
+            // irreversible" — as the variant's own docstring says. The
+            // earlier mapping capped *every* stakes level at `approve-safe`,
+            // which made `assisted` indistinguishable from `autonomous` on
+            // costly work and silently downgraded an operator's
+            // `auto-approve` on a greeting.
+            Autonomy::Assisted => {
+                if stakes.rank() >= Stakes::Costly.rank() {
+                    ApprovalCeiling::Ask
+                } else {
+                    ApprovalCeiling::AutoApprove
+                }
+            }
             Autonomy::Delegated => {
                 // in_envelope says the action falls within the grant's scope;
                 // the grant must also be live. A revoked or expired envelope
@@ -588,6 +600,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The autonomy table as documented: assisted acts on reversible work
+    /// without a gate and asks before anything costly.
+    #[test]
+    fn assisted_auto_approves_reversible_and_asks_for_costly() {
+        let now = chrono::Utc::now();
+        let assisted = Authority::default();
+        assert_eq!(
+            assisted.approval_ceiling(Stakes::Inert, now, false),
+            ApprovalCeiling::AutoApprove
+        );
+        assert_eq!(
+            assisted.approval_ceiling(Stakes::Reversible, now, false),
+            ApprovalCeiling::AutoApprove
+        );
+        assert_eq!(
+            assisted.approval_ceiling(Stakes::Costly, now, false),
+            ApprovalCeiling::Ask
+        );
+        let autonomous = Authority {
+            autonomy: Autonomy::Autonomous,
+            ..Authority::default()
+        };
+        assert_eq!(
+            autonomous.approval_ceiling(Stakes::Costly, now, false),
+            ApprovalCeiling::ApproveSafe
+        );
     }
 
     #[test]

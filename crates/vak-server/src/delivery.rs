@@ -473,21 +473,18 @@ pub(crate) async fn render_response(
     provenance: Option<std::collections::BTreeMap<String, String>>,
     bot_id: Option<&str>,
     session_id: Option<&str>,
+    intent_posture: Option<vak_intent::DeliveryPosture>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
-    let intent_posture = outcome_metadata.as_ref().and_then(|metadata| {
-        let cadence = metadata.get("intent_cadence")?;
-        let urgency = metadata
-            .get("intent_urgency")
-            .map(String::as_str)
-            .unwrap_or("notify");
-        Some(vak_delivery::DeliveryPosture::from_intent_labels(
-            cadence, urgency,
-        ))
-    });
     let mut profile = profile_for_surface(core, surface, requested);
+    // The engagement decides *when* a packet goes out (docs/design/47,
+    // delivery posture): an unattended run rolls up into the digest, an
+    // irreversible step's confirmation breaks through.
     if let Some(posture) = intent_posture {
-        profile.posture = posture;
+        profile.posture = vak_delivery::DeliveryPosture::from_intent_labels(
+            posture.cadence.as_str(),
+            posture.urgency.as_str(),
+        );
     }
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),

@@ -66,6 +66,7 @@ pub mod outcome;
 pub mod reading;
 pub mod resolve;
 pub mod signals;
+pub mod strand;
 
 pub use authority::{
     ApprovalCeiling, Authority, Autonomy, CapabilityDecision, CapabilityKind, CapabilityRequest,
@@ -79,23 +80,24 @@ pub use engage::{
     OutputShape, Posture, StopProfile, Urgency, derive,
 };
 pub use engage::{FLOOR_DOMAINS, ORIENTATION_FLOOR};
-pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update};
+pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation};
 pub use limits::{CapabilitySlice, DomainSet, Limits};
 pub use outcome::{
-    CompletionVerdict, EvidenceReceipt, EvidenceState, InterventionDecision,
-    InterventionEvaluation, InterventionKind, InterventionRequest, OutcomeRequirement, OutcomeSpec,
-    OutcomeStatus, RequirementEvaluation, RequirementImportance, RequirementKind,
-    RequirementOrigin, RequirementStatus, classify_intervention, evaluate_completion,
+    Command, CompletionVerdict, ControlSource, EvidenceReceipt, EvidenceState,
+    InterventionDecision, InterventionEvaluation, InterventionKind, InterventionRequest,
+    OutcomeRequirement, OutcomeSpec, OutcomeStatus, RequirementEvaluation, RequirementImportance,
+    RequirementKind, RequirementOrigin, RequirementStatus, evaluate_completion,
     evaluate_intervention, evaluate_requirements, evaluate_requirements_with_evidence,
     evaluate_requirements_with_receipt, evaluate_requirements_with_state, evaluate_response,
     evaluate_response_with_failures, evidence_state_from_age, evidence_state_from_receipt,
-    human_review_state,
+    human_review_state, parse_command,
 };
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{
     Classification, Declared, RESOLVER_VERSION, Resolution, ResolverConfig, apply_classification,
-    prompt_digest, resolve,
+    classification_prompt, implied_stakes, parse_classifications, prompt_digest, resolve,
 };
 pub use signals::{
     Attachment, HistoryFacts, Request, Signal, SignalKind, Surface, WorkspaceFacts, extract,
 };
+pub use strand::{Lineage, LineageHint, Strand, StrandRelation, ThreadFact};

@@ -56,6 +56,12 @@ fn is_anaphoric(directive: &str) -> bool {
     })
 }
 
+/// How many of the most recent closed turns a `minimal` reading may still
+/// carry at `Full`. Two: the exchange just before this one, and the one
+/// before that, which is what a greeting or a one-line answer plausibly
+/// refers to.
+const MINIMAL_FULL_TURNS: usize = 2;
+
 /// A turn's value from recency alone: `1 / (1 + age)` where `age` is how
 /// many closed turns came after it. The most recent closed turn is worth
 /// 1.0, the one before it 0.5, and so on — a parameter-free decay that a
@@ -118,16 +124,31 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     // rather than blocking everything behind it.
     let anaphoric = is_anaphoric(input.directive);
     let preceding = closed.last().map(|turn| turn.id.clone());
+    // `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): just
+    // the conversation. No relevance retrieval promotes an older turn, and
+    // only the most recent turns are candidates for `Full`; a greeting does
+    // not pay for last Tuesday. Anaphora still promotes the preceding turn —
+    // "thanks, do that again" points at it.
+    let minimal = input
+        .reading
+        .is_some_and(vak_session::ReadingKey::is_minimal);
     let query = relevance_query(input.directive, input.reading);
-    let lexical: std::collections::HashMap<String, f64> =
-        input.index.search(&query).into_iter().collect();
+    let lexical: std::collections::HashMap<String, f64> = if minimal {
+        std::collections::HashMap::new()
+    } else {
+        input.index.search(&query).into_iter().collect()
+    };
     let best_lexical = lexical.values().copied().fold(0.0_f64, f64::max);
     let mut ranked: Vec<(f64, f64, usize, &vak_session::Turn)> = closed
         .iter()
         .enumerate()
         .map(|(position, turn)| {
             let age = closed.len() - 1 - position;
-            let recency = recency_value(age);
+            let recency = if minimal && age >= MINIMAL_FULL_TURNS {
+                0.0
+            } else {
+                recency_value(age)
+            };
             let relevance = if best_lexical > 0.0 {
                 lexical.get(&turn.id).copied().unwrap_or(0.0) / best_lexical
             } else {
@@ -152,6 +173,11 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
             .then(b.2.cmp(&a.2))
     });
     for (value, recency, _, turn) in &ranked {
+        // A turn worth nothing is not promoted to `Full`, whatever the
+        // budget; it still gets a card below.
+        if *value <= 0.0 {
+            continue;
+        }
         let cost = turn.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
         if spent.saturating_add(cost) <= budget {
             spent += cost;
@@ -326,6 +352,7 @@ mod tests {
                 act: "answer".into(),
                 domains: domains.iter().map(|d| d.to_string()).collect(),
                 modalities: Vec::new(),
+                context: String::new(),
             },
             tokens_full,
             tokens_card,
@@ -441,6 +468,74 @@ mod tests {
             result.retrieved
         );
         assert!(result.spent <= result.budget);
+    }
+
+    /// `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): a
+    /// greeting does not retrieve an older turn on relevance, and only the
+    /// most recent turns are candidates for `Full`, however much budget
+    /// there is.
+    #[test]
+    fn a_minimal_reading_neither_retrieves_nor_carries_old_turns_at_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, ids) = fixture(
+            dir.path(),
+            &[
+                ("what is the sensex today", 15, 5, &["finance"]),
+                ("unrelated small talk", 60, 10, &[]),
+                ("another unrelated turn", 60, 10, &[]),
+                ("and one more", 60, 10, &[]),
+            ],
+        );
+        let index = TurnIndex::from_log(&log);
+        // Plenty of budget: every turn would be `Full` for a recall reading.
+        let profile = profile(10_000);
+        let minimal = ReadingKey {
+            act: "converse".into(),
+            domains: Vec::new(),
+            modalities: Vec::new(),
+            context: "minimal".into(),
+        };
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "sensex",
+            reading: Some(&minimal),
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        let full: Vec<&str> = result
+            .per_turn
+            .iter()
+            .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert!(result.retrieved.is_empty(), "{:?}", result.retrieved);
+        assert!(full.contains(&ids[3].as_str()));
+        assert!(full.contains(&ids[2].as_str()));
+        assert!(!full.contains(&ids[1].as_str()), "{full:?}");
+        assert!(!full.contains(&ids[0].as_str()), "{full:?}");
+
+        // The same request with a recall reading carries everything.
+        let recall = ReadingKey {
+            context: "recall".into(),
+            ..minimal.clone()
+        };
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "sensex",
+            reading: Some(&recall),
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        let full = result
+            .per_turn
+            .iter()
+            .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
+            .count();
+        assert_eq!(full, 4);
     }
 
     #[test]

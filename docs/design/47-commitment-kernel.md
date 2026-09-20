@@ -1,22 +1,27 @@
 # 47 — The commitment kernel
 
-Status: **all phases shipped; lifecycle recovery and progress hardening shipped in 3.0.8; outcome integration current in 3.0.10**.
+Status: **all phases shipped and wired; strands and the control plane shipped
+with resolver version 2** (the review that led to them is summarised under
+*What the review changed*).
 
-| Phase | Delivers |
-|---|---|
-| I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice |
-| I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler |
-| I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` |
-| I3 | route demand, per-commitment budget, prompt projection |
-| I4 | capability slicing (progressive disclosure) |
-| I5 | envelopes: `vak grant` / `vak revoke`, live grant reaching the turn's authority, revocation honoured on read |
-| I6 | episodes bracketing durable turns; commitment upkeep on its own tick — schedule wakes, zero-token predicate wakes, escalation policies, explicit expiry |
-| I7 | server endpoints, admin portfolio, desktop composer strip, the `commitments` capability, per-channel autonomy ceiling, delivery cadence/urgency |
-| I8 | misread evidence: escalation-as-measurement, per-cell accuracy with routing-ledger epistemics |
+| Phase | Delivers | Governs the turn through |
+|---|---|---|
+| I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
+| I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::begin_episodes` — one commitment per thread |
+| I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
+| I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only the two most recent turns at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
+| I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
+| I5 | envelopes: `vak grant` / `vak revoke`, live grant reaching the turn's authority, revocation honoured on read | `intent::permission_mode` → `cfg.mode`; `spend_ceiling_usd` → the run cap |
+| I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
+| I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling, delivery cadence/urgency | the gateway reads `posture.delivery` from the turn's intent entry |
+| I8 | misread evidence: escalation-as-measurement, restatement, per-cell accuracy | scoped to the turn's own tool calls; `vak intent show` reports weak cells |
+| **I9** | **tiers 2/3**: a `Classify` dispatch on a weak reading — spend-gated, watchdogged, fail-open | `[intent] escalate = local \| cloud`, `classify_model` |
+| **I10** | **control plane**: authority from the channel, explicit commands, no text heuristics | `ControlSource`, `parse_command`, `evaluate_intervention` |
 
 Every part is switchable off with `[intent] enabled = false` and
 `[commitment] enabled = false`, which together reproduce the runtime's
-pre-kernel behaviour exactly.
+pre-kernel behaviour exactly: `DomainSet::All` means *everything*, and only a
+disabled kernel produces it.
 
 ## Problem
 
@@ -123,6 +128,44 @@ the slice, and confidence is how much of the total act evidence that set
 accounts for. "Fix the failing test" is a `modify` *and* a `verify`; resolving
 the tie by argmax would remove half of what it needs.
 
+### Strands: a request is several pieces of work
+
+A request is rarely one thing. "Explain the parser, then refactor it, and
+also check whether the nightly job ran" is three pieces of work with three
+readings, and the runtime has to know that: the tool surface must cover all
+three, the stop rule must be the strictest of the three, and the nightly-job
+question may well be a thread the user opened two turns ago.
+
+So a turn resolves to a list of **strands** (`crate::strand`). Each carries
+its own reading and engagement, its **relation** to the strands beside it
+(`Independent`, `Sequential { after }`, `Dependent { on }`) and its
+**lineage** to threads from earlier turns (`New`, `Continues`, `Corrects`,
+`Replaces`). The turn's engagement is `Engagement::compose` over the strands:
+everything meets — the strictest strand governs approval, permission, spend
+and the stop rule — except the domain requirement, which is the **union**,
+because a turn that is "search the web, then run the tests" needs both
+toolsets. The composite reading kept on `Intent::reading` is the most
+consequential strand widened by the others, for everything that wants one
+answer (the misread ledger, the session index, a commitment's spec).
+
+Segmentation is tier 1, deterministic: sentence boundaries, enumerated items,
+and a short list of sequencing (`then`, `after that`, `finally`) and
+addition (`also`, `additionally`) markers, matched as whole words. Plain
+"and" is not a boundary. A clause with no act signal folds into its
+neighbour. Every strand of a several-part request is read at least as a
+`turn` horizon: "one reply, no tools" cannot describe a part of something
+larger.
+
+Cross-turn lineage: a strand continues an open thread when it shares the act
+and either points at something ("it", "that") or shares a content word. It
+is `New` otherwise — a wrong `New` costs a duplicate thread, a wrong
+`Continues` merges unrelated work, so the tie goes to `New`. `Corrects` and
+`Replaces` are **never inferred**: only an explicit `/goal fix …` or
+`/goal replace …` produces them, because a wrongly inferred replacement
+discards work. A durable strand opens or continues **its own commitment**
+(`CommitmentSpec.thread_id`), and the model-visible note lists the parts in
+order so the model knows there are *k* things and which are still open.
+
 ### Resolution cascade
 
 Cheapest first, stopping once confidence clears the bar.
@@ -141,14 +184,50 @@ routing ledger applies to `Settlement::Unknown`. Never claim replay fidelity
 you do not have.
 
 The kernel decides **whether** a paid tier is warranted; `vak-core` performs
-it, because a dispatch is a dispatch: `WorkPurpose::Classify`, a work receipt,
-spend-gate admission under `max_classify_usd`, the cheapest leg on the frozen
-ladder rather than the primary, a short watchdog, and **fail-open** to the
-general engagement. A classifier outage must never block work.
+it (`Core::resolve_turn_intent_with_escalation`), because a dispatch is a
+dispatch: `WorkPurpose::Classify`, a work receipt on the session, spend-gate
+admission under `max_classify_usd`, an eight-second watchdog under the run's
+cancellation token, and **fail-open** to the free-tier reading with the
+reason recorded in `escalation_note`. A classifier outage must never block
+work. `escalate = "local"` runs on the keyless `ollama` provider with
+`classify_model` (or the effective model when the route is already ollama);
+`escalate = "cloud"` runs on the effective provider, or on `provider/model`
+when `classify_model` names one. The prompt is built by the kernel
+(`classification_prompt`) — one JSON object per strand — so its digest is
+the kernel's, and `parse_classifications` accepts an array or a single
+object. The request asks the model **not** to think (`ChatRequest.think =
+Some(false)`, Ollama `think`): measured live on `gemma4:e2b-mlx`, the default
+spent its whole output budget in the thinking channel and returned no JSON;
+without thinking it answers in 0.8–4 s. The watchdog is
+`classify_timeout_secs` (default 10). When the model splits the request
+into a different number of parts than the segmenter did — it did, for one
+strand containing "then", about half the time — the objects fold on the
+cautious side (highest level per ordered axis, union of domains, lowest
+confidence) and apply to every strand rather than being discarded.
 
-A classifier may raise stakes freely; it may not lower them below what the act
-implies. A model cannot talk the runtime out of caution it reached
-deterministically.
+Measured live (six runs, local Ollama): every run settled `local-model`
+with five axes set, 0.8–3.9 s, and a cold model overrunning the watchdog
+failed open with the reason in `escalation_note`. `escalate = "cloud"` is
+privileged: a project config that sets it is stripped unless trusted, which
+is why an untrusted workspace never spends credentials classifying.
+
+A classifier may raise stakes or evidence freely; it may not lower either
+below what the free tiers concluded, nor lower stakes below what the act it
+chose implies. Authority-bearing limits are met with the free tier's, so a
+classifier can change what a turn *reaches for* but never what it is
+*allowed to do*. A classifier that states no confidence is provisional: it
+may raise a floor, it may not remove a tool.
+
+What a weak reading gets, with the kernel on, is the **orienting
+engagement**: the general posture and the orientation floor
+(`filesystem`, `memory`) as its domain requirement — an explicit decision,
+never a collapsed top element. `DomainSet::All` keeps its one meaning,
+everything, and only a disabled kernel produces it (design 68 Principle 6:
+when a decision cannot be made confidently, send less and give the model a
+way to ask for more). Stage 4 of turn-capability assembly *excludes* a
+capability only for a reading confident enough to slice; an uncertain
+reading's floor shapes the tool surface (core versus deferred) and leaves
+every admitted tool reachable through `find_tools`.
 
 ### Authority: the autonomy spectrum
 
@@ -156,12 +235,14 @@ Autonomy is **delegated by a human**; attendance is **observed by the runtime**.
 Conflating them is why agents nag when you wanted autonomy and barrel ahead
 when nobody is watching.
 
-| Autonomy | Meaning |
-|---|---|
-| `manual` | propose only |
-| `assisted` | act on reversible things; ask for costly or irreversible |
-| `delegated` | act inside a declared envelope; escalate outside it |
-| `autonomous` | act freely within the permission mode; report afterwards |
+| Autonomy | Meaning | Approval ceiling by stakes |
+|---|---|---|
+| `manual` | propose only | `ask` at every level |
+| `assisted` | act on reversible things; ask for costly or irreversible | `auto-approve` for inert/reversible, `ask` from costly up |
+| `delegated` | act inside a declared envelope; escalate outside it | `auto-approve` inside a live envelope, `ask` outside |
+| `autonomous` | act freely within the permission mode; report afterwards | stakes alone: `approve-safe` at costly, `ask` at irreversible |
+
+The table is the code (`Authority::approval_ceiling`) and a test pins it.
 
 An **envelope** is pre-authorization *within existing authority* — never a
 grant of new authority. Its `permission_ceiling` can only lower the effective
@@ -190,7 +271,13 @@ Chosen by `attendance × stakes × autonomy`.
 unconditionally — correct for a one-shot turn, wrong for month-long work, which
 should wait rather than fail. Deferring needs somewhere to park the question,
 so it is only offered when the horizon opens a commitment; a one-shot
-unattended turn still fails closed exactly as before.
+unattended turn still fails closed exactly as before. It covers irreversible
+work too: an irreversible step with nobody present reaches the inbox, not a
+gate that can only time out. Wiring: `intent::DeferringApprover` wraps the
+run's approver when `gate_fallback` is `Defer`; a gate the inner approver
+cannot answer becomes an `ApprovalPending` inbox entry and a
+`Suspended { Human }` event on the commitment, and the turn still fails
+closed — nothing happens without the answer, but the work survives.
 
 Every deferred question carries an escalation policy. `AssumeConservative` is
 refused above `costly`: assuming a default for an irreversible action because
@@ -299,6 +386,35 @@ freely" on a workspace whose operator did not. `vak-config` ranks the names
 without depending on the kernel; a test in `vak-core`, which sees both, pins
 the two rankings equal.
 
+### Control plane: authority from the channel, never from the text
+
+A running turn can be steered, paused, cancelled, re-planned or approved.
+Three sources, typed by the transport, never parsed from a body
+(`ControlSource`):
+
+| Kind | Human | Agent | System |
+|---|---|---|---|
+| status / resume | ✓ | own subtree only | ✓ |
+| pause / cancel | ✓ | own children only | ✗ |
+| steer | ✓ (any free text) | typed message only | ✗ |
+| replan / add / drop / prioritize | ✓ → new revision | requires human | ✗ |
+| approve / reject a gate | ✓ | ✗ | ✗ |
+| goal corrects / replaces | ✓ explicit only | ✗ | ✗ |
+
+**Human free text is always steering.** Control from a human is only an
+explicit command (`parse_command`): a leading slash command — `/stop`,
+`/cancel`, `/pause`, `/resume`, `/status`, `/replan …`, `/add …`,
+`/drop …`, `/prioritize …`, `/goal replace …`, `/goal fix …`,
+`/approve <gate>`, `/reject <gate>` — or a whole message that is exactly
+`stop`, `cancel`, `pause`, `resume` or `status`. "Stop using semicolons in
+the output" steers the running loop between steps; before this it cancelled
+the run. Goal relation follows the same rule (`goal_relation`): only an
+explicit command corrects or replaces the active goal, and a correction
+keeps what was added to the goal while a replacement discards it. The
+earlier text classifiers (`classify_intervention`, `classify_goal_update`)
+are gone: they read "replace the deprecated API call" as a replacement of
+the goal.
+
 ### Did we read it right?
 
 Misclassification becomes **measurable**. Typed misread signals: the user
@@ -307,8 +423,13 @@ strongest, **escalation**, where the engagement sliced a tool out and the model
 then asked for it. That is a measured misread, not a guess, and it is a direct
 benefit of doing the slicing at all. These fold into the routing evidence
 ledger with the same epistemics (success / failure / **unknown**, Laplace
-shrinkage, 30-day TTL), so intent accuracy tunes the resolver the way route
-evidence tunes the ladder. *(Phase I8, not yet wired.)*
+shrinkage, 30-day TTL). Escalation is measured against the turn's *own*
+tool calls (scanning the whole chain recorded a tool used three turns ago as
+an escalation against today's reading); a request restated verbatim right
+after the previous turn is recorded as `Restated` against the previous
+reading. The loop closes on a person: `vak intent show` lists cells whose
+accuracy has fallen below 0.75 over at least five observations, with the
+capabilities the model asked for.
 
 ## Invariants
 
@@ -332,7 +453,12 @@ evidence tunes the ladder. *(Phase I8, not yet wired.)*
    carrying the exact contributed text; the projection reads those bytes rather
    than re-deriving them, so a replay reproduces the prompt even if the
    derivation rules have since changed.
-7. **Reproducible, or declared not to be.**
+7. **Reproducible, or declared not to be.** `RESOLVER_VERSION` and the tier-1
+   lexicon move together: a test pins a digest of every table tier 1 reads
+   (and the segmentation vocabulary) to the version, so a lexicon change that
+   forgets the bump fails CI instead of silently invalidating every ledger
+   row that claims `reproducible: true`. `now` is an input to `resolve` and
+   `derive`, not a clock read inside them.
 8. **Uncertainty resolves to the general engagement** — byte-for-byte the
    previous behaviour. Being unsure must never silently remove a tool.
 9. **Commitments close explicitly**, with a verdict and evidence.
@@ -375,11 +501,16 @@ vak-core/intent.rs  the seam: gathers facts, runs the cascade, projects the
 enabled = true              # false reproduces pre-kernel behaviour exactly
 accept_confidence = 0.75    # bar for capability slicing
 provisional_confidence = 0.45
-slice_capabilities = true
-posture = true              # stakes may raise the approval floor
+slice_capabilities = true   # false switches capability narrowing off entirely
+posture = true              # the approval ceiling (stakes × autonomy) may lower the mode
 escalate = "none"           # none | local | cloud    (privileged at "cloud")
+classify_model = "…"        # model, or provider/model, for the classifier
 max_classify_usd = 0.01
+classify_timeout_secs = 10  # watchdog; an overrun fails open to the free-tier reading
 autonomy = "assisted"       # privileged
+
+[route]
+modality_hints = ["vision", "-vl"]   # legs able to serve non-text input; none ⇒ every leg
 
 [commitment]
 enabled = true
@@ -402,6 +533,37 @@ default_ttl_days = 30
   `GET /commitments/{id}`, `POST /commitments/{id}/close` (409 on a refused
   closure — the request was well-formed; the evidence simply does not support
   the claim).
+
+## What the review changed
+
+A deep review of the kernel (resolver version 1) found, and this version
+fixes:
+
+* `DomainSet::All` meant "everything" in the kernel and "nothing declared"
+  in the runtime, so `enabled = false` did not reproduce pre-kernel
+  behaviour. `All` now has one meaning; weak readings get the explicit
+  orienting engagement.
+* Horizon phrases matched substrings (`then` inside *authentication*), and a
+  lone sub-floor vote won an ordered axis at 0.76 confidence — "fix the
+  authentication bug" opened a durable commitment. Phrases match whole words;
+  sub-floor votes abstain.
+* Stakes words applied to questions ("where does this config live" read as
+  irreversible, capped approval at `ask`, and told the model to confirm an
+  irreversible step). They apply only to effectful acts.
+* `assisted` capped every stakes level at `approve-safe`, indistinguishable
+  from `autonomous` on costly work. The table above is now the code.
+* Tiers 2/3 were configuration without a call site; they are wired (I9).
+* Modality, permission and spend ceilings, HIL `Defer`, delivery posture,
+  the stop and context profiles and the checkpoint decision were computed and
+  never consumed; they are wired. The session's first checkpoint is always
+  taken (it is the baseline the workspace delta is measured against); later
+  ones only when the reading expects an effect.
+* `Engagement::meet` was asymmetric and could reduce caution; the stop gate
+  reasoned from requirement *prose*; the control plane granted authority to
+  whatever body said `"human"`; goal and intervention classifiers were the
+  keyword hacks this design set out to remove. All replaced.
+* `RESOLVER_VERSION` stayed at 1 through eleven lexicon changes. Pinned.
+* The misread ledger scanned the whole session for escalations. Scoped.
 
 ## Verification
 

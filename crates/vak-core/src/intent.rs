@@ -109,16 +109,70 @@ pub fn resolve_turn(
     declared: &Declared,
     authority: &Authority,
     config: &ResolverConfig,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> Resolution {
+    // An explicit `/goal fix` or `/goal replace` is the only way a strand
+    // becomes a correction or a replacement of earlier work.
+    let (text, lineage_hint) = match vak_intent::parse_command(text) {
+        Some(vak_intent::Command::GoalFix { text }) => {
+            (text, Some(vak_intent::LineageHint::Corrects))
+        }
+        Some(vak_intent::Command::GoalReplace { text }) => {
+            (text, Some(vak_intent::LineageHint::Replaces))
+        }
+        _ => (text.to_string(), None),
+    };
     let request = Request {
-        text,
+        text: &text,
         surface: intent_surface(surface),
         attachments,
         workspace,
         history,
         attendance_override: Some(authority.attendance),
+        lineage_hint,
     };
-    vak_intent::resolve(&request, declared, authority, config)
+    vak_intent::resolve(&request, declared, authority, config, now)
+}
+
+/// The threads still open in a session, for strand lineage.
+///
+/// A thread is open while its most recent strand is not `Replaces`d and no
+/// later turn closed it; the last `MAX_OPEN_THREADS` distinct threads are
+/// kept, newest first, so a long session does not link every request to
+/// something said an hour ago.
+pub fn open_threads(session: &vak_session::SessionLog) -> Vec<vak_intent::ThreadFact> {
+    const MAX_OPEN_THREADS: usize = 12;
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut replaced: BTreeSet<String> = BTreeSet::new();
+    let mut out = Vec::new();
+    for entry in session.chain_to_root().into_iter().rev() {
+        let vak_session::EntryPayload::Intent(record) = &entry.payload else {
+            continue;
+        };
+        for strand in record.strands.iter().rev() {
+            if let vak_intent::Lineage::Replaces { thread_id } = &strand.lineage {
+                replaced.insert(thread_id.clone());
+            }
+            if replaced.contains(&strand.thread_id) || !seen.insert(strand.thread_id.clone()) {
+                continue;
+            }
+            out.push(vak_intent::ThreadFact {
+                thread_id: strand.thread_id.clone(),
+                act: strand.reading.act,
+                domains: strand.reading.domains.clone(),
+                keywords: vak_intent::strand::keywords(&strand.text),
+            });
+            if out.len() >= MAX_OPEN_THREADS {
+                break;
+            }
+        }
+        if out.len() >= MAX_OPEN_THREADS {
+            break;
+        }
+    }
+    // Oldest first, so "the most recent open thread" is `last()`.
+    out.reverse();
+    out
 }
 
 // --------------------------------------------------------- projections ---
@@ -130,33 +184,26 @@ pub fn resolve_turn(
 /// turn, which is why a wider reading on the next turn restores the full set
 /// without needing a new session.
 ///
-/// Matching is by declared domain, not by tool name. The old shape compared
-/// against a static list of built-in names, so a capability the user had
-/// installed could never be matched — every integration needed a harness
-/// edit, and only got one after somebody reported a confidently wrong answer.
-/// Here a capability that declares `serves` is kept when it serves something
-/// the turn needs, and one that declares nothing is always kept — slicing
-/// saves context, it does not enforce policy, so an unclassified capability
-/// failing open is correct.
+/// Matching is by declared domain, not by tool name. A capability that
+/// declares `serves` is kept when it serves something the turn needs, and one
+/// that declares nothing is always kept — slicing saves context, it does not
+/// enforce policy, so an unclassified capability failing open is correct.
 ///
-/// **Fails narrow, not open, on an uncertain reading**
-/// (docs/design/68-context-engine.md Principle 6: "when a decision cannot be
-/// made confidently, send less and give the model a way to ask for more;
-/// never send everything"). `required_domains` arrives here already
-/// collapsed by the caller: `vak_intent::engage::derive` only narrows
-/// `Limits::required_domains` away from its unconstrained default when
-/// `Reading::may_slice_capabilities(floor)` said the reading was trustworthy
-/// enough to slice at all. So an unconstrained *or* empty domain set both
-/// mean the same thing here — "no trustworthy domain reading is available"
-/// — and both take every declared tool out of the advertised set rather than
-/// admitting everything on a guess. The orientation floor and any
-/// capability that declares nothing still survive, and `find_tools` is how
-/// the model reaches the rest when it turns out to need it.
+/// `DomainSet` has exactly the meaning the kernel gives it: `All` keeps
+/// everything (a disabled kernel), `Only` keeps what serves those domains,
+/// `Empty` keeps only the orientation floor and undeclared capabilities. A
+/// reading too weak to slice never arrives here as `All`; the resolver
+/// already turned it into the explicit orientation floor
+/// (`Engagement::orienting`, docs/design/68-context-engine.md Principle 6),
+/// so this function no longer has to guess what an unconstrained set meant.
 pub fn slice_capabilities(
     admitted: &[CapabilityDescriptor],
     required_domains: &vak_intent::DomainSet,
     declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<CapabilityDescriptor> {
+    if required_domains.is_unconstrained() {
+        return admitted.to_vec();
+    }
     let required: std::collections::BTreeSet<crate::capability::Domain> = required_domains
         .iter()
         .map(|name| crate::capability::Domain::parse(name))
@@ -181,9 +228,8 @@ pub fn slice_capabilities(
 /// nothing to do with what the user asked for. Slicing those would spend risk
 /// for no context saving.
 ///
-/// `required` is the concrete domain set the caller resolved from
-/// `DomainSet` — empty for both the unconstrained (`All`) and the explicit
-/// `Empty` case, which is what makes both fail narrow identically here.
+/// `required` is the concrete domain set from an `Only`/`Empty` domain set;
+/// the `All` case never reaches here.
 fn keep_capability(
     capability: &CapabilityDescriptor,
     required: &std::collections::BTreeSet<crate::capability::Domain>,
@@ -337,6 +383,94 @@ pub fn leg_supports_modalities(
         .any(|hint| model.contains(&hint.to_ascii_lowercase()))
 }
 
+/// An approver that parks a gate nobody here can answer.
+///
+/// The `Defer` human-in-the-loop mode (docs/design/47-commitment-kernel.md):
+/// when the surface cannot answer and the work is durable enough to own a
+/// commitment, an `Ask` becomes an inbox entry and a `Suspended { Human }`
+/// event on the commitment, and the turn still fails closed — nothing
+/// happens without the answer, but the work survives to be resumed. On a
+/// surface that *can* answer, this is transparent.
+pub struct DeferringApprover {
+    inner: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+    shared_home: std::path::PathBuf,
+    sessions_home: std::path::PathBuf,
+    session_id: String,
+    commitment_id: String,
+    escalation: vak_intent::Escalation,
+}
+
+impl DeferringApprover {
+    pub fn new(
+        inner: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        shared_home: std::path::PathBuf,
+        sessions_home: std::path::PathBuf,
+        session_id: String,
+        commitment_id: String,
+        escalation: vak_intent::Escalation,
+    ) -> Self {
+        DeferringApprover {
+            inner,
+            shared_home,
+            sessions_home,
+            session_id,
+            commitment_id,
+            escalation,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl vak_agent::Approver for DeferringApprover {
+    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+        if let Some(inner) = &self.inner
+            && inner.answerable()
+        {
+            return inner.approve(tool, args_json, reason).await;
+        }
+        let question = format!("`{tool}` needs approval: {reason}");
+        let body = format!("{question}\n\nArguments:\n{args_json}");
+        match crate::commitments::defer_for_human(
+            &self.sessions_home,
+            &self.commitment_id,
+            &question,
+            None,
+            self.escalation.clone(),
+        ) {
+            Ok(question_id) => {
+                let _ = crate::inbox::record(
+                    &self.shared_home,
+                    crate::inbox::Kind::ApprovalPending,
+                    &format!("Decision needed for {}", self.commitment_id),
+                    &format!(
+                        "{body}\n\nquestion: {question_id}\ncommitment: {}",
+                        self.commitment_id
+                    ),
+                    Some(&self.session_id),
+                    None,
+                );
+            }
+            Err(error) => {
+                let _ = crate::inbox::record(
+                    &self.shared_home,
+                    crate::inbox::Kind::ApprovalDenied,
+                    &format!("Gate denied for {}", self.commitment_id),
+                    &format!("{body}\n\ncould not suspend the commitment: {error}"),
+                    Some(&self.session_id),
+                    None,
+                );
+            }
+        }
+        // Fail closed, exactly as before: the answer arrives through the
+        // inbox and the commitment resumes from there.
+        false
+    }
+
+    fn answerable(&self) -> bool {
+        self.inner.as_ref().is_some_and(|inner| inner.answerable())
+    }
+}
+
 /// The engagement's contribution to the prompt, as a runtime section.
 ///
 /// Code-owned, like the `Surface:` line: it sits beside the other generated
@@ -415,31 +549,36 @@ mod tests {
         assert!(!narrowed.iter().any(|c| c.name == "bash"));
     }
 
-    /// Fail narrow, not open: an unconstrained domain set is what a
-    /// disabled resolver or a below-floor-confidence reading produces, and
-    /// must not be read as "advertise everything".
+    /// `All` means everything: it is what a disabled kernel produces and it
+    /// must reproduce the pre-kernel packet byte for byte.
     #[test]
-    fn unconstrained_domains_fail_narrow_for_declared_tools() {
+    fn unconstrained_domains_keep_everything() {
         let admitted = vec![tool("webfetch"), tool("bash")];
         let declared = serves(&[("webfetch", &["web"]), ("bash", &["code-exec"])]);
         let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::All, &declared);
-        assert!(
-            narrowed.is_empty(),
-            "an unconstrained reading must narrow declared tools away, not admit everything: {:?}",
-            narrowed
-        );
+        assert_eq!(narrowed, admitted);
     }
 
-    /// The orientation floor and undeclared capabilities still survive even
-    /// when there is no trustworthy domain reading at all — narrowing must
-    /// never leave the agent blind to its own workspace.
+    /// The orientation floor: what a reading too weak to slice arrives as.
+    /// Floor tools and undeclared capabilities survive; declared tools
+    /// outside the floor are reached through discovery.
     #[test]
-    fn unconstrained_domains_still_keep_the_floor_and_undeclared_capabilities() {
-        let admitted = vec![tool("read"), tool("some_installed_thing"), skill("review")];
-        let declared = serves(&[("read", &["filesystem"])]);
-        let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::All, &declared);
+    fn the_orientation_floor_keeps_floor_tools_and_undeclared_capabilities() {
+        let admitted = vec![
+            tool("read"),
+            tool("bash"),
+            tool("some_installed_thing"),
+            skill("review"),
+        ];
+        let declared = serves(&[("read", &["filesystem"]), ("bash", &["code-exec"])]);
+        let floor = vak_intent::Engagement::orienting().limits.required_domains;
+        let narrowed = slice_capabilities(&admitted, &floor, &declared);
         let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"read"), "orientation floor kept by name");
+        assert!(
+            !names.contains(&"bash"),
+            "declared tools outside the floor are deferred"
+        );
         assert!(
             names.contains(&"some_installed_thing"),
             "undeclared capabilities still fail open"
@@ -447,14 +586,14 @@ mod tests {
         assert!(names.contains(&"review"), "skills are never sliced");
     }
 
-    /// An explicit empty domain set fails narrow the same way an
-    /// unconstrained one does — the two collapse to identical behaviour.
+    /// The bottom element keeps only the floor and undeclared capabilities.
     #[test]
-    fn explicit_empty_domains_fail_narrow_the_same_way_as_unconstrained() {
-        let admitted = vec![tool("webfetch")];
-        let declared = serves(&[("webfetch", &["web"])]);
+    fn explicit_empty_domains_keep_only_the_floor() {
+        let admitted = vec![tool("webfetch"), tool("read")];
+        let declared = serves(&[("webfetch", &["web"]), ("read", &["filesystem"])]);
         let narrowed = slice_capabilities(&admitted, &vak_intent::DomainSet::Empty, &declared);
-        assert!(narrowed.is_empty());
+        let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["read"]);
     }
 
     /// The defect this whole mechanism was rebuilt around: a capability the

@@ -572,6 +572,89 @@ async fn busy_message_is_steered_not_dropped() {
     assert!(raw.contains("done two"), "run must complete after steering");
 }
 
+/// Control plane (docs/design/47-commitment-kernel.md): a human's free text
+/// while the run is busy is steering, whatever word it starts with; only an
+/// explicit command is control.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn busy_free_text_steers_and_only_an_explicit_command_cancels() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![
+            tool_call("t1", "bash", serde_json::json!({"command": "sleep 8"})),
+            text("never reached"),
+        ])),
+    });
+    let (base, token, _home, _server) = spawn_gateway(provider).await;
+    let client = client_with(&token);
+    let res = inbound(
+        &client,
+        &base,
+        serde_json::json!({"surface":"webhook","chat":"ci","text":"first msg"}),
+    )
+    .await;
+    assert_eq!(res.status(), 202);
+    let sid = {
+        let status: serde_json::Value = client
+            .get(format!("{base}/gateway/status"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        status["bindings"][0]["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let deadline_busy = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline_busy,
+            "never became busy"
+        );
+        if let Ok(res) = client
+            .get(format!("{base}/sessions/{sid}/transcript"))
+            .send()
+            .await
+            && res.status() == reqwest::StatusCode::OK
+        {
+            let t: serde_json::Value = res.json().await.unwrap();
+            if serde_json::to_string(&t)
+                .unwrap_or_default()
+                .contains("run in progress")
+            {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Free text that begins with "stop" is a steer, not a cancellation.
+    let res = inbound(
+        &client,
+        &base,
+        serde_json::json!({
+            "surface": "webhook",
+            "chat": "ci",
+            "text": "stop using semicolons in the output",
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), 202);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["state"], "steering_queued", "{body}");
+
+    // A bare "stop" is the explicit command.
+    let res = inbound(
+        &client,
+        &base,
+        serde_json::json!({"surface": "webhook", "chat": "ci", "text": "stop"}),
+    )
+    .await;
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["state"], "cancelled", "{body}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gateway_disabled_by_default_returns_conflict() {
     let provider = Arc::new(Scripted {

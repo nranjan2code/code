@@ -149,6 +149,24 @@ impl DomainSet {
         }
     }
 
+    /// Least upper bound over the *names*: the domains either side needs.
+    ///
+    /// This is not a lattice `join` on authority — it exists for one caller,
+    /// composing the strands of a multi-intent turn, where a turn that is
+    /// "search the web and then run the tests" needs both toolsets. Relative
+    /// to the unrestricted baseline it is still a narrowing (a finite set),
+    /// which is the invariant that matters; see `Engagement::compose`.
+    pub fn union(&self, other: &DomainSet) -> DomainSet {
+        match (self, other) {
+            (DomainSet::All, _) | (_, DomainSet::All) => DomainSet::All,
+            (DomainSet::Empty, other) => other.clone(),
+            (this, DomainSet::Empty) => this.clone(),
+            (DomainSet::Only { names: a }, DomainSet::Only { names: b }) => {
+                DomainSet::only(a.union(b).cloned())
+            }
+        }
+    }
+
     pub fn iter(&self) -> std::collections::btree_set::Iter<'_, String> {
         static EMPTY_SET: std::sync::LazyLock<BTreeSet<String>> =
             std::sync::LazyLock::new(BTreeSet::new);
@@ -181,20 +199,19 @@ impl DomainSet {
             (_, DomainSet::All) => true,
             (DomainSet::Empty, _) => true,
             (DomainSet::All, _) => false,
-            (DomainSet::Only { .. }, DomainSet::Empty) => false,
+            // `Only {}` (reachable through deserialisation) is ⊥ too.
+            (DomainSet::Only { names }, DomainSet::Empty) => names.is_empty(),
             (DomainSet::Only { names: a }, DomainSet::Only { names: b }) => a.is_subset(b),
         }
     }
 }
 
 impl<S: Into<String>> FromIterator<S> for DomainSet {
+    /// Same rule as [`DomainSet::only`]: an empty collection is the bottom
+    /// element, never the top. Collecting nothing must not silently admit
+    /// everything.
     fn from_iter<T: IntoIterator<Item = S>>(iter: T) -> Self {
-        let names: BTreeSet<String> = iter.into_iter().map(Into::into).collect();
-        if names.is_empty() {
-            DomainSet::All
-        } else {
-            DomainSet::Only { names }
-        }
+        DomainSet::only(iter)
     }
 }
 

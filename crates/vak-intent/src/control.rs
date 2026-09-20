@@ -108,7 +108,7 @@ impl ControlKind {
 }
 
 /// A `<tag>…</tag>` block the runtime derives into a model-visible message.
-pub const CONTEXT_BLOCK_TAGS: [&str; 9] = [
+pub const CONTEXT_BLOCK_TAGS: [&str; 10] = [
     "conversation_thread",
     "context_summary",
     "intent",
@@ -118,6 +118,7 @@ pub const CONTEXT_BLOCK_TAGS: [&str; 9] = [
     "system_reminder",
     "runtime_guidance",
     "scratchpad",
+    "workspace_delta",
 ];
 
 /// A marker line inside other text (a tool result or a stop guard's reason).
@@ -198,9 +199,8 @@ pub fn is_scaffolding_line(line: &str) -> bool {
 pub fn strip_control_blocks(text: &str) -> String {
     let mut out = text.to_string();
     for tag in CONTEXT_BLOCK_TAGS {
-        let open_pattern = format!("<{tag}");
         let close_pattern = format!("</{tag}>");
-        while let Some(start) = out.find(&open_pattern) {
+        while let Some(start) = find_open_tag(&out, tag) {
             if let Some(end_offset) = out[start..].find(&close_pattern) {
                 let end = start + end_offset + close_pattern.len();
                 out.replace_range(start..end, "");
@@ -247,6 +247,24 @@ pub fn strip_control_blocks(text: &str) -> String {
         }
     }
     out
+}
+
+/// Position of the first `<tag>` / `<tag …>` opener, as a whole tag name.
+///
+/// A bare prefix match (`<intent`) also matched `<intentional>` and, finding
+/// no `</intent>`, truncated the rest of the text.
+fn find_open_tag(text: &str, tag: &str) -> Option<usize> {
+    let prefix = format!("<{tag}");
+    let mut from = 0;
+    while let Some(offset) = text[from..].find(&prefix) {
+        let start = from + offset;
+        let after = text[start + prefix.len()..].chars().next();
+        if matches!(after, Some('>') | Some('/')) || after.is_some_and(char::is_whitespace) {
+            return Some(start);
+        }
+        from = start + prefix.len();
+    }
+    None
 }
 
 /// The text with all scaffolding removed and outer blank lines trimmed.

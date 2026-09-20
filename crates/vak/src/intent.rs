@@ -75,6 +75,38 @@ fn show_policy(core: &Core) -> i32 {
         );
     }
     println!("  autonomy             {}", config.intent.autonomy);
+    // Did we read it right? The misread ledger's per-cell accuracy, so the
+    // loop closes on a person rather than on nothing.
+    let ledger = vak_core::misread::MisreadLedger::new(&core.sessions_home());
+    let cells = ledger.accuracy();
+    let observed: u64 = cells.iter().map(|cell| cell.observations()).sum();
+    println!("  readings observed    {observed}");
+    let weak = vak_core::misread::weak_cells(&ledger, 5);
+    if weak.is_empty() {
+        println!("  weak cells           none (fewer than 5 observations, or accuracy ≥ 0.75)");
+    } else {
+        for cell in weak {
+            let wanted = cell
+                .wanted
+                .iter()
+                .take(3)
+                .map(|(name, count)| format!("{name}×{count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!(
+                "  weak cell            {}/{} accuracy {:.2} over {} — model asked for: {}",
+                cell.act,
+                cell.stakes,
+                cell.accuracy(),
+                cell.observations(),
+                if wanted.is_empty() {
+                    "-".to_string()
+                } else {
+                    wanted
+                }
+            );
+        }
+    }
     println!();
     println!("commitments");
     println!("  enabled              {}", config.commitment.enabled);
@@ -151,6 +183,7 @@ fn explain(
         &declared,
         &authority,
         &vak_core::intent::resolver_config(core.config()),
+        chrono::Utc::now(),
     );
     let escalation = match &resolution {
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
@@ -161,6 +194,7 @@ fn explain(
     if json {
         let value = serde_json::json!({
             "reading": intent.reading,
+            "strands": intent.strands,
             "engagement": intent.engagement,
             "provenance": intent.provenance,
             "narrows": intent.engagement.limits.diff_from(&Limits::unrestricted()),
@@ -174,8 +208,45 @@ fn explain(
         return 0;
     }
 
+    if intent.strands.len() > 1 {
+        println!("parts ({})", intent.strands.len());
+        for (index, strand) in intent.strands.iter().enumerate() {
+            let relation = match &strand.relation {
+                vak_intent::StrandRelation::Independent => String::new(),
+                vak_intent::StrandRelation::Sequential { after } => {
+                    format!(", after {after}")
+                }
+                vak_intent::StrandRelation::Dependent { on } => format!(", uses {on}"),
+            };
+            let lineage = match &strand.lineage {
+                vak_intent::Lineage::New => String::new(),
+                vak_intent::Lineage::Continues { thread_id } => {
+                    format!(", continues {thread_id}")
+                }
+                vak_intent::Lineage::Corrects { thread_id } => {
+                    format!(", corrects {thread_id}")
+                }
+                vak_intent::Lineage::Replaces { thread_id } => {
+                    format!(", replaces {thread_id}")
+                }
+            };
+            println!(
+                "  {}. [{}] {}/{}/{}/{} {:.0}%{relation}{lineage}  “{}”",
+                index + 1,
+                strand.strand_id,
+                strand.reading.act.as_str(),
+                strand.reading.horizon.as_str(),
+                strand.reading.stakes.as_str(),
+                strand.reading.evidence.as_str(),
+                strand.reading.confidence * 100.0,
+                strand.text
+            );
+        }
+        println!();
+    }
+
     let reading = &intent.reading;
-    println!("reading");
+    println!("reading (composite)");
     println!("  act          {}", reading.act.as_str());
     println!("  horizon      {}", reading.horizon.as_str());
     println!("  stakes       {}", reading.stakes.as_str());

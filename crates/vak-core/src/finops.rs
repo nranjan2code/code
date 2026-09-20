@@ -348,6 +348,25 @@ impl CoreSpendGate {
         self.raised_once.store(true, Ordering::SeqCst);
     }
 
+    /// Lower the run cap to `cap` for this gate's session, never raise it.
+    ///
+    /// An envelope's lifetime spend limit reaches the turn through here:
+    /// the configured `max_run_usd` and the engagement's `spend_ceiling_usd`
+    /// meet, and the smaller governs.
+    pub fn narrow_run_cap(&self, cap: f64) {
+        let mut current = self
+            .max_run_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *current = Some(current.map_or(cap, |existing| existing.min(cap)));
+    }
+
+    /// Estimated cost of `usage` on `model` under the configured prices,
+    /// or `None` when the model's price is unknown.
+    pub fn estimate_usd(&self, model: &str, usage: &Usage) -> Option<f64> {
+        self.estimate(model, usage)
+    }
+
     fn estimate(&self, model: &str, usage: &Usage) -> Option<f64> {
         let overrides = self
             .overrides

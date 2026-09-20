@@ -173,6 +173,9 @@ pub fn compose_tail(tail: &TailInput, sections: &TailSections) -> String {
     if let Some(work_contract) = &sections.work_contract {
         push_block(&mut out, work_contract);
     }
+    if let Some(workspace) = &sections.workspace {
+        push_block(&mut out, workspace);
+    }
     if let Some(thread) = &sections.thread {
         push_block(&mut out, thread);
     }

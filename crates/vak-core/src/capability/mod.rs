@@ -28,7 +28,6 @@ pub mod surface;
 pub mod turn;
 
 pub use domain::{Domain, Serves};
-pub use provider::required_domains;
 pub use registry::{
     CapabilityProvider, CapabilityRegistry, DEBOUNCE, Declaration, Hint, ProbeFailure, ProbeReport,
     RECONCILE_INTERVAL, ReconcileStatus,

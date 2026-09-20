@@ -294,6 +294,11 @@ pub struct CommitmentSpec {
     /// Which commitment this replaced, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
+    /// The conversation thread (strand lineage) this commitment serves, so
+    /// a later turn that continues the thread attaches to it instead of
+    /// opening a twin (docs/design/47-commitment-kernel.md, strands).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 /// One criterion's standing.

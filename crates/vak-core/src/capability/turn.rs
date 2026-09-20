@@ -105,9 +105,11 @@ pub struct TurnProbe<'a> {
     pub channel_policy: &'a ChannelPolicy,
     /// Per-turn reach standings (already computed by `capability_standings`).
     pub reach_standings: &'a [crate::reach::Standing],
-    /// Required domains for this turn (empty when intent is disabled or
-    /// the reading is uncertain — stage 4 then preserves everything).
-    pub required_domains: &'a BTreeSet<Domain>,
+    /// Required domains for this turn. `None` when the kernel is disabled
+    /// (stage 4 then preserves everything). `Some` — possibly just the
+    /// orientation floor for an uncertain reading — slices: a declared
+    /// capability survives only if it serves one of these.
+    pub required_domains: Option<&'a BTreeSet<Domain>>,
     /// Discovered MCP tool catalogs, keyed by server name.
     pub mcp_inventory: Option<&'a [(String, Vec<vak_mcp::McpToolInfo>)]>,
     /// Tool names that are always visible (orientation floor), never
@@ -227,16 +229,16 @@ fn passes_domain_slice(cap: &Capability, probe: &TurnProbe<'_>) -> bool {
         CapabilityKind::Hook | CapabilityKind::Command => return true,
         _ => {}
     }
-    // If intent is disabled or required_domains is empty, no slicing.
-    if probe.required_domains.is_empty() {
+    // Intent disabled: no slicing.
+    let Some(required) = probe.required_domains else {
         return true;
-    }
+    };
     // Orientation floor: never slice these names regardless of kind.
     if probe.orientation_floor.contains(&cap.id.name.as_str()) {
         return true;
     }
     // Undeclared capabilities always survive (fail open).
-    cap.serves.serves_any(probe.required_domains)
+    cap.serves.serves_any(required)
 }
 
 /// Pick the right allow/deny lists from the channel policy for a kind.
@@ -429,7 +431,7 @@ impl TurnCapabilities {
         //
         // Score surviving skills against required_domains to select top active skill.
         let mut best_skill_name: Option<String> = None;
-        if !probe.required_domains.is_empty() {
+        if let Some(required) = probe.required_domains.filter(|r| !r.is_empty()) {
             let mut highest_score = 0;
             for c in surviving
                 .iter()
@@ -437,7 +439,7 @@ impl TurnCapabilities {
             {
                 let score = match &c.serves {
                     super::domain::Serves::Declared(domains) => {
-                        domains.intersection(probe.required_domains).count()
+                        domains.intersection(required).count()
                     }
                     super::domain::Serves::Undeclared => 0,
                 };
@@ -625,7 +627,8 @@ mod tests {
             session_contract: contract,
             channel_policy: policy,
             reach_standings: standings,
-            required_domains: required,
+            // Tests pass an empty set for "no slicing".
+            required_domains: (!required.is_empty()).then_some(required),
             mcp_inventory: inventory,
             orientation_floor: &[
                 "read",

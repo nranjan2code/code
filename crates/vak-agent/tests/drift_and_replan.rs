@@ -161,6 +161,8 @@ fn intent_record(reading: vak_intent::Reading) -> IntentRecord {
         outcome: None,
         model_visible: None,
         commitment_id: None,
+        strands: Vec::new(),
+        strand_commitments: Default::default(),
     }
 }
 

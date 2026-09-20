@@ -4749,24 +4749,22 @@ async fn run_prompt(
         .clone()
         .unwrap_or_else(|| vak_llm::Message::user_text(expanded_prompt.clone()));
     let preview_intent = core.resolve_turn_intent(&taken, &preview_message);
-    let mut preview_outcome = vak_intent::OutcomeSpec::from_reading(
-        &expanded_prompt,
-        &preview_intent.reading,
-        preview_intent.provenance.resolver_version,
-    );
+    let mut preview_outcome =
+        vak_intent::OutcomeSpec::from_intent(&expanded_prompt, &preview_intent);
     preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
-    preview_outcome.max_turns = preview_intent.engagement.limits.max_turns;
     *handle
         .intent
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) =
         Some(vak_session::types::IntentRecord {
             reading: preview_intent.reading,
+            strands: preview_intent.strands,
             engagement: preview_intent.engagement,
             provenance: preview_intent.provenance,
             outcome: Some(preview_outcome),
             model_visible: None,
             commitment_id: None,
+            strand_commitments: Default::default(),
         });
     if body.goal.is_some() && !body.attachments.is_empty() {
         *handle
@@ -5016,6 +5014,50 @@ fn default_intervention_source() -> String {
     "human".into()
 }
 
+/// Who is behind an HTTP intervention.
+///
+/// The authenticated loopback client is the operator's own surface, so the
+/// default is a person on that surface. A caller may declare itself *lower*
+/// — `agent` (one of ours, steering a child) or `system` (an integration) —
+/// and the control plane then treats it accordingly. Free text never grants
+/// authority; the source and the explicit command do
+/// (docs/design/47-commitment-kernel.md, control plane).
+fn control_source_for(declared: &str, surface: &str, target: &str) -> vak_intent::ControlSource {
+    match declared.trim().to_ascii_lowercase().as_str() {
+        // An agent reaching a session over HTTP is, as far as the control
+        // plane can tell, acting on the session it names — not on a child
+        // it dispatched. Worker control goes through the worker endpoints,
+        // which check parentage.
+        "agent" | "worker" => vak_intent::ControlSource::Agent {
+            session_id: target.to_string(),
+            parent_session_id: None,
+        },
+        "system" | "webhook" | "cron" | "integration" => vak_intent::ControlSource::System {
+            origin: declared.trim().to_string(),
+        },
+        _ => vak_intent::ControlSource::Human {
+            surface: surface.to_string(),
+            principal: None,
+        },
+    }
+}
+
+/// Kind and text for a message on a control endpoint: an explicit command,
+/// or steering text.
+fn intervention_of(text: &str) -> (vak_intent::InterventionKind, String) {
+    match vak_intent::parse_command(text) {
+        Some(command) => {
+            let kind = command.intervention_kind();
+            let text = command
+                .text()
+                .map(str::to_string)
+                .unwrap_or_else(|| text.to_string());
+            (kind, text)
+        }
+        None => (vak_intent::InterventionKind::Steer, text.to_string()),
+    }
+}
+
 async fn send_steering(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -5075,13 +5117,14 @@ async fn send_steering(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(request_id.clone());
-    let kind = vak_intent::classify_intervention(&body.text);
+    let (kind, command_text) = intervention_of(&body.text);
     let evaluation = vak_intent::evaluate_intervention(vak_intent::InterventionRequest {
         request_id: request_id.clone(),
         kind: kind.clone(),
-        text: body.text.clone(),
-        source: body.source.clone(),
+        text: command_text,
+        source: control_source_for(&body.source, state.core.surface().slug(), &id),
         target_revision: None,
+        target_session_id: Some(id.clone()),
     });
     record_activity_or_buffer(
         &handle,
@@ -5110,14 +5153,23 @@ async fn send_steering(
             ]),
         },
     );
-    if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
+    if matches!(
+        evaluation.decision,
+        vak_intent::InterventionDecision::RequiresHuman
+            | vak_intent::InterventionDecision::Rejected
+    ) {
         handle
             .admissions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&request_id);
+        let status = if evaluation.decision == vak_intent::InterventionDecision::Rejected {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::CONFLICT
+        };
         return (
-            StatusCode::CONFLICT,
+            status,
             Json(serde_json::json!({
                 "request_id": evaluation.request.request_id,
                 "decision": evaluation.decision.as_str(),
@@ -5127,6 +5179,26 @@ async fn send_steering(
             .into_response();
     }
     match kind {
+        vak_intent::InterventionKind::Replan
+        | vak_intent::InterventionKind::Reprioritize
+        | vak_intent::InterventionKind::AddRequirement
+        | vak_intent::InterventionKind::RemoveRequirement => {
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+            return plan_change(
+                State(state.clone()),
+                Path(id),
+                Json(PlanChangeBody {
+                    text: body.text.clone(),
+                    source: body.source.clone(),
+                    target_revision: None,
+                }),
+            )
+            .await;
+        }
         vak_intent::InterventionKind::Status => {
             handle
                 .admissions
@@ -5391,7 +5463,7 @@ async fn plan_change(
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let kind = vak_intent::classify_intervention(&body.text);
+    let (kind, command_text) = intervention_of(&body.text);
     if !matches!(
         kind,
         vak_intent::InterventionKind::Replan
@@ -5441,9 +5513,10 @@ async fn plan_change(
     let evaluation = vak_intent::evaluate_intervention(vak_intent::InterventionRequest {
         request_id: format!("plan-change-{}", uuid::Uuid::now_v7()),
         kind,
-        text: body.text.clone(),
-        source: body.source.clone(),
+        text: command_text,
+        source: control_source_for(&body.source, state.core.surface().slug(), &id),
         target_revision: Some(revision),
+        target_session_id: Some(id.clone()),
     });
     let mut admitted_revision = None;
     let mut requirement_diff = None;
@@ -5463,11 +5536,13 @@ async fn plan_change(
         requirement_diff = Some(diff);
         let update = vak_session::types::IntentRecord {
             reading: record.reading.clone(),
+            strands: record.strands.clone(),
             engagement: record.engagement.clone(),
             provenance: record.provenance.clone(),
             outcome: Some(outcome),
             model_visible: None,
             commitment_id: record.commitment_id.clone(),
+            strand_commitments: record.strand_commitments.clone(),
         };
         if session.append_intent(update.clone()).is_ok() {
             *handle
@@ -5486,11 +5561,13 @@ async fn plan_change(
         requirement_diff = Some(diff);
         let update = vak_session::types::IntentRecord {
             reading: record.reading,
+            strands: record.strands,
             engagement: record.engagement,
             provenance: record.provenance,
             outcome: Some(outcome.clone()),
             model_visible: None,
             commitment_id: record.commitment_id,
+            strand_commitments: record.strand_commitments,
         };
         *handle
             .intent
@@ -7913,6 +7990,7 @@ async fn intent_explain(
                         .header()
                         .and_then(|header| header.contract_id.as_ref())
                         .is_some(),
+                    open_threads: vak_core::intent::open_threads(&session),
                 }
             }
             Err(_) => vak_intent::HistoryFacts::default(),
@@ -7930,6 +8008,7 @@ async fn intent_explain(
         &declared,
         &core.turn_authority_for(&surface),
         &vak_core::intent::resolver_config(core.config()),
+        chrono::Utc::now(),
     );
     let escalation = match &resolution {
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
@@ -7938,6 +8017,7 @@ async fn intent_explain(
     let intent = resolution.intent();
     Json(serde_json::json!({
         "reading": intent.reading,
+        "strands": intent.strands,
         "engagement": intent.engagement,
         "provenance": intent.provenance,
         "narrows": intent
@@ -7967,6 +8047,7 @@ async fn intent_policy(State(state): State<AppState>) -> Json<serde_json::Value>
             "posture": config.intent.posture,
             "escalate": config.intent.escalate,
             "max_classify_usd": config.intent.max_classify_usd,
+            "classify_timeout_secs": config.intent.classify_timeout_secs,
             "autonomy": config.intent.autonomy,
             "evidence_max_age_secs": config.intent.evidence_max_age_secs,
         },

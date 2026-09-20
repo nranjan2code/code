@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::outcome::Command;
+
 /// How a new human message relates to the work already in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,9 +57,15 @@ impl GoalState {
             });
             current.revision = update.revision;
             match update.relation {
-                GoalRelation::New | GoalRelation::Replaces | GoalRelation::Corrects => {
+                GoalRelation::New | GoalRelation::Replaces => {
                     current.objective = update.request;
                     current.additions.clear();
+                    current.control = GoalControlState::Active;
+                }
+                // A correction amends the objective and keeps what was added
+                // to it; only a replacement discards the additions.
+                GoalRelation::Corrects => {
+                    current.objective = update.request;
                     current.control = GoalControlState::Active;
                 }
                 GoalRelation::AddsTo => current.additions.push(update.request),
@@ -76,42 +84,38 @@ impl GoalState {
     }
 }
 
-/// Classifies the control relationship without pretending to understand the
-/// domain request. Domain planning still happens after this audit fact.
-pub fn classify_goal_update(request: &str, active_revision: Option<u64>) -> GoalRelation {
-    let text = request.trim().to_ascii_lowercase();
-    let command = text
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .find(|word| !word.is_empty())
-        .unwrap_or("");
-    if command == "status"
-        || text.starts_with("how is ")
-        || text.starts_with("what is the progress")
-        || text.starts_with("what is the status")
-    {
-        GoalRelation::Status
-    } else if command == "pause" || command == "hold" {
-        GoalRelation::Pauses
-    } else if command == "resume" || command == "continue" {
-        GoalRelation::Resumes
-    } else if command == "cancel" || command == "stop" || command == "abort" {
-        GoalRelation::Cancels
-    } else if text.starts_with("actually ")
-        || text.starts_with("correction")
-        || text.starts_with("that's wrong")
-        || text.starts_with("fix that")
-    {
-        GoalRelation::if_active(active_revision, GoalRelation::Corrects)
-    } else if text.contains("instead")
-        || text.contains("change of mind")
-        || text.contains("replace")
-        || text.contains("forget that")
-    {
-        GoalRelation::if_active(active_revision, GoalRelation::Replaces)
-    } else if active_revision.is_some() {
-        GoalRelation::AddsTo
-    } else {
-        GoalRelation::New
+/// The relationship a request has to the active goal.
+///
+/// Only an explicit [`Command`] can correct or replace the active goal, or
+/// change its control state; every other request adds to it (or opens one
+/// when none is active). There is no text classifier here on purpose: the
+/// earlier one read "replace the deprecated API call" as a replacement of
+/// the goal and cleared everything the user had added to it.
+pub fn goal_relation(command: Option<&Command>, active_revision: Option<u64>) -> GoalRelation {
+    match command {
+        Some(Command::Status) => GoalRelation::Status,
+        Some(Command::Pause) => GoalRelation::Pauses,
+        Some(Command::Resume) => GoalRelation::Resumes,
+        Some(Command::Cancel) => GoalRelation::Cancels,
+        Some(Command::GoalFix { .. }) => {
+            GoalRelation::if_active(active_revision, GoalRelation::Corrects)
+        }
+        Some(Command::GoalReplace { .. }) => {
+            GoalRelation::if_active(active_revision, GoalRelation::Replaces)
+        }
+        Some(Command::Replan { .. })
+        | Some(Command::AddRequirement { .. })
+        | Some(Command::RemoveRequirement { .. })
+        | Some(Command::Reprioritize { .. })
+        | Some(Command::Approve { .. })
+        | Some(Command::Reject { .. })
+        | None => {
+            if active_revision.is_some() {
+                GoalRelation::AddsTo
+            } else {
+                GoalRelation::New
+            }
+        }
     }
 }
 
@@ -126,35 +130,69 @@ impl GoalRelation {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn distinguishes_collaborative_updates() {
+    fn relation_follows_the_explicit_command_only() {
         assert_eq!(
-            classify_goal_update("what is the status?", Some(1)),
+            goal_relation(Some(&Command::Status), Some(1)),
             GoalRelation::Status
         );
+        assert_eq!(goal_relation(None, Some(1)), GoalRelation::AddsTo);
+        assert_eq!(goal_relation(None, None), GoalRelation::New);
         assert_eq!(
-            classify_goal_update("also include citations", Some(1)),
-            GoalRelation::AddsTo
-        );
-        assert_eq!(
-            classify_goal_update("actually use the web version instead", Some(1)),
+            goal_relation(
+                Some(&Command::GoalFix {
+                    text: "use the web version".into()
+                }),
+                Some(1)
+            ),
             GoalRelation::Corrects
         );
         assert_eq!(
-            classify_goal_update("start a new thing", None),
+            goal_relation(
+                Some(&Command::GoalReplace {
+                    text: "just add the index".into()
+                }),
+                None
+            ),
             GoalRelation::New
         );
+        // Text that used to be read as a replacement is an addition now.
         assert_eq!(
-            classify_goal_update("Implement a progress bar", None),
-            GoalRelation::New
-        );
-        assert_eq!(
-            classify_goal_update("Fix the cancellation button", Some(1)),
+            goal_relation(
+                crate::outcome::parse_command("replace the deprecated API call").as_ref(),
+                Some(1)
+            ),
             GoalRelation::AddsTo
         );
+    }
+
+    #[test]
+    fn a_correction_keeps_additions_and_a_replacement_drops_them() {
+        let base = |relation, request: &str, revision| GoalUpdate {
+            revision,
+            relation,
+            request: request.into(),
+            supersedes_revision: None,
+        };
+        let corrected = GoalState::from_updates([
+            base(GoalRelation::New, "prepare a briefing", 1),
+            base(GoalRelation::AddsTo, "include sources", 2),
+            base(GoalRelation::Corrects, "prepare a two-page briefing", 3),
+        ])
+        .unwrap();
+        assert_eq!(corrected.objective, "prepare a two-page briefing");
+        assert_eq!(corrected.additions, vec!["include sources"]);
+        let replaced = GoalState::from_updates([
+            base(GoalRelation::New, "prepare a briefing", 1),
+            base(GoalRelation::AddsTo, "include sources", 2),
+            base(GoalRelation::Replaces, "just send the summary", 3),
+        ])
+        .unwrap();
+        assert!(replaced.additions.is_empty());
     }
 
     #[test]

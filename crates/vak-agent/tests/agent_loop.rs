@@ -199,6 +199,8 @@ async fn outcome_turn_cap_counts_model_calls_not_tool_round_trips() {
         requirements: Vec::new(),
         resolver_version: 1,
         evidence_max_age_secs: None,
+        acts: Default::default(),
+        stop: Default::default(),
         max_turns: Some(2),
     });
 
@@ -239,10 +241,14 @@ async fn queued_outcome_revision_is_applied_and_logged_before_dispatch() {
             requirements: Vec::new(),
             resolver_version: 1,
             evidence_max_age_secs: None,
+            acts: Default::default(),
+            stop: Default::default(),
             max_turns: Some(1),
         }),
         model_visible: None,
         commitment_id: None,
+        strands: Vec::new(),
+        strand_commitments: Default::default(),
     });
 
     let outcome = h

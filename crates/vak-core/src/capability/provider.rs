@@ -389,90 +389,48 @@ fn origin_from_provenance(provenance: Option<&str>) -> Origin {
     }
 }
 
-/// Domains this reading requires, derived from the reading's own axes.
-///
-/// This is the replacement for `act_capabilities`'s table of built-in tool
-/// names. The distinction that matters: this maps vak's *model of the
-/// request* to a vocabulary, and adding an integration never touches it.
-/// The old table enumerated instances, so every integration needed an edit —
-/// and the edit only ever happened after a user reported a confidently wrong
-/// answer.
-pub fn required_domains(act: vak_intent::Act, evidence_is_external: bool) -> BTreeSet<Domain> {
-    use Domain::*;
-    use vak_intent::Act;
-    let mut required = BTreeSet::from([Filesystem, Memory]);
-    match act {
-        Act::Converse => {}
-        Act::Answer => {
-            required.insert(LiveData);
-            required.insert(Web);
-        }
-        Act::Locate => {
-            required.extend([LiveData, Web, Vcs]);
-        }
-        Act::Analyze => {
-            required.extend([LiveData, Web, CodeExec, Vcs]);
-        }
-        Act::Author => {
-            required.extend([Documents, Web]);
-        }
-        Act::Modify => {
-            required.extend([Documents, CodeExec, Vcs]);
-        }
-        Act::Operate => {
-            required.extend([CodeExec, Web, LiveData, Messaging, Documents, Orchestration]);
-        }
-        Act::Verify => {
-            required.extend([CodeExec, Observability]);
-        }
-        Act::Orchestrate => {
-            required.extend([Orchestration, CodeExec]);
-        }
-        Act::Govern => {
-            required.extend([Memory, Orchestration, Documents, Observability]);
-        }
-    }
-    // A question whose answer is not already in front of us needs a way to
-    // go and get one, whatever the act was read as. This is the general form
-    // of the live-data gap: the failure was never specific to `Answer`.
-    if evidence_is_external {
-        required.insert(LiveData);
-        required.insert(Web);
-    }
-    required
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_intent::Act;
 
+    /// The act → domain table lives in the kernel (`vak_intent::engage`);
+    /// this crate only parses the names. A second copy of the table here
+    /// drifted once already.
+    fn required_for(act: Act) -> BTreeSet<Domain> {
+        let reading = vak_intent::Reading {
+            act,
+            confidence: 0.9,
+            ..vak_intent::Reading::general()
+        };
+        let engagement = vak_intent::derive(
+            &reading,
+            &vak_intent::Authority::default(),
+            true,
+            chrono::Utc::now(),
+        );
+        engagement
+            .limits
+            .required_domains
+            .iter()
+            .map(|name| Domain::parse(name))
+            .collect()
+    }
+
     #[test]
     fn every_act_that_produces_a_fact_can_reach_a_live_source() {
-        // The regression the old table encoded: `Answer` and `Locate` were
-        // the two acts that exist to produce a fact, and the two that could
-        // not go and get one.
         for act in [Act::Answer, Act::Locate, Act::Analyze, Act::Operate] {
-            let required = required_domains(act, false);
             assert!(
-                required.contains(&Domain::LiveData),
+                required_for(act).contains(&Domain::LiveData),
                 "{act:?} must be able to reach a live source"
             );
         }
     }
 
     #[test]
-    fn an_external_question_reaches_live_data_whatever_the_act() {
-        // Even for the act that needs least, an answer that is not in
-        // context must be able to go and get one.
-        let required = required_domains(Act::Verify, true);
-        assert!(required.contains(&Domain::LiveData));
-    }
-
-    #[test]
     fn a_greeting_stays_narrow() {
-        let required = required_domains(Act::Converse, false);
+        let required = required_for(Act::Converse);
         assert!(!required.contains(&Domain::CodeExec));
         assert!(!required.contains(&Domain::LiveData));
     }
@@ -481,7 +439,7 @@ mod tests {
     fn the_mcp_broker_serves_live_data_so_a_search_server_is_reachable() {
         // This is the specific link that made "how is the weather" work:
         // `mcp` must survive a slice that requires live data.
-        let required = required_domains(Act::Answer, false);
+        let required = required_for(Act::Answer);
         assert!(builtin_domains("mcp").serves_any(&required));
     }
 

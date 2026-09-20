@@ -2283,7 +2283,15 @@ async fn gateway_inbound(
     let preview: String = text.chars().take(80).collect();
     let expanded_text = text.clone();
     state.hub.emit_gateway_inbound(&body.surface, who, &preview);
-    let intervention = vak_intent::classify_intervention(&text);
+    // Only an explicit command is control; everything else a person types
+    // while the run is busy is steering text (docs/design/47, control
+    // plane). "Stop using semicolons" steers; "/stop" or a bare "stop"
+    // cancels.
+    let command = vak_intent::parse_command(&text);
+    let intervention = command
+        .as_ref()
+        .map(vak_intent::Command::intervention_kind)
+        .unwrap_or(vak_intent::InterventionKind::Steer);
     let session_id = binding_session(&state, &key);
     if matches!(
         intervention,
@@ -2472,6 +2480,31 @@ async fn gateway_inbound(
     }
     match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
         Ok(Ok(text)) => {
+            // The turn's delivery posture, from its intent entry: the
+            // session ledger when the run has handed it back, else the
+            // handle's last known record.
+            let intent_posture = binding_session(&state, &key)
+                .as_deref()
+                .and_then(|session_id| state.get(session_id))
+                .and_then(|handle| {
+                    let from_ledger = handle.session.lock().ok().and_then(|guard| {
+                        guard.as_ref().and_then(|session| {
+                            session.chain_to_root().iter().rev().find_map(|entry| {
+                                match &entry.payload {
+                                    vak_session::EntryPayload::Intent(record) => {
+                                        Some(record.engagement.posture.delivery)
+                                    }
+                                    _ => None,
+                                }
+                            })
+                        })
+                    });
+                    from_ledger.or_else(|| {
+                        handle.intent.lock().ok().and_then(|guard| {
+                            guard.as_ref().map(|record| record.engagement.posture.delivery)
+                        })
+                    })
+                });
             let outcome_metadata = binding_session(&state, &key)
                 .as_deref()
                 .and_then(|session_id| state.get(session_id))
@@ -2516,6 +2549,7 @@ async fn gateway_inbound(
                 ])),
                 body.bot_id.as_deref(),
                 session_id.as_deref(),
+                intent_posture,
             )
             .await
             {

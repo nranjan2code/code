@@ -705,6 +705,12 @@ pub struct RouteSettings {
     /// balanced/quality-critical objectives. Routing knowledge stays
     /// operator-supplied, never baked into source (invariant 9).
     pub quality_hints: Vec<String>,
+    /// Model-id substrings that mark a leg as able to serve non-text input
+    /// (images, audio, …). A vision turn is served only by matching legs;
+    /// with no hints declared every leg is assumed capable, because a
+    /// restriction the operator did not state is not ours to invent
+    /// (docs/design/47-commitment-kernel.md, invariant 10).
+    pub modality_hints: Vec<String>,
 }
 
 /// Intent kernel (docs/design/47-commitment-kernel.md).
@@ -736,11 +742,16 @@ pub struct IntentSettings {
     pub posture: Option<bool>,
     /// How far the cascade may escalate: "none" | "local" | "cloud".
     pub escalate: Option<String>,
-    /// Model id for the classification tier; empty picks the cheapest leg on
-    /// the already-frozen ladder.
+    /// Model for the classification tier: `model`, or `provider/model`.
+    /// Local escalation runs it on `ollama`; cloud on the effective
+    /// provider unless a provider is named. Empty uses the effective route.
     pub classify_model: Option<String>,
     /// Hard ceiling on one classification dispatch.
     pub max_classify_usd: Option<f64>,
+    /// Watchdog on one classification dispatch, in seconds (default 10).
+    /// A classifier that overruns it is abandoned and the free-tier reading
+    /// stands; the run never waits on it.
+    pub classify_timeout_secs: Option<u64>,
     /// Standing delegation: "manual" | "assisted" | "delegated" | "autonomous".
     pub autonomy: Option<String>,
     pub evidence_max_age_secs: Option<i64>,
@@ -1507,6 +1518,8 @@ pub struct RouteResolved {
     pub max_fallbacks: usize,
     /// Frontier-tier model-id substrings (lowercased for matching).
     pub quality_hints: Vec<String>,
+    /// Model-id substrings that can serve non-text modalities (lowercased).
+    pub modality_hints: Vec<String>,
 }
 
 /// Resolved intent-kernel policy.
@@ -1521,6 +1534,7 @@ pub struct IntentResolved {
     pub escalate: String,
     pub classify_model: Option<String>,
     pub max_classify_usd: f64,
+    pub classify_timeout_secs: u64,
     /// Standing delegation for this workspace.
     pub autonomy: String,
     pub evidence_max_age_secs: i64,
@@ -1707,6 +1721,7 @@ impl Default for Config {
                 fallback_models: Vec::new(),
                 max_fallbacks: 4,
                 quality_hints: Vec::new(),
+                modality_hints: Vec::new(),
             },
             probe: ProbeResolved {
                 hosted: "none".into(),
@@ -1723,6 +1738,7 @@ impl Default for Config {
                 escalate: "none".into(),
                 classify_model: None,
                 max_classify_usd: 0.01,
+                classify_timeout_secs: 10,
                 autonomy: "assisted".into(),
                 evidence_max_age_secs: 86_400,
             },
@@ -3380,6 +3396,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .iter()
         .map(|h| h.to_ascii_lowercase())
         .collect();
+    cfg.route.modality_hints = merged
+        .route
+        .modality_hints
+        .iter()
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
 
     cfg.probe.hosted = match merged.probe.hosted.as_deref() {
         None | Some("none") => "none".into(),
@@ -3442,6 +3464,11 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .max_classify_usd
         .unwrap_or(0.01)
         .clamp(0.0, 1.0);
+    cfg.intent.classify_timeout_secs = merged
+        .intent
+        .classify_timeout_secs
+        .unwrap_or(10)
+        .clamp(1, 120);
     cfg.intent.autonomy = match merged.intent.autonomy.as_deref() {
         Some("manual") => "manual".into(),
         Some("assisted") | None => "assisted".into(),
@@ -4414,6 +4441,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.intent.max_classify_usd.is_some() {
         base.intent.max_classify_usd = over.intent.max_classify_usd;
     }
+    if over.intent.classify_timeout_secs.is_some() {
+        base.intent.classify_timeout_secs = over.intent.classify_timeout_secs;
+    }
     if over.intent.autonomy.is_some() {
         base.intent.autonomy = over.intent.autonomy;
     }
@@ -4438,6 +4468,11 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     for h in over.route.quality_hints {
         if !base.route.quality_hints.contains(&h) {
             base.route.quality_hints.push(h);
+        }
+    }
+    for h in over.route.modality_hints {
+        if !base.route.modality_hints.contains(&h) {
+            base.route.modality_hints.push(h);
         }
     }
     if over.automation.catch_up_missed.is_some() {

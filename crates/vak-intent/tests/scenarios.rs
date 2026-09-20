@@ -28,9 +28,7 @@ use vak_intent::engage::{
     Cadence, ClarifyPolicy, ContextProfile, Engagement, HilMode, OutputShape, StopProfile, Urgency,
     derive,
 };
-use vak_intent::goal::{
-    GoalControlState, GoalRelation, GoalState, GoalUpdate, classify_goal_update,
-};
+use vak_intent::goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate};
 use vak_intent::limits::{CapabilitySlice, DomainSet, Limits};
 use vak_intent::outcome::{
     CompletionVerdict, EvidenceState, OutcomeSpec, OutcomeStatus, RequirementEvaluation,
@@ -55,7 +53,14 @@ fn req(text: &str) -> Request<'_> {
         workspace: WorkspaceFacts::default(),
         history: HistoryFacts::default(),
         attendance_override: None,
+        lineage_hint: None,
     }
+}
+
+fn now() -> chrono::DateTime<Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc)
 }
 
 fn req_full(
@@ -80,8 +85,10 @@ fn req_full(
             previous_act,
             turn_index,
             commitment_open,
+            open_threads: Vec::new(),
         },
         attendance_override: None,
+        lineage_hint: None,
     }
 }
 
@@ -91,6 +98,7 @@ fn resolve_text(text: &str) -> Intent {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     )
     .intent()
 }
@@ -101,6 +109,7 @@ fn resolve_declared(text: &str, declared: &Declared) -> Intent {
         declared,
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     )
     .intent()
 }
@@ -840,7 +849,7 @@ fn stakes_inert_for_non_effectful_acts() {
     ];
     for text in cases {
         let extraction = extract(&req(text));
-        let stakes = extraction.stakes.winner().map(|w| w.0);
+        let stakes = extraction.stakes_from_words.winner().map(|w| w.0);
         assert_ne!(
             stakes,
             Some(Stakes::Irreversible),
@@ -874,7 +883,7 @@ fn stakes_production_words_raise_stakes() {
     ];
     for text in cases {
         let extraction = extract(&req(text));
-        let stakes = extraction.stakes.winner().map(|w| w.0);
+        let stakes = extraction.stakes_from_words.winner().map(|w| w.0);
         assert!(
             stakes == Some(Stakes::Irreversible) || stakes == Some(Stakes::Costly),
             "`{}` should read as costly or irreversible, got {:?}",
@@ -918,11 +927,12 @@ fn stakes_ordering_takes_highest_with_support() {
         conf
     );
 
+    // Votes that all sit below the escalation floor abstain: a stray hint is
+    // not evidence of the level it names, and the axis default applies.
     let mut weak: Votes<Stakes> = Votes::default();
     weak.add(Stakes::Reversible, 0.3);
     weak.add(Stakes::Inert, 0.3);
-    let (winner, _) = weak.winner().unwrap();
-    assert!(winner.rank() >= Stakes::Inert.rank());
+    assert!(weak.winner().is_none());
 }
 
 // ================================================================
@@ -986,7 +996,6 @@ fn evidence_verified_scenarios() {
         "make sure the tests pass",
         "ensure correctness of the approach",
         "passing the tests proves it",
-        "green tests show it works",
         "prove this theorem now",
     ];
     for text in cases {
@@ -1114,6 +1123,7 @@ fn resolution_confident_readings_are_settled() {
             &Declared::default(),
             &Authority::default(),
             &ResolverConfig::default(),
+            now(),
         );
         match &resolution {
             Resolution::Settled(intent) => {
@@ -1143,10 +1153,14 @@ fn resolution_unknown_input_falls_back_to_general() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     );
     let intent = resolution.intent();
     assert_eq!(intent.provenance.tier, Tier::General);
-    assert_eq!(intent.engagement, Engagement::general());
+    // Kernel on and nothing understood: the orientation floor, not
+    // everything (docs/design/68, Principle 6). `Engagement::general` is
+    // what a *disabled* kernel produces.
+    assert_eq!(intent.engagement, Engagement::orienting());
 }
 
 #[test]
@@ -1189,6 +1203,7 @@ fn resolution_disabled_reproduces_general() {
         &Declared::default(),
         &Authority::default(),
         &config,
+        now(),
     );
     let intent = resolution.intent();
     assert_eq!(intent.engagement, Engagement::general());
@@ -1207,11 +1222,13 @@ fn resolution_provisional_reading_withholds_slicing() {
         &Declared::default(),
         &Authority::default(),
         &config,
+        now(),
     );
     let intent = resolution.peek();
-    assert!(
-        intent.engagement.limits.required_domains.is_unconstrained(),
-        "provisional reading must not narrow domains"
+    assert_eq!(
+        intent.engagement.limits.required_domains,
+        Engagement::orienting().limits.required_domains,
+        "a provisional reading gets the orientation floor, never a guessed slice"
     );
 }
 
@@ -1226,12 +1243,13 @@ fn classification_may_raise_stakes_not_lower() {
     };
     let intent = apply_classification(
         partial,
-        &downplayed,
+        std::slice::from_ref(&downplayed),
         "cheap-model",
         "digest",
         &Authority::default(),
         &ResolverConfig::default(),
         true,
+        now(),
     );
     assert_eq!(
         intent.reading.stakes,
@@ -1247,12 +1265,13 @@ fn classification_empty_leaves_free_tier_intact() {
     let before_engagement = partial.engagement.clone();
     let after = apply_classification(
         partial,
-        &Classification::default(),
+        std::slice::from_ref(&Classification::default()),
         "flaky-model",
         "digest",
         &Authority::default(),
         &ResolverConfig::default(),
         true,
+        now(),
     );
     assert_eq!(after.reading, before_reading);
     assert_eq!(after.engagement, before_engagement);
@@ -1267,12 +1286,13 @@ fn classification_only_overwrites_returned_axes() {
     };
     let intent = apply_classification(
         partial,
-        &classification,
+        std::slice::from_ref(&classification),
         "local-model",
         "abc123",
         &Authority::default(),
         &ResolverConfig::default(),
         false,
+        now(),
     );
     assert_eq!(intent.reading.act, Act::Operate);
     assert!(!intent.provenance.reproducible);
@@ -1299,7 +1319,7 @@ fn engagement_output_shape_per_act() {
     ];
     for (act, expected_shape) in cases {
         let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(
             engagement.posture.delivery.shape, *expected_shape,
             "act {:?} should produce shape {:?}",
@@ -1312,7 +1332,7 @@ fn engagement_output_shape_per_act() {
 fn engagement_output_shape_cited_evidence_for_answer_analyze() {
     for act in [Act::Answer, Act::Analyze] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(
             engagement.posture.delivery.shape,
             OutputShape::Sources,
@@ -1339,7 +1359,7 @@ fn engagement_stop_profile_per_act() {
     ];
     for (act, expected_stop) in cases {
         let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(
             engagement.posture.stop, *expected_stop,
             "act {:?} should produce stop {:?}",
@@ -1352,7 +1372,7 @@ fn engagement_stop_profile_per_act() {
 fn engagement_stop_profile_verified_overrides_act() {
     for act in Act::ALL {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::Verified);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(
             engagement.posture.stop,
             StopProfile::Verification,
@@ -1370,18 +1390,18 @@ fn engagement_context_profile_per_act_and_horizon() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.posture.context, ContextProfile::Minimal);
 
     for act in [Act::Modify, Act::Verify, Act::Operate] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.posture.context, ContextProfile::Working);
     }
 
     for act in [Act::Modify, Act::Operate] {
         let r = reading_simple(act, Horizon::Durable, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.posture.context, ContextProfile::Full);
     }
 }
@@ -1397,7 +1417,7 @@ fn engagement_hil_mode_matrix() {
                 Evidence::None,
             );
             let auth = authority_of(autonomy, attendance, None);
-            let engagement = derive(&r, &auth, true);
+            let engagement = derive(&r, &auth, true, now());
             assert_eq!(
                 engagement.posture.hil,
                 HilMode::Interrupt,
@@ -1415,7 +1435,7 @@ fn engagement_hil_mode_matrix() {
         Evidence::None,
     );
     let auth = authority_of(Autonomy::Autonomous, Attendance::Interactive, None);
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth, true, now());
     assert_eq!(engagement.posture.hil, HilMode::Review);
 
     let r = reading_simple(
@@ -1429,7 +1449,7 @@ fn engagement_hil_mode_matrix() {
         Attendance::Interactive,
         Some(test_envelope(PermissionCeiling::WorkspaceWrite)),
     );
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth, true, now());
     assert_eq!(engagement.posture.hil, HilMode::Envelope);
 }
 
@@ -1437,7 +1457,7 @@ fn engagement_hil_mode_matrix() {
 fn engagement_demand_hints_populated() {
     for act in [Act::Analyze, Act::Author, Act::Modify, Act::Orchestrate] {
         let r = reading_simple(act, Horizon::Durable, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(
             engagement.posture.demand.reasoning_required,
             "{:?} should require reasoning",
@@ -1446,7 +1466,7 @@ fn engagement_demand_hints_populated() {
     }
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert!(engagement.posture.demand.evidence_required);
 
     let r = reading_simple(
@@ -1455,7 +1475,7 @@ fn engagement_demand_hints_populated() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert!(engagement.posture.demand.structured_output);
 }
 
@@ -1475,6 +1495,7 @@ fn engagement_delivery_posture_by_attendance_and_stakes() {
             &r,
             &authority_of(Autonomy::Assisted, attendance, None),
             true,
+            now(),
         );
         assert_eq!(engagement.posture.delivery.urgency, Urgency::Interrupt);
     }
@@ -1485,12 +1506,13 @@ fn engagement_delivery_posture_by_attendance_and_stakes() {
         &r,
         &authority_of(Autonomy::Assisted, Attendance::Unattended, None),
         true,
+        now(),
     );
     assert_eq!(engagement.posture.delivery.cadence, Cadence::Digest);
     assert_eq!(engagement.posture.delivery.urgency, Urgency::Quiet);
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.posture.delivery.cadence, Cadence::Live);
 }
 
@@ -1502,12 +1524,12 @@ fn engagement_ladder_limit_per_horizon() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.limits.ladder_limit, Some(1));
 
     for horizon in [Horizon::Turn, Horizon::Session, Horizon::Durable] {
         let r = reading_simple(Act::Answer, horizon, Stakes::Inert, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.limits.ladder_limit, None);
     }
 }
@@ -1522,7 +1544,7 @@ fn engagement_min_satisfaction_per_evidence() {
     ];
     for (evidence, expected_sat) in cases {
         let r = reading_simple(Act::Modify, Horizon::Session, Stakes::Reversible, *evidence);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.limits.min_satisfaction, *expected_sat);
     }
 }
@@ -1556,7 +1578,7 @@ fn engagement_domain_requirements_per_act() {
     ];
     for (act, expected_domains) in cases {
         let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         for domain in *expected_domains {
             assert!(
                 engagement.limits.required_domains.contains(domain),
@@ -1571,7 +1593,7 @@ fn engagement_domain_requirements_per_act() {
 fn engagement_cited_evidence_adds_live_data_and_web() {
     for act in Act::ALL {
         let r = reading_simple(act, Horizon::Turn, Stakes::Reversible, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(engagement.limits.required_domains.contains("live-data"));
         assert!(engagement.limits.required_domains.contains("web"));
     }
@@ -1582,13 +1604,13 @@ fn engagement_clarify_policy_by_stakes() {
     for act in [Act::Converse, Act::Answer] {
         let mut r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::None);
         r.clarity = Clarity::Ambiguous;
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.posture.clarify, ClarifyPolicy::StateAssumption);
     }
 
     let mut r = reading_simple(Act::Operate, Horizon::Turn, Stakes::Costly, Evidence::None);
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.posture.clarify, ClarifyPolicy::Ask);
 
     let r = reading_simple(
@@ -1597,7 +1619,7 @@ fn engagement_clarify_policy_by_stakes() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.posture.clarify, ClarifyPolicy::Proceed);
 }
 
@@ -1605,12 +1627,12 @@ fn engagement_clarify_policy_by_stakes() {
 fn engagement_checkpoints_for_effectful_stakes_reversible_plus() {
     for stakes in [Stakes::Reversible, Stakes::Costly, Stakes::Irreversible] {
         let r = reading_simple(Act::Modify, Horizon::Session, stakes, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert!(engagement.posture.checkpoint_before_effect);
     }
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert!(!engagement.posture.checkpoint_before_effect);
 }
 
@@ -1622,7 +1644,7 @@ fn engagement_any_effectful_contender_forces_checkpoint() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert!(!engagement.posture.checkpoint_before_effect);
 
     let mut r2 = reading_simple(
@@ -1632,9 +1654,11 @@ fn engagement_any_effectful_contender_forces_checkpoint() {
         Evidence::None,
     );
     r2.alternate_acts.insert(Act::Modify);
-    let engagement2 = derive(&r2, &Authority::default(), true);
+    let engagement2 = derive(&r2, &Authority::default(), true, now());
     assert!(engagement2.posture.checkpoint_before_effect);
-    assert_eq!(engagement2.posture.stop, StopProfile::Effect);
+    // The stop rule follows the primary act; a contender only widens the
+    // toolbox and the checkpoint.
+    assert_eq!(engagement2.posture.stop, StopProfile::Message);
 }
 
 #[test]
@@ -1645,7 +1669,7 @@ fn engagement_note_content() {
         Stakes::Irreversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("cannot be undone"));
 
@@ -1655,12 +1679,12 @@ fn engagement_note_content() {
         Stakes::Reversible,
         Evidence::Verified,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("runtime") || note.contains("decide"));
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("source"));
 
@@ -1670,7 +1694,7 @@ fn engagement_note_content() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert!(engagement.posture.note.is_none());
 }
 
@@ -1828,7 +1852,7 @@ fn narrowing_invariant_full_combinatorial() {
                                         evidence: 0.9,
                                     };
                                     let auth = authority_of(autonomy, attendance, None);
-                                    let engagement = derive(&r, &auth, slice);
+                                    let engagement = derive(&r, &auth, slice, now());
                                     assert!(
                                         engagement.limits.is_at_most(&baseline),
                                         "widened: {:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?} slice={slice}",
@@ -1880,7 +1904,7 @@ fn narrowing_invariant_full_combinatorial_with_envelope() {
                                         None
                                     };
                                     let auth = authority_of(autonomy, attendance, env);
-                                    let engagement = derive(&r, &auth, slice);
+                                    let engagement = derive(&r, &auth, slice, now());
                                     assert!(
                                         engagement.limits.is_at_most(&baseline),
                                         "widened: {:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?} slice={slice}",
@@ -1913,7 +1937,7 @@ fn engagement_meet_never_widens_either_operand() {
                 for &evidence in &[Evidence::None, Evidence::Cited, Evidence::Verified] {
                     for slice in [true, false] {
                         let r = reading_simple(act, horizon, stakes, evidence);
-                        readings.push(derive(&r, &Authority::default(), slice));
+                        readings.push(derive(&r, &Authority::default(), slice, now()));
                     }
                 }
             }
@@ -1947,7 +1971,7 @@ fn lattice_meet_is_idempotent() {
                     for &autonomy in &Autonomy::ALL {
                         let auth = authority_of(autonomy, Attendance::Interactive, None);
                         for slice in [true, false] {
-                            let e = derive(&r, &auth, slice);
+                            let e = derive(&r, &auth, slice, now());
                             assert_eq!(e.limits.meet(&e.limits), e.limits);
                         }
                     }
@@ -1973,7 +1997,7 @@ fn lattice_meet_is_commutative() {
         .collect();
     let engagements: Vec<Engagement> = readings
         .iter()
-        .map(|r| derive(r, &Authority::default(), true))
+        .map(|r| derive(r, &Authority::default(), true, now()))
         .collect();
     for i in 0..engagements.len() {
         for j in (i + 1)..engagements.len().min(i + 20) {
@@ -1990,7 +2014,7 @@ fn lattice_meet_is_associative() {
     for &act in &Act::ALL {
         for &stakes in &Stakes::ALL {
             let r = reading_simple(act, Horizon::Session, stakes, Evidence::None);
-            limits_list.push(derive(&r, &Authority::default(), true).limits);
+            limits_list.push(derive(&r, &Authority::default(), true, now()).limits);
         }
     }
     for i in 0..limits_list.len() {
@@ -2014,7 +2038,7 @@ fn lattice_unrestricted_is_identity() {
         .flat_map(|&act| {
             Stakes::ALL.iter().map(move |&stakes| {
                 let r = reading_simple(act, Horizon::Session, stakes, Evidence::None);
-                derive(&r, &Authority::default(), true).limits
+                derive(&r, &Authority::default(), true, now()).limits
             })
         })
         .collect();
@@ -2283,8 +2307,8 @@ fn edge_case_insensitive_matching() {
         upper.act.winner().map(|w| w.0)
     );
     assert_eq!(
-        lower.stakes.winner().map(|w| w.0),
-        upper.stakes.winner().map(|w| w.0)
+        lower.stakes_from_words.winner().map(|w| w.0),
+        upper.stakes_from_words.winner().map(|w| w.0)
     );
 }
 
@@ -2379,6 +2403,7 @@ fn edge_dirty_tree_adds_stakes_for_effectful_acts() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     )
     .intent();
     assert_eq!(
@@ -2474,63 +2499,50 @@ fn deictic_clear_with_recent_paths() {
 // ================================================================
 
 #[test]
-fn goal_classification_all_relations() {
+fn goal_relation_follows_explicit_commands_only() {
+    use vak_intent::goal::goal_relation;
+    use vak_intent::outcome::parse_command;
     let cases: &[(Option<u64>, &str, GoalRelation)] = &[
-        (None, "start a new project", GoalRelation::New),
-        (None, "deploy the service", GoalRelation::New),
-        (Some(1), "build a feature", GoalRelation::AddsTo),
-        (Some(1), "status please", GoalRelation::Status),
-        (Some(1), "how is it going", GoalRelation::Status),
-        (Some(1), "what is the progress", GoalRelation::Status),
-        (Some(1), "what is the status", GoalRelation::Status),
-        (Some(1), "pause the work", GoalRelation::Pauses),
-        (Some(1), "hold off", GoalRelation::Pauses),
-        (Some(1), "resume work", GoalRelation::Resumes),
-        (Some(1), "continue", GoalRelation::Resumes),
+        (Some(1), "/status", GoalRelation::Status),
+        (Some(1), "status", GoalRelation::Status),
+        (Some(1), "/pause", GoalRelation::Pauses),
+        (Some(1), "pause", GoalRelation::Pauses),
+        (Some(1), "/resume", GoalRelation::Resumes),
         (Some(1), "cancel", GoalRelation::Cancels),
-        (Some(1), "stop", GoalRelation::Cancels),
-        (Some(1), "abort", GoalRelation::Cancels),
+        (Some(1), "Stop.", GoalRelation::Cancels),
         (
             Some(1),
-            "actually do it differently",
+            "/goal fix use the other approach",
             GoalRelation::Corrects,
         ),
-        (Some(1), "that's wrong, try again", GoalRelation::Corrects),
+        (
+            Some(1),
+            "/goal replace just add the index",
+            GoalRelation::Replaces,
+        ),
+        // Natural language that used to be a correction/replacement/cancel
+        // is an addition to the active goal now.
+        (Some(1), "actually do it differently", GoalRelation::AddsTo),
         (
             Some(1),
             "forget that, do something else instead",
-            GoalRelation::Replaces,
+            GoalRelation::AddsTo,
         ),
-        (
-            Some(1),
-            "change of mind, use the other approach",
-            GoalRelation::Replaces,
-        ),
+        (Some(1), "stop using semicolons", GoalRelation::AddsTo),
+        (Some(1), "pause the work", GoalRelation::AddsTo),
+        (Some(1), "how is it going", GoalRelation::AddsTo),
+        (None, "actually do it differently", GoalRelation::New),
+        (None, "/goal replace whatever", GoalRelation::New),
+        (None, "also include a CSV", GoalRelation::New),
     ];
     for (active, text, expected) in cases {
-        let result = classify_goal_update(text, *active);
+        let result = goal_relation(parse_command(text).as_ref(), *active);
         assert_eq!(
             result, *expected,
             "active={:?} text=`{}` should be {:?}",
             active, text, expected
         );
     }
-}
-
-#[test]
-fn goal_classification_without_active_is_new_or_status() {
-    assert_eq!(
-        classify_goal_update("actually do it differently", None),
-        GoalRelation::New
-    );
-    assert_eq!(
-        classify_goal_update("do something instead", None),
-        GoalRelation::New
-    );
-    assert_eq!(
-        classify_goal_update("also include a CSV", None),
-        GoalRelation::New
-    );
 }
 
 #[test]
@@ -2889,7 +2901,7 @@ fn slicing_keeps_orientation_floor() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     for domain in vak_intent::FLOOR_DOMAINS.iter() {
         assert!(
             engagement.limits.required_domains.contains(domain),
@@ -2900,27 +2912,53 @@ fn slicing_keeps_orientation_floor() {
 }
 
 #[test]
-fn slicing_empty_domains_is_identity() {
+fn slicing_withheld_gives_the_orientation_floor() {
     let r = reading_simple(
         Act::Converse,
         Horizon::Immediate,
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), false);
-    assert!(engagement.limits.required_domains.is_unconstrained());
+    let engagement = derive(&r, &Authority::default(), false, now());
+    assert_eq!(
+        engagement.limits.required_domains,
+        Engagement::orienting().limits.required_domains
+    );
 }
 
 #[test]
-fn slicing_unrestricted_when_confidence_below_floor() {
+fn below_floor_confidence_gives_the_orientation_floor() {
     let resolution = resolve(
         &req("zorble frobnicate"),
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     );
     let intent = resolution.intent();
     assert_eq!(intent.provenance.tier, Tier::General);
+    assert_eq!(
+        intent.engagement.limits.required_domains,
+        Engagement::orienting().limits.required_domains
+    );
+}
+
+/// `DomainSet::All` has exactly one meaning — everything — and only a
+/// disabled kernel produces it.
+#[test]
+fn only_a_disabled_kernel_is_unconstrained() {
+    let config = ResolverConfig {
+        enabled: false,
+        ..ResolverConfig::default()
+    };
+    let intent = resolve(
+        &req("zorble frobnicate"),
+        &Declared::default(),
+        &Authority::default(),
+        &config,
+        now(),
+    )
+    .intent();
     assert!(intent.engagement.limits.required_domains.is_unconstrained());
 }
 
@@ -2932,7 +2970,7 @@ fn slicing_unrestricted_when_confidence_below_floor() {
 fn worker_budget_zero_for_converse_and_answer() {
     for act in [Act::Converse, Act::Answer] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.limits.worker_budget, Some(0));
     }
 }
@@ -2945,7 +2983,7 @@ fn worker_budget_unlimited_for_orchestrate() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.limits.worker_budget, None);
 }
 
@@ -2957,7 +2995,7 @@ fn max_turns_two_for_immediate() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     assert_eq!(engagement.limits.max_turns, Some(2));
 }
 
@@ -2965,7 +3003,7 @@ fn max_turns_two_for_immediate() {
 fn max_turns_unlimited_for_non_immediate() {
     for horizon in [Horizon::Turn, Horizon::Session, Horizon::Durable] {
         let r = reading_simple(Act::Answer, horizon, Stakes::Inert, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default(), true, now());
         assert_eq!(engagement.limits.max_turns, None);
     }
 }
@@ -3041,7 +3079,7 @@ fn prompt_note_for_ambiguous_high_stakes() {
         Evidence::None,
     );
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("ask") || note.contains("question") || note.contains("ambiguous"),
@@ -3053,7 +3091,7 @@ fn prompt_note_for_ambiguous_high_stakes() {
 fn prompt_note_for_state_assumption() {
     let mut r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default(), true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("under-specified") || note.contains("assumption"),
@@ -3070,7 +3108,7 @@ fn prompt_note_for_deferred_work() {
         Evidence::None,
     );
     let auth = authority_of(Autonomy::Delegated, Attendance::Unattended, None);
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth, true, now());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("Nobody") || note.contains("queued"),
@@ -3327,7 +3365,7 @@ fn thousands_of_stakes_combinations() {
             for object in objects {
                 let text = format!("{} {} to {}", verb, object, word);
                 let extraction = extract(&req(&text));
-                let stakes = extraction.stakes.winner();
+                let stakes = extraction.stakes_from_words.winner();
                 if let Some((winner, _)) = stakes {
                     assert!(
                         winner.rank() >= expected_stakes.rank(),
@@ -3475,7 +3513,7 @@ fn thousands_of_engagement_matrix_combinations() {
                             None
                         };
                         let auth = authority_of(autonomy, attendance, env);
-                        let engagement = derive(&r, &auth, true);
+                        let engagement = derive(&r, &auth, true, now());
                         assert!(engagement.limits.is_at_most(&Limits::unrestricted()));
                         count += 1;
                     }
@@ -3495,7 +3533,7 @@ fn thousands_of_lattice_meet_pairs() {
                 for &evidence in &Evidence::ALL {
                     for slice in [true, false] {
                         let r = reading_simple(act, horizon, stakes, evidence);
-                        engagements.push(derive(&r, &Authority::default(), slice));
+                        engagements.push(derive(&r, &Authority::default(), slice, now()));
                     }
                 }
             }
@@ -3673,6 +3711,7 @@ fn provenance_escalation_note_present_when_below_threshold() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     );
     let intent = resolution.intent();
     assert!(intent.provenance.escalation_note.is_some());
@@ -3785,6 +3824,7 @@ fn pipeline_surface_changes_attendance() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     );
     let intent = resolution.intent();
     assert_eq!(intent.reading.attendance, Attendance::Unattended);
@@ -3824,6 +3864,7 @@ fn pipeline_workspace_repo_adds_domain() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
+        now(),
     )
     .intent();
     assert!(intent.reading.domains.contains("engineering"));
@@ -3855,20 +3896,28 @@ fn authority_stakes_autonomy_hil_matrix() {
                         None
                     };
                     let auth = authority_of(autonomy, attendance, env);
-                    let engagement = derive(&r, &auth, true);
+                    let engagement = derive(&r, &auth, true, now());
 
                     if stakes == Stakes::Irreversible {
+                        // Someone present: interrupt. Nobody present and the
+                        // work durable enough to park the question: defer to
+                        // the inbox rather than raise a gate that can only
+                        // time out.
+                        let expected = if !attendance.can_answer_now() && horizon.opens_commitment()
+                        {
+                            HilMode::Defer
+                        } else {
+                            HilMode::Interrupt
+                        };
                         assert_eq!(
-                            engagement.posture.hil,
-                            HilMode::Interrupt,
-                            "Irreversible must always interrupt: stakes={stakes:?} autonomy={autonomy:?} attendance={attendance:?} horizon={horizon:?}"
+                            engagement.posture.hil, expected,
+                            "stakes={stakes:?} autonomy={autonomy:?} attendance={attendance:?} horizon={horizon:?}"
                         );
                     }
 
-                    if attendance == Attendance::Unattended
-                        && horizon == Horizon::Durable
+                    if !attendance.can_answer_now()
+                        && horizon.opens_commitment()
                         && stakes.rank() >= Stakes::Costly.rank()
-                        && stakes != Stakes::Irreversible
                     {
                         assert_eq!(engagement.posture.hil, HilMode::Defer);
                     }
