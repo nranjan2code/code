@@ -146,6 +146,7 @@ export default function WorkbenchPanel() {
   const [reviewComment, setReviewComment] = createSignal("");
   const [reviewCommentBusy, setReviewCommentBusy] = createSignal(false);
   const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
+  const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
 
@@ -182,6 +183,7 @@ export default function WorkbenchPanel() {
     setInspectedFiles([]);
     setReviewComment("");
     setReviewCommentMessage(null);
+    setCandidateComments([]);
   });
 
   const executions = () => workbenchExecutions();
@@ -381,6 +383,12 @@ export default function WorkbenchPanel() {
     setBeforeContent(null);
     setAfterContent(null);
     setReviewCommentMessage(null);
+    setCandidateComments([]);
+    void api.listSandboxCandidateComments(prepared.session_id, prepared.candidate.candidate_id)
+      .then(({ comments }) => {
+        if (candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
+      })
+      .catch(() => { /* Review remains usable if comment history is unavailable. */ });
   }
 
   const reviewCandidate = async (prepareNew = false, executionId?: string) => {
@@ -475,6 +483,9 @@ export default function WorkbenchPanel() {
       await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined });
       setReviewComment("");
       setReviewCommentMessage("Feedback sent to the Agent. This draft remains unchanged until it prepares a new version.");
+      void api.listSandboxCandidateComments(id, prepared.candidate.candidate_id)
+        .then(({ comments }) => setCandidateComments(comments))
+        .catch(() => { /* The accepted comment remains durable. */ });
     } catch (error) {
       setReviewCommentMessage(`Could not send feedback: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -561,6 +572,15 @@ export default function WorkbenchPanel() {
                   <div class="candidate-review-columns">
                     <div><strong>Current workspace</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
                     <div><strong>Draft</strong><pre>{afterContent() ?? "Loading or preview unavailable"}</pre></div>
+                  </div>
+                </Show>
+                <Show when={candidateComments().length > 0}>
+                  <div class="candidate-review-comments" aria-label="Comments on this draft">
+                    <h4>Comments</h4>
+                    <For each={candidateComments()}>{(comment) => <article>
+                      <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
+                      <p>{comment.text}</p>
+                    </article>}</For>
                   </div>
                 </Show>
                 <div class="candidate-review-feedback">

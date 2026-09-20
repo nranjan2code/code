@@ -1002,6 +1002,12 @@ export function commentOnSandboxCandidate(sessionId: string, candidateId: string
   });
 }
 
+export type SandboxCandidateComment = { comment_id: string; actor_id: string; text: string; path?: string; line_start?: number; line_end?: number; created_at?: string };
+
+export function listSandboxCandidateComments(sessionId: string, candidateId: string): Promise<{ comments: SandboxCandidateComment[] }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
+}
+
 export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }

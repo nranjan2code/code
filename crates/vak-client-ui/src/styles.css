@@ -516,6 +516,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-feedback label { color: var(--text-soft); font-size: 12px; font-weight: 600; }
 .candidate-review-feedback textarea { width: 100%; min-height: 70px; padding: 10px 12px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }
 .candidate-review-feedback p { margin: 0; color: var(--muted); font-size: 12px; }
+.candidate-review-comments, .artifact-canvas-comments { display: grid; gap: 8px; margin-top: 16px; }
+.candidate-review-comments h4 { margin: 0; font-size: 12px; }
+.candidate-review-comments article, .artifact-canvas-comments article { padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-raised); }
+.candidate-review-comments article > div, .artifact-canvas-comments article > div { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10px; }
+.candidate-review-comments article strong, .artifact-canvas-comments article strong { color: var(--text-soft); font-size: 11px; }
+.candidate-review-comments article p, .artifact-canvas-comments article p { margin: 5px 0 0; color: var(--text); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .candidate-review-footer { justify-content: flex-end; border-top: 1px solid var(--border-soft); }
 .candidate-review-footer span { margin-right: auto; color: var(--muted); font-size: 12px; }
 @media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } }
@@ -5838,6 +5844,7 @@ html[data-theme="dawn"] .artifact-canvas-body {
 }
 
 .artifact-canvas-feedback-compose button:disabled { opacity: 0.45; cursor: default; }
+.artifact-canvas-comments { max-height: 150px; overflow: auto; }
 .artifact-canvas-feedback small { display: block; margin-top: 6px; }
 
 /* --- Footer (security) -------------------------------------------------- */

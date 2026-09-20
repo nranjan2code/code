@@ -732,7 +732,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
-            post(comment_on_sandbox_candidate),
+            get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
         )
         .route(
             "/sessions/{id}/sandbox/promote",
@@ -9850,6 +9850,67 @@ struct CandidateCommentBody {
     request_id: Option<String>,
 }
 
+async fn list_sandbox_candidate_comments(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !records.iter().any(|record| {
+        matches!(record,
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id)
+    }) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut comments = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(log) = find_session_on_disk(&state.core, &session_id) {
+        for (_, timestamp, activity) in log.activities() {
+            if activity.kind == vak_session::ActivityKind::CandidateComment
+                && activity.data.get("candidate_id") == Some(&candidate_id)
+            {
+                seen.insert(activity.activity_id.clone());
+                comments.push(serde_json::json!({
+                    "comment_id": activity.activity_id,
+                    "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
+                    "text": activity.data.get("comment").cloned().unwrap_or_default(),
+                    "path": activity.data.get("path"),
+                    "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
+                    "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "created_at": timestamp.to_rfc3339(),
+                }));
+            }
+        }
+    }
+    if let Some(handle) = state.get(&session_id) {
+        let buffered = handle
+            .activity_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for activity in buffered.iter() {
+            if activity.kind == vak_session::ActivityKind::CandidateComment
+                && activity.data.get("candidate_id") == Some(&candidate_id)
+                && seen.insert(activity.activity_id.clone())
+            {
+                comments.push(serde_json::json!({
+                    "comment_id": activity.activity_id,
+                    "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
+                    "text": activity.data.get("comment").cloned().unwrap_or_default(),
+                    "path": activity.data.get("path"),
+                    "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
+                    "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "created_at": serde_json::Value::Null,
+                }));
+            }
+        }
+    }
+    Json(serde_json::json!({ "comments": comments })).into_response()
+}
+
 async fn comment_on_sandbox_candidate(
     State(state): State<AppState>,
     Path((session_id, candidate_id)): Path<(String, String)>,
@@ -9908,6 +9969,7 @@ async fn comment_on_sandbox_candidate(
         .unwrap_or_else(|| format!("candidate-comment-{}", uuid::Uuid::now_v7()));
     let mut data = std::collections::BTreeMap::new();
     data.insert("request_id".into(), request_id.clone());
+    data.insert("actor_id".into(), "operator".into());
     data.insert("candidate_id".into(), candidate_id.clone());
     data.insert("result_id".into(), saved.result_id.clone());
     data.insert("execution_id".into(), saved.execution_id.clone());
@@ -17071,6 +17133,45 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
+        let ledger_path = find_session_on_disk(&state.core, "session-1")
+            .unwrap()
+            .path()
+            .to_path_buf();
+        let mut ledger = vak_session::SessionLog::open(ledger_path).unwrap();
+        ledger
+            .append_activity(vak_session::ActivityRecord {
+                activity_id: "comment-history-1".into(),
+                turn: None,
+                kind: vak_session::ActivityKind::CandidateComment,
+                status: vak_session::ActivityStatus::Succeeded,
+                label: "Candidate comment".into(),
+                detail: None,
+                data: std::collections::BTreeMap::from([
+                    ("actor_id".into(), "operator".into()),
+                    (
+                        "candidate_id".into(),
+                        candidate.candidate.candidate_id.clone(),
+                    ),
+                    ("comment".into(), "Keep this reviewed wording".into()),
+                    ("path".into(), "result.txt".into()),
+                    ("line_start".into(), "1".into()),
+                ]),
+            })
+            .unwrap();
+        let history = list_sandbox_candidate_comments(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+        )
+        .await;
+        assert_eq!(history.status(), StatusCode::OK);
+        let history: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(history.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(history["comments"][0]["text"], "Keep this reviewed wording");
+        assert_eq!(history["comments"][0]["line_start"], 1);
         let response = promote_sandbox_candidate(
             State(state),
             Path("session-1".into()),

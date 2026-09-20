@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   canvasArtifact,
   canvasMode,
@@ -49,6 +49,7 @@ export default function ArtifactCanvas() {
   const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "error">("idle");
   const [commentLineStart, setCommentLineStart] = createSignal("");
   const [commentLineEnd, setCommentLineEnd] = createSignal("");
+  const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
   const commentLineInvalid = () => {
     const start = Number.parseInt(commentLineStart(), 10);
     const end = Number.parseInt(commentLineEnd(), 10);
@@ -61,11 +62,19 @@ export default function ArtifactCanvas() {
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
 
   createEffect(() => {
-    void canvasArtifact()?.id;
+    const artifact = canvasArtifact();
     setFeedback("");
     setFeedbackState("idle");
     setCommentLineStart("");
     setCommentLineEnd("");
+    setCandidateComments([]);
+    if (artifact?.candidateId && artifact.sessionId) {
+      let disposed = false;
+      void api.listSandboxCandidateComments(artifact.sessionId, artifact.candidateId)
+        .then(({ comments }) => { if (!disposed) setCandidateComments(comments); })
+        .catch(() => { /* Comments are supplementary; revision remains usable. */ });
+      onCleanup(() => { disposed = true; });
+    }
   });
 
   const sendRevision = async () => {
@@ -90,6 +99,11 @@ export default function ArtifactCanvas() {
       }
       setFeedback("");
       setFeedbackState("sent");
+      if (artifact.candidateId) {
+        void api.listSandboxCandidateComments(sessionId, artifact.candidateId)
+          .then(({ comments }) => setCandidateComments(comments))
+          .catch(() => { /* The accepted comment remains durable. */ });
+      }
     } catch {
       setFeedbackState("error");
     }
@@ -705,6 +719,16 @@ export default function ArtifactCanvas() {
           </div>
           <Show when={feedbackState() === "sent"}><small role="status">Sent to the Agent conversation.</small></Show>
           <Show when={feedbackState() === "error"}><small role="alert">Could not send. Your feedback is still here to retry.</small></Show>
+          <Show when={candidateComments().length > 0}>
+            <div class="artifact-canvas-comments" aria-label="Comments on this saved draft">
+              <For each={candidateComments()}>{(comment) =>
+                <article>
+                  <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
+                  <p>{comment.text}</p>
+                </article>
+              }</For>
+            </div>
+          </Show>
         </section>
 
         {/* Security / Server Status Footer */}
