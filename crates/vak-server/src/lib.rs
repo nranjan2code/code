@@ -736,6 +736,10 @@ fn router_with_state(state: AppState) -> Router {
             get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/comments/{comment_id}/request-revision",
+            post(request_revision_from_candidate_comment),
+        )
+        .route(
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
@@ -10323,6 +10327,74 @@ async fn comment_on_sandbox_candidate(
     .await
 }
 
+/// Owner decision: make one saved human comment an Agent revision request.
+/// The comment itself stays feedback until this explicit control action.
+async fn request_revision_from_candidate_comment(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id, comment_id)): Path<(String, String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let Some(saved) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
+        {
+            Some(saved)
+        }
+        _ => None,
+    }) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let from_log = find_session_on_disk(&state.core, &session_id).and_then(|log| {
+        log.activities().into_iter().find_map(|(_, _, activity)| {
+            (activity.activity_id == comment_id
+                && activity.kind == vak_session::ActivityKind::CandidateComment
+                && activity.data.get("candidate_id") == Some(&candidate_id))
+            .then_some(activity)
+        })
+    });
+    let comment = from_log.or_else(|| {
+        state.get(&session_id).and_then(|handle| {
+            handle.activity_buffer.lock().ok().and_then(|buffer| {
+                buffer.iter().find(|activity| {
+                    activity.activity_id == comment_id
+                        && activity.kind == vak_session::ActivityKind::CandidateComment
+                        && activity.data.get("candidate_id") == Some(&candidate_id)
+                }).cloned()
+            })
+        })
+    });
+    let Some(comment) = comment else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if comment.data.get("candidate_digest") != Some(&saved.candidate_digest) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let Some(body) = comment.data.get("comment") else {
+        return StatusCode::CONFLICT.into_response();
+    };
+    let location = match (comment.data.get("path"), comment.data.get("line_start"), comment.data.get("line_end")) {
+        (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
+        (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
+        (Some(path), _, _) => format!(" file {path}"),
+        _ => String::new(),
+    };
+    send_steering(
+        State(state),
+        Path(session_id),
+        Json(SteeringBody {
+            text: format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
+            request_id: Some(format!("revision-from-{comment_id}")),
+            routing: None,
+            source: "candidate_comment".into(),
+            attachments: Vec::new(),
+        }),
+    ).await
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct SandboxPromotionBody {
     candidate_id: String,
@@ -17646,6 +17718,11 @@ mod sandbox_promotion_tests {
         assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,
             "/sessions/session-1/sandbox/promote",
+            &participant(&["read", "comment"])
+        ));
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/sandbox/candidates/candidate-1/comments/comment-1/request-revision",
             &participant(&["read", "comment"])
         ));
         assert!(!participant_read_route_allowed(

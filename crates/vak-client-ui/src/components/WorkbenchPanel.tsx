@@ -493,6 +493,22 @@ export default function WorkbenchPanel() {
     }
   };
 
+  const requestRevisionFromComment = async (commentId: string) => {
+    const id = activeId();
+    const prepared = candidate();
+    if (!id || !prepared || reviewCommentBusy()) return;
+    setReviewCommentBusy(true);
+    setReviewCommentMessage(null);
+    try {
+      await api.requestRevisionFromCandidateComment(id, prepared.candidate.candidate_id, commentId);
+      setReviewCommentMessage("The Agent received this comment as a revision request. The saved draft is unchanged until it prepares a new version.");
+    } catch (error) {
+      setReviewCommentMessage(`Could not request a revision: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setReviewCommentBusy(false);
+    }
+  };
+
   const promoteCandidate = async () => {
     const value = candidate();
     if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError()) return;
@@ -580,6 +596,7 @@ export default function WorkbenchPanel() {
                     <For each={candidateComments()}>{(comment) => <article>
                       <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
+                      <Show when={comment.actor_id !== "operator"}><button type="button" class="button subtle" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button></Show>
                     </article>}</For>
                   </div>
                 </Show>

@@ -1008,6 +1008,10 @@ export function listSandboxCandidateComments(sessionId: string, candidateId: str
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
 }
 
+export function requestRevisionFromCandidateComment(sessionId: string, candidateId: string, commentId: string): Promise<InterventionReceipt> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments/${encodeURIComponent(commentId)}/request-revision`, { method: "POST" });
+}
+
 export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }
