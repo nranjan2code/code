@@ -58,8 +58,9 @@ Read before changing behaviour in these areas:
   the one to start from when adding a renderer).
 - **Decision and capability layers** — `41-capability-registry.md`,
   `42-managed-work-contracts.md`, `45-prompt-layers.md`,
-  `47-commitment-kernel.md` (the intent kernel, which subsumes skill
-  intent-discovery), `50-call-and-evidence-contract.md`,
+  `47-commitment-kernel.md` (the intent kernel — strands, resolver tiers,
+  authority, the control plane; it subsumes skill intent-discovery),
+  `50-call-and-evidence-contract.md`,
   `52-outcome-directed-runtime.md`, `43-governed-self-evolution.md`,
   `44-shared-config.md`, `39-plugin-ecosystem.md`, `40-harness-engineering.md`.
 - **Install and onboarding** — `46-stabilization-install-and-onboarding.md`,
@@ -452,12 +453,24 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     states the invariant as a predicate, and there is deliberately no `join`
     to reach for by accident. Intent never gates the permission engine —
     permission is evaluated exactly as before and intent may only add a
-    requirement on top, so a resolution bug cannot authorize anything. An
-    uncertain reading resolves to the general engagement, byte-for-byte the
-    behaviour before the kernel existed: being unsure must never silently
-    remove a tool. An envelope is pre-authorization *within* existing
+    requirement on top, so a resolution bug cannot authorize anything.
+    `DomainSet::All` means everything and only a *disabled* kernel produces
+    it; an uncertain reading resolves to the explicit *orienting* engagement
+    (general posture, orientation-floor domains) and is never excluded at
+    stage 4 — it sees less and reaches the rest through `find_tools`, so
+    being unsure never removes a tool it cannot get back. A request resolves
+    to its **strands** (one reading per part, with relations and cross-turn
+    lineage); the turn's engagement meets every authority-bearing limit
+    across them and unions their domains. Resolver tiers 2/3 may raise
+    stakes or evidence and never lower either; their limits meet the free
+    tier's. The tier-1 lexicon is pinned to `RESOLVER_VERSION` by a digest
+    test, and `now` is an input to `resolve`/`derive`, never a clock read
+    inside them. An envelope is pre-authorization *within* existing
     authority, never a grant of new authority, and irreversible work reaches
-    a human whatever was delegated.
+    a human whatever was delegated. Control authority comes from the
+    channel, never from text: `ControlSource` is stamped by the transport,
+    human free text is always steering, and only an explicit command
+    (`/stop`, `/pause`, `/goal replace …`, a bare `stop`) is control.
 33. **The runtime evaluates satisfaction; the model never does.** The model
     may propose criteria; it may not mark one passed. A criterion's
     evidentiary strength comes from how it was established — a command the
@@ -711,13 +724,18 @@ Specialised presentation recipes are eligible only when the required typed
 result and evidence are present; otherwise deterministic Markdown fallback is
 used with a diagnostic. No surface may independently classify a result.
 
-Collaborative messages are classified as new work, additions, corrections,
-replacements, status requests, pauses, resumes, or cancellations. The
-`GoalState` projection exposes the current objective, additions, superseded
-revisions, and control state. Replan/reprioritise/add/remove requests use the
-existing intervention and approval path, create a new outcome revision, and
-queue work at a safe boundary. Human approval is required whenever the change
-would exceed the current authority or affect an irreversible action.
+A collaborative message adds to the active goal unless it is an explicit
+command: `/goal fix …` corrects (keeping the additions), `/goal replace …`
+replaces, `/pause` / `/resume` / `/stop` / `/status` change control state.
+There is no text classifier for this — one read "replace the deprecated API
+call" as a goal replacement and wiped the additions. The `GoalState`
+projection exposes the current objective, additions, superseded revisions,
+and control state. Replan/reprioritise/add/remove commands use the
+intervention path under the `ControlSource` matrix (humans: queued as a new
+outcome revision; agents: only their own children, scope changes require a
+human; systems: observe only) and queue work at a safe boundary. Human
+approval is required whenever the change would exceed the current authority
+or affect an irreversible action.
 
 `OutputTimeline` is the cross-surface contract for web, desktop, and channel
 delivery. It carries result outcome metadata, evidence references, diagnostics,
@@ -768,7 +786,13 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      what thinking gets replayed. Native Ollama
                      (`ollama.rs`) speaks `/api/chat` directly with
                      `keep_alive`/`num_ctx`, fills prefill/load timing into
-                     `Usage`, and never replays thinking (docs/design/
+                     `Usage`, never replays thinking, and honours
+                     `ChatRequest.think` (`Some(false)` on the structured
+                     side-dispatches: classify, compaction, handoff, plan --
+                     measured live, a thinking model spent its whole budget
+                     deliberating and returned no JSON; the completion judge
+                     keeps the default because thinking made its verdicts
+                     parse 6/6 instead of 3/6) (docs/design/
                      68-context-engine.md §8, §10, §11)
                      + Gemini Live voice synthesis
                      (google_live.rs): BidiGenerateContent WebSocket
@@ -846,8 +870,12 @@ crates/vak-plugin    plugin packages: manifest parsing, capability
                      (docs/design/39-plugin-ecosystem.md)
 crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      seven behavioural axes, deterministic signal extraction,
-                     the resolution cascade, the autonomy/envelope model, and
-                     the narrowing lattice. NO vak dependencies -- a pure
+                     clause segmentation into strands (strand.rs), the
+                     resolution cascade with the classifier prompt/parse for
+                     tiers 2/3, the autonomy/envelope model, the control
+                     plane (`ControlSource`, `parse_command`,
+                     `evaluate_intervention` in outcome.rs) and the
+                     narrowing lattice. NO vak dependencies -- a pure
                      decision layer, unit-testable without a network, a model,
                      or a config file. `Limits` is a meet semilattice whose top
                      element reproduces pre-kernel behaviour; `meet` is the only
@@ -964,8 +992,13 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no
-                     wider), commitments.rs (opens a commitment for a durable
-                     turn, brackets an episode, classifies what it achieved,
+                     wider; `open_threads` for strand lineage,
+                     `DeferringApprover` for the `Defer` HIL mode; the
+                     tier-2/3 `Classify` dispatch lives on `Core` as
+                     `resolve_turn_intent_with_escalation`, spend-gated,
+                     watchdogged, fail-open), commitments.rs (opens or
+                     continues one commitment per durable thread,
+                     brackets an episode per strand, classifies what it achieved,
                      evaluates workspace criteria, and runs the zero-token
                      upkeep pass: schedule wakes, predicate wakes, escalation
                      policies, explicit expiry), tools_commitments.rs (the

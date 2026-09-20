@@ -253,7 +253,10 @@ async fn complete_text(
         temperature: None,
         cache: None,
         previous_response_id: None,
-        think: None,
+        // A TOML DAG, not a deliberation: measured live, thinking made no
+        // difference to whether the plan parsed and cost up to 5x the
+        // latency.
+        think: Some(false),
     };
     let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
     for attempt in 1..=PLANNER_CALL_ATTEMPTS {
