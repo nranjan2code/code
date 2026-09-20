@@ -276,11 +276,17 @@ break and is surfaced as an `Activity` so regressions are visible.
 **Placement.** The tail rides the last user message, after any
 `tool_result` blocks (every adapter keeps results first) and *before* any
 text, so the last thing the model reads is the user's own words — the
-directive on the first step, a runtime nudge on a redo. When no user text
-follows (a step continuing from tool results), the tail ends with a
-`<directive>` echo of the current request. Measured live: with the tail
-appended after the directive, `gemma4:e2b-mlx` answered the `<stance>` block
-("As an analytical agent, I can handle tasks…") instead of the question.
+directive on the first step, a runtime nudge on a redo. The tail never
+restates the directive: measured live, an echo after a tool result read as
+the user asking again and the same card was re-emitted up to nineteen
+times in one turn. Also measured: with the tail appended after the
+directive, `gemma4:e2b-mlx` answered the `<stance>` block ("As an
+analytical agent, I can handle tasks…") instead of the question.
+
+**Repeated cards.** An `emit_*_card` call identical to one already shown
+is acknowledged as a no-op; after three consecutive all-repeat batches the
+turn closes on that card as its answer instead of spending the turn budget
+on acknowledgements.
 
 **Empty steps.** A response with neither text nor a tool call (a
 thinking-only completion — the model planned an action in its reasoning
@@ -304,8 +310,12 @@ engine adds a runtime check, not more prose:
   deixis such as "current", "right now", "today", "latest" sets the
   `live-data` domain on the reading — and no retrieval-shaped call succeeded
   in the run): the answer or card can only repeat an earlier turn's figure.
-  One `[freshness-check]` redo asks for a retrieval this turn or an explicit
-  "no live data". Measured live: five of six replays of a "current weather"
+  A card call is intercepted before execution and answered with a
+  `[freshness-check]` error value the model repairs by retrieving first; a
+  prose answer gets the same as one redo nudge. Either way once per turn,
+  and an explicit "no live data" is accepted. The signal sets the domain
+  only — raising the evidence standard through the stance text made the
+  small model deliberate in its thinking channel and emit nothing. Measured live: five of six replays of a "current weather"
   question emitted a card carrying a temperature from a previous turn.
 - **Model drift** (the model's step does not serve the current directive:
   wrong domain tool, answering a previous question, restating a card): the

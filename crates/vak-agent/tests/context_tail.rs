@@ -193,8 +193,8 @@ async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     assert_eq!(texts[1], "run the check");
 
     // Step 2: the last user message carries the tool result; the tail rides
-    // after it (tool results stay first for every adapter) and ends with a
-    // `<directive>` echo, since no user text follows it.
+    // after it (tool results stay first for every adapter), byte-identical
+    // to step 1's and with no restatement of the directive.
     let step2_last = requests[1].messages.last().unwrap();
     assert!(matches!(
         step2_last.content.first(),
@@ -204,11 +204,8 @@ async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
         ContentBlock::Text { text } => text.clone(),
         other => panic!("expected the tail after the result, got {other:?}"),
     };
-    assert!(
-        tail_step_2.starts_with(&tail_step_1),
-        "tail body identical across steps"
-    );
-    assert!(tail_step_2.ends_with("<directive>\nrun the check\n</directive>"));
+    assert_eq!(tail_step_2, tail_step_1, "tail identical across steps");
+    assert!(!tail_step_2.contains("<directive>"));
 }
 
 /// Cache breakpoints land after the stable prefix, after the last message of

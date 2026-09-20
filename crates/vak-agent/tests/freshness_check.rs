@@ -344,3 +344,99 @@ async fn a_thinking_only_step_gets_one_redo_to_act() {
         "exactly one empty-step nudge: {nudges:?}"
     );
 }
+
+fn card_call(id: &str, value: &str) -> AssistantMessage {
+    AssistantMessage {
+        content: vec![ContentBlock::ToolUse {
+            id: id.into(),
+            name: "emit_metric_card".into(),
+            input: serde_json::json!({"semantic_type":"metric","payload":{"label":"Delhi","value":value,"unit":"C"}}),
+        }],
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        model: "test-model".into(),
+        response_id: None,
+    }
+}
+
+struct FakeCardTool;
+
+#[async_trait]
+impl Tool for FakeCardTool {
+    fn name(&self) -> &str {
+        "emit_metric_card"
+    }
+    fn description(&self) -> &str {
+        "fake card tool for tests"
+    }
+    fn schema(&self) -> Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("{\"ok\":true}")
+    }
+}
+
+#[tokio::test]
+async fn a_card_in_a_live_data_turn_is_gated_until_something_is_retrieved() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "freshness-card-gate",
+        vec![
+            // Card straight from memory: not executed, error value back.
+            card_call("c1", "29.1"),
+            // Repairs: retrieves, then the card from the result is shown.
+            search_call("s1"),
+            card_call("c2", "26.4"),
+            text_msg("Delhi is at 26.4 C (example-met.in, 05:30)."),
+        ],
+        true,
+    )
+    .await;
+    agent.config.tools.push(Arc::new(FakeCardTool));
+    let outcome = agent
+        .run(
+            "what is the current weather in new delhi",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
+
+    let results: Vec<(String, bool)> = futures::executor::block_on(async {
+        agent
+            .session
+            .lock()
+            .await
+            .message_chain()
+            .iter()
+            .flat_map(|(_, m)| m.content.clone())
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => Some((content, is_error)),
+                _ => None,
+            })
+            .collect()
+    });
+    assert!(
+        results
+            .iter()
+            .any(|(c, e)| *e && c.starts_with("[freshness-check]")),
+        "the first card must come back as a freshness error: {results:?}"
+    );
+    assert!(
+        !user_texts(&agent)
+            .iter()
+            .any(|t| t.starts_with("[freshness-check]")),
+        "the gate fired at the card, so no second nudge on the final text"
+    );
+}

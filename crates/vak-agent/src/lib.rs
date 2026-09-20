@@ -504,17 +504,26 @@ impl AgentConfig {
 /// session-derived sections `SessionLog::tail_sections()` returned.
 /// Sections absent from `sections` are omitted entirely, never emitted as an
 /// empty tag pair.
+/// The no-op result for an `emit_*_card` call identical to one already shown
+/// this run (cards are Vak's own display channel; a repeat is not an error).
+const CARD_REPEAT_ACK: &str = "Card already displayed to the user. Do not call it again: add at most one short sentence and finish.";
+
+/// Consecutive all-repeat card batches after which the turn closes on the
+/// card as its answer. Three: one repeat is a slip the ack corrects, two is
+/// a model that did not read it, three is one that will not.
+const CARD_REPEAT_EXHAUSTION_THRESHOLD: u32 = 3;
+
 /// Attaches the turn's tail to the last user message
 /// (docs/design/68-context-engine.md §6): after any `tool_result` blocks and
 /// BEFORE any text, so the last thing the model reads is the user's own
 /// words (the directive, or a runtime nudge) and never the runtime's
 /// context. Observed live: with the tail appended after the directive, a
 /// small model answered the `<stance>` block ("As an analytical agent, I can
-/// handle tasks…") instead of the question. When no text follows the tail
-/// (a step that continues from tool results), the tail ends with a
-/// `<directive>` echo of the current request so the ask is still the
-/// nearest instruction.
-fn attach_tail(messages: &mut [Message], tail: &str, directive: &str) {
+/// handle tasks…") instead of the question. The tail never restates the
+/// directive: an echo after a tool result reads as the user asking again
+/// (measured live: "since the user is asking again…" followed by the same
+/// card re-emitted up to nineteen times).
+fn attach_tail(messages: &mut [Message], tail: &str) {
     if tail.is_empty() {
         return;
     }
@@ -528,15 +537,9 @@ fn attach_tail(messages: &mut [Message], tail: &str, directive: &str) {
         .content
         .iter()
         .position(|block| matches!(block, ContentBlock::Text { .. }));
-    let mut block = tail.to_string();
-    if first_text.is_none() && !directive.trim().is_empty() {
-        block.push_str(&format!(
-            "\n<directive>\n{}\n</directive>",
-            directive.trim()
-        ));
-    }
     let at = first_text.unwrap_or(last.content.len());
-    last.content.insert(at, ContentBlock::text(block));
+    last.content
+        .insert(at, ContentBlock::text(tail.to_string()));
 }
 
 fn compose_tail(tail: &TailInput, sections: &vak_session::TailSections) -> String {
@@ -1249,6 +1252,7 @@ impl Agent {
         let mut retrieval_succeeded_this_run = false;
         let mut freshness_repair_attempted = false;
         let mut empty_step_repair_attempted = false;
+        let mut card_repeat_streak: u32 = 0;
         let wants_live_data = self
             .session
             .lock()
@@ -1542,7 +1546,7 @@ impl Agent {
                 // The tail is one final text block on the last user message
                 // (after any tool_result blocks), never a separate consecutive
                 // user message (docs/design/68-context-engine.md §6).
-                attach_tail(&mut messages, &turn_tail, &prompt_owned);
+                attach_tail(&mut messages, &turn_tail);
                 let session_key = session
                     .header()
                     .map(|header| header.session_id.clone())
@@ -1643,7 +1647,7 @@ impl Agent {
                             request = {
                                 let session = self.session.lock().await;
                                 let mut messages = session.derive_with_plan(&plan);
-                                attach_tail(&mut messages, &turn_tail, &prompt_owned);
+                                attach_tail(&mut messages, &turn_tail);
                                 let session_key = session
                                     .header()
                                     .map(|header| header.session_id.clone())
@@ -2227,8 +2231,53 @@ impl Agent {
             // bash" are different situations even if both calls land in the
             // same batch and finish in the opposite order.
             let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
+            // Freshness gate at the earliest point (docs/design/68 §7): a
+            // card in a live-data turn with nothing retrieved yet would show
+            // a carried-over figure. The call is not executed; the model
+            // gets an error value it can repair by retrieving first. Once.
+            let (calls, gated): (Vec<PendingToolCall>, Vec<PendingToolCall>) =
+                calls.into_iter().partition(|call| {
+                    !(wants_live_data
+                        && !retrieval_succeeded_this_run
+                        && !freshness_repair_attempted
+                        && self.tool_presents_cards(&call.name))
+                });
+            if !gated.is_empty() {
+                freshness_repair_attempted = true;
+            }
             let mut results = self.execute_batch(calls, &cancel, &events).await;
+            results.extend(gated.into_iter().map(|call| {
+                (
+                    call.id,
+                    ToolRunOutput::Err(
+                        "[freshness-check]: not shown — this asks for a value as it stands now and \
+                         nothing has been retrieved on this turn, so the card would carry a figure \
+                         from an earlier answer. Call a retrieval tool first and build the card from \
+                         what it returns, or say plainly that you have no live data."
+                            .into(),
+                    ),
+                )
+            }));
             self.record_worker_work(&task_assignments, &results).await;
+            // Identical-card repeat breaker: the no-op ack ("already
+            // displayed") is enough for a model that reads it; one that
+            // re-emits the same card anyway (measured live: up to nineteen
+            // times in one turn) would otherwise spend the whole turn budget
+            // on acks. The card it keeps re-emitting IS its answer, so after
+            // CARD_REPEAT_EXHAUSTION_THRESHOLD consecutive all-repeat batches
+            // the turn closes on that answer.
+            let all_repeats = !results.is_empty()
+                && results.iter().all(|(_, output)| {
+                    matches!(output, ToolRunOutput::Ok(text) if text.starts_with(CARD_REPEAT_ACK))
+                });
+            card_repeat_streak = if all_repeats {
+                card_repeat_streak + 1
+            } else {
+                0
+            };
+            if card_repeat_streak >= CARD_REPEAT_EXHAUSTION_THRESHOLD {
+                return self.card_repeat_outcome().await;
+            }
             // Classify unresolved correctable tool failures this turn for the
             // repair budget (see `reconcile_repair_budget`). Computed before
             // `results` is consumed into tool-result blocks below, and keyed
@@ -4255,17 +4304,37 @@ impl Agent {
                 }
             }
         }
-        results.extend(repeats.into_iter().map(|id| {
-            (
-                id,
-                ToolRunOutput::Ok(
-                    "Card already displayed to the user. Do not call it again: add at most one \
-                     short sentence and finish."
-                        .into(),
-                ),
-            )
-        }));
+        results.extend(
+            repeats
+                .into_iter()
+                .map(|id| (id, ToolRunOutput::Ok(CARD_REPEAT_ACK.into()))),
+        );
         results
+    }
+
+    /// The turn's answer when the model kept re-emitting a card it had
+    /// already shown: the card stands, the loop stops paying for acks.
+    async fn card_repeat_outcome(&self) -> TurnOutcome {
+        self.record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Succeeded,
+            "card-repeat-exhausted".into(),
+            Some(format!(
+                "{CARD_REPEAT_EXHAUSTION_THRESHOLD} consecutive steps re-emitted an already-shown card; \
+                 the turn closed on that card as its answer"
+            )),
+            std::collections::BTreeMap::new(),
+        )
+        .await;
+        TurnOutcome::Completed {
+            response: AssistantMessage {
+                content: Vec::new(),
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: self.config.model.clone(),
+                response_id: None,
+            },
+        }
     }
 
     async fn execute_batch_calls(
