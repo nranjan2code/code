@@ -32,7 +32,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
     setError(null);
     try {
       const response = await api.createCoworkingInvitation(props.sessionId, name().trim(), hours());
-      setIssuedToken(response.token);
+      setIssuedToken(`${response.invitation.conversation_id}.${response.token}`);
       setCopied(false);
       setName("");
       await refresh();
@@ -74,8 +74,8 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
       <Show when={error()}>{(message) => <p class="coworking-share-error" role="alert">{message()}</p>}</Show>
       <Show when={issuedToken()}>{(token) => <div class="coworking-issued" aria-live="polite">
         <strong>Invitation created</strong>
-        <p>Copy this private token now. It appears only once. The recipient can use it as a bearer credential for this conversation’s read endpoints.</p>
-        <div class="coworking-token"><input readOnly aria-label="Invitation token" value={token()} onFocus={(event) => event.currentTarget.select()} /><button type="button" class="btn" onClick={() => void copyToken()}><Icon name={copied() ? "check" : "copy"} size={14} /> {copied() ? "Copied" : "Copy"}</button></div>
+        <p>Send the private code through a channel you trust. It appears only once. The recipient can open <a href={`${api.backendUrl()}/app/?shared=1`} target="_blank" rel="noopener noreferrer">the shared conversation view</a> and paste it there.</p>
+        <div class="coworking-token"><input readOnly aria-label="Invitation code" value={token()} onFocus={(event) => event.currentTarget.select()} /><button type="button" class="btn" onClick={() => void copyToken()}><Icon name={copied() ? "check" : "copy"} size={14} /> {copied() ? "Copied" : "Copy"}</button></div>
         <button type="button" class="ghost small" onClick={() => setIssuedToken(null)}>Done with token</button>
       </div>}</Show>
       <form class="coworking-invite-form" onSubmit={(event) => void invite(event)}>
