@@ -133,6 +133,7 @@ export default function WorkbenchPanel() {
   const [copiedLog, setCopiedLog] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [candidate, setCandidate] = createSignal<Awaited<ReturnType<typeof api.exportSandboxCandidate>> | null>(null);
+  const [pendingCandidates, setPendingCandidates] = createSignal<api.SandboxCandidateRecord[]>([]);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
   const [reviewOpen, setReviewOpen] = createSignal(false);
@@ -173,6 +174,7 @@ export default function WorkbenchPanel() {
     setArtifactContent(null);
     setArtifactError(null);
     setCandidate(null);
+    setPendingCandidates([]);
     setPromotionMessage(null);
     setReviewOpen(false);
     setReviewedPath(null);
@@ -200,15 +202,14 @@ export default function WorkbenchPanel() {
       const sessionId = activeId();
       if (!sessionId) return key;
       void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
-        if (disposed || candidate()) return;
+        if (disposed) return;
+        if (reviewOpen() && candidate()?.execution_id !== exec.id) return;
         const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-        const pending = records.filter((record) => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id));
-        const latest = pending[pending.length - 1];
-        if (latest?.kind === "Candidate") {
-          const prepared = latest.record;
-          setCandidate(prepared);
-          setReviewedFiles(prepared.candidate.files.map((file) => file.path));
-          setReviewedPath(prepared.candidate.files[0]?.path ?? null);
+        const pending = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+        setPendingCandidates(pending);
+        if (!reviewOpen() && !pending.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) {
+          if (pending.length > 0) selectCandidate(pending[pending.length - 1]);
+          else setCandidate(null);
         }
       }).catch(() => { /* Review remains available by preparing it again. */ });
       onCleanup(() => { disposed = true; });
@@ -371,18 +372,46 @@ export default function WorkbenchPanel() {
   const isVideoArtifact = (path: string, mime?: string) =>
     mime?.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(path);
 
-  const reviewCandidate = async () => {
-    const exec = currentExec();
+  function selectCandidate(prepared: api.SandboxCandidateRecord) {
+    setCandidate(prepared);
+    setReviewedFiles(prepared.candidate.files.map((file) => file.path));
+    setInspectedFiles([]);
+    setReviewedPath(prepared.candidate.files[0]?.path ?? null);
+    setReviewFileError(null);
+    setBeforeContent(null);
+    setAfterContent(null);
+    setReviewCommentMessage(null);
+  }
+
+  const reviewCandidate = async (prepareNew = false, executionId?: string) => {
+    const exec = executionId ? executions().find((item) => item.id === executionId) : currentExec();
     const sessionId = activeId();
     if (!sessionId || !exec || exec.artifacts.length === 0) return;
+    if (!prepareNew) {
+      let saved: api.SandboxCandidateRecord[];
+      try {
+        const { records } = await api.listSessionSandboxRecords(sessionId);
+        if (activeId() !== sessionId) return;
+        const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
+        saved = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+        setPendingCandidates(saved);
+      } catch (error) {
+        setPromotionMessage(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (saved.length > 0) {
+        if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
+        setReviewOpen(true);
+        return;
+      }
+    }
     setCandidateBusy(true);
     setPromotionMessage(null);
     try {
       const prepared = await api.exportSandboxCandidate(sessionId, exec.id, exec.scratchDir, ".");
-      setCandidate(prepared);
-      setReviewedFiles(prepared.candidate.files.map((file) => file.path));
-      setInspectedFiles([]);
-      setReviewedPath(prepared.candidate.files[0]?.path ?? null);
+      if (activeId() !== sessionId) return;
+      setPendingCandidates((current) => [...current, prepared]);
+      selectCandidate(prepared);
       setReviewOpen(true);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
@@ -461,6 +490,7 @@ export default function WorkbenchPanel() {
       const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
       setPromotionMessage(`Applied and verified ${receipt.receipt.verification?.length ?? 0} file(s).`);
       setReviewOpen(false);
+      setPendingCandidates((current) => current.filter((record) => record.candidate.candidate_id !== value.candidate.candidate_id));
       setCandidate(null);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
@@ -479,6 +509,17 @@ export default function WorkbenchPanel() {
               <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
             </header>
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
+              <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
+                <label for="candidate-review-version">Draft version</label>
+                <select id="candidate-review-version" value={prepared().candidate.candidate_id} onChange={(event) => {
+                  const selected = pendingCandidates().find((record) => record.candidate.candidate_id === event.currentTarget.value);
+                  if (selected) selectCandidate(selected);
+                }}>
+                  <For each={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id)}>{(record, index) =>
+                    <option value={record.candidate.candidate_id}>Version {index() + 1} · {new Date(record.updated_at).toLocaleString()}</option>
+                  }</For>
+                </select>
+              </Show>
               <div class="candidate-review-counts">
                 <strong>{candidateSummary().newFiles} new</strong>
                 <strong>{candidateSummary().changedFiles} changed</strong>
@@ -487,6 +528,7 @@ export default function WorkbenchPanel() {
               <p><strong>Destination</strong> <span>{prepared().candidate.destination_root}</span></p>
               <p><strong>From Agent work</strong> <span>{prepared().execution_id.slice(0, 12)} · candidate {prepared().candidate.candidate_id.slice(0, 12)}</span></p>
               <p class="candidate-review-limitation">No candidate-bound check receipts are attached. Review the selected files before applying them.</p>
+              <button type="button" class="button subtle" disabled={candidateBusy()} onClick={() => void reviewCandidate(true, prepared().execution_id)}>Prepare newer version from current draft</button>
             </div>
             <div class="candidate-review-body">
               <div class="candidate-review-files" aria-label="Draft files">

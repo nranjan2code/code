@@ -488,6 +488,9 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-header h2 { margin: 0 0 4px; font-size: 19px; }
 .candidate-review-header p { margin: 0; color: var(--muted); font-size: 12px; }
 .candidate-review-summary { display: grid; gap: 5px; padding: 12px 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface-raised); }
+.candidate-review-summary label { color: var(--text-soft); font-size: 11px; font-weight: 620; }
+.candidate-review-summary select { width: min(340px, 100%); padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+.candidate-review-summary > .button { justify-self: start; margin-top: 5px; }
 .candidate-review-summary p { display: flex; gap: 9px; min-width: 0; margin: 0; font-size: 11px; color: var(--muted); }
 .candidate-review-summary p strong { flex: none; color: var(--text-soft); font-weight: 620; }
 .candidate-review-summary p span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
