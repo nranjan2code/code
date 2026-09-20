@@ -759,6 +759,7 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/coworking/invitations",
             get(list_coworking_invitations).post(create_coworking_invitation),
         )
+        .route("/sessions/{id}/coworking/me", get(coworking_me))
         .route(
             "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
             post(revoke_coworking_invitation),
@@ -3577,7 +3578,6 @@ pub(crate) struct AuthPolicy {
 /// attribution and narrower decisions without ever treating a collaborator
 /// as the workspace owner.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Participant attribution is consumed when write routes are admitted.
 pub(crate) enum AuthenticatedPrincipal {
     Operator,
     Participant(coworking::VerifiedPrincipal),
@@ -3588,19 +3588,30 @@ fn participant_read_route_allowed(
     path: &str,
     principal: &coworking::VerifiedPrincipal,
 ) -> bool {
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let ["sessions", conversation_id, rest @ ..] = segments.as_slice() else {
+        return false;
+    };
+    if *conversation_id != principal.conversation_id {
+        return false;
+    }
+    if method == axum::http::Method::POST {
+        return principal
+            .capabilities
+            .iter()
+            .any(|capability| capability == "comment")
+            && principal
+                .capabilities
+                .iter()
+                .any(|capability| capability == "read")
+            && matches!(*rest, ["sandbox", "candidates", _, "comments"]);
+    }
     if method != axum::http::Method::GET
         || !principal
             .capabilities
             .iter()
             .any(|capability| capability == "read")
     {
-        return false;
-    }
-    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
-    let ["sessions", conversation_id, rest @ ..] = segments.as_slice() else {
-        return false;
-    };
-    if *conversation_id != principal.conversation_id {
         return false;
     }
     matches!(
@@ -3613,6 +3624,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "candidates", _, "files"]
             | ["sandbox", "candidates", _, "files", "raw"]
             | ["sandbox", "candidates", _, "comments"]
+            | ["coworking", "me"]
     )
 }
 
@@ -7015,6 +7027,8 @@ struct CoworkingInvitationBody {
     display_name: String,
     #[serde(default = "default_coworking_invitation_hours")]
     expires_in_hours: u32,
+    #[serde(default)]
+    can_comment: bool,
 }
 
 fn default_coworking_invitation_hours() -> u32 {
@@ -7036,6 +7050,29 @@ fn conversation_audience(state: &AppState, id: &str) -> Option<String> {
     read_historical_header(state, id, None)?
         .conversation
         .map(|context| context.audience_id)
+}
+
+async fn coworking_me(
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match principal {
+        AuthenticatedPrincipal::Operator => {
+            Json(serde_json::json!({ "principal_id": "operator", "display_name": "You", "capabilities": ["owner"] })).into_response()
+        }
+        AuthenticatedPrincipal::Participant(participant)
+            if participant.conversation_id == conversation_id =>
+        {
+            Json(serde_json::json!({
+                "principal_id": participant.principal_id,
+                "display_name": participant.display_name,
+                "capabilities": participant.capabilities,
+            }))
+            .into_response()
+        }
+        AuthenticatedPrincipal::Participant(_) => StatusCode::FORBIDDEN.into_response(),
+    }
 }
 
 async fn list_coworking_invitations(
@@ -7088,7 +7125,11 @@ async fn create_coworking_invitation(
         display_name: display_name.to_string(),
         conversation_id: conversation_id.clone(),
         audience_id,
-        capabilities: vec!["read".into()],
+        capabilities: if body.can_comment {
+            vec!["read".into(), "comment".into()]
+        } else {
+            vec!["read".into()]
+        },
         token_hash: coworking::token_hash(&token),
         created_at: now.to_rfc3339(),
         expires_at: (now + chrono::Duration::hours(i64::from(body.expires_in_hours))).to_rfc3339(),
@@ -10100,6 +10141,7 @@ async fn list_sandbox_candidate_comments(
                 comments.push(serde_json::json!({
                     "comment_id": activity.activity_id,
                     "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
+                    "actor_name": activity.data.get("actor_name").map(String::as_str).unwrap_or("You"),
                     "text": activity.data.get("comment").cloned().unwrap_or_default(),
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
@@ -10122,6 +10164,7 @@ async fn list_sandbox_candidate_comments(
                 comments.push(serde_json::json!({
                     "comment_id": activity.activity_id,
                     "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
+                    "actor_name": activity.data.get("actor_name").map(String::as_str).unwrap_or("You"),
                     "text": activity.data.get("comment").cloned().unwrap_or_default(),
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
@@ -10137,6 +10180,7 @@ async fn list_sandbox_candidate_comments(
 async fn comment_on_sandbox_candidate(
     State(state): State<AppState>,
     Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
     Json(body): Json<CandidateCommentBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
@@ -10165,6 +10209,12 @@ async fn comment_on_sandbox_candidate(
     }) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if let AuthenticatedPrincipal::Participant(participant) = &principal
+        && conversation_audience(&state, &session_id).as_deref()
+            != Some(participant.audience_id.as_str())
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let path = body
         .path
         .as_deref()
@@ -10190,10 +10240,27 @@ async fn comment_on_sandbox_candidate(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("candidate-comment-{}", uuid::Uuid::now_v7()));
+    let request_id = match &principal {
+        AuthenticatedPrincipal::Operator => request_id,
+        AuthenticatedPrincipal::Participant(_) => {
+            format!("candidate-comment-{}", uuid::Uuid::now_v7())
+        }
+    };
     let mut data = std::collections::BTreeMap::new();
     data.insert("request_id".into(), request_id.clone());
-    data.insert("actor_id".into(), "operator".into());
+    match &principal {
+        AuthenticatedPrincipal::Operator => {
+            data.insert("actor_id".into(), "operator".into());
+            data.insert("actor_name".into(), "You".into());
+        }
+        AuthenticatedPrincipal::Participant(participant) => {
+            data.insert("actor_id".into(), participant.principal_id.clone());
+            data.insert("actor_name".into(), participant.display_name.clone());
+            data.insert("grant_id".into(), participant.grant_id.clone());
+        }
+    }
     data.insert("candidate_id".into(), candidate_id.clone());
+    data.insert("candidate_digest".into(), saved.candidate_digest.clone());
     data.insert("result_id".into(), saved.result_id.clone());
     data.insert("execution_id".into(), saved.execution_id.clone());
     if let Some(path) = path {
@@ -10206,9 +10273,7 @@ async fn comment_on_sandbox_candidate(
         data.insert("line_end".into(), line.to_string());
     }
     data.insert("comment".into(), text.to_string());
-    record_activity_or_buffer(
-        &handle,
-        vak_session::ActivityRecord {
+    let comment = vak_session::ActivityRecord {
             activity_id: format!("comment-{request_id}"),
             turn: None,
             kind: vak_session::ActivityKind::CandidateComment,
@@ -10216,8 +10281,25 @@ async fn comment_on_sandbox_candidate(
             label: "Candidate comment".into(),
             detail: None,
             data,
+        };
+    // A comment receipt must not claim success if its append-only record failed.
+    let recorded = match handle.session.lock() {
+        Ok(mut session) => match session.as_mut() {
+            Some(session) => session.append_activity(comment).is_ok(),
+            None => handle.activity_buffer.lock().map(|mut buffer| buffer.push(comment)).is_ok(),
         },
-    );
+        Err(_) => false,
+    };
+    if !recorded {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if matches!(principal, AuthenticatedPrincipal::Participant(_)) {
+        return (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "comment_id": format!("comment-{request_id}"), "intervention": false })),
+        )
+            .into_response();
+    }
     let location = match (path, body.line_start, body.line_end) {
         (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
         (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
@@ -17333,6 +17415,7 @@ mod sandbox_promotion_tests {
         let invalid_comment = comment_on_sandbox_candidate(
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
             Json(CandidateCommentBody {
                 text: "Change this".into(),
                 path: Some("not-reviewed.txt".into()),
@@ -17346,6 +17429,7 @@ mod sandbox_promotion_tests {
         let invalid_range = comment_on_sandbox_candidate(
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
             Json(CandidateCommentBody {
                 text: "Change this line".into(),
                 path: Some("result.txt".into()),
@@ -17553,6 +17637,16 @@ mod sandbox_promotion_tests {
             &axum::http::Method::POST,
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             &principal
+        ));
+        assert!(participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            &participant(&["read", "comment"])
+        ));
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/sandbox/promote",
+            &participant(&["read", "comment"])
         ));
         assert!(!participant_read_route_allowed(
             &axum::http::Method::GET,

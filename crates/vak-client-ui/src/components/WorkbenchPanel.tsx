@@ -578,7 +578,7 @@ export default function WorkbenchPanel() {
                   <div class="candidate-review-comments" aria-label="Comments on this draft">
                     <h4>Comments</h4>
                     <For each={candidateComments()}>{(comment) => <article>
-                      <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
+                      <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
                     </article>}</For>
                   </div>

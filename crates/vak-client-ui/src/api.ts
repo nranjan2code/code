@@ -1002,7 +1002,7 @@ export function commentOnSandboxCandidate(sessionId: string, candidateId: string
   });
 }
 
-export type SandboxCandidateComment = { comment_id: string; actor_id: string; text: string; path?: string; line_start?: number; line_end?: number; created_at?: string };
+export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; created_at?: string };
 
 export function listSandboxCandidateComments(sessionId: string, candidateId: string): Promise<{ comments: SandboxCandidateComment[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
@@ -1029,10 +1029,10 @@ export function listCoworkingInvitations(sessionId: string): Promise<{ invitatio
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`);
 }
 
-export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number): Promise<{ invitation: CoworkingInvitation; token: string }> {
+export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number, canComment = false): Promise<{ invitation: CoworkingInvitation; token: string }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`, {
     method: "POST",
-    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours }),
+    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours, can_comment: canComment }),
   });
 }
 

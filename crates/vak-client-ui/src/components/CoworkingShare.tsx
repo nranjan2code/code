@@ -7,6 +7,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
   const [invitations, setInvitations] = createSignal<api.CoworkingInvitation[]>([]);
   const [name, setName] = createSignal("");
   const [hours, setHours] = createSignal(24);
+  const [canComment, setCanComment] = createSignal(false);
   const [issuedToken, setIssuedToken] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
@@ -31,7 +32,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
     setBusy(true);
     setError(null);
     try {
-      const response = await api.createCoworkingInvitation(props.sessionId, name().trim(), hours());
+      const response = await api.createCoworkingInvitation(props.sessionId, name().trim(), hours(), canComment());
       setIssuedToken(`${response.invitation.conversation_id}.${response.token}`);
       setCopied(false);
       setName("");
@@ -68,7 +69,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
   return <div class="modal-backdrop" role="presentation" onClick={props.onClose}>
     <section class="modal coworking-share" role="dialog" aria-modal="true" aria-labelledby="coworking-share-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") props.onClose(); }} use:trapFocus>
       <header class="modal-header">
-        <div><h2 id="coworking-share-title">Invite someone to this conversation</h2><p>They can read this conversation and its saved drafts. They cannot send messages or change your workspace yet.</p></div>
+        <div><h2 id="coworking-share-title">Invite someone to this conversation</h2><p>They can read this conversation and its saved drafts. You can also let them leave comments on a saved draft. They cannot start Agent work or change your workspace.</p></div>
         <button type="button" class="icon-button subtle" aria-label="Close sharing" onClick={props.onClose}><Icon name="close" /></button>
       </header>
       <Show when={error()}>{(message) => <p class="coworking-share-error" role="alert">{message()}</p>}</Show>
@@ -83,14 +84,15 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
         <input id="coworking-name" value={name()} onInput={(event) => setName(event.currentTarget.value)} maxLength={120} placeholder="Name for this invitation" required />
         <label for="coworking-expiry">Access expires</label>
         <select id="coworking-expiry" value={hours()} onChange={(event) => setHours(Number(event.currentTarget.value))}><option value={24}>In 1 day</option><option value={168}>In 7 days</option><option value={720}>In 30 days</option></select>
-        <button type="submit" class="btn primary" disabled={busy() || !name().trim()}>{busy() ? "Creating…" : "Create read invitation"}</button>
+        <label class="coworking-comment-option"><input type="checkbox" checked={canComment()} onChange={(event) => setCanComment(event.currentTarget.checked)} /> Allow comments on saved drafts</label>
+        <button type="submit" class="btn primary" disabled={busy() || !name().trim()}>{busy() ? "Creating…" : canComment() ? "Create comment invitation" : "Create read invitation"}</button>
       </form>
       <div class="coworking-invitations">
         <h3>Invitations</h3>
         <Show when={!loading()} fallback={<p class="dim">Loading invitations…</p>}>
           <For each={invitations()} fallback={<p class="dim">No one has been invited to this conversation.</p>}>
             {(invitation) => <div class="coworking-invitation">
-              <div><strong>{invitation.display_name}</strong><span>{invitation.status === "active" ? `Read access · until ${new Date(invitation.expires_at).toLocaleString()}` : invitation.status === "revoked" ? "Access revoked" : "Access expired"}</span></div>
+              <div><strong>{invitation.display_name}</strong><span>{invitation.status === "active" ? `${invitation.capabilities.includes("comment") ? "Read and comment" : "Read"} · until ${new Date(invitation.expires_at).toLocaleString()}` : invitation.status === "revoked" ? "Access revoked" : "Access expired"}</span></div>
               <Show when={invitation.status === "active"}><button type="button" class="btn danger" disabled={busy()} onClick={() => void revoke(invitation.grant_id)}>Revoke</button></Show>
             </div>}
           </For>

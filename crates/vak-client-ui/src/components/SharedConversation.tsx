@@ -9,7 +9,7 @@ type SharedCandidate = {
     result_id?: string;
   };
 };
-type SharedComment = { comment_id: string; actor_id: string; text: string; path?: string; line_start?: number; line_end?: number };
+type SharedComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number };
 
 function visibleText(message: Message): string {
   return message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
@@ -27,6 +27,11 @@ export default function SharedConversation() {
   const [openFile, setOpenFile] = createSignal<{ candidateId: string; path: string; content?: string; imageUrl?: string; kind: string } | null>(null);
   const [comments, setComments] = createSignal<SharedComment[]>([]);
   const [fileError, setFileError] = createSignal<string | null>(null);
+  const [participantName, setParticipantName] = createSignal("");
+  const [canComment, setCanComment] = createSignal(false);
+  const [commentText, setCommentText] = createSignal("");
+  const [commentLine, setCommentLine] = createSignal("");
+  const [commentBusy, setCommentBusy] = createSignal(false);
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
   const stop = () => {
@@ -41,6 +46,10 @@ export default function SharedConversation() {
     setOpenFile(null);
     setComments([]);
     setFileError(null);
+    setParticipantName("");
+    setCanComment(false);
+    setCommentText("");
+    setCommentLine("");
   };
   onCleanup(stop);
 
@@ -133,14 +142,57 @@ export default function SharedConversation() {
     setError(null);
     setCredential({ conversationId: trimmed.slice(0, separator), token: trimmed.slice(separator + 1) });
     setCode("");
+    try {
+      const current = credential();
+      if (!current) return;
+      const me = await read(current.conversationId, current.token, "/coworking/me");
+      setParticipantName(me.display_name ?? "Guest");
+      setCanComment(Array.isArray(me.capabilities) && me.capabilities.includes("comment"));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return;
+    }
     await refresh();
     if (credential()) refreshTimer = setInterval(() => void refresh(), 10_000);
+  };
+
+  const postComment = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const current = credential();
+    const file = openFile();
+    if (!current || !file || !canComment() || !commentText().trim() || commentBusy()) return;
+    const line = commentLine().trim() ? Number(commentLine()) : undefined;
+    if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) {
+      setFileError("Enter a positive line number, or leave the line blank for a whole-file comment.");
+      return;
+    }
+    setCommentBusy(true);
+    setFileError(null);
+    try {
+      const response = await fetch(`/sessions/${encodeURIComponent(current.conversationId)}/sandbox/candidates/${encodeURIComponent(file.candidateId)}/comments`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${current.token}`, "Content-Type": "application/json" },
+        credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+        body: JSON.stringify({ text: commentText().trim(), path: file.path, line_start: line }),
+      });
+      if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended or commenting is not allowed."); }
+      if (!response.ok) throw new Error(`Could not save comment (${response.status}).`);
+      const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(file.candidateId)}/comments`);
+      if (credential()?.token !== current.token) return;
+      setComments(history.comments ?? []);
+      setCommentText("");
+      setCommentLine("");
+    } catch (cause) {
+      setFileError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCommentBusy(false);
+    }
   };
 
   return <main class="shared-conversation">
     <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
-      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>You are reading a conversation shared with you. You can follow its saved results and drafts; changes and Agent requests remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
+      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you` : "You"} can follow this conversation and its saved drafts{canComment() ? ", and leave comments on a draft" : ""}. Agent requests and workspace changes remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
@@ -150,7 +202,7 @@ export default function SharedConversation() {
       </section>
       <Show when={candidates().length > 0}><section class="shared-drafts"><h2>Saved drafts</h2><For each={candidates()}>{(record) => <div class="shared-draft"><strong>Draft {record.record.candidate?.candidate_id.slice(0, 8)}</strong><span>{record.record.candidate?.files.length ?? 0} files</span><ul><For each={record.record.candidate?.files ?? []}>{(file) => <li><button type="button" onClick={() => void showFile(record.record.candidate!.candidate_id, file.path)}><Icon name="file" size={13} />{file.path}</button></li>}</For></ul></div>}</For></section></Show>
       <Show when={fileError()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
-      <Show when={openFile()}>{(file) => <section class="shared-file"><div class="shared-file-head"><h2>{file().path}</h2><span>Saved draft {file().candidateId.slice(0, 8)}</span><button type="button" class="btn" onClick={() => { if (file().imageUrl) URL.revokeObjectURL(file().imageUrl!); setOpenFile(null); }}>Close</button></div><Show when={file().kind === "text"}><pre>{file().content}</pre></Show><Show when={file().kind === "image"}><img src={file().imageUrl} alt={file().path} /></Show><Show when={file().kind === "binary"}><p>This saved file has no inline preview in the shared view.</p></Show><div class="shared-file-comments"><h3>Comments on this draft</h3><For each={comments().filter((comment) => !comment.path || comment.path === file().path)} fallback={<p>No comments on this file yet.</p>}>{(comment) => <div class="shared-file-comment"><strong>{comment.actor_id}</strong><Show when={comment.line_start}><span>Line {comment.line_start}{comment.line_end ? `–${comment.line_end}` : ""}</span></Show><p>{comment.text}</p></div>}</For></div></section>}</Show>
+      <Show when={openFile()}>{(file) => <section class="shared-file"><div class="shared-file-head"><h2>{file().path}</h2><span>Saved draft {file().candidateId.slice(0, 8)}</span><button type="button" class="btn" onClick={() => { if (file().imageUrl) URL.revokeObjectURL(file().imageUrl!); setOpenFile(null); }}>Close</button></div><Show when={file().kind === "text"}><pre>{file().content}</pre></Show><Show when={file().kind === "image"}><img src={file().imageUrl} alt={file().path} /></Show><Show when={file().kind === "binary"}><p>This saved file has no inline preview in the shared view.</p></Show><div class="shared-file-comments"><h3>Comments on this draft</h3><For each={comments().filter((comment) => !comment.path || comment.path === file().path)} fallback={<p>No comments on this file yet.</p>}>{(comment) => <div class="shared-file-comment"><strong>{comment.actor_name ?? comment.actor_id}</strong><Show when={comment.line_start}><span>Line {comment.line_start}{comment.line_end ? `–${comment.line_end}` : ""}</span></Show><p>{comment.text}</p></div>}</For><Show when={canComment()}><form class="shared-comment-form" onSubmit={(event) => void postComment(event)}><label for="shared-comment-text">Leave a comment on this saved version</label><textarea id="shared-comment-text" value={commentText()} onInput={(event) => setCommentText(event.currentTarget.value)} maxLength={32768} rows={3} required /><label for="shared-comment-line">Line number (optional)</label><input id="shared-comment-line" type="number" min="1" step="1" value={commentLine()} onInput={(event) => setCommentLine(event.currentTarget.value)} disabled={file().kind !== "text"} /><button type="submit" class="btn primary" disabled={commentBusy() || !commentText().trim()}>{commentBusy() ? "Saving…" : "Save comment"}</button><p>Comments are visible to everyone in this conversation. They do not automatically instruct the Agent.</p></form></Show></div></section>}</Show>
     </div>}>
       <div class="shared-entry"><h1>Open a shared conversation</h1><p>Paste the private invitation code you received. The code stays in this tab while you are here.</p><form onSubmit={(event) => void open(event)}><label for="shared-code">Invitation code</label><input id="shared-code" type="password" autocomplete="off" spellcheck={false} value={code()} onInput={(event) => setCode(event.currentTarget.value)} required /><button type="submit" class="btn primary" disabled={!code().trim()}>Open conversation</button></form><Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show></div>
     </Show>

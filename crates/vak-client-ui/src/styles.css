@@ -456,6 +456,8 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .coworking-invite-form label:first-child, .coworking-invite-form input { grid-column: 1 / -1; }
 .coworking-invite-form input, .coworking-invite-form select, .coworking-token input { min-width: 0; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--text); font: inherit; }
 .coworking-invite-form button { align-self: end; }
+.coworking-invite-form .coworking-comment-option { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: 12px; }
+.coworking-invite-form .coworking-comment-option input { width: 16px; min-height: 16px; margin: 0; accent-color: var(--accent); }
 .coworking-invitations { margin-top: 24px; }
 .coworking-invitations h3 { margin: 0 0 10px; font-size: 12.5px; font-weight: 620; }
 .coworking-invitation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border-soft); }
@@ -514,6 +516,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .shared-file-comment strong { font-size: 12px; }
 .shared-file-comment span { margin-left: 9px; color: var(--muted); font-size: 11px; }
 .shared-file-comment p { margin: 6px 0 0; color: var(--text-soft); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+.shared-comment-form { display: grid; gap: 8px; margin-top: 19px; padding-top: 15px; border-top: 1px solid var(--border-soft); }
+.shared-comment-form label { color: var(--text-soft); font-size: 11.5px; font-weight: 580; }
+.shared-comment-form textarea, .shared-comment-form input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); font: inherit; font-size: 12.5px; }
+.shared-comment-form input { width: 120px; }
+.shared-comment-form button { justify-self: start; }
+.shared-comment-form p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
 .shared-conversation-error { color: var(--red); font-size: 12.5px; }
 .everyday-result { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface-raised); }
 .everyday-result strong { color: var(--text); font-size: 13px; }

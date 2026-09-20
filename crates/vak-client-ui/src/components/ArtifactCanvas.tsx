@@ -723,7 +723,7 @@ export default function ArtifactCanvas() {
             <div class="artifact-canvas-comments" aria-label="Comments on this saved draft">
               <For each={candidateComments()}>{(comment) =>
                 <article>
-                  <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
+                  <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                   <p>{comment.text}</p>
                 </article>
               }</For>
