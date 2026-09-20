@@ -888,7 +888,13 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         }
     }
 
-    // Temporal deixis ⇒ the answer must be retrieved now, and sourced.
+    // Temporal deixis ⇒ the answer must be retrieved on this turn. It sets
+    // the domain only; the runtime's freshness check enforces the retrieval.
+    // It deliberately does not raise the evidence standard: measured live,
+    // the `analytical` stance and "cite the sources" note that a `Cited`
+    // vote produces made gemma4:e2b-mlx deliberate in its thinking channel
+    // and emit nothing at all (three of six replays), where the same
+    // request under `direct-answer` produced a card six times out of six.
     let mut recency: Option<(&str, f64)> = None;
     for (phrase, weight) in RECENCY_PHRASES {
         let padded = format!(" {lower} ");
@@ -898,7 +904,6 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     }
     if let Some((phrase, weight)) = recency {
         out.domains.push("live-data".into());
-        out.evidence.add(Evidence::Cited, weight * 0.6);
         out.signals.push(Signal::new(
             SignalKind::Lexical,
             format!("recency:{}", phrase.trim().replace(' ', "-")),
@@ -1100,7 +1105,9 @@ mod tests {
             now.domains
         );
         assert!(now.signals.iter().any(|s| s.name.starts_with("recency:")));
-        assert_eq!(now.evidence.winner().map(|w| w.0), Some(Evidence::Cited));
+        // The domain is set; the evidence standard is left to the request's
+        // own words (the runtime freshness check does the enforcing).
+        assert_ne!(now.evidence.winner().map(|w| w.0), Some(Evidence::Cited));
 
         let timeless = extract(&request("explain how copper is refined"));
         assert!(!timeless.domains.iter().any(|d| d == "live-data"));
