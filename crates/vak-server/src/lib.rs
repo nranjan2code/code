@@ -731,6 +731,10 @@ fn router_with_state(state: AppState) -> Router {
             get(read_sandbox_candidate_file_raw),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
+            post(comment_on_sandbox_candidate),
+        )
+        .route(
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
@@ -9834,6 +9838,124 @@ async fn read_sandbox_candidate_file_raw(
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct CandidateCommentBody {
+    text: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    line_start: Option<u32>,
+    #[serde(default)]
+    line_end: Option<u32>,
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+async fn comment_on_sandbox_candidate(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    Json(body): Json<CandidateCommentBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let text = body.text.trim();
+    if text.is_empty() || text.len() > 32 * 1024 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if body.line_start.is_some_and(|line| line == 0)
+        || body.line_end.is_some_and(|line| line == 0)
+        || matches!((body.line_start, body.line_end), (Some(start), Some(end)) if end < start)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let Some(saved) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
+        {
+            Some(saved)
+        }
+        _ => None,
+    }) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let path = body
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    if path.is_some_and(|path| !saved.candidate.files.iter().any(|file| file.path == path)) {
+        return (StatusCode::BAD_REQUEST, "comment path is not in candidate").into_response();
+    }
+    if (body.line_start.is_some() || body.line_end.is_some()) && path.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "line anchor requires a candidate path",
+        )
+            .into_response();
+    }
+    let Some(handle) = state.get(&session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("candidate-comment-{}", uuid::Uuid::now_v7()));
+    let mut data = std::collections::BTreeMap::new();
+    data.insert("request_id".into(), request_id.clone());
+    data.insert("candidate_id".into(), candidate_id.clone());
+    data.insert("result_id".into(), saved.result_id.clone());
+    data.insert("execution_id".into(), saved.execution_id.clone());
+    if let Some(path) = path {
+        data.insert("path".into(), path.to_string());
+    }
+    if let Some(line) = body.line_start {
+        data.insert("line_start".into(), line.to_string());
+    }
+    if let Some(line) = body.line_end {
+        data.insert("line_end".into(), line.to_string());
+    }
+    data.insert("comment".into(), text.to_string());
+    record_activity_or_buffer(
+        &handle,
+        vak_session::ActivityRecord {
+            activity_id: format!("comment-{request_id}"),
+            turn: None,
+            kind: vak_session::ActivityKind::CandidateComment,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: "Candidate comment".into(),
+            detail: None,
+            data,
+        },
+    );
+    let location = match (path, body.line_start, body.line_end) {
+        (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
+        (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
+        (Some(path), _, _) => format!(" file {path}"),
+        _ => String::new(),
+    };
+    send_steering(
+        State(state),
+        Path(session_id),
+        Json(SteeringBody {
+            text: format!(
+                "Revise candidate {candidate_id} for result {}{location}. Human comment: {text}",
+                saved.result_id
+            ),
+            request_id: Some(request_id),
+            routing: None,
+            source: "candidate_comment".into(),
+            attachments: Vec::new(),
+        }),
+    )
+    .await
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct SandboxPromotionBody {
     candidate_id: String,
     files: Vec<String>,
@@ -16922,6 +17044,19 @@ mod sandbox_promotion_tests {
         )
         .await
         .unwrap();
+        let invalid_comment = comment_on_sandbox_candidate(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            Json(CandidateCommentBody {
+                text: "Change this".into(),
+                path: Some("not-reviewed.txt".into()),
+                line_start: None,
+                line_end: None,
+                request_id: Some("invalid-comment".into()),
+            }),
+        )
+        .await;
+        assert_eq!(invalid_comment.status(), StatusCode::BAD_REQUEST);
         let response = promote_sandbox_candidate(
             State(state),
             Path("session-1".into()),

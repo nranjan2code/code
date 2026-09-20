@@ -610,6 +610,8 @@ pub enum ActivityKind {
     PresentationProposal,
     /// User choice or feedback about a presentation projection.
     PresentationFeedback,
+    /// Human feedback anchored to an immutable candidate result and file.
+    CandidateComment,
     /// A bind-time capacity probe ran and recorded a `CapacityProfile`
     /// (docs/design/68-context-engine.md §1). Never model-visible.
     CapacityProbe,

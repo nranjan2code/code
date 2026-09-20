@@ -67,9 +67,12 @@ export default function ArtifactCanvas() {
     setFeedbackState("sending");
     const subject = artifact.artifactPath || artifact.title;
     try {
-      const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
-      const version = artifact.candidateId ? ` (candidate ${artifact.candidateId})` : "";
-      await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}${version}. Feedback: ${note}`);
+      if (artifact.candidateId) {
+        await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, { path: artifact.artifactPath || undefined });
+      } else {
+        const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
+        await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
+      }
       setFeedback("");
       setFeedbackState("sent");
     } catch {

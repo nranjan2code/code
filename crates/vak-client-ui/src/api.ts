@@ -989,6 +989,19 @@ export async function readSandboxCandidateFileRaw(sessionId: string, candidateId
   return URL.createObjectURL(await response.blob());
 }
 
+export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number }): Promise<InterventionReceipt> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`, {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      path: anchor?.path,
+      line_start: anchor?.lineStart,
+      line_end: anchor?.lineEnd,
+      request_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    }),
+  });
+}
+
 export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }

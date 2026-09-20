@@ -472,7 +472,7 @@ export default function WorkbenchPanel() {
     setReviewCommentBusy(true);
     setReviewCommentMessage(null);
     try {
-      await api.steer(id, `For result ${prepared.result_id}, revise draft ${prepared.candidate.candidate_id}, ${reviewedPath() ?? "the selected files"}: ${comment}`);
+      await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined });
       setReviewComment("");
       setReviewCommentMessage("Feedback sent to the Agent. This draft remains unchanged until it prepares a new version.");
     } catch (error) {

@@ -1407,6 +1407,18 @@ fn activity_item(
                 detail: activity.detail.clone(),
             },
         ),
+        ActivityKind::CandidateComment => (
+            OutputRole::User,
+            OutputKind::Information,
+            OutputContent::Information {
+                label: activity
+                    .data
+                    .get("path")
+                    .map(|path| format!("Comment on {path}"))
+                    .unwrap_or_else(|| "Comment on saved draft".into()),
+                detail: activity.data.get("comment").cloned(),
+            },
+        ),
         ActivityKind::Worker => (
             OutputRole::Worker,
             OutputKind::Progress,
