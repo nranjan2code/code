@@ -49,10 +49,18 @@ pub enum ControlKind {
     /// different directive than the current one — a mismatched-domain tool
     /// call, or a verbatim repeat of a past answer.
     SteeringDrift,
+    /// An `emit_*_card` call after a successful retrieval THIS run whose
+    /// own payload shares no topic word with either the directive or what
+    /// was just retrieved — never checked when nothing was retrieved this
+    /// run, since a card built from the model's own reasoning or from data
+    /// already in the directive routinely has no vocabulary overlap with
+    /// either and would otherwise be gated for being right
+    /// (docs/design/68-context-engine.md §7).
+    TopicMismatchCheck,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 9] = [
+    pub const ALL: [ControlKind; 10] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
@@ -62,6 +70,7 @@ impl ControlKind {
         ControlKind::FreshnessCheck,
         ControlKind::EmptyStep,
         ControlKind::SteeringDrift,
+        ControlKind::TopicMismatchCheck,
     ];
 
     /// The literal the message body begins with, for the model's benefit.
@@ -77,6 +86,7 @@ impl ControlKind {
             ControlKind::FreshnessCheck => "[freshness-check]",
             ControlKind::EmptyStep => "[empty-step]",
             ControlKind::SteeringDrift => "[steering-drift]",
+            ControlKind::TopicMismatchCheck => "[topic-mismatch]",
         }
     }
 
@@ -92,6 +102,7 @@ impl ControlKind {
                 | ControlKind::PresentationCheck
                 | ControlKind::FreshnessCheck
                 | ControlKind::EmptyStep
+                | ControlKind::TopicMismatchCheck
         )
     }
 }
@@ -327,6 +338,7 @@ mod tests {
                 ControlKind::PresentationCheck,
                 ControlKind::FreshnessCheck,
                 ControlKind::EmptyStep,
+                ControlKind::TopicMismatchCheck,
             ]
         );
     }

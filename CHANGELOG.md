@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.1 — 2026-09-20
+
+Fixed a real regression found within hours of the 3.5.0 release, on the actual production install: asked "what is the current top news in AI", the model correctly called `tavily_search` and got real AI-news results back, then wrote `emit_metric_card` for "Noida Weather, 28°C" — a payload copied verbatim from an unrelated, much older turn still sitting in context — instead of answering from the evidence it had just retrieved. The freshness check added in 3.5.0 had nothing to say: a retrieval genuinely had succeeded this run.
+
+- **Topic-mismatch check** (`[topic-mismatch]`, docs/design/68-context-engine.md §7): after a retrieval succeeds this run, an `emit_*_card` call is intercepted before execution if its own payload shares no word with either the directive or this turn's own retrieved evidence text — checked against both, not the directive alone, so a card correctly titled from what was actually found ("OpenAI announces GPT-6" for a directive that only said "AI news") still passes on the evidence's own words. One repair; the second strike fails closed with the raw evidence quoted, never a wrong card and never nothing. Deliberately scoped to fire only when a retrieval has already succeeded this run — checked unscoped first, which broke a real, previously-passing test: a legitimate chart card with a sparse, structural payload (`{"chart_type":"line","series":[]}`) shares no vocabulary with any directive, retrieved or not, whether it is right or wrong.
+
 ## 3.5.0 — 2026-09-20
 
 Context engine (docs/design/68-context-engine.md). Found from a weather question on `gemma4:e2b-mlx` answered in prose instead of a card: the request carried 29.9k tokens of history because every turn's text went out verbatim until 80% of the declared window, historical tool results were cut to 300 characters blind, the system prompt carried a per-turn timestamp that broke the provider prefix cache on every turn (Ollama re-prefilled ~27k tokens, ~40s), and thirty tool schemas plus an inline MCP catalogue cost 12k tokens before any history. Replayed against the live model: it called a tool 6/6 with ≤13k tokens of context and 0/6 at ≥18k. Zero users, so this is a replacement, not a migration.

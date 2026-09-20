@@ -330,6 +330,26 @@ engine adds a runtime check, not more prose:
   horizon. Three consecutive model-drift events end the turn with the
   system-authored degraded outcome (same shape as tool-repair exhaustion in
   15-reliability.md).
+- **Topic mismatch** (a card's own content is unrelated to both the
+  directive and this turn's own retrieval, found in real post-release use:
+  asked "what is the current top news in AI", the model correctly called
+  `tavily_search`, got real AI-news results back, and then wrote
+  `emit_metric_card` for "Noida Weather, 28°C" — a payload copied from an
+  unrelated, much older turn still sitting in context. Freshness had nothing
+  to say: a retrieval genuinely had succeeded this run). The check is a word-
+  overlap test between the card's serialized payload and the directive plus
+  this turn's own retrieved evidence text (never the directive alone —
+  evidence is far richer, so a card correctly titled from what was actually
+  found, e.g. "OpenAI announces GPT-6" for a directive that only said "AI
+  news", still passes on zero overlap against the directive). Deliberately
+  **scoped to only fire when a retrieval has already succeeded this run**:
+  a card built from the model's own reasoning or from data already in the
+  directive routinely shares no vocabulary with anything (an empty chart
+  skeleton, a bare numeric metric) whether it is right or wrong, and
+  checking those broke a real, previously-passing test the first time this
+  was tried unscoped. A gated card is intercepted before execution
+  (`[topic-mismatch]`, one repair); the second strike fails closed with the
+  raw evidence text quoted rather than a wrong card or nothing.
 
 A card-only turn is a complete answer: the outcome evaluator sees the turn's
 presentation entries as response content, so a model that emits a card and

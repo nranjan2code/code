@@ -772,11 +772,182 @@ fn first_sentence_fallback(text: &str) -> String {
 /// should not spam the ledger with an activity every turn.
 const CAPACITY_FEEDBACK_CHANGE_THRESHOLD: f64 = 0.05;
 
+/// Words too generic to establish that a card is *about* the same thing as
+/// the directive: recency deixis ("current", "now") appears in both a
+/// legitimate live-data directive and an unrelated one, and would make any
+/// two such directives look related if left in; ordinary function words and
+/// a few request-shaped verbs are excluded for the same reason. Deliberately
+/// small and topic-neutral — this never grows into a per-domain keyword
+/// list, it only strips words that carry no topic of their own.
+const TOPIC_STOPWORDS: &[&str] = &[
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "what",
+    "who",
+    "when",
+    "where",
+    "how",
+    "why",
+    "current",
+    "currently",
+    "now",
+    "today",
+    "tonight",
+    "latest",
+    "right",
+    "this",
+    "that",
+    "of",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "and",
+    "or",
+    "with",
+    "me",
+    "please",
+    "give",
+    "tell",
+    "show",
+    "get",
+    "find",
+    "you",
+];
+
+/// Lower-cased, stopword-stripped word set of `text`, for a cheap topic
+/// overlap check — not a search index, just "do these two strings share a
+/// real word".
+fn topic_tokens(text: &str) -> std::collections::HashSet<String> {
+    text.to_ascii_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.len() > 2 && !TOPIC_STOPWORDS.contains(word))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether an `emit_*_card` call's own text (its title/payload, serialized)
+/// shares at least one real word with the directive it is supposed to
+/// answer. Found live: a model that had just run a correct, on-topic search
+/// still wrote a card from an unrelated older turn's payload ("Noida
+/// Weather", "28°C") in answer to "what is the current top news in AI" — the
+/// call executed, `derived_from` correctly pointed at the real search
+/// result, and nothing else in the loop notices the payload itself has
+/// nothing to do with either the question or that evidence. A directive with
+/// no topic words of its own (every word is a stopword) is never gated —
+/// there is nothing to compare against, and refusing everything would be a
+/// worse failure than missing this one.
+fn card_shares_a_topic_with(directive: &str, name: &str, input: &serde_json::Value) -> bool {
+    let directive_words = topic_tokens(directive);
+    if directive_words.is_empty() {
+        return true;
+    }
+    let card_text = serde_json::to_string(input).unwrap_or_default() + " " + name;
+    let card_words = topic_tokens(&card_text);
+    directive_words.iter().any(|word| card_words.contains(word))
+}
+
 fn relative_change(before: f64, after: f64) -> f64 {
     if before == 0.0 {
         if after == 0.0 { 0.0 } else { 1.0 }
     } else {
         ((after - before) / before).abs()
+    }
+}
+
+#[cfg(test)]
+mod topic_gate_tests {
+    use super::card_shares_a_topic_with;
+
+    #[test]
+    fn a_weather_card_matches_a_weather_directive() {
+        let input = serde_json::json!({
+            "semantic_type": "weather",
+            "payload": {"label": "Noida Weather", "unit": "Celsius", "value": "28°C"}
+        });
+        assert!(card_shares_a_topic_with(
+            "what is the current weather in noida",
+            "emit_metric_card",
+            &input
+        ));
+    }
+
+    #[test]
+    fn the_real_regression_a_weather_card_does_not_match_an_ai_news_directive() {
+        // Exactly what shipped and broke live: a correct on-topic search for
+        // "current top news in AI" ran, then the model wrote this weather
+        // card from an unrelated older turn anyway.
+        let input = serde_json::json!({
+            "semantic_type": "weather",
+            "payload": {"label": "Noida Weather", "unit": "Celsius", "value": "28°C"}
+        });
+        assert!(!card_shares_a_topic_with(
+            "what is the current top news in AI",
+            "emit_metric_card",
+            &input
+        ));
+    }
+
+    #[test]
+    fn an_on_topic_ai_card_matches() {
+        let input = serde_json::json!({
+            "semantic_type": "research.synthesis",
+            "payload": {"title": "AI news roundup", "sources": [{"title": "Latest AI breakthroughs"}]}
+        });
+        assert!(card_shares_a_topic_with(
+            "what is the current top news in AI",
+            "emit_research_card",
+            &input
+        ));
+    }
+
+    #[test]
+    fn a_directive_with_only_stopwords_is_never_gated() {
+        let input = serde_json::json!({"payload": {"label": "anything at all"}});
+        assert!(card_shares_a_topic_with(
+            "what is this now",
+            "emit_metric_card",
+            &input
+        ));
+    }
+
+    #[test]
+    fn a_correctly_derived_card_that_renames_the_topic_still_passes() {
+        // The false-positive risk of a literal word check: a card that is
+        // genuinely right but titled from what the search actually returned
+        // ("OpenAI announces GPT-6"), not from the user's own words ("AI
+        // news"), must not be gated just because it paraphrased. Checked
+        // against the directive PLUS this turn's evidence together — the
+        // call site does this by widening the context string before calling
+        // this function, which is what this test exercises directly.
+        let input = serde_json::json!({
+            "payload": {"title": "OpenAI announces GPT-6", "summary": "a major model release"}
+        });
+        let directive_plus_evidence =
+            "what is the current top news in AI OpenAI today unveiled GPT-6, its newest model";
+        assert!(card_shares_a_topic_with(
+            directive_plus_evidence,
+            "emit_entity_card",
+            &input
+        ));
+    }
+
+    #[test]
+    fn recency_words_alone_never_establish_a_shared_topic() {
+        // Both directives use "current"/"now"/"right"; without stripping
+        // them as stopwords, this unrelated pair would look related.
+        let input = serde_json::json!({"payload": {"label": "Noida Weather"}});
+        assert!(!card_shares_a_topic_with(
+            "what is currently happening right now in politics",
+            "emit_metric_card",
+            &input
+        ));
     }
 }
 
@@ -1269,6 +1440,15 @@ impl Agent {
         let mut freshness_repair_attempted = false;
         let mut empty_step_repair_attempted = false;
         let mut card_repeat_streak: u32 = 0;
+        let mut topic_repair_attempted = false;
+        // The most recent non-card tool result's own text this run, for the
+        // fail-closed fallback below: when a topic-mismatched card has to be
+        // refused twice, the evidence that WAS gathered is worth showing
+        // rather than nothing (found live: a real `tavily_search` for "AI
+        // news" succeeded, then the model wrote an unrelated "Noida Weather"
+        // card twice in a row — the search result was sitting right there
+        // and never got refused nothing).
+        let mut last_evidence_snippet: Option<String> = None;
         let wants_live_data = self
             .session
             .lock()
@@ -2253,17 +2433,63 @@ impl Agent {
             // bash" are different situations even if both calls land in the
             // same batch and finish in the opposite order.
             let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
-            // Freshness gate at the earliest point (docs/design/68 §7): a
-            // card in a live-data turn with nothing retrieved yet would show
-            // a carried-over figure. The call is not executed; the model
-            // gets an error value it can repair by retrieving first. Once.
-            let (calls, gated): (Vec<PendingToolCall>, Vec<PendingToolCall>) =
-                calls.into_iter().partition(|call| {
-                    !(wants_live_data
-                        && !retrieval_succeeded_this_run
-                        && self.tool_presents_cards(&call.name))
-                });
-            if !gated.is_empty() {
+            // Two card gates at the earliest point, before execution
+            // (docs/design/68 §7). Freshness: a card in a live-data turn
+            // with nothing retrieved yet would show a carried-over figure.
+            // Topic mismatch: a card whose own payload shares no topic word
+            // with the directive is unrelated to what was asked, whatever
+            // it claims to be derived from — found live, a card correctly
+            // linked to a real, on-topic search result still carried an
+            // entirely different topic's payload, copied from an older
+            // turn's own tool call still sitting in context. Each gated
+            // call gets an error value naming which check refused it;
+            // either one gets exactly one repair before failing closed.
+            enum CardGate {
+                Fresh,
+                Topic,
+            }
+            let mut gated: Vec<(PendingToolCall, CardGate)> = Vec::new();
+            let calls: Vec<PendingToolCall> = calls
+                .into_iter()
+                .filter(|call| {
+                    if !self.tool_presents_cards(&call.name) {
+                        return true;
+                    }
+                    if wants_live_data && !retrieval_succeeded_this_run {
+                        gated.push((call.clone(), CardGate::Fresh));
+                        return false;
+                    }
+                    // Scoped to "a retrieval actually succeeded this run":
+                    // that is the one circumstance the real bug needs and
+                    // the only one this check can safely judge. Many
+                    // legitimate cards have sparse, structural payloads with
+                    // no vocabulary of their own at all (an empty chart
+                    // skeleton, a bare numeric metric) and share no word
+                    // with any directive whether they are right or wrong —
+                    // checked live, this exact shape broke a real,
+                    // previously-passing test. Only when the model has just
+                    // retrieved something is "the card is unrelated to
+                    // both the question and what was found" a signal worth
+                    // trusting; a card built from the model's own reasoning
+                    // or from data already in the directive gets no such
+                    // check; the evidence text (far richer than the terse
+                    // question) is what lets a correctly-derived card that
+                    // renames or paraphrases what was found still pass even
+                    // with zero overlap against the directive alone.
+                    if let Some(evidence) = &last_evidence_snippet {
+                        let topic_context = format!("{prompt_owned} {evidence}");
+                        if !card_shares_a_topic_with(&topic_context, &call.name, &call.input) {
+                            gated.push((call.clone(), CardGate::Topic));
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .collect();
+            if gated
+                .iter()
+                .any(|(_, gate)| matches!(gate, CardGate::Fresh))
+            {
                 if freshness_repair_attempted {
                     // The repair was another carried-over card (measured
                     // live: "New Delhi 29.1°C" gated, then "Noida 28°C"
@@ -2273,18 +2499,33 @@ impl Agent {
                 }
                 freshness_repair_attempted = true;
             }
+            if gated
+                .iter()
+                .any(|(_, gate)| matches!(gate, CardGate::Topic))
+            {
+                if topic_repair_attempted {
+                    return self
+                        .topic_mismatch_outcome(last_evidence_snippet.clone())
+                        .await;
+                }
+                topic_repair_attempted = true;
+            }
             let mut results = self.execute_batch(calls, &cancel, &events).await;
-            results.extend(gated.into_iter().map(|call| {
-                (
-                    call.id,
-                    ToolRunOutput::Err(
+            results.extend(gated.into_iter().map(|(call, gate)| {
+                let message = match gate {
+                    CardGate::Fresh => {
                         "[freshness-check]: not shown — this asks for a value as it stands now and \
                          nothing has been retrieved on this turn, so the card would carry a figure \
                          from an earlier answer. Call a retrieval tool first and build the card from \
                          what it returns, or say plainly that you have no live data."
-                            .into(),
-                    ),
-                )
+                    }
+                    CardGate::Topic => {
+                        "[topic-mismatch]: not shown — this card's own content has nothing to do \
+                         with what was asked. Build the card from what the current directive and \
+                         this turn's own tool results actually say, not from an earlier turn's data."
+                    }
+                };
+                (call.id, ToolRunOutput::Err(message.into()))
             }));
             self.record_worker_work(&task_assignments, &results).await;
             // Identical-card repeat breaker: the no-op ack ("already
@@ -2349,6 +2590,14 @@ impl Agent {
                 .collect();
             if !retrieval_tool_names.is_empty() {
                 retrieval_succeeded_this_run = true;
+                if let Some((_, ToolRunOutput::Ok(content))) = results.iter().find(|(id, out)| {
+                    matches!(out, ToolRunOutput::Ok(_))
+                        && call_names
+                            .get(id)
+                            .is_some_and(|name| retrieval_tool_names.contains(name))
+                }) {
+                    last_evidence_snippet = Some(truncate_chars(content, RESULT_PREVIEW_LIMIT));
+                }
             }
             pending_grounding_check = if retrieval_tool_names.is_empty() {
                 None
@@ -4386,6 +4635,44 @@ impl Agent {
                      carried-over figure as current.{last_known} Ask again when a retrieval tool \
                      is available, or ask for the last known figure explicitly."
                 ))],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: self.config.model.clone(),
+                response_id: None,
+            },
+        }
+    }
+
+    /// The turn's answer when a card repeatedly refuses to be about what was
+    /// asked (docs/design/68 §7): honest text instead of a wrong card. When
+    /// this turn's own retrieval actually succeeded, its raw result is
+    /// quoted rather than left out — the evidence exists, only the card
+    /// built from it did not.
+    async fn topic_mismatch_outcome(&self, evidence: Option<String>) -> TurnOutcome {
+        self.record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "topic-mismatch-refused".into(),
+            Some(
+                "a card was offered twice whose content did not match the directive; the turn \
+                 closed on an honest statement instead of showing a wrong card"
+                    .into(),
+            ),
+            std::collections::BTreeMap::new(),
+        )
+        .await;
+        let text = match evidence {
+            Some(found) => format!(
+                "I could not turn what I found into a card that actually answers this, so here is \
+                 the raw result instead:\n\n{found}"
+            ),
+            None => "I could not produce a card that matches what was asked, and had nothing else \
+                     to fall back on this turn. Could you rephrase the question?"
+                .to_string(),
+        };
+        TurnOutcome::Completed {
+            response: AssistantMessage {
+                content: vec![ContentBlock::text(text)],
                 stop_reason: StopReason::EndTurn,
                 usage: Usage::default(),
                 model: self.config.model.clone(),
