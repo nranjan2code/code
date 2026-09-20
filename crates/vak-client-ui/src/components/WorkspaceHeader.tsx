@@ -69,6 +69,11 @@ export default function WorkspaceHeader() {
     if (isRunning(id)) return retryOf(id) ? "Retrying" : "Working";
     return "Ready";
   });
+  const characterState = createMemo(() => {
+    const id = activeId();
+    if (id && itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "waiting" as const;
+    return isRunning(id) ? "working" as const : "idle" as const;
+  });
   const [exporting, setExporting] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
 
@@ -139,7 +144,7 @@ export default function WorkspaceHeader() {
               title="Switch Agent Specialist"
             >
               <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                <AgentMark character={titleGlyph()} size={20} working={isRunning(activeId())} />
+                <AgentMark character={titleGlyph()} size={20} state={characterState()} interactive />
                 <span>{title()}</span>
                 <span style="font-size: 11px; opacity: 0.6;">▾</span>
               </h1>

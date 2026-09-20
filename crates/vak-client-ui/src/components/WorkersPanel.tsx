@@ -89,7 +89,7 @@ export default function WorkersPanel(props: { sessionId: string | null }): JSX.E
             {(child) => (
               <div class="worker-card">
                 <div class="worker-head">
-                  <span class="worker-identity"><AgentMark character={profileForChild(child)?.character} size={22} working /><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.agent_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
+                  <span class="worker-identity"><AgentMark character={profileForChild(child)?.character} size={22} state="working" /><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.agent_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
                   <span class="worker-elapsed">{child.elapsed_secs}s</span>
                   <button
                     class="worker-stop"

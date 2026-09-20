@@ -1,13 +1,36 @@
+import { createSignal, onCleanup } from "solid-js";
 import { agentCharacter, AGENT_CHARACTERS, type AgentCharacter } from "../agentGlyph";
 
-export default function AgentMark(props: { character?: string; size?: number; working?: boolean; class?: string }) {
+export type CharacterState = "idle" | "listening" | "thinking" | "working" | "waiting" | "success" | "concern" | "acknowledge";
+
+export default function AgentMark(props: {
+  character?: string;
+  size?: number;
+  state?: CharacterState;
+  interactive?: boolean;
+  class?: string;
+}) {
+  const [reaction, setReaction] = createSignal(false);
+  let reactionTimer: number | undefined;
   const id = () => (props.character && props.character in AGENT_CHARACTERS ? props.character : "vak") as AgentCharacter;
   const companion = () => agentCharacter(id());
+  const state = () => reaction() ? "acknowledge" : props.state ?? "idle";
+  const acknowledge = () => {
+    if (!props.interactive) return;
+    setReaction(true);
+    window.clearTimeout(reactionTimer);
+    reactionTimer = window.setTimeout(() => setReaction(false), 620);
+  };
+  onCleanup(() => window.clearTimeout(reactionTimer));
+
   return <span
-    class={`agent-mark companion ${id()} ${props.working ? "working" : "idle"} ${props.class ?? ""}`}
+    class={`agent-mark companion ${id()} state-${state()} ${props.interactive ? "interactive" : ""} ${props.class ?? ""}`}
     style={{ width: `${props.size ?? 26}px`, height: `${props.size ?? 26}px`, "--companion-hue": `${companion().hue}` }}
+    data-character-state={state()}
+    onPointerDown={acknowledge}
     aria-hidden="true"
   >
-    <span class="agent-mark-motion"><img src={companion().image} alt="" draggable={false} /></span>
+    <img class="agent-mark-fallback" src={companion().image} alt="" draggable={false} />
+    <span class="agent-mark-atlas" style={{ "background-image": `url(${companion().atlas})` }} />
   </span>;
 }

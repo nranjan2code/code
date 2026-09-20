@@ -122,7 +122,7 @@ function activeWorkingState(id: string | null): { executionId?: string } | null 
 function WorkingIndicator(props: { sessionId: string | null; executionId?: string }) {
   return (
     <div class="working-state" aria-live="polite" aria-label={`${agentForSession(props.sessionId).name} is working`}>
-      <AgentMark character={agentForSession(props.sessionId).character} size={24} working class="working-state-mark" />
+      <AgentMark character={agentForSession(props.sessionId).character} size={24} state="working" class="working-state-mark" />
       <span class="working-state-copy"><strong>{agentForSession(props.sessionId).name}</strong><span>Working on it</span></span>
       <Show when={props.executionId}>
         <button type="button" onClick={() => openWorkbenchExecution(props.executionId)}>View activity</button>
@@ -656,7 +656,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     return (
       <div class="msg assistant">
         <div class="assistant-turn-head">
-          <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} size={26} working={props.item.streaming} class="assistant-avatar-mark" />
+          <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} size={26} state={props.item.streaming ? "working" : "idle"} class="assistant-avatar-mark" />
           <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
           <Show when={props.item.streaming}>
             <span class="assistant-live-pulse" title="Generating">

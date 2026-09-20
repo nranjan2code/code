@@ -1,10 +1,11 @@
 import { createSignal, onCleanup } from "solid-js";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { VoiceSessionSocket } from "../voice";
+import AgentMark, { type CharacterState } from "./AgentMark";
 
 /** Governed voice capture control for the composer. It only streams PCM after
  * an explicit user gesture and reports final text back into the draft. */
-export default function VoiceControl(props: { sessionId?: string; ensureSession(): Promise<string | null>; onFinal(text: string): void }) {
+export default function VoiceControl(props: { sessionId?: string; character?: string; ensureSession(): Promise<string | null>; onFinal(text: string): void }) {
   const [active, setActive] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [status, setStatus] = createSignal<string>("Voice");
@@ -143,8 +144,15 @@ export default function VoiceControl(props: { sessionId?: string; ensureSession(
     else { void playbackContext.suspend(); setPaused(true); setStatus("Paused"); }
   }
   const state = () => connecting() ? "connecting" : paused() ? "paused" : status().toLowerCase().startsWith("speaking") ? "speaking" : status() === "Processing" ? "processing" : active() ? "listening" : "idle";
+  const characterState = (): CharacterState => {
+    if (state() === "listening") return "listening";
+    if (state() === "processing" || state() === "connecting") return "thinking";
+    if (state() === "paused") return "waiting";
+    if (state() === "speaking") return "acknowledge";
+    return "idle";
+  };
   return <span class="voice-control" data-state={state()} role="group" aria-label="Voice conversation controls">
-    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><span aria-hidden="true">{active() ? "●" : "◉"}</span><span>{connecting() ? "Connecting…" : status()}</span></button>
+    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} size={22} state={characterState()} interactive /><span>{connecting() ? "Connecting…" : status()}</span></button>
     {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => { playbackGeneration += 1; playbackSource?.stop(); playbackSource = undefined; playbackQueue = []; setPaused(false); setStatus("Listening"); }}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
   </span>;
 }

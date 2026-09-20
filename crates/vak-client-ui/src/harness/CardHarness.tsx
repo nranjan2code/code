@@ -229,7 +229,7 @@ export default function CardHarness() {
               <div class="harness-character-sizes">
                 <AgentMark character={id} size={24} />
                 <AgentMark character={id} size={40} />
-                <AgentMark character={id} size={88} working />
+                <AgentMark character={id} size={88} state="working" />
               </div>
               <strong>{AGENT_CHARACTERS[id].name}</strong>
               <span>{AGENT_CHARACTERS[id].kind}</span>

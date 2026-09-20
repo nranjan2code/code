@@ -210,7 +210,7 @@ export default function AgentCreateWizard() {
                         aria-label={`Choose ${AGENT_CHARACTERS[c].name}, ${AGENT_CHARACTERS[c].kind}`}
                         onClick={() => { setCharacter(c); playCharacterCue(c); }}
                       >
-                        <AgentMark character={c} size={56} working={character() === c} />
+                        <AgentMark character={c} size={56} state={character() === c ? "listening" : "idle"} interactive />
                         <strong>{AGENT_CHARACTERS[c].name}</strong>
                         <small>{AGENT_CHARACTERS[c].kind}</small>
                       </button>

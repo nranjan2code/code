@@ -58,12 +58,12 @@ export default function Sidebar() {
       <Show when={searching()}><div class="sb-search-wrap"><input class="sb-search" type="search" aria-label="Search agents" placeholder="Find an agent" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} /></div></Show>
 
       <nav class="sb-agent-list" aria-label="Agents">
-        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><AgentMark character="spark" size={22} working={agentIsRunning("vak")} /><span>Vak</span></button>
+        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><AgentMark character="vak" size={22} state={agentIsRunning("vak") ? "working" : "idle"} /><span>Vak</span></button>
         <Show when={loaded()} fallback={
           <div class="sb-agent-skeleton" aria-hidden="true"><span /><span /></div>
         }>
           <For each={shown()}>{(profile) =>
-            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><AgentMark character={profile.character} size={22} working={agentIsRunning(profile.id)} /><span>{profile.name}</span></button>
+            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><AgentMark character={profile.character} size={22} state={agentIsRunning(profile.id) ? "working" : "idle"} /><span>{profile.name}</span></button>
           }</For>
         </Show>
         <Show when={query() && loaded() && !shown().length}><p class="sb-empty">No matching agents.</p></Show>
