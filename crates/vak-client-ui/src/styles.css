@@ -487,6 +487,14 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-header { justify-content: space-between; border-bottom: 1px solid var(--border-soft); }
 .candidate-review-header h2 { margin: 0 0 4px; font-size: 19px; }
 .candidate-review-header p { margin: 0; color: var(--muted); font-size: 12px; }
+.candidate-review-summary { display: grid; gap: 5px; padding: 12px 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface-raised); }
+.candidate-review-summary p { display: flex; gap: 9px; min-width: 0; margin: 0; font-size: 11px; color: var(--muted); }
+.candidate-review-summary p strong { flex: none; color: var(--text-soft); font-weight: 620; }
+.candidate-review-summary p span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-review-summary .candidate-review-limitation { margin-top: 3px; white-space: normal; }
+.candidate-review-counts { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 13px; margin-bottom: 3px; }
+.candidate-review-counts strong { color: var(--text); font-size: 12px; font-weight: 620; }
+.candidate-review-counts span { color: var(--muted); font-size: 11px; }
 .candidate-review-body { display: grid; grid-template-columns: minmax(190px, 27%) minmax(0, 1fr); min-height: 0; flex: 1; }
 .candidate-review-files { overflow: auto; border-right: 1px solid var(--border-soft); padding: 10px; }
 .candidate-review-file { display: flex; align-items: center; gap: 7px; padding: 6px; border-radius: 7px; }
@@ -507,7 +515,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-feedback p { margin: 0; color: var(--muted); font-size: 12px; }
 .candidate-review-footer { justify-content: flex-end; border-top: 1px solid var(--border-soft); }
 .candidate-review-footer span { margin-right: auto; color: var(--muted); font-size: 12px; }
-@media (max-width: 700px) { .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } }
+@media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } }
 .settings-load-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--red); border-radius: 8px; color: var(--red); font-size: 12px; }
 .composer-lookup-error { margin: 0 16px 8px; color: var(--yellow); font-size: 12px; }
 .intent-hud-error { margin: 4px 16px 8px; color: var(--yellow); font-size: 12px; }

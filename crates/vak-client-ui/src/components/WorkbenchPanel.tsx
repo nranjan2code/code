@@ -399,6 +399,16 @@ export default function WorkbenchPanel() {
   });
 
   const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
+  const fileState = (file: { candidate_hash: string; base_hash?: string }) =>
+    !file.base_hash ? "New" : file.base_hash === file.candidate_hash ? "Unchanged" : "Changed";
+  const candidateSummary = createMemo(() => {
+    const files = candidate()?.candidate.files ?? [];
+    return {
+      newFiles: files.filter((file) => fileState(file) === "New").length,
+      changedFiles: files.filter((file) => fileState(file) === "Changed").length,
+      unchangedFiles: files.filter((file) => fileState(file) === "Unchanged").length,
+    };
+  });
 
   createEffect(() => {
     const prepared = candidate();
@@ -465,15 +475,25 @@ export default function WorkbenchPanel() {
         {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
-              <div><h2>Review draft files</h2><p>Choose the files to apply to your workspace. Vak will check for changes before writing.</p></div>
+              <div><h2>Review this draft</h2><p>Choose the files to apply. Vak checks the draft and workspace against this candidate before writing.</p></div>
               <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
             </header>
+            <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
+              <div class="candidate-review-counts">
+                <strong>{candidateSummary().newFiles} new</strong>
+                <strong>{candidateSummary().changedFiles} changed</strong>
+                <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
+              </div>
+              <p><strong>Destination</strong> <span>{prepared().candidate.destination_root}</span></p>
+              <p><strong>From Agent work</strong> <span>{prepared().execution_id.slice(0, 12)} · candidate {prepared().candidate.candidate_id.slice(0, 12)}</span></p>
+              <p class="candidate-review-limitation">No candidate-bound check receipts are attached. Review the selected files before applying them.</p>
+            </div>
             <div class="candidate-review-body">
               <div class="candidate-review-files" aria-label="Draft files">
                 <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file">
                   <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} />
                   <button type="button" classList={{ active: reviewedPath() === file.path }} onClick={() => setReviewedPath(file.path)}>{file.path}</button>
-                  <span>{inspectedFiles().includes(file.path) ? "Viewed" : formatBytes(file.bytes)}</span>
+                  <span>{fileState(file)} · {inspectedFiles().includes(file.path) ? "Viewed" : formatBytes(file.bytes)}</span>
                 </div>}</For>
               </div>
               <div class="candidate-review-preview">
@@ -497,7 +517,7 @@ export default function WorkbenchPanel() {
             <footer class="candidate-review-footer">
               <span>{reviewedFiles().length} selected · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
               <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Applying…" : "Apply selected files"}</button>
+              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Applying…" : `Apply ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
             </footer>
           </section>
         </div>}
