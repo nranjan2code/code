@@ -45,16 +45,41 @@ export default function ArtifactCanvas() {
   const [activeServerPort, setActiveServerPort] = createSignal<number | null>(null);
   const [reloadKey, setReloadKey] = createSignal(0);
   const [isClosing, setIsClosing] = createSignal(false);
+  const [feedback, setFeedback] = createSignal("");
+  const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "error">("idle");
 
   let request = 0;
   let startedServerName: string | null = null;
   let allocatedMediaUrl: string | null = null;
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
 
+  createEffect(() => {
+    void canvasArtifact()?.id;
+    setFeedback("");
+    setFeedbackState("idle");
+  });
+
+  const sendRevision = async () => {
+    const artifact = canvasArtifact();
+    const sessionId = artifact?.sessionId ?? activeId();
+    const note = feedback().trim();
+    if (!sessionId || !artifact || !note || feedbackState() === "sending") return;
+    setFeedbackState("sending");
+    const subject = artifact.artifactPath || artifact.title;
+    try {
+      const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
+      await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
+      setFeedback("");
+      setFeedbackState("sent");
+    } catch {
+      setFeedbackState("error");
+    }
+  };
+
   // Cleanup helper for dev servers started specifically by the canvas
   const cleanupServer = () => {
     if (startedServerName) {
-      const sid = activeId();
+      const sid = canvasArtifact()?.sessionId ?? activeId();
       if (sid) void api.stopLaunch(sid, startedServerName);
       startedServerName = null;
     }
@@ -124,7 +149,7 @@ export default function ArtifactCanvas() {
     try {
       // 1. Dev-server handling: if serverName is provided, ensure it is running
       if (artifact.serverName) {
-        const sid = activeId();
+        const sid = artifact.sessionId ?? activeId();
         if (sid) {
           if (startedServerName && startedServerName !== artifact.serverName) {
             cleanupServer();
@@ -398,6 +423,9 @@ export default function ArtifactCanvas() {
             <Show when={path()}>
               <span class="artifact-canvas-path">{path()}</span>
             </Show>
+            <Show when={canvasArtifact()?.resultId}>{(resultId) =>
+              <span class="artifact-canvas-result" title={resultId()}>From this conversation result</span>
+            }</Show>
           </div>
 
           <div class="artifact-canvas-controls">
@@ -599,6 +627,33 @@ export default function ArtifactCanvas() {
             </Show>
           </Show>
         </div>
+
+        <section class="artifact-canvas-feedback" aria-label="Review this draft">
+          <div class="artifact-canvas-feedback-intro">
+            <strong>Work on this together</strong>
+            <span>Tell the Agent what to change in this draft.</span>
+          </div>
+          <div class="artifact-canvas-feedback-compose">
+            <textarea
+              rows={2}
+              value={feedback()}
+              onInput={(event) => { setFeedback(event.currentTarget.value); setFeedbackState("idle"); }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void sendRevision();
+                }
+              }}
+              placeholder="What should change?"
+              aria-label="Feedback for this draft"
+            />
+            <button type="button" disabled={!feedback().trim() || feedbackState() === "sending"} onClick={() => void sendRevision()}>
+              {feedbackState() === "sending" ? "Sending…" : "Ask for revision"}
+            </button>
+          </div>
+          <Show when={feedbackState() === "sent"}><small role="status">Sent to the Agent conversation.</small></Show>
+          <Show when={feedbackState() === "error"}><small role="alert">Could not send. Your feedback is still here to retry.</small></Show>
+        </section>
 
         {/* Security / Server Status Footer */}
         <footer class="artifact-canvas-footer">

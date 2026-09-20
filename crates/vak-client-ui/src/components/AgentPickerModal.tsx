@@ -15,7 +15,7 @@ import {
 } from "../store";
 import { openAgentChat, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import * as api from "../api";
-import { agentGlyph } from "../agentGlyph";
+import AgentMark from "./AgentMark";
 import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
@@ -245,7 +245,6 @@ export default function AgentPickerModal() {
               <For each={filteredAgents()}>
                 {(agent) => {
                   const isActive = createMemo(() => activeAgentId() === agent.id);
-                  const glyph = agentGlyph(agent.character);
                   return (
                     <div
                       style="display: flex; align-items: center; justify-content: space-between; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s, transform 0.15s; cursor: pointer;"
@@ -253,9 +252,7 @@ export default function AgentPickerModal() {
                       onClick={() => void handleSelectAgent(agent.id)}
                     >
                       <div style="display: flex; align-items: center; gap: 12px;">
-                        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--surface-raised); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 16px;">
-                          {glyph}
-                        </div>
+                        <AgentMark character={agent.character} size={36} />
                         <div>
                           <div style="display: flex; align-items: center; gap: 6px;">
                             <strong style="font-size: 14px;">{agent.name}</strong>

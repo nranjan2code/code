@@ -3,7 +3,7 @@ import { activeAgentId, agentOpening, backend, isRunning, sessions, settingsOpen
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
-import { agentGlyph } from "../agentGlyph";
+import AgentMark from "./AgentMark";
 import { sortByRecent } from "../agentRecents";
 import Icon from "./Icon";
 
@@ -58,12 +58,12 @@ export default function Sidebar() {
       <Show when={searching()}><div class="sb-search-wrap"><input class="sb-search" type="search" aria-label="Search agents" placeholder="Find an agent" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} /></div></Show>
 
       <nav class="sb-agent-list" aria-label="Agents">
-        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><span class="agent-glyph spark" classList={{ running: agentIsRunning("vak") }}>{agentGlyph("spark")}</span><span>Vak</span></button>
+        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><AgentMark character="spark" size={22} working={agentIsRunning("vak")} /><span>Vak</span></button>
         <Show when={loaded()} fallback={
           <div class="sb-agent-skeleton" aria-hidden="true"><span /><span /></div>
         }>
-          <For each={shown()}>{(profile, index) =>
-            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><span class={`agent-glyph ${profile.character}`} classList={{ running: agentIsRunning(profile.id) }} style={{ "animation-delay": `${(index() % 5) * 0.35}s` }}>{agentGlyph(profile.character)}</span><span>{profile.name}</span></button>
+          <For each={shown()}>{(profile) =>
+            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><AgentMark character={profile.character} size={22} working={agentIsRunning(profile.id)} /><span>{profile.name}</span></button>
           }</For>
         </Show>
         <Show when={query() && loaded() && !shown().length}><p class="sb-empty">No matching agents.</p></Show>

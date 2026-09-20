@@ -3,7 +3,8 @@ import { trapFocus } from "../focusTrap";
 import { agentCreateOpen, setAgentCreateOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
-import { AGENT_GLYPHS, agentGlyph, type AgentCharacter } from "../agentGlyph";
+import { AGENT_GLYPHS, type AgentCharacter } from "../agentGlyph";
+import AgentMark from "./AgentMark";
 import Icon from "./Icon";
 
 type Character = AgentCharacter;
@@ -150,7 +151,7 @@ export default function AgentCreateWizard() {
                     style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start;"
                     onClick={() => applyTemplate(tmpl)}
                   >
-                    <span style="font-size: 15px;">{agentGlyph(tmpl.character)} {tmpl.name}</span>
+                    <span style="display: inline-flex; align-items: center; gap: 7px;"><AgentMark character={tmpl.character} size={23} /> {tmpl.name}</span>
                     <span style="font-size: 11.5px; color: var(--muted); font-weight: 400;">{tmpl.description}</span>
                   </button>
                 )}
@@ -208,7 +209,7 @@ export default function AgentCreateWizard() {
                         aria-label={c}
                         onClick={() => setCharacter(c)}
                       >
-                        {agentGlyph(c)}
+                        <AgentMark character={c} size={22} />
                       </button>
                     )}
                   </For>
@@ -251,7 +252,7 @@ export default function AgentCreateWizard() {
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);">
                 <span style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Preview</span>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                  <span class={`agent-glyph ${character()}`} style="width: 28px; height: 28px; font-size: 17px;">{agentGlyph(character())}</span>
+                  <AgentMark character={character()} size={28} />
                   <div>
                     <div style="font-weight: 600; font-size: 13.5px;">{name() || "Unnamed agent"}</div>
                     <div style="font-size: 11.5px; color: var(--muted);">{personality() || "No personality set yet"}</div>

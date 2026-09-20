@@ -19,7 +19,7 @@ import {
   agentForSession,
   agentOpening,
 } from "../store";
-import { loadHealth, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
+import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
@@ -371,6 +371,12 @@ export default function Composer(props: { cwd: string }) {
     setReplyTarget(null);
   };
 
+  const submitVoice = (value: string) => {
+    const prompt = value.trim();
+    if (!prompt) return;
+    recordPrompt(prompt);
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     const slashList = slashMatches();
     if (slashList.length) {
@@ -605,7 +611,7 @@ export default function Composer(props: { cwd: string }) {
                 </select>
               </div>
             </details>
-            <Show when={activeId()} keyed>{(sid) => <VoiceControl sessionId={sid} onFinal={(value) => { void sendPrompt(value, undefined, undefined, sid); }} />}</Show>
+            <VoiceControl sessionId={activeId() ?? undefined} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
             <input
               ref={fileInput}
               type="file"

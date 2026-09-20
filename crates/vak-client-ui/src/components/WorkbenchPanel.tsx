@@ -13,10 +13,13 @@ import {
   openArtifactPathInCanvas,
   workbenchTab,
   setWorkbenchTab,
+  candidateReviewRequest,
+  setCandidateReviewRequest,
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
 import { artifactPreviewHtml } from "../artifactPreview";
+import { trapFocus } from "../focusTrap";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -132,6 +135,16 @@ export default function WorkbenchPanel() {
   const [candidate, setCandidate] = createSignal<Awaited<ReturnType<typeof api.exportSandboxCandidate>> | null>(null);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
+  const [reviewOpen, setReviewOpen] = createSignal(false);
+  const [reviewedPath, setReviewedPath] = createSignal<string | null>(null);
+  const [reviewedFiles, setReviewedFiles] = createSignal<string[]>([]);
+  const [inspectedFiles, setInspectedFiles] = createSignal<string[]>([]);
+  const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
+  const [afterContent, setAfterContent] = createSignal<string | null>(null);
+  const [reviewFileError, setReviewFileError] = createSignal<string | null>(null);
+  const [reviewComment, setReviewComment] = createSignal("");
+  const [reviewCommentBusy, setReviewCommentBusy] = createSignal(false);
+  const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
 
@@ -161,6 +174,12 @@ export default function WorkbenchPanel() {
     setArtifactError(null);
     setCandidate(null);
     setPromotionMessage(null);
+    setReviewOpen(false);
+    setReviewedPath(null);
+    setReviewedFiles([]);
+    setInspectedFiles([]);
+    setReviewComment("");
+    setReviewCommentMessage(null);
   });
 
   const executions = () => workbenchExecutions();
@@ -172,6 +191,30 @@ export default function WorkbenchPanel() {
     }
     return executions()[executions().length - 1] ?? null;
   };
+
+  createEffect((previous: string | null) => {
+    const exec = currentExec();
+    const key = exec ? `${activeId()}:${exec.id}` : null;
+    if (key && key !== previous && exec?.scratchDir) {
+      let disposed = false;
+      const sessionId = activeId();
+      if (!sessionId) return key;
+      void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
+        if (disposed || candidate()) return;
+        const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
+        const pending = records.filter((record) => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id));
+        const latest = pending[pending.length - 1];
+        if (latest?.kind === "Candidate") {
+          const prepared = latest.record;
+          setCandidate(prepared);
+          setReviewedFiles(prepared.candidate.files.map((file) => file.path));
+          setReviewedPath(prepared.candidate.files[0]?.path ?? null);
+        }
+      }).catch(() => { /* Review remains available by preparing it again. */ });
+      onCleanup(() => { disposed = true; });
+    }
+    return key;
+  }, null);
 
   createEffect(() => {
     const cur = currentExec();
@@ -330,11 +373,17 @@ export default function WorkbenchPanel() {
 
   const reviewCandidate = async () => {
     const exec = currentExec();
-    if (!exec || exec.artifacts.length === 0) return;
+    const sessionId = activeId();
+    if (!sessionId || !exec || exec.artifacts.length === 0) return;
     setCandidateBusy(true);
     setPromotionMessage(null);
     try {
-      setCandidate(await api.exportSandboxCandidate(`candidate-${exec.id}`, exec.scratchDir, "."));
+      const prepared = await api.exportSandboxCandidate(sessionId, exec.id, exec.scratchDir, ".");
+      setCandidate(prepared);
+      setReviewedFiles(prepared.candidate.files.map((file) => file.path));
+      setInspectedFiles([]);
+      setReviewedPath(prepared.candidate.files[0]?.path ?? null);
+      setReviewOpen(true);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -342,13 +391,67 @@ export default function WorkbenchPanel() {
     }
   };
 
+  createEffect(() => {
+    const requested = candidateReviewRequest();
+    if (!requested || currentExec()?.id !== requested) return;
+    setCandidateReviewRequest(null);
+    void reviewCandidate();
+  });
+
+  const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
+
+  createEffect(() => {
+    const prepared = candidate();
+    const path = reviewedPath();
+    if (!reviewOpen() || !prepared || !path) return;
+    let disposed = false;
+    setBeforeContent(null);
+    setAfterContent(null);
+    setReviewFileError(null);
+    void Promise.allSettled([
+      api.readFile(candidatePath(prepared.candidate.destination_root, path)),
+      api.readFile(candidatePath(prepared.candidate.source_root, path)),
+    ]).then(([before, after]) => {
+      if (disposed) return;
+      setBeforeContent(before.status === "fulfilled" ? before.value.content ?? null : null);
+      setAfterContent(after.status === "fulfilled" ? after.value.content ?? null : null);
+      if (after.status === "rejected") setReviewFileError("Could not load this draft file. Review is unavailable until it can be read.");
+      else setInspectedFiles((paths) => paths.includes(path) ? paths : [...paths, path]);
+    });
+    onCleanup(() => { disposed = true; });
+  });
+
+  const toggleReviewedFile = (path: string) => {
+    setReviewedFiles((paths) => paths.includes(path) ? paths.filter((entry) => entry !== path) : [...paths, path]);
+  };
+
+  const sendReviewComment = async () => {
+    const id = activeId();
+    const prepared = candidate();
+    const comment = reviewComment().trim();
+    if (!id || !prepared || !comment) return;
+    setReviewCommentBusy(true);
+    setReviewCommentMessage(null);
+    try {
+      await api.steer(id, `For result ${prepared.result_id}, revise draft ${prepared.candidate.candidate_id}, ${reviewedPath() ?? "the selected files"}: ${comment}`);
+      setReviewComment("");
+      setReviewCommentMessage("Feedback sent to the Agent. This draft remains unchanged until it prepares a new version.");
+    } catch (error) {
+      setReviewCommentMessage(`Could not send feedback: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setReviewCommentBusy(false);
+    }
+  };
+
   const promoteCandidate = async () => {
     const value = candidate();
-    if (!value) return;
+    if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError()) return;
     setCandidateBusy(true);
     try {
-      const receipt = await api.promoteSandboxCandidate(value);
-      setPromotionMessage(`Applied and verified ${receipt.verification?.length ?? 0} file(s).`);
+      const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
+      setPromotionMessage(`Applied and verified ${receipt.receipt.verification?.length ?? 0} file(s).`);
+      setReviewOpen(false);
+      setCandidate(null);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -358,6 +461,47 @@ export default function WorkbenchPanel() {
 
   return (
     <div class="workbench-panel">
+      <Show when={reviewOpen() && candidate()}>
+        {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
+          <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
+            <header class="candidate-review-header">
+              <div><h2>Review draft files</h2><p>Choose the files to apply to your workspace. Vak will check for changes before writing.</p></div>
+              <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
+            </header>
+            <div class="candidate-review-body">
+              <div class="candidate-review-files" aria-label="Draft files">
+                <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file">
+                  <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} />
+                  <button type="button" classList={{ active: reviewedPath() === file.path }} onClick={() => setReviewedPath(file.path)}>{file.path}</button>
+                  <span>{inspectedFiles().includes(file.path) ? "Viewed" : formatBytes(file.bytes)}</span>
+                </div>}</For>
+              </div>
+              <div class="candidate-review-preview">
+                <h3>{reviewedPath() ?? "Choose a file"}</h3>
+                <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
+                <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
+                <Show when={reviewedPath() && !reviewFileError()}>
+                  <div class="candidate-review-columns">
+                    <div><strong>Current workspace</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
+                    <div><strong>Draft</strong><pre>{afterContent() ?? "Loading or preview unavailable"}</pre></div>
+                  </div>
+                </Show>
+                <div class="candidate-review-feedback">
+                  <label for="candidate-review-comment">Ask the Agent to change this draft</label>
+                  <textarea id="candidate-review-comment" value={reviewComment()} onInput={(event) => setReviewComment(event.currentTarget.value)} placeholder="Describe what you want changed…" />
+                  <button type="button" class="button subtle" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Sending…" : "Send feedback"}</button>
+                  <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>
+                </div>
+              </div>
+            </div>
+            <footer class="candidate-review-footer">
+              <span>{reviewedFiles().length} selected · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
+              <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
+              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Applying…" : "Apply selected files"}</button>
+            </footer>
+          </section>
+        </div>}
+      </Show>
       <Show when={controlError()}>
         <div class="inline-error" role="alert">Could not stop this execution: {controlError()}</div>
       </Show>
@@ -544,10 +688,8 @@ export default function WorkbenchPanel() {
                         <Show when={candidate()}>
                           {(review) => (
                             <div style={{ "margin-top": "8px", width: "100%" }}>
-                              <div class="artifact-meta">{review().files.length} file(s), hashed against the workspace base</div>
-                              <button class="tool-open" onClick={() => void promoteCandidate()} disabled={candidateBusy()}>
-                                Apply reviewed candidate
-                              </button>
+                              <div class="artifact-meta">{review().candidate.files.length} file(s), hashed against the workspace base</div>
+                              <button class="tool-open" onClick={() => setReviewOpen(true)}>Open file review</button>
                             </div>
                           )}
                         </Show>

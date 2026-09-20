@@ -971,24 +971,30 @@ export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
 }
 
-export function listSandboxRecords(): Promise<{ records: unknown[] }> {
-  return req("/sandbox/records");
+export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number }> };
+export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; updated_at: string };
+export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { verification?: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
+export type SandboxRecord =
+  | { kind: "Candidate"; record: SandboxCandidateRecord }
+  | { kind: "Promotion"; record: SandboxPromotionRecord }
+  | { kind: "Environment"; record: unknown };
+
+export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }
 
-export function appendSandboxRecord(record: unknown): Promise<{ accepted: boolean }> {
-  return req("/sandbox/records", { method: "POST", body: JSON.stringify(record) });
-}
-
-export function exportSandboxCandidate(candidateId: string, source: string, destination = "."):
-  Promise<{ candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number }> }> {
-  return req("/sandbox/candidates", {
+export async function exportSandboxCandidate(sessionId: string, executionId: string, source: string, destination = "."):
+  Promise<SandboxCandidateRecord> {
+  const response = await req<{ kind: "Candidate"; record: SandboxCandidateRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates`, {
     method: "POST",
-    body: JSON.stringify({ candidate_id: candidateId, source, destination }),
+    body: JSON.stringify({ execution_id: executionId, source, destination }),
   });
+  return response.record;
 }
 
-export function promoteSandboxCandidate(candidate: unknown): Promise<{ verification?: Array<{ path: string; status: string; evidence: string }> }> {
-  return req("/sandbox/promote", { method: "POST", body: JSON.stringify({ candidate }) });
+export async function promoteSandboxCandidate(sessionId: string, candidateId: string, files: string[]): Promise<SandboxPromotionRecord> {
+  const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promote`, { method: "POST", body: JSON.stringify({ candidate_id: candidateId, files }) });
+  return response.record;
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   isPreviewableArtifact,
   openArtifactPathInCanvas,
   openArtifactCanvas,
+  openCandidateReview,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -34,6 +35,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
 import GenericSpecRenderer, { buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
+import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
 
@@ -74,9 +76,7 @@ function AssistantMessage(props: { children: JSX.Element; text?: string; session
   return (
     <div class="semantic-assistant">
       <div class="assistant-turn-head">
-        <span class="assistant-avatar-mark">
-          <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
-        </span>
+        <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} size={26} class="assistant-avatar-mark" />
         <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
       </div>
       <div class="assistant-turn-body">
@@ -678,6 +678,7 @@ function Artifact(props: { item: OutputItem }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const path = () => artifact.path ?? null;
+  const reviewAction = () => props.item.actions.find((action) => action.verb === "review_draft");
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
@@ -689,13 +690,31 @@ function Artifact(props: { item: OutputItem }) {
             class="artifact-open"
             onClick={() => {
               if (isPreviewableArtifact(value())) {
-                openArtifactPathInCanvas(value());
+                openArtifactPathInCanvas(value(), undefined, {
+                  sessionId: props.item.provenance?.session_id ?? undefined,
+                  resultId: props.item.outcome?.result_id ?? undefined,
+                  executionId: props.item.provenance?.tool_call_id ?? undefined,
+                });
               } else {
                 openWorkbenchArtifact(value());
               }
             }}
           >
             {isPreviewableArtifact(value()) ? "Open Canvas" : "Open"}
+          </button>
+        )}
+      </Show>
+      <Show when={reviewAction()}>
+        {(action) => (
+          <button
+            type="button"
+            class="artifact-open"
+            onClick={() => {
+              const executionId = action().data.execution_id;
+              if (executionId) openCandidateReview(executionId);
+            }}
+          >
+            {action().label}
           </button>
         )}
       </Show>
@@ -783,6 +802,23 @@ function ResultOutcomeSummary(props: { item: OutputItem }) {
     <Show when={value().evidence_state}><span>Evidence: {value().evidence_state}</span></Show>
     <Show when={value().human_review}><span>Human review: {value().human_review}</span></Show>
   </div>}</Show>;
+}
+
+function ResultEvidence(props: { item: OutputItem }) {
+  const outcome = () => props.item.outcome;
+  return <Show when={outcome()}>{(value) => {
+    const receipts = () => value().evidence_receipt_ids.length;
+    const requirements = () => value().requirement_ids.length;
+    const hasEvidence = () => receipts() > 0 || requirements() > 0 || Boolean(value().evidence_state) || Boolean(value().human_review);
+    return <Show when={hasEvidence() || value().status !== "succeeded"}>
+      <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
+        <Show when={value().status !== "succeeded"}><span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span></Show>
+        <Show when={receipts() > 0}><span><Icon name="check" size={12} />{receipts()} evidence {receipts() === 1 ? "receipt" : "receipts"}</span></Show>
+        <Show when={requirements() > 0}><span>{requirements()} requested {requirements() === 1 ? "check" : "checks"}</span></Show>
+        <Show when={value().human_review}><span>Review: {value().human_review}</span></Show>
+      </footer>
+    </Show>;
+  }}</Show>;
 }
 
 function ActivityRow(props: { item: OutputItem }) {
@@ -1181,10 +1217,10 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   // above the header of the sentence that introduced it.
   const blocks = createMemo(() => {
     const out: JSX.Element[] = [];
-    let lead: JSX.Element[] = [];
+    let lead: Array<{ item: OutputItem; node: JSX.Element }> = [];
     const flush = () => {
       if (lead.length === 0) return;
-      out.push(<AssistantMessage sessionId={props.sessionId}>{lead}</AssistantMessage>);
+      out.push(<AssistantMessage sessionId={props.sessionId}>{lead.map((entry) => entry.node)}</AssistantMessage>);
       lead = [];
     };
     const grouping = !showOperatorChrome();
@@ -1193,7 +1229,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         item.role !== "user" &&
         (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
       if (grouping && cardLike) {
-        lead.push(node);
+        lead.push({ item, node });
         continue;
       }
       const answer =
@@ -1205,8 +1241,19 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       if (grouping && answer) {
         out.push(
           <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
-            {lead}
-            <PresentationDocumentView document={answer} />
+            <article
+              class="primary-result"
+              data-result-id={item.outcome?.result_id ?? item.id}
+              aria-label="Agent result"
+            >
+              <div class="primary-result-answer"><PresentationDocumentView document={answer} /></div>
+              <Show when={lead.length > 0}>
+                <div class="primary-result-material" aria-label="Result material">
+                  {lead.map((entry) => entry.node)}
+                </div>
+              </Show>
+              <ResultEvidence item={item} />
+            </article>
           </AssistantMessage>,
         );
         lead = [];

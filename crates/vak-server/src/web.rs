@@ -832,13 +832,24 @@ async fn drive_voice(
         }
     }
     let _lease = VoiceLease(active);
-    let ledger =
-        session_id.and_then(|id| sessions.lock().ok().and_then(|map| map.get(&id).cloned()));
+    let ledger = session_id
+        .as_deref()
+        .and_then(|id| sessions.lock().ok().and_then(|map| map.get(id).cloned()));
+    if session_id.is_some() && ledger.is_none() {
+        let _ = socket
+            .send(Message::Text(
+                "{\"type\":\"error\",\"message\":\"Voice conversation is unavailable\",\"remedy\":\"Reopen the Agent conversation and try again\"}"
+                    .into(),
+            ))
+            .await;
+        return;
+    }
     let mut lifecycle = vak_voice::session::VoiceSession::new(std::time::Duration::from_secs(
         voice_config.max_session_secs,
     ));
     let mut received_bytes: usize = 0;
     let mut utterance_audio: Vec<u8> = Vec::new();
+    let mut committed_utterances = std::collections::HashSet::new();
     let Ok(ready) =
         vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::Ready {
             protocol_version: Some(vak_voice::protocol::VOICE_PROTOCOL_VERSION),
@@ -985,14 +996,36 @@ async fn drive_voice(
                                 continue;
                             };
                             if let Ok(text) = result
+                                && !text.trim().is_empty()
+                                && committed_utterances.insert(utterance_id.clone())
                                 && let Ok(frame) = vak_voice::protocol::Frame::encode_control(
                                     &vak_voice::protocol::Control::Transcript {
                                         utterance_id: utterance_id.clone(),
-                                        text,
+                                        text: text.clone(),
                                         final_: true,
                                     },
                                 )
                             {
+                                if let Some(handle) = ledger.as_ref() {
+                                    if let Ok(mut log) = handle.session.lock()
+                                        && let Some(log) = log.as_mut()
+                                    {
+                                        let _ = log.append_voice_transcript(
+                                            format!("voice:{utterance_id}"),
+                                            text.clone(),
+                                            true,
+                                        );
+                                    }
+                                    let prompt = crate::gateway::compose_voice_prompt(&text);
+                                    crate::gateway::start_turn_chain_with_gateway(
+                                        gateway.clone(),
+                                        &handle.core,
+                                        handle.clone(),
+                                        prompt,
+                                        None,
+                                    );
+                                }
+                                let _ = lifecycle.commit_transcript(&utterance_id, &text);
                                 let _ = socket
                                     .send(Message::Text(
                                         String::from_utf8_lossy(&frame).into_owned().into(),
@@ -1008,6 +1041,9 @@ async fn drive_voice(
                         final_,
                     }) => {
                         if text.trim().is_empty() {
+                            continue;
+                        }
+                        if final_ && !committed_utterances.insert(utterance_id.clone()) {
                             continue;
                         }
                         if let Some(handle) = ledger.as_ref()

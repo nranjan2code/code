@@ -1,9 +1,10 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
+import AgentMark from "./AgentMark";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
@@ -105,33 +106,27 @@ function EmptyChat(props: { hasSession: boolean }) {
   );
 }
 
-/** True while a turn is running but nothing currently *visible at this
- * density* shows its own activity — the model is between tokens/tool
- * calls (or, in "outcome" density, thinking/working on a tool that
- * density hides) with literally nothing animating on screen. This is
- * the gap that otherwise reads as a dead, stuck UI.
- *
- * Checked against the density-filtered list, not the raw item list:
- * "outcome" hides thinking and completed tool cards, so a raw-list check
- * could see a live thinking item and suppress the indicator while the
- * screen itself shows nothing at all. */
-function awaitingNextOutput(id: string | null): boolean {
-  if (!isRunning(id)) return false;
-  const list = visibleItems(itemsOf(id));
+/** One calm live state for the outcome-first conversation. Raw thinking,
+ * tool calls, stdout and telemetry stay in Details/Workbench. Approvals and
+ * failures remain inline because they require a decision. */
+function activeWorkingState(id: string | null): { executionId?: string } | null {
+  if (!isRunning(id)) return null;
+  const list = itemsOf(id);
   const last = list[list.length - 1];
-  if (!last) return true;
-  if (last.kind === "assistant" && last.streaming) return false;
-  if (last.kind === "thinking" && !last.done) return false;
-  if (last.kind === "tool" && !last.done) return false;
-  return true;
+  if (last?.kind === "assistant" && last.streaming) return null;
+  if (last?.kind === "approval" && !last.resolved) return null;
+  const execution = [...list].reverse().find((item) => item.kind === "tool" && !item.done);
+  return { executionId: execution?.kind === "tool" ? execution.id : undefined };
 }
 
-function ThinkingIndicator() {
+function WorkingIndicator(props: { sessionId: string | null; executionId?: string }) {
   return (
-    <div class="thinking-row" aria-live="polite" aria-label="Working">
-      <span class="thinking-dots">
-        <span /><span /><span />
-      </span>
+    <div class="working-state" aria-live="polite" aria-label={`${agentForSession(props.sessionId).name} is working`}>
+      <AgentMark character={agentForSession(props.sessionId).character} size={24} working class="working-state-mark" />
+      <span class="working-state-copy"><strong>{agentForSession(props.sessionId).name}</strong><span>Working on it</span></span>
+      <Show when={props.executionId}>
+        <button type="button" onClick={() => openWorkbenchExecution(props.executionId)}>View activity</button>
+      </Show>
     </div>
   );
 }
@@ -632,49 +627,25 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
         }
       }
 
-      const results: Array<{ name: string; path: string }> = [];
+      const results: Array<{ name: string; path: string; execId?: string }> = [];
       const seenPaths = new Set<string>();
       const executions = workbenchExecutions();
 
-      // 1. Add actual artifacts from executions that ran in this turn
+      // Only attach artifacts through the brokered tool-call/execution id.
+      // Prose and basename inference used to make a mentioned file look like
+      // a produced result, and the session-wide fallback could attach an old
+      // execution to every later answer.
       for (const exec of executions) {
-        if (turnToolIds.has(exec.id) || (turnToolIds.size === 0 && (!exec.ownerSessionId || exec.ownerSessionId === sid))) {
+        if (turnToolIds.has(exec.id)) {
           for (const art of exec.artifacts) {
             if (isPreviewableArtifact(art.path) && !seenPaths.has(art.path)) {
               seenPaths.add(art.path);
               results.push({
                 name: art.path.split("/").pop() || art.path,
                 path: art.path,
+                execId: exec.id,
               });
             }
-          }
-        }
-      }
-
-      // 2. Extract referenced deliverables from prose, stripping trailing punctuation
-      const text = props.item.text;
-      const re = /(?:`([^`\n]+)`|\[(?:[^\]]*)\]\(([^)\n]+)\)|(?:\.vak\/scratch\/[^\s,;'")\]]+)|(?:[\w./-]+\.(?:html|htm|pdf|svg|png|jpe?g|webp|bmp)))/gi;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(text)) !== null) {
-        let raw = (m[1] || m[2] || m[0] || "").trim();
-        raw = raw.replace(/[.,;:!?)]'"`]+$/, "").trim();
-        if (
-          raw &&
-          isPreviewableArtifact(raw) &&
-          !raw.includes(" ") &&
-          !raw.startsWith("http")
-        ) {
-          // If this matches an existing execution artifact basename, resolve to full artifact path
-          const matchingExecArt = executions
-            .flatMap((e) => e.artifacts)
-            .find((a) => a.path === raw || a.path.endsWith("/" + raw) || a.path.split("/").pop() === raw.split("/").pop());
-          const finalPath = matchingExecArt ? matchingExecArt.path : raw;
-          if (!seenPaths.has(finalPath)) {
-            seenPaths.add(finalPath);
-            results.push({
-              name: matchingExecArt ? (matchingExecArt.path.split("/").pop() || finalPath) : (raw.split("/").pop() || raw),
-              path: finalPath,
-            });
           }
         }
       }
@@ -685,9 +656,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     return (
       <div class="msg assistant">
         <div class="assistant-turn-head">
-          <span class="assistant-avatar-mark">
-            <img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" class="assistant-avatar-img" />
-          </span>
+          <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} size={26} working={props.item.streaming} class="assistant-avatar-mark" />
           <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
           <Show when={props.item.streaming}>
             <span class="assistant-live-pulse" title="Generating">
@@ -718,7 +687,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
           <Show when={!props.item.streaming && turnDeliverables().length > 0}>
             <div class="turn-artifacts-container">
               <For each={turnDeliverables()}>
-                {(art) => (
+                {(art, index) => (
                   <div class="turn-artifact-chip">
                     <span class="artifact-chip-icon"><Icon name="preview" size={14} /></span>
                     <div class="artifact-chip-details">
@@ -733,6 +702,9 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
                     >
                       <Icon name="preview" size={12} /> Open Canvas
                     </button>
+                    <Show when={index() === 0 && art.execId}>
+                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!)}><Icon name="diff" size={12} /> Review draft</button>
+                    </Show>
                   </div>
                 )}
               </For>
@@ -760,11 +732,41 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   let smoothScrolling = false;
   let smoothTimer: number | null = null;
   const [atBottom, setAtBottom] = createSignal(true);
+  const [shownTurns, setShownTurns] = createSignal(40);
+  let loadingEarlier = false;
+  let observedTurnCount = 0;
+  const turns = createMemo(() => {
+    const grouped: Item[][] = [[]];
+    for (const item of itemsOf(sid())) {
+      if (item.kind === "user") {
+        if (!stripControlScaffolding(item.text).trim()) continue;
+        grouped.push([]);
+      }
+      grouped[grouped.length - 1].push(item);
+    }
+    return grouped;
+  });
+  const displayedTurns = createMemo(() => {
+    const all = turns();
+    const start = Math.max(0, all.length - shownTurns());
+    return all.slice(start).map((turn, offset) => ({ turn, index: start + offset }));
+  });
+  const working = createMemo(() => activeWorkingState(sid()));
 
   const onScroll = () => {
     if (smoothScrolling) return;
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
     setAtBottom(pinned);
+    if (scroller.scrollTop < 160 && shownTurns() < turns().length && !loadingEarlier) {
+      loadingEarlier = true;
+      const height = scroller.scrollHeight;
+      const top = scroller.scrollTop;
+      setShownTurns((count) => Math.min(turns().length, count + 40));
+      requestAnimationFrame(() => {
+        scroller.scrollTop = top + scroller.scrollHeight - height;
+        loadingEarlier = false;
+      });
+    }
   };
   const scrollToBottom = (force = false) => {
     if (force) {
@@ -801,6 +803,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     void id;
     pinned = true;
     setAtBottom(true);
+    setShownTurns(40);
+    observedTurnCount = 0;
     queueMicrotask(() => scheduleScroll());
   });
 
@@ -840,16 +844,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
     if (smoothTimer !== null) clearTimeout(smoothTimer);
   });
-  const turns = createMemo(() => {
-    const grouped: Item[][] = [[]];
-    for (const item of itemsOf(sid())) {
-      if (item.kind === "user") {
-        if (!stripControlScaffolding(item.text).trim()) continue;
-        grouped.push([]);
-      }
-      grouped[grouped.length - 1].push(item);
+  createEffect(() => {
+    const count = turns().length;
+    if (observedTurnCount > 0 && count > observedTurnCount && !pinned) {
+      setShownTurns((shown) => shown + count - observedTurnCount);
     }
-    return grouped;
+    observedTurnCount = count;
   });
   const projectedTurn = (index: number) => {
     const timeline = presentationOf(sid());
@@ -873,13 +873,13 @@ export default function ChatPane(props: { sessionId?: string | null }) {
             {/* Unified continuous chat canvas: The transcript stays permanently mounted
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
-            <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
-              <Index each={turns()}>{(turn, index) =>
-                <Show when={projectedTurn(index)} fallback={<Index each={visibleItems(turn())}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
+            <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
+              <Index each={displayedTurns()}>{(entry) =>
+                <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn)}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
                   {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}
                 </Show>
               }</Index>
-              <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
+              <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>
             </Show>
           </Show>
         </Show>

@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import * as api from "../api";
 import type { ActiveWorker } from "../api";
 import Icon from "./Icon";
+import AgentMark from "./AgentMark";
 
 /**
  * Live worker attach/steer panel (dock tab). Polls the session's
@@ -19,7 +20,6 @@ export default function WorkersPanel(props: { sessionId: string | null }): JSX.E
   onMount(() => { void api.listAgents().then((res) => setProfiles(res.agents)).catch(() => { /* optional enhancement */ }); });
   const profileFor = (label: string) => profiles().find((profile) => profile.name.toLowerCase() === label.toLowerCase());
   const profileForChild = (child: ActiveWorker) => profiles().find((profile) => profile.id === child.agent_id) ?? profileFor(child.label);
-  const glyphFor = (character: string | undefined) => ({ orb: "◌", leaf: "◒", sun: "☼", wave: "〰", spark: "✦" }[character ?? "orb"] ?? "◌");
 
   const refresh = async () => {
     const id = props.sessionId;
@@ -89,7 +89,7 @@ export default function WorkersPanel(props: { sessionId: string | null }): JSX.E
             {(child) => (
               <div class="worker-card">
                 <div class="worker-head">
-                  <span class="worker-identity"><span class={`agent-glyph ${profileForChild(child)?.character ?? "orb"} ${profileForChild(child)?.animation ?? "subtle"}`}>{glyphFor(profileForChild(child)?.character)}</span><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.agent_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
+                  <span class="worker-identity"><AgentMark character={profileForChild(child)?.character} size={22} working /><span><strong title={child.id}>{child.label}</strong><small>{profileForChild(child)?.name ? `with ${profileForChild(child)!.name} · revision ${child.agent_revision ?? profileForChild(child)!.revision}` : "Vak delegated this work"}</small></span></span>
                   <span class="worker-elapsed">{child.elapsed_secs}s</span>
                   <button
                     class="worker-stop"

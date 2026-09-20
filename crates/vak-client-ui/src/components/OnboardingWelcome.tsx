@@ -2,6 +2,7 @@ import { createEffect, createSignal, Show } from "solid-js";
 import { backend, setAgentCreateOpen } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
+import AgentMark from "./AgentMark";
 
 const SEEN_KEY = "vak.onboarded";
 
@@ -37,7 +38,7 @@ export default function OnboardingWelcome() {
     <Show when={visible()}>
       <div class="modal-back" onClick={dismiss}>
         <div class="modal" style="max-width: 420px;" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" onClick={(e) => e.stopPropagation()}>
-          <div class="agent-glyph spark" style="width: 44px; height: 44px; font-size: 26px; margin-bottom: 12px;">✦</div>
+          <div style="margin-bottom: 12px;"><AgentMark character="spark" size={44} /></div>
           <h2 id="onboarding-title" style="margin: 0 0 6px;">Meet Vak</h2>
           <p style="margin: 0 0 18px; color: var(--muted); font-size: 13.5px; line-height: 1.5;">
             Vak is ready to help out of the box. You can also build your own specialists — an agent with its own

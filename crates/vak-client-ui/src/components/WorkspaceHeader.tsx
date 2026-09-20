@@ -29,7 +29,7 @@ import {
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
-import { agentGlyph } from "../agentGlyph";
+import AgentMark from "./AgentMark";
 import Icon, { type IconName } from "./Icon";
 
 const INBOX_POLL_MS = 20_000;
@@ -137,7 +137,7 @@ export default function WorkspaceHeader() {
               title="Switch Agent Specialist"
             >
               <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                <span class={`agent-glyph ${titleGlyph() ?? "orb"}`} classList={{ running: isRunning(activeId()) }} style="width: 20px; height: 20px; font-size: 12px;">{agentGlyph(titleGlyph())}</span>
+                <AgentMark character={titleGlyph()} size={20} working={isRunning(activeId())} />
                 <span>{title()}</span>
                 <span style="font-size: 11px; opacity: 0.6;">▾</span>
               </h1>

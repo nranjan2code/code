@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Primary user: a solo, security-conscious technical user who wants powerful agent automation but refuses to give up inspectability and control. They run vak against their own machine, files, and tools, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
+Primary user: a person who wants an Agent to help with everyday work by voice or typing, see a clear result, and continue. Most users are not developers. Inspectability and control remain available when the work calls for review, including for technical users working with code, files, and tools.
 
 ## Product Purpose
 

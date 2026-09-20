@@ -200,6 +200,14 @@ export function setActiveExecutionId(value: string | null) {
 }
 
 export const [workbenchTab, setWorkbenchTab] = createSignal<"execution" | "artifacts">("execution");
+export const [candidateReviewRequest, setCandidateReviewRequest] = createSignal<string | null>(null);
+
+export function openCandidateReview(execId: string) {
+  setActiveExecutionId(execId);
+  setWorkbenchTab("execution");
+  setCandidateReviewRequest(execId);
+  setDockTab("workbench");
+}
 
 export function openWorkbenchExecution(execId?: string) {
   setWorkbenchTab("execution");
@@ -295,6 +303,10 @@ export interface ActiveComponentPreview {
   connectSrc?: string;
   serverName?: string;
   serverUrl?: string;
+  /** Durable conversation/result identity that produced this artifact. */
+  sessionId?: string;
+  resultId?: string;
+  executionId?: string;
 }
 export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
 
@@ -473,7 +485,11 @@ export function extractCodeBlockForPath(text: string, path: string): string | un
 }
 
 /** Open any artifact path directly in the Artifact Canvas. */
-export function openArtifactPathInCanvas(path: string, html?: string) {
+export function openArtifactPathInCanvas(
+  path: string,
+  html?: string,
+  context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId">,
+) {
   let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
   const executions = workbenchExecutions();
   // Check if there is an execution artifact matching this filename or ending with this path
@@ -514,6 +530,7 @@ export function openArtifactPathInCanvas(path: string, html?: string) {
     artifactPath: clean,
     html: resolvedHtml,
     timestamp: Date.now(),
+    ...context,
   });
 }
 
