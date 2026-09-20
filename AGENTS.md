@@ -67,6 +67,8 @@ Read before changing behaviour in these areas:
 - **Experience direction** — `61-adaptive-assistant-experience.md` (Phase 1
   shipped, later journeys phased), `65-universal-adaptive-platform.md` and
   `66-immersive-artifact-canvas.md` (both implemented and audited),
+  `70-calm-agent-experience-implementation.md` (the current four-screen visual
+  reference and implementation ledger; in progress),
   `58-admin-ia-and-ui-goal.md` (goal and guidance),
   `59-reference-ui-acceptance.md` (an acceptance backlog, not a description of
   the build), `51-feed-system.md`, `51-retired-tools.md`.
