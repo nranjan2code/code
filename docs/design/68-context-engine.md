@@ -100,14 +100,20 @@ assembling the user's request:
 1. Metadata rung: `model_context()` as today (Ollama `/api/show` incl.
    `num_ctx`, `/v1/models`, Anthropic/OpenAI catalogues). Sets
    `declared_window`, `output_reserve`.
-2. Horizon ladder: send synthetic turns of geometrically increasing size
-   (4k, 8k, 16k, 32k, 64k, … up to `declared_window × 0.9`), each containing
-   filler history and *one* instruction that requires a tool call
-   (`probe_ack` tool, no side effects). Binary-search the boundary between
-   "called the tool" and "did not". The largest passing rung is
-   `instruction_horizon`. A 400/413 on any rung sets `verified_window` to the
-   last accepted rung. Each rung is one request with `max_tokens` ≈ 32; cost
-   is dominated by prefill.
+2. Horizon ladder: send synthetic histories of geometrically increasing
+   size (4k, 8k, 16k, 32k, 64k, … up to `declared_window × 0.9`), shaped
+   like the turns the model will really see — user question, assistant
+   tool call, digest-shaped result with an `[evidence:…]` tag, short answer
+   — ending with *one* instruction that requires a tool call (`probe_ack`,
+   no side effects). A rung's verdict is the majority of three identical
+   samples (a sampling model is a coin flip per completion; the second and
+   third samples hit the prefix cache, so they cost decode time only).
+   Binary-search the boundary between "followed" and "did not". The largest
+   passing rung is `instruction_horizon`. A 400/413 on any rung sets
+   `verified_window`. Each sample is one request with `max_tokens` ≈ 32.
+   Measured: single samples over inert prose gave 7k, 14k and 48k for one
+   model within an hour; majority-of-three over turn-shaped filler gave 64k
+   six times out of six.
 3. Cache rung: two identical requests back to back; if the provider reports
    cached tokens (`prompt_tokens_details.cached_tokens`,
    `cache_read_input_tokens`) or the second is ≥5× faster, `cache =
