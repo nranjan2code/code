@@ -9,6 +9,7 @@ This folder contains the research, creative brief, narration, prompts, and agent
 - [`SCRIPT.md`](SCRIPT.md) — scene-by-scene storyboard and timing plan
 - [`STORY_FILM.md`](STORY_FILM.md) — director’s premise, visual language, beat map, and editing rules
 - [`PROMPTS.md`](PROMPTS.md) — master visual prompt, scene prompts, and voice direction
+- [`spot-2026/`](spot-2026/README.md) — the 25 s brand spot “Ask. Then go live your day.” (ElevenLabs canvas, keyframes, clips, audio, final MP4)
 - [`ASSET_MANAGEMENT.md`](ASSET_MANAGEMENT.md) — canonical diagram library, manifests, syncing, and replacement rules
 - [`narration.txt`](narration.txt) — canonical narration input for voice generation
 - [`story-narration.txt`](story-narration.txt) — narration input for the cinematic second asset
