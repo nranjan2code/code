@@ -3,7 +3,8 @@ import { trapFocus } from "../focusTrap";
 import { agentCreateOpen, setAgentCreateOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
-import { AGENT_GLYPHS, type AgentCharacter } from "../agentGlyph";
+import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
+import { playCharacterCue } from "../characterSound";
 import AgentMark from "./AgentMark";
 import Icon from "./Icon";
 
@@ -14,7 +15,7 @@ const SCRATCH: api.AgentTemplate = {
   domain: "custom",
   name: "",
   description: "Start with a blank agent and define everything yourself.",
-  character: "spark",
+  character: "mira",
   personality: "",
   behaviour: "Deliver high-quality outcomes with clear reasoning.",
   responsibilities: "",
@@ -34,7 +35,7 @@ export default function AgentCreateWizard() {
   const [id, setId] = createSignal("");
   const [idTouched, setIdTouched] = createSignal(false);
   const [name, setName] = createSignal("");
-  const [character, setCharacter] = createSignal<Character>("spark");
+  const [character, setCharacter] = createSignal<Character>("mira");
   const [personality, setPersonality] = createSignal("");
   const [instructions, setInstructions] = createSignal("");
 
@@ -50,7 +51,7 @@ export default function AgentCreateWizard() {
     setId("");
     setIdTouched(false);
     setName("");
-    setCharacter("spark");
+    setCharacter("mira");
     setPersonality("");
     setInstructions("");
     setError("");
@@ -199,21 +200,24 @@ export default function AgentCreateWizard() {
 
               <div>
                 <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Character</label>
-                <div style="display: flex; gap: 6px;">
-                  <For each={Object.keys(AGENT_GLYPHS) as Character[]}>
+                <div class="agent-companion-picker">
+                  <For each={AGENT_CHARACTER_IDS}>
                     {(c) => (
                       <button
                         type="button"
-                        class="icon-button subtle"
+                        class="agent-companion-choice"
                         classList={{ active: character() === c }}
-                        aria-label={c}
-                        onClick={() => setCharacter(c)}
+                        aria-label={`Choose ${AGENT_CHARACTERS[c].name}, ${AGENT_CHARACTERS[c].kind}`}
+                        onClick={() => { setCharacter(c); playCharacterCue(c); }}
                       >
-                        <AgentMark character={c} size={22} />
+                        <AgentMark character={c} size={56} working={character() === c} />
+                        <strong>{AGENT_CHARACTERS[c].name}</strong>
+                        <small>{AGENT_CHARACTERS[c].kind}</small>
                       </button>
                     )}
                   </For>
                 </div>
+                <p class="agent-companion-note">Choose a companion to preview its movement and sound. Sounds follow your app setting.</p>
               </div>
 
               <div>

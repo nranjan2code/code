@@ -377,7 +377,7 @@ export interface Agent {
   revision: number;
   lifecycle: "active" | "paused" | "archived";
   name: string;
-  character: "orb" | "leaf" | "sun" | "wave" | "spark";
+  character: "vak" | "mira" | "moss" | "nori" | "pip" | "lumi" | "tavi" | "beni";
   personality: string;
   behaviour: string;
   responsibilities: string;
@@ -403,7 +403,7 @@ export interface AgentTemplate {
   domain: string;
   name: string;
   description: string;
-  character: "orb" | "leaf" | "sun" | "wave" | "spark";
+  character: "vak" | "mira" | "moss" | "nori" | "pip" | "lumi" | "tavi" | "beni";
   personality: string;
   behaviour: string;
   responsibilities: string;

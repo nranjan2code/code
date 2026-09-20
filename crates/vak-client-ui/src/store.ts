@@ -67,7 +67,7 @@ export function agentForSession(id: string | null) {
   const found = sessions().find((session) => session.session_id === id)?.agent;
   if (found) return found;
   if (id && id === activeId() && activeAgent()) return activeAgent()!;
-  return {id: "vak", name: "Vak", revision: 1, character: "spark"};
+  return {id: "vak", name: "Vak", revision: 1, character: "vak"};
 }
 export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);

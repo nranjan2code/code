@@ -17,6 +17,8 @@ import {
 } from "./fixtures";
 import type { Category, Fixture, ScenarioFixture, MultiCardFixture } from "./fixtures";
 import type { StructuredOutput } from "../types";
+import AgentMark from "../components/AgentMark";
+import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS } from "../agentGlyph";
 
 // `?stress=1` pads every string in every fixture with long prose plus a long
 // unbroken token, the shape of real model/tool output (titles, snippets,
@@ -214,6 +216,28 @@ export default function CardHarness() {
           onInput={(e) => setFilter(e.currentTarget.value)}
         />
       </header>
+
+      <section>
+        <h2>Agent character package</h2>
+        <p class="harness-section-note">
+          Canonical Vak mascot and all seven built-in companions at compact, conversation, and promotional sizes.
+          The final portrait in each row exercises the working-state motion.
+        </p>
+        <div class="harness-character-grid">
+          <For each={AGENT_CHARACTER_IDS}>{(id) => (
+            <article class="harness-character-card">
+              <div class="harness-character-sizes">
+                <AgentMark character={id} size={24} />
+                <AgentMark character={id} size={40} />
+                <AgentMark character={id} size={88} working />
+              </div>
+              <strong>{AGENT_CHARACTERS[id].name}</strong>
+              <span>{AGENT_CHARACTERS[id].kind}</span>
+              <small>{AGENT_CHARACTERS[id].personality}</small>
+            </article>
+          )}</For>
+        </div>
+      </section>
 
       <section>
         <h2>Real-world scenario simulations (groundedness, not just render-safety)</h2>

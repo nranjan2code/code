@@ -1112,6 +1112,7 @@ mod tests {
                 id: "support".into(),
                 revision: 2,
                 name: "Support".into(),
+                character: "vak".into(),
                 personality: String::new(),
                 behaviour: String::new(),
                 responsibilities: String::new(),

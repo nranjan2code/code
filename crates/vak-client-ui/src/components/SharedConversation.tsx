@@ -2,6 +2,7 @@ import { createSignal, For, onCleanup, Show } from "solid-js";
 import type { Message, OutputItem, OutputTimeline } from "../types";
 import Icon from "./Icon";
 import { AdaptiveTreeView, StructuredView } from "./PresentationRenderer";
+import AgentMark from "./AgentMark";
 
 type SharedCandidate = {
   kind: "Candidate" | "Promotion" | "Environment";
@@ -30,6 +31,7 @@ export default function SharedConversation() {
   const [comments, setComments] = createSignal<SharedComment[]>([]);
   const [fileError, setFileError] = createSignal<string | null>(null);
   const [participantName, setParticipantName] = createSignal("");
+  const [agent, setAgent] = createSignal({ name: "Vak", character: "vak" });
   const [canComment, setCanComment] = createSignal(false);
   const [commentText, setCommentText] = createSignal("");
   const [commentLine, setCommentLine] = createSignal("");
@@ -53,6 +55,7 @@ export default function SharedConversation() {
     setComments([]);
     setFileError(null);
     setParticipantName("");
+    setAgent({ name: "Vak", character: "vak" });
     setCanComment(false);
     setCommentText("");
     setCommentLine("");
@@ -199,7 +202,9 @@ export default function SharedConversation() {
       const current = credential();
       if (!current) return;
       const me = await read(current.conversationId, current.token, "/coworking/me");
+      if (!me.agent?.name || !me.agent?.character) throw new Error("This conversation has no complete Agent identity.");
       setParticipantName(me.display_name ?? "Guest");
+      setAgent({ name: me.agent.name, character: me.agent.character });
       setCanComment(Array.isArray(me.capabilities) && me.capabilities.includes("comment"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -247,14 +252,14 @@ export default function SharedConversation() {
   };
 
   return <main class="shared-conversation">
-    <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
+    <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><span class="shared-agent-identity"><AgentMark character={agent().character} size={22} /><span>{agent().name}</span></span><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
       <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation and its saved drafts{canComment() ? ", and leave comments on a draft" : ""}. Agent requests and workspace changes remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
         <For each={messages().slice(-visibleCount())} fallback={<p class="shared-empty">No visible messages yet.</p>}>
-          {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author">{message.role.toLowerCase() === "assistant" ? "Agent" : "Person"}</span><p>{text()}</p></article>}</Show>}
+          {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author"><Show when={message.role.toLowerCase() === "assistant"} fallback={<>Person</>}><AgentMark character={agent().character} size={18} /><span>{agent().name}</span></Show></span><p>{text()}</p></article>}</Show>}
         </For>
       </section>
       <Show when={sharedResults().length > 0}><section class="shared-results" aria-label="Shared results"><h2>Results</h2><For each={sharedResults()}>{(item) => <article class="shared-result" data-result-id={item.outcome?.result_id ?? item.id}><Show when={item.content.type === "structured"}>{item.content.type === "structured" && <StructuredView output={item.content.output} fallback={item.fallback_text} />}</Show><Show when={item.content.type === "adaptive"}>{item.content.type === "adaptive" && <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />}</Show></article>}</For></section></Show>

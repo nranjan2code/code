@@ -212,6 +212,7 @@ pub struct AgentIdentity {
     pub id: String,
     pub revision: u64,
     pub name: String,
+    pub character: String,
     pub personality: String,
     pub behaviour: String,
     #[serde(default)]
@@ -885,4 +886,19 @@ pub enum SessionError {
     Exists(std::path::PathBuf),
     #[error("session is locked by another process: {0}")]
     Locked(std::path::PathBuf),
+}
+
+#[cfg(test)]
+mod agent_identity_tests {
+    #[test]
+    fn character_is_required_identity_data() {
+        let value = serde_json::json!({
+            "id": "researcher",
+            "revision": 1,
+            "name": "Researcher",
+            "personality": "curious",
+            "behaviour": "careful"
+        });
+        assert!(serde_json::from_value::<super::AgentIdentity>(value).is_err());
+    }
 }

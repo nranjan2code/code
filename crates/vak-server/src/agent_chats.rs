@@ -59,6 +59,7 @@ pub(crate) fn resolve_agent_core(
             id: id.to_string(),
             revision: 1,
             name: "Vak".into(),
+            character: "vak".into(),
             personality: String::new(),
             behaviour: String::new(),
             responsibilities: String::new(),

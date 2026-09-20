@@ -3653,6 +3653,7 @@ mod tests {
             id: "researcher".into(),
             revision: 1,
             name: "Researcher".into(),
+            character: "vak".into(),
             personality: "curious".into(),
             behaviour: "thorough".into(),
             responsibilities: "deep research".into(),

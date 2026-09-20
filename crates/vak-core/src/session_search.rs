@@ -407,6 +407,7 @@ mod tests {
                     id: agent.into(),
                     revision: 1,
                     name: agent.into(),
+                    character: "vak".into(),
                     personality: String::new(),
                     behaviour: String::new(),
                     responsibilities: String::new(),

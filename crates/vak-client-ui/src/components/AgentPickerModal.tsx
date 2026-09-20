@@ -40,7 +40,7 @@ export default function AgentPickerModal() {
       revision: 1,
       lifecycle: "active",
       name: "Vak",
-      character: "spark",
+      character: "vak",
       personality: "Adaptive, helpful, safety-first autonomous assistant.",
       behaviour: "Take initiative on clear requests and explain next useful step.",
       responsibilities: "Core engineering, analysis, coding, and general tasks.",

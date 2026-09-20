@@ -7139,13 +7139,29 @@ fn conversation_audience(state: &AppState, id: &str) -> Option<String> {
 }
 
 async fn coworking_me(
+    State(state): State<AppState>,
     Path(conversation_id): Path<String>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let Some(agent) =
+        read_historical_header(&state, &conversation_id, None).and_then(|header| header.agent)
+    else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "conversation has no Agent identity" })),
+        )
+            .into_response();
+    };
+    let agent = serde_json::json!({
+        "id": agent.id,
+        "name": agent.name,
+        "character": agent.character,
+        "revision": agent.revision,
+    });
     match principal {
         AuthenticatedPrincipal::Operator => {
-            Json(serde_json::json!({ "principal_id": "operator", "display_name": "You", "capabilities": ["owner"] })).into_response()
+            Json(serde_json::json!({ "principal_id": "operator", "display_name": "You", "capabilities": ["owner"], "agent": agent })).into_response()
         }
         AuthenticatedPrincipal::Participant(participant)
             if participant.conversation_id == conversation_id =>
@@ -7154,6 +7170,7 @@ async fn coworking_me(
                 "principal_id": participant.principal_id,
                 "display_name": participant.display_name,
                 "capabilities": participant.capabilities,
+                "agent": agent,
             }))
             .into_response()
         }

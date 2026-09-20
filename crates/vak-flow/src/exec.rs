@@ -526,6 +526,7 @@ async fn execute_node(
                         id: "vak".into(),
                         revision: 1,
                         name: "Vak".into(),
+                        character: "vak".into(),
                         personality: String::new(),
                         behaviour: String::new(),
                         responsibilities: String::new(),
