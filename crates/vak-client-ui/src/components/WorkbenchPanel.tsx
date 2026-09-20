@@ -420,7 +420,7 @@ export default function WorkbenchPanel() {
     setReviewFileError(null);
     void Promise.allSettled([
       api.readFile(candidatePath(prepared.candidate.destination_root, path)),
-      api.readFile(candidatePath(prepared.candidate.source_root, path)),
+      api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path),
     ]).then(([before, after]) => {
       if (disposed) return;
       setBeforeContent(before.status === "fulfilled" ? before.value.content ?? null : null);

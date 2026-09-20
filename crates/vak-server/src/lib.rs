@@ -723,6 +723,10 @@ fn router_with_state(state: AppState) -> Router {
             post(export_sandbox_candidate),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/files",
+            get(read_sandbox_candidate_file),
+        )
+        .route(
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
@@ -9467,6 +9471,14 @@ fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
         .join("records.jsonl")
 }
 
+fn sandbox_candidates_root(state: &AppState) -> std::path::PathBuf {
+    state
+        .core
+        .sessions_home()
+        .join("sandbox")
+        .join("candidates")
+}
+
 fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
     state
         .core
@@ -9681,11 +9693,16 @@ async fn export_sandbox_candidate(
             .into_response();
     };
     let id = uuid::Uuid::now_v7().to_string();
-    match vak_sandbox::candidate_manifest(&id, &source, &destination) {
+    let frozen_root = sandbox_candidates_root(&state).join(&id);
+    if let Err(error) = std::fs::create_dir_all(sandbox_candidates_root(&state)) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
         Ok(candidate) => {
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
+                    let _ = std::fs::remove_dir_all(&frozen_root);
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({"error": error.to_string()})),
@@ -9707,11 +9724,14 @@ async fn export_sandbox_candidate(
             });
             match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
                 Ok(()) => Json(record).into_response(),
-                Err(error) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response(),
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&frozen_root);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": error.to_string() })),
+                    )
+                        .into_response()
+                }
             }
         }
         Err(error) => (
@@ -9720,6 +9740,50 @@ async fn export_sandbox_candidate(
         )
             .into_response(),
     }
+}
+
+async fn read_sandbox_candidate_file(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let Some(candidate) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
+        {
+            Some(&saved.candidate)
+        }
+        _ => None,
+    }) else {
+        return (StatusCode::NOT_FOUND, "candidate not found").into_response();
+    };
+    let Some(file) = candidate.files.iter().find(|file| file.path == q.path) else {
+        return (StatusCode::NOT_FOUND, "file not in candidate").into_response();
+    };
+    let expected_root = sandbox_candidates_root(&state).join(&candidate_id);
+    if candidate.source_root != expected_root {
+        return (StatusCode::FORBIDDEN, "candidate source is not frozen").into_response();
+    }
+    let Some(path) = confined_path(&expected_root, &file.path) else {
+        return (StatusCode::FORBIDDEN, "candidate path outside frozen root").into_response();
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return (StatusCode::NOT_FOUND, "candidate file missing").into_response(),
+    };
+    if vak_sandbox::digest(&bytes) != file.candidate_hash {
+        return (StatusCode::CONFLICT, "candidate file changed").into_response();
+    }
+    let size = bytes.len();
+    let content = String::from_utf8(bytes).ok();
+    Json(serde_json::json!({ "path": file.path, "kind": if content.is_some() { "text" } else { "binary" }, "bytes": size, "content": content, "editable": false })).into_response()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -9792,7 +9856,9 @@ async fn promote_sandbox_candidate(
         .unwrap_or_else(|_| candidate.source_root.clone());
     let destination_root = std::fs::canonicalize(&candidate.destination_root)
         .unwrap_or_else(|_| candidate.destination_root.clone());
-    let source_ok = source_root.starts_with(&workspace);
+    let frozen_root = sandbox_candidates_root(&state).join(&body.candidate_id);
+    let source_ok =
+        std::fs::canonicalize(&frozen_root).is_ok_and(|expected| source_root == expected);
     let destination_ok = destination_root == workspace;
     if !source_ok || !destination_ok {
         return (
@@ -16728,7 +16794,7 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test]
-    async fn promotion_rejects_a_candidate_changed_after_review() {
+    async fn promotion_uses_frozen_candidate_after_scratch_changes() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -16744,6 +16810,55 @@ mod sandbox_promotion_tests {
         tokio::fs::write(scratch.join("result.txt"), "changed")
             .await
             .unwrap();
+        let preview = read_sandbox_candidate_file(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "result.txt".into(),
+            }),
+        )
+        .await;
+        assert_eq!(preview.status(), StatusCode::OK);
+        let preview: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(preview.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(preview["content"], "reviewed");
+        let wrong_session = read_sandbox_candidate_file(
+            State(state.clone()),
+            Path((
+                "another-session".into(),
+                candidate.candidate.candidate_id.clone(),
+            )),
+            axum::extract::Query(FileQuery {
+                path: "result.txt".into(),
+            }),
+        )
+        .await;
+        assert_eq!(wrong_session.status(), StatusCode::NOT_FOUND);
+        tokio::fs::write(
+            candidate.candidate.source_root.join("result.txt"),
+            "tampered",
+        )
+        .await
+        .unwrap();
+        let tampered = read_sandbox_candidate_file(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "result.txt".into(),
+            }),
+        )
+        .await;
+        assert_eq!(tampered.status(), StatusCode::CONFLICT);
+        tokio::fs::write(
+            candidate.candidate.source_root.join("result.txt"),
+            "reviewed",
+        )
+        .await
+        .unwrap();
         let response = promote_sandbox_candidate(
             State(state),
             Path("session-1".into()),
@@ -16753,8 +16868,13 @@ mod sandbox_promotion_tests {
             }),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert!(!dir.path().join("result.txt").exists());
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("result.txt"))
+                .await
+                .unwrap(),
+            "reviewed"
+        );
     }
 
     #[test]

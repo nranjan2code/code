@@ -283,6 +283,45 @@ pub fn candidate_manifest(
     })
 }
 
+/// Capture the reviewed bytes under a new, server-owned directory. The
+/// manifest still records the destination baseline observed at export time.
+pub fn freeze_candidate(
+    id: &str,
+    source_root: &Path,
+    destination_root: &Path,
+    frozen_root: &Path,
+) -> Result<CandidateManifest, Error> {
+    let mut manifest = candidate_manifest(id, source_root, destination_root)?;
+    fs::create_dir(frozen_root)?;
+    let copy = (|| -> Result<(), Error> {
+        for file in &manifest.files {
+            let source = confined(source_root, &file.path)?;
+            let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
+            if digest(&bytes) != file.candidate_hash {
+                return Err(Error::CandidateChanged(file.path.clone()));
+            }
+            let target = confined(frozen_root, &file.path)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            use std::io::Write;
+            output.write_all(&bytes)?;
+            output.sync_all()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = copy {
+        let _ = fs::remove_dir_all(frozen_root);
+        return Err(error);
+    }
+    manifest.source_root = frozen_root.to_path_buf();
+    Ok(manifest)
+}
+
 pub fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
     let mut staged = Vec::new();
     let mut before_hashes = Vec::new();
@@ -415,6 +454,30 @@ mod tests {
             matches!(promote(&candidate), Err(Error::Conflict(path)) if path == "nested/z.txt")
         );
         assert!(!target.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn frozen_candidate_keeps_reviewed_bytes_after_scratch_changes() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("result.txt"), "reviewed").unwrap();
+        let frozen = store.path().join("candidate-1");
+        let candidate =
+            freeze_candidate("candidate-1", source.path(), target.path(), &frozen).unwrap();
+        fs::write(source.path().join("result.txt"), "later agent work").unwrap();
+
+        assert_eq!(candidate.source_root, frozen);
+        assert_eq!(
+            fs::read_to_string(frozen.join("result.txt")).unwrap(),
+            "reviewed"
+        );
+        let receipt = promote(&candidate).unwrap();
+        assert_eq!(receipt.applied, vec!["result.txt"]);
+        assert_eq!(
+            fs::read_to_string(target.path().join("result.txt")).unwrap(),
+            "reviewed"
+        );
     }
 
     #[cfg(unix)]

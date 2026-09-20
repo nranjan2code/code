@@ -979,6 +979,10 @@ export type SandboxRecord =
   | { kind: "Promotion"; record: SandboxPromotionRecord }
   | { kind: "Environment"; record: unknown };
 
+export function readSandboxCandidateFile(sessionId: string, candidateId: string, path: string): Promise<FileResponse> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
+}
+
 export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }
