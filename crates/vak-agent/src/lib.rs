@@ -1874,7 +1874,7 @@ impl Agent {
                 // repeat of an earlier turn's data. One bounded redo naming
                 // the gap; the model may decline by saying it has no live
                 // data, which the grounding phrases below already accept.
-                if wants_live_data && !retrieval_succeeded_this_run && !freshness_repair_attempted {
+                if wants_live_data && !retrieval_succeeded_this_run {
                     let text = response.text_content();
                     let lower = text.to_ascii_lowercase();
                     let admits_no_data = [
@@ -1887,6 +1887,12 @@ impl Agent {
                     ]
                     .iter()
                     .any(|phrase| lower.contains(phrase));
+                    if !admits_no_data && freshness_repair_attempted {
+                        // Repaired once already and still nothing retrieved
+                        // (a thinking-only end, or the same figure again):
+                        // fail closed rather than accept a stale answer.
+                        return self.stale_data_outcome().await;
+                    }
                     if !admits_no_data {
                         freshness_repair_attempted = true;
                         if turn + 1 >= self.config.max_turns {
@@ -2239,10 +2245,16 @@ impl Agent {
                 calls.into_iter().partition(|call| {
                     !(wants_live_data
                         && !retrieval_succeeded_this_run
-                        && !freshness_repair_attempted
                         && self.tool_presents_cards(&call.name))
                 });
             if !gated.is_empty() {
+                if freshness_repair_attempted {
+                    // The repair was another carried-over card (measured
+                    // live: "New Delhi 29.1°C" gated, then "Noida 28°C"
+                    // from an older turn offered instead). Fail closed:
+                    // no stale figure is presented as current.
+                    return self.stale_data_outcome().await;
+                }
                 freshness_repair_attempted = true;
             }
             let mut results = self.execute_batch(calls, &cancel, &events).await;
@@ -4310,6 +4322,60 @@ impl Agent {
                 .map(|id| (id, ToolRunOutput::Ok(CARD_REPEAT_ACK.into()))),
         );
         results
+    }
+
+    /// The turn's answer when a current value was asked for and nothing
+    /// was retrieved after the one repair (docs/design/68 §7): an honest
+    /// statement naming the last figure this conversation recorded and
+    /// when, never that figure presented as current.
+    async fn stale_data_outcome(&self) -> TurnOutcome {
+        let last_known = {
+            let session = self.session.lock().await;
+            let turn_id = session.latest_directive_entry_id();
+            let entries = session.chain_to_root();
+            session
+                .presentations()
+                .into_iter()
+                .rev()
+                .find(|(_, record)| Some(record.turn_id.as_str()) != turn_id.as_deref())
+                .map(|(id, record)| {
+                    let when = entries
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .map(|entry| entry.ts.format("%Y-%m-%d %H:%M UTC").to_string())
+                        .unwrap_or_else(|| "an earlier turn".to_string());
+                    format!(
+                        " The most recent figure in this conversation was recorded at {when}: {}.",
+                        record.identity_digest
+                    )
+                })
+                .unwrap_or_default()
+        };
+        self.record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "stale-data-refused".into(),
+            Some(
+                "a current value was asked for, nothing was retrieved this turn after one repair, \
+                 and no carried-over figure was presented as current"
+                    .into(),
+            ),
+            std::collections::BTreeMap::new(),
+        )
+        .await;
+        TurnOutcome::Completed {
+            response: AssistantMessage {
+                content: vec![ContentBlock::text(format!(
+                    "I could not retrieve a current value on this turn, so I am not presenting a \
+                     carried-over figure as current.{last_known} Ask again when a retrieval tool \
+                     is available, or ask for the last known figure explicitly."
+                ))],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: self.config.model.clone(),
+                response_id: None,
+            },
+        }
     }
 
     /// The turn's answer when the model kept re-emitting a card it had

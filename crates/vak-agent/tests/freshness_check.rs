@@ -440,3 +440,46 @@ async fn a_card_in_a_live_data_turn_is_gated_until_something_is_retrieved() {
         "the gate fired at the card, so no second nudge on the final text"
     );
 }
+
+#[tokio::test]
+async fn a_second_stale_card_fails_closed_with_an_honest_answer() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "freshness-fail-closed",
+        vec![
+            card_call("c1", "29.1"),
+            // The "repair" is another carried-over figure, still no retrieval.
+            card_call("c2", "28"),
+            text_msg("unreachable"),
+        ],
+        true,
+    )
+    .await;
+    agent.config.tools.push(Arc::new(FakeCardTool));
+    let outcome = agent
+        .run(
+            "what is the current weather in new delhi",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    match &outcome {
+        TurnOutcome::Completed { response } => {
+            let text = response.text_content();
+            assert!(
+                text.contains("not presenting a carried-over figure as current"),
+                "fail-closed answer expected, got: {text}"
+            );
+            assert!(!text.contains("unreachable"));
+        }
+        other => panic!("expected a completed turn, got {other:?}"),
+    }
+    let presented =
+        futures::executor::block_on(async { agent.session.lock().await.presentations().len() });
+    assert_eq!(
+        presented, 0,
+        "no stale card may reach the ledger as a presentation"
+    );
+}

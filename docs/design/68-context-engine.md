@@ -312,8 +312,14 @@ engine adds a runtime check, not more prose:
   in the run): the answer or card can only repeat an earlier turn's figure.
   A card call is intercepted before execution and answered with a
   `[freshness-check]` error value the model repairs by retrieving first; a
-  prose answer gets the same as one redo nudge. Either way once per turn,
-  and an explicit "no live data" is accepted. The signal sets the domain
+  prose answer gets the same as one redo nudge. An explicit "no live data"
+  is accepted. After that one repair the turn **fails closed**: a second
+  card with still nothing retrieved, or a final answer that still carries
+  no retrieval, ends the turn with a system-authored statement that no
+  current value was retrieved, naming the last figure the conversation
+  recorded and when — never a carried-over figure presented as current.
+  Measured live: the model's "repair" was a different stale card from an
+  older turn. The signal sets the domain
   only — raising the evidence standard through the stance text made the
   small model deliberate in its thinking channel and emit nothing. Measured live: five of six replays of a "current weather"
   question emitted a card carrying a temperature from a previous turn.
