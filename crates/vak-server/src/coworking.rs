@@ -46,6 +46,29 @@ pub struct VerifiedPrincipal {
     pub capabilities: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GrantSummary {
+    pub grant_id: String,
+    pub principal_id: String,
+    pub display_name: String,
+    pub conversation_id: String,
+    pub audience_id: String,
+    pub capabilities: Vec<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    pub status: GrantStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantStatus {
+    Active,
+    Expired,
+    Revoked,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("grant store error: {0}")]
@@ -104,6 +127,11 @@ pub fn invite(path: &Path, grant: AudienceGrant) -> Result<(), Error> {
         || grant.capabilities.is_empty()
     {
         return Err(Error::Invalid("grant fields must be explicit".into()));
+    }
+    if load(path)?.iter().any(
+        |event| matches!(event, GrantEvent::Invited { grant: existing } if existing.grant_id == grant.grant_id),
+    ) {
+        return Err(Error::Invalid("grant id already exists".into()));
     }
     append(path, &GrantEvent::Invited { grant })
 }
@@ -168,6 +196,58 @@ pub fn verify(
     Ok(None)
 }
 
+pub fn list(
+    path: &Path,
+    conversation_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<GrantSummary>, Error> {
+    let events = load(path)?;
+    let revoked: std::collections::HashMap<&str, &str> = events
+        .iter()
+        .filter_map(|event| match event {
+            GrantEvent::Revoked {
+                grant_id,
+                revoked_at,
+                ..
+            } => Some((grant_id.as_str(), revoked_at.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut summaries = Vec::new();
+    for event in &events {
+        let GrantEvent::Invited { grant } = event else {
+            continue;
+        };
+        if grant.conversation_id != conversation_id {
+            continue;
+        }
+        let expires = chrono::DateTime::parse_from_rfc3339(&grant.expires_at)
+            .map_err(|error| Error::Invalid(error.to_string()))?
+            .with_timezone(&chrono::Utc);
+        let revoked_at = revoked.get(grant.grant_id.as_str()).copied();
+        summaries.push(GrantSummary {
+            grant_id: grant.grant_id.clone(),
+            principal_id: grant.principal_id.clone(),
+            display_name: grant.display_name.clone(),
+            conversation_id: grant.conversation_id.clone(),
+            audience_id: grant.audience_id.clone(),
+            capabilities: grant.capabilities.clone(),
+            created_at: grant.created_at.clone(),
+            expires_at: grant.expires_at.clone(),
+            status: if revoked_at.is_some() {
+                GrantStatus::Revoked
+            } else if expires <= now {
+                GrantStatus::Expired
+            } else {
+                GrantStatus::Active
+            },
+            revoked_at: revoked_at.map(ToOwned::to_owned),
+        });
+    }
+    summaries.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(summaries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,8 +297,33 @@ mod tests {
             .into();
         assert!(verify(&path, "expired", now).unwrap().is_none());
 
-        invite(&path, grant("revoked", "2026-09-22T00:00:00Z")).unwrap();
-        revoke(&path, "grant-1", "operator").unwrap();
+        let mut revoked = grant("revoked", "2026-09-22T00:00:00Z");
+        revoked.grant_id = "grant-2".into();
+        invite(&path, revoked).unwrap();
+        revoke(&path, "grant-2", "operator").unwrap();
         assert!(verify(&path, "revoked", now).unwrap().is_none());
+    }
+
+    #[test]
+    fn listing_omits_tokens_and_reports_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(dir.path());
+        invite(&path, grant("secret-token", "2026-09-22T00:00:00Z")).unwrap();
+        let duplicate = invite(&path, grant("replacement", "2026-09-23T00:00:00Z"));
+        assert!(duplicate.is_err());
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
+            .unwrap()
+            .into();
+        let listed = list(&path, "session-1", now).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].status, GrantStatus::Active);
+        let serialized = serde_json::to_string(&listed).unwrap();
+        assert!(!serialized.contains("token_hash"));
+        assert!(!serialized.contains("secret-token"));
+
+        revoke(&path, "grant-1", "operator").unwrap();
+        let listed = list(&path, "session-1", now).unwrap();
+        assert_eq!(listed[0].status, GrantStatus::Revoked);
+        assert!(listed[0].revoked_at.is_some());
     }
 }

@@ -755,6 +755,14 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/sessions/{id}/transcript", get(transcript))
         .route("/sessions/{id}/transcript.md", get(transcript_markdown))
+        .route(
+            "/sessions/{id}/coworking/invitations",
+            get(list_coworking_invitations).post(create_coworking_invitation),
+        )
+        .route(
+            "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
+            post(revoke_coworking_invitation),
+        )
         .route("/sessions/{id}/side", post(side_chat))
         .route("/sessions/{id}/side/events", get(side_events_sse))
         .route("/sessions/{id}/side/cancel", post(side_cancel_run))
@@ -3569,7 +3577,7 @@ pub(crate) struct AuthPolicy {
 /// attribution and narrower decisions without ever treating a collaborator
 /// as the workspace owner.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Read by attributed participant handlers in the next coworking slice.
+#[allow(dead_code)] // Participant attribution is consumed when write routes are admitted.
 pub(crate) enum AuthenticatedPrincipal {
     Operator,
     Participant(coworking::VerifiedPrincipal),
@@ -7000,6 +7008,140 @@ async fn transcript_markdown(
         )
             .into_response(),
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CoworkingInvitationBody {
+    display_name: String,
+    #[serde(default = "default_coworking_invitation_hours")]
+    expires_in_hours: u32,
+}
+
+fn default_coworking_invitation_hours() -> u32 {
+    7 * 24
+}
+
+fn operator_only(principal: &AuthenticatedPrincipal) -> Result<(), StatusCode> {
+    match principal {
+        AuthenticatedPrincipal::Operator => Ok(()),
+        AuthenticatedPrincipal::Participant(_) => Err(StatusCode::FORBIDDEN),
+    }
+}
+
+fn conversation_exists(state: &AppState, id: &str) -> bool {
+    state.get(id).is_some() || find_session_on_disk(&state.core, id).is_some()
+}
+
+fn conversation_audience(state: &AppState, id: &str) -> Option<String> {
+    read_historical_header(state, id, None)?
+        .conversation
+        .map(|context| context.audience_id)
+}
+
+async fn list_coworking_invitations(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    if !conversation_exists(&state, &conversation_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match coworking::list(
+        &coworking::store_path(&state.core.sessions_home()),
+        &conversation_id,
+        chrono::Utc::now(),
+    ) {
+        Ok(invitations) => Json(serde_json::json!({ "invitations": invitations })).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn create_coworking_invitation(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Json(body): Json<CoworkingInvitationBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let Some(audience_id) = conversation_audience(&state, &conversation_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let display_name = body.display_name.trim();
+    if display_name.is_empty()
+        || display_name.chars().count() > 120
+        || !(1..=30 * 24).contains(&body.expires_in_hours)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let now = chrono::Utc::now();
+    let token = coworking::generate_token();
+    let grant = coworking::AudienceGrant {
+        grant_id: uuid::Uuid::now_v7().to_string(),
+        principal_id: uuid::Uuid::now_v7().to_string(),
+        display_name: display_name.to_string(),
+        conversation_id: conversation_id.clone(),
+        audience_id,
+        capabilities: vec!["read".into()],
+        token_hash: coworking::token_hash(&token),
+        created_at: now.to_rfc3339(),
+        expires_at: (now + chrono::Duration::hours(i64::from(body.expires_in_hours))).to_rfc3339(),
+    };
+    match coworking::invite(
+        &coworking::store_path(&state.core.sessions_home()),
+        grant.clone(),
+    ) {
+        Ok(()) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "invitation": {
+                    "grant_id": grant.grant_id,
+                    "principal_id": grant.principal_id,
+                    "display_name": grant.display_name,
+                    "conversation_id": grant.conversation_id,
+                    "audience_id": grant.audience_id,
+                    "capabilities": grant.capabilities,
+                    "created_at": grant.created_at,
+                    "expires_at": grant.expires_at,
+                    "status": "active",
+                },
+                "token": token,
+            })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn revoke_coworking_invitation(
+    State(state): State<AppState>,
+    Path((conversation_id, grant_id)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let path = coworking::store_path(&state.core.sessions_home());
+    let invitations = match coworking::list(&path, &conversation_id, chrono::Utc::now()) {
+        Ok(invitations) => invitations,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let Some(invitation) = invitations.iter().find(|item| item.grant_id == grant_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if invitation.status != coworking::GrantStatus::Revoked
+        && coworking::revoke(&path, &grant_id, "operator").is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 fn html_response(html: String) -> axum::response::Response {
@@ -17417,6 +17559,92 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/transcript",
             &participant(&["comment"])
         ));
+    }
+
+    #[tokio::test]
+    async fn participant_bearer_is_enforced_by_http_boundary() {
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let token = "participant-secret";
+        let grant = coworking::AudienceGrant {
+            grant_id: "grant-http".into(),
+            principal_id: "person-http".into(),
+            display_name: "Asha".into(),
+            conversation_id: "session-1".into(),
+            audience_id: "local".into(),
+            capabilities: vec!["read".into()],
+            token_hash: coworking::token_hash(token),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        };
+        coworking::invite(&coworking::store_path(dir.path()), grant).unwrap();
+        let app = Router::new()
+            .route(
+                "/sessions/{id}/transcript",
+                get(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/sessions/{id}/run",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: dir.path().into(),
+                    trusted_hosts: Vec::new(),
+                },
+                require_bearer,
+            ));
+        let request = |method: axum::http::Method, path: &str| {
+            axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::GET,
+                    "/sessions/session-1/transcript"
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::GET,
+                    "/sessions/session-2/transcript"
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(axum::http::Method::POST, "/sessions/session-1/run"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        coworking::revoke(&coworking::store_path(dir.path()), "grant-http", "operator").unwrap();
+        assert_eq!(
+            app.oneshot(request(
+                axum::http::Method::GET,
+                "/sessions/session-1/transcript"
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[tokio::test]
