@@ -93,7 +93,7 @@ type ModelContextCache = std::sync::Mutex<
 /// §1), keyed by `(provider, model, quantisation)`. Per-process only —
 /// durable history lives in the ledger via `SessionLog::latest_capacity_profile`.
 type CapacityCache = std::sync::Mutex<
-    HashMap<vak_agent::capacity::ProfileKey, vak_agent::capacity::CapacityProfile>,
+    HashMap<vak_context::capacity::ProfileKey, vak_context::capacity::CapacityProfile>,
 >;
 
 /// Provider metadata gathered before a capacity probe runs, bundled so
@@ -4412,7 +4412,7 @@ impl Core {
         leg: &vak_llm::RouteLeg,
         session: &mut SessionLog,
         cancel: &CancellationToken,
-    ) -> vak_agent::capacity::CapacityProfile {
+    ) -> vak_context::capacity::CapacityProfile {
         let now = std::time::SystemTime::now();
         let local = self.is_local_provider(leg);
 
@@ -4430,7 +4430,7 @@ impl Core {
                 .flatten(),
             None => None,
         };
-        let key = vak_agent::capacity::ProfileKey {
+        let key = vak_context::capacity::ProfileKey {
             provider: leg.provider.clone(),
             model: leg.model.clone(),
             quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
@@ -4441,7 +4441,7 @@ impl Core {
         // (tightened horizons, calibrated tokens/char), which the cache
         // never sees, and it survives a restart.
         let cached = session
-            .latest_capacity_profile::<_, vak_agent::capacity::CapacityProfile>(&key)
+            .latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key)
             .or_else(|| {
                 self.inner
                     .capacity_cache
@@ -4493,7 +4493,7 @@ impl Core {
             )
             .await
         } else {
-            vak_agent::capacity::CapacityProfile::from_metadata_only(
+            vak_context::capacity::CapacityProfile::from_metadata_only(
                 declared_window,
                 output_reserve,
                 metadata_digest,
@@ -4543,15 +4543,15 @@ impl Core {
         provider_client: Arc<dyn Provider>,
         metadata: ProbeMetadata,
         cancel: &CancellationToken,
-    ) -> vak_agent::capacity::CapacityProfile {
+    ) -> vak_context::capacity::CapacityProfile {
         let ProbeMetadata {
             declared_window,
             output_reserve,
             metadata_digest,
             probed_at,
         } = metadata;
-        let mut ladder = vak_agent::capacity::Ladder::new(declared_window);
-        let mut rungs: Vec<vak_agent::capacity::Rung> = Vec::new();
+        let mut ladder = vak_context::capacity::Ladder::new(declared_window);
+        let mut rungs: Vec<vak_context::capacity::Rung> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
         // Refined as soon as one rung reports real usage, so later rungs
         // land closer to their token target on a real tokenizer.
@@ -4563,7 +4563,7 @@ impl Core {
                 break;
             }
             let request =
-                vak_agent::capacity::probe_request(target, tokens_per_char_hint, &leg.model);
+                vak_context::capacity::probe_request(target, tokens_per_char_hint, &leg.model);
             let sent_chars: u64 = request
                 .messages
                 .iter()
@@ -4579,7 +4579,7 @@ impl Core {
             let mut rejected: Option<String> = None;
             let mut transport_error: Option<vak_llm::LlmError> = None;
             let mut first_prefill_ms: Option<u64> = None;
-            let needed = vak_agent::capacity::PROBE_SAMPLES_PER_RUNG / 2 + 1;
+            let needed = vak_context::capacity::PROBE_SAMPLES_PER_RUNG / 2 + 1;
             while passes < needed && fails < needed && rejected.is_none() {
                 if cancel.is_cancelled() {
                     break;
@@ -4600,7 +4600,7 @@ impl Core {
                         if first_prefill_ms.is_none() {
                             first_prefill_ms = message.usage.prefill_ms;
                         }
-                        if vak_agent::capacity::followed(&message) {
+                        if vak_context::capacity::followed(&message) {
                             passes += 1;
                         } else {
                             fails += 1;
@@ -4619,7 +4619,7 @@ impl Core {
             }
             if let Some(msg) = rejected {
                 signals.push(format!("rung {target} rejected: {msg}"));
-                rungs.push(vak_agent::capacity::Rung {
+                rungs.push(vak_context::capacity::Rung {
                     tokens: target,
                     accepted: false,
                     followed_instruction: None,
@@ -4635,7 +4635,7 @@ impl Core {
             signals.push(format!(
                 "rung {target}: {passes} followed / {fails} did not"
             ));
-            rungs.push(vak_agent::capacity::Rung {
+            rungs.push(vak_context::capacity::Rung {
                 tokens: target,
                 accepted: true,
                 followed_instruction: Some(followed),
@@ -4651,7 +4651,7 @@ impl Core {
                 .filter(|r| r.followed_instruction == Some(true))
                 .map(|r| r.tokens)
                 .max();
-            vak_agent::capacity::Horizon {
+            vak_context::capacity::Horizon {
                 tokens: largest_followed.unwrap_or_else(|| declared_window.min(4_000)),
                 confidence: if largest_followed.is_some() { 0.5 } else { 0.3 },
                 last_confirmed: probed_at,
@@ -4663,10 +4663,10 @@ impl Core {
         // separate from the horizon ladder, which varies size to find the
         // instruction-following boundary rather than to probe caching.
         let cache = if cancel.is_cancelled() {
-            vak_agent::capacity::CacheBehaviour::Unknown
+            vak_context::capacity::CacheBehaviour::Unknown
         } else {
             let cache_request =
-                vak_agent::capacity::probe_request(4_000, tokens_per_char_hint, &leg.model);
+                vak_context::capacity::probe_request(4_000, tokens_per_char_hint, &leg.model);
             let (first_outcome, first_latency_ms) = Self::stream_with_first_token_latency(
                 &provider_client,
                 cache_request.clone(),
@@ -4686,7 +4686,7 @@ impl Core {
                         Ok(second_message) => {
                             let first_ms = first_latency_ms.unwrap_or(0);
                             let second_ms = second_latency_ms.unwrap_or(0);
-                            let behaviour = vak_agent::capacity::classify_cache_rung(
+                            let behaviour = vak_context::capacity::classify_cache_rung(
                                 first_ms,
                                 second_ms,
                                 &second_message.usage,
@@ -4700,24 +4700,24 @@ impl Core {
                         }
                         Err(e) => {
                             signals.push(format!("cache rung second request failed: {e}"));
-                            vak_agent::capacity::CacheBehaviour::Unknown
+                            vak_context::capacity::CacheBehaviour::Unknown
                         }
                     }
                 }
                 Err(e) => {
                     signals.push(format!("cache rung first request failed: {e}"));
-                    vak_agent::capacity::CacheBehaviour::Unknown
+                    vak_context::capacity::CacheBehaviour::Unknown
                 }
             }
         };
 
-        vak_agent::capacity::CapacityProfile::from_probe(
+        vak_context::capacity::CapacityProfile::from_probe(
             declared_window,
             verified_window,
             horizon,
             cache,
             output_reserve,
-            vak_agent::capacity::ProbeProvenance {
+            vak_context::capacity::ProbeProvenance {
                 probed_at,
                 rungs,
                 signals,
@@ -5629,7 +5629,7 @@ impl Core {
         let capacity = self
             .capacity_profile_for(&turn_primary_leg, &mut session, &cancel)
             .await;
-        cfg.capacity_key = Some(vak_agent::capacity::ProfileKey {
+        cfg.capacity_key = Some(vak_context::capacity::ProfileKey {
             provider: turn_primary_leg.provider.clone(),
             model: turn_primary_leg.model.clone(),
             quantisation: capacity.provenance.quantisation.clone(),
@@ -6659,7 +6659,7 @@ impl Core {
         mut session: SessionLog,
         cancel: tokio_util::sync::CancellationToken,
     ) -> (SessionLog, CompactOutcome) {
-        let profile = vak_agent::capacity::CapacityProfile::from_metadata_only(
+        let profile = vak_context::capacity::CapacityProfile::from_metadata_only(
             self.inner.config.context_window,
             u64::from(self.inner.config.max_tokens),
             "compact-session-now".to_string(),
@@ -6679,22 +6679,7 @@ impl Core {
                 .sum::<u64>();
         let prefix_tokens = profile.estimate_tokens(prefix_chars);
         let plan_now = |session: &SessionLog| -> vak_session::WorkingSetPlan {
-            let index = vak_session::TurnIndex::from_log(session);
-            let directive = index
-                .turns
-                .last()
-                .map(|turn| turn.directive.text_content())
-                .unwrap_or_default();
-            let reading = session.latest_reading();
-            vak_agent::planner::plan(vak_agent::planner::PlanInput {
-                profile: &profile,
-                index: &index,
-                directive: &directive,
-                reading: reading.as_ref(),
-                prefix_tokens,
-                tail_tokens: 0,
-                current_turn_tokens: 0,
-            })
+            vak_context::plan_for_session(session, &profile, prefix_tokens, 0)
         };
         let plan = plan_now(&session);
         let Some((first_turn_id, last_turn_id)) = plan.packet_range else {
@@ -6714,7 +6699,7 @@ impl Core {
             Err(e) => return (session, CompactOutcome::failed(e.to_string())),
         };
         let model = self.effective_model();
-        let req = vak_agent::context::compaction_request(&model, &transcript);
+        let req = vak_context::assemble::compaction_request(&model, &transcript);
 
         let started = std::time::Instant::now();
         let mut receipt =
@@ -7927,7 +7912,7 @@ impl Core {
                 role: vak_llm::Role::User,
                 content: vec![vak_llm::ContentBlock::text(tail.clone())],
             };
-            let est_profile = vak_agent::capacity::CapacityProfile::from_metadata_only(
+            let est_profile = vak_context::capacity::CapacityProfile::from_metadata_only(
                 self.inner.config.context_window,
                 u64::from(self.inner.config.max_tokens),
                 "reflection-estimate".to_string(),
@@ -9632,8 +9617,8 @@ mod capacity_probe_tests {
         assert!(probed.provenance.rungs[0].accepted);
         assert_eq!(probed.provenance.rungs[0].followed_instruction, Some(true));
 
-        let recorded: vak_agent::capacity::CapacityProfile = session
-            .latest_capacity_profile(&vak_agent::capacity::ProfileKey {
+        let recorded: vak_context::capacity::CapacityProfile = session
+            .latest_capacity_profile(&vak_context::capacity::ProfileKey {
                 provider: "ollama".into(),
                 model: "fake-ollama-model".into(),
                 quantisation: None,
@@ -9763,7 +9748,7 @@ mod capacity_probe_tests {
 
         assert_eq!(
             probed.cache,
-            vak_agent::capacity::CacheBehaviour::ProviderReported
+            vak_context::capacity::CacheBehaviour::ProviderReported
         );
         assert!(
             probed

@@ -21,6 +21,7 @@ vak-intent = { workspace = true }
 vak-llm = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
+vak-context = { workspace = true }
 vak-tools = { workspace = true }
 
 [dev-dependencies]

@@ -6,23 +6,28 @@
 
 mod fences;
 use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
-pub mod capacity;
 pub mod circuit;
-pub mod context;
 pub mod goal;
-pub mod planner;
 pub mod spend;
 pub mod steering;
 pub mod stop_policy;
 pub mod task;
 pub mod workspace;
 
-pub use capacity::CapacityProfile;
+// The context engine (docs/design/68-context-engine.md) is its own crate;
+// the loop here only orchestrates it: probe, plan, assemble, dispatch,
+// write back.
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
 pub use task::{ActiveWorker, TaskDeps, TaskTool, WorkerHandle, WorkerRegistry};
+use vak_context::assemble::{
+    attach_tail, cache_breakpoints, capacity_feedback_delta, chat_request_chars, compose_tail,
+    messages_chars, prefix_chars,
+};
+pub use vak_context::{CapacityProfile, TailInput};
+use vak_context::{assemble, capacity, planner};
 pub use workspace::WorkspaceDelta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -431,19 +436,6 @@ pub struct PresentationCardInfo {
 pub type PresentationRebuild =
     Arc<dyn Fn(&str, &serde_json::Value) -> Option<PresentationCardInfo> + Send + Sync>;
 
-/// Host-supplied per-turn content for the request tail (docs/design/68-
-/// context-engine.md §6/§10): the clock instant and the epistemic stance,
-/// each rendered under its own tag alongside the session-derived tail
-/// sections. Captured once per turn by the caller, not recomputed per step,
-/// so the tail stays byte-identical across every step of one turn.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TailInput {
-    /// Raw temporal context sentence, with no wrapping tag.
-    pub temporal: String,
-    /// Raw epistemic-stance text, with no wrapping tag.
-    pub stance: String,
-}
-
 impl AgentConfig {
     pub fn new(system_prefix: impl Into<String>) -> Self {
         AgentConfig {
@@ -512,87 +504,6 @@ const CARD_REPEAT_ACK: &str = "Card already displayed to the user. Do not call i
 /// card as its answer. Three: one repeat is a slip the ack corrects, two is
 /// a model that did not read it, three is one that will not.
 const CARD_REPEAT_EXHAUSTION_THRESHOLD: u32 = 3;
-
-/// Attaches the turn's tail to the last user message
-/// (docs/design/68-context-engine.md §6): after any `tool_result` blocks and
-/// BEFORE any text, so the last thing the model reads is the user's own
-/// words (the directive, or a runtime nudge) and never the runtime's
-/// context. Observed live: with the tail appended after the directive, a
-/// small model answered the `<stance>` block ("As an analytical agent, I can
-/// handle tasks…") instead of the question. The tail never restates the
-/// directive: an echo after a tool result reads as the user asking again
-/// (measured live: "since the user is asking again…" followed by the same
-/// card re-emitted up to nineteen times).
-fn attach_tail(messages: &mut [Message], tail: &str) {
-    if tail.is_empty() {
-        return;
-    }
-    let Some(last) = messages.last_mut() else {
-        return;
-    };
-    if last.role != Role::User {
-        return;
-    }
-    let first_text = last
-        .content
-        .iter()
-        .position(|block| matches!(block, ContentBlock::Text { .. }));
-    let at = first_text.unwrap_or(last.content.len());
-    last.content
-        .insert(at, ContentBlock::text(tail.to_string()));
-}
-
-fn compose_tail(tail: &TailInput, sections: &vak_session::TailSections) -> String {
-    let mut out = String::new();
-    let push_block = |out: &mut String, block: &str| {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(block);
-    };
-    if !tail.temporal.trim().is_empty() {
-        push_block(
-            &mut out,
-            &format!("<turn_context>\n{}\n</turn_context>", tail.temporal.trim()),
-        );
-    }
-    if let Some(intent) = &sections.intent {
-        push_block(&mut out, intent);
-    }
-    if !tail.stance.trim().is_empty() {
-        push_block(
-            &mut out,
-            &format!("<stance>\n{}\n</stance>", tail.stance.trim()),
-        );
-    }
-    if let Some(work_contract) = &sections.work_contract {
-        push_block(&mut out, work_contract);
-    }
-    if let Some(thread) = &sections.thread {
-        push_block(&mut out, thread);
-    }
-    out
-}
-
-/// Cache breakpoints per §10: after the stable prefix, after the last
-/// message of any previous turn, and on the last message of the request
-/// being built (which, within a turn, moves forward with every step).
-fn cache_breakpoints(messages: &[Message]) -> Vec<vak_llm::CacheBreakpoint> {
-    use vak_llm::CacheBreakpoint;
-    let mut positions: Vec<Option<usize>> = vec![None];
-    if !messages.is_empty() {
-        let boundary = vak_llm::current_turn_boundary(messages);
-        if boundary > 0 {
-            positions.push(Some(boundary - 1));
-        }
-        positions.push(Some(messages.len() - 1));
-    }
-    positions.dedup();
-    positions
-        .into_iter()
-        .map(|after_message| CacheBreakpoint { after_message })
-        .collect()
-}
 
 /// The most recent Execute-purpose receipt's prefix digest recorded in this
 /// session, or `None` when no receipt has recorded one yet.
@@ -670,38 +581,6 @@ fn trips_breaker(e: &LlmError) -> bool {
     matches!(e, LlmError::Network(_) | LlmError::Parse(_))
 }
 
-/// Sum of text/tool_use/tool_result characters actually sent in `request` —
-/// what `CapacityProfile::observe_usage` calibrates `tokens_per_char`
-/// against (docs/design/68-context-engine.md §1 "Feedback"). Thinking and
-/// image blocks are excluded: no provider bills prefill on them the way it
-/// does on text, and images would swamp the char count relative to the
-/// tokens they actually cost.
-fn chat_request_chars(request: &ChatRequest) -> u64 {
-    let system_chars = request.system.as_deref().map(str::len).unwrap_or(0) as u64;
-    system_chars + messages_chars(&request.messages)
-}
-
-/// Sum of text/tool_use/tool_result characters in one message — the same
-/// exclusions as `chat_request_chars` (thinking and images are never billed
-/// like text on prefill).
-fn message_chars(message: &Message) -> u64 {
-    message
-        .content
-        .iter()
-        .map(|block| match block {
-            ContentBlock::Text { text } => text.len() as u64,
-            ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64,
-            ContentBlock::ToolResult { content, .. } => content.len() as u64,
-            ContentBlock::Provider { raw, .. } => raw.to_string().len() as u64,
-            ContentBlock::Thinking { .. } | ContentBlock::Image { .. } => 0,
-        })
-        .sum()
-}
-
-fn messages_chars(messages: &[Message]) -> u64 {
-    messages.iter().map(message_chars).sum()
-}
-
 /// Per-leg tool inclusion (docs/design/68-context-engine.md §5): Anthropic
 /// legs get the full core+deferred set (deferred schemas withheld from the
 /// prefix there via `defer_loading`, discoverable through the server-side
@@ -716,20 +595,6 @@ fn tools_for_leg(
         return tools.to_vec();
     }
     tools.iter().filter(|t| !t.defer).cloned().collect()
-}
-
-/// Character count of the stable prefix (system prompt + tool schemas),
-/// measured through `CapacityProfile::estimate_tokens` rather than a
-/// chars/4 constant (docs/design/68-context-engine.md §4/§6).
-fn prefix_chars(system: &str, tools: &[vak_llm::ToolDefinition]) -> u64 {
-    let mut chars = system.len() as u64;
-    for tool in tools {
-        chars += (tool.name.len() + tool.description.len()) as u64
-            + serde_json::to_string(&tool.parameters)
-                .map(|s| s.len() as u64)
-                .unwrap_or(0);
-    }
-    chars
 }
 
 /// Renders a turn's full record (docs/design/68-context-engine.md §10) as
@@ -766,11 +631,6 @@ fn first_sentence_fallback(text: &str) -> String {
     }
     trimmed.to_string()
 }
-
-/// Relative-change threshold for writing a `capacity-feedback` activity
-/// (docs/design/68 §6): small usage-to-usage jitter in a measured EWMA
-/// should not spam the ledger with an activity every turn.
-const CAPACITY_FEEDBACK_CHANGE_THRESHOLD: f64 = 0.05;
 
 /// Words too generic to establish that a card is *about* the same thing as
 /// the directive: recency deixis ("current", "now") appears in both a
@@ -851,14 +711,6 @@ fn card_shares_a_topic_with(directive: &str, name: &str, input: &serde_json::Val
     let card_text = serde_json::to_string(input).unwrap_or_default() + " " + name;
     let card_words = topic_tokens(&card_text);
     directive_words.iter().any(|word| card_words.contains(word))
-}
-
-fn relative_change(before: f64, after: f64) -> f64 {
-    if before == 0.0 {
-        if after == 0.0 { 0.0 } else { 1.0 }
-    } else {
-        ((after - before) / before).abs()
-    }
 }
 
 #[cfg(test)]
@@ -949,48 +801,6 @@ mod topic_gate_tests {
             &input
         ));
     }
-}
-
-/// Fields of a `CapacityProfile` that changed by more than
-/// `CAPACITY_FEEDBACK_CHANGE_THRESHOLD`, rendered for an `Activity`'s
-/// `data` map. Empty means nothing worth recording changed.
-fn capacity_feedback_delta(
-    before: &CapacityProfile,
-    after: &CapacityProfile,
-) -> std::collections::BTreeMap<String, String> {
-    let mut delta = std::collections::BTreeMap::new();
-    if relative_change(before.tokens_per_char.value, after.tokens_per_char.value)
-        > CAPACITY_FEEDBACK_CHANGE_THRESHOLD
-    {
-        delta.insert(
-            "tokens_per_char".into(),
-            format!(
-                "{} -> {}",
-                before.tokens_per_char.value, after.tokens_per_char.value
-            ),
-        );
-    }
-    if relative_change(before.prefill_tps.value, after.prefill_tps.value)
-        > CAPACITY_FEEDBACK_CHANGE_THRESHOLD
-    {
-        delta.insert(
-            "prefill_tps".into(),
-            format!(
-                "{} -> {}",
-                before.prefill_tps.value, after.prefill_tps.value
-            ),
-        );
-    }
-    if before.instruction_horizon.tokens != after.instruction_horizon.tokens {
-        delta.insert(
-            "instruction_horizon_tokens".into(),
-            format!(
-                "{} -> {}",
-                before.instruction_horizon.tokens, after.instruction_horizon.tokens
-            ),
-        );
-    }
-    delta
 }
 
 pub struct AutoApprove;
@@ -1097,11 +907,10 @@ impl Agent {
         }
     }
 
-    /// Builds one `WorkingSetPlan` (docs/design/68-context-engine.md §4):
-    /// reads the current chain and the current directive's resolved
-    /// reading, then delegates to `planner::plan`. Called fresh per step
-    /// (and again after an incremental compaction) so it always reflects
-    /// the latest ledger state.
+    /// One `WorkingSetPlan` for the ledger as it stands
+    /// (`vak_context::plan_for_session`). Called fresh per step (and again
+    /// after an incremental compaction) so it always reflects the latest
+    /// chain; the lock is held only for the pure planning pass.
     async fn build_working_set_plan(
         &self,
         profile: &CapacityProfile,
@@ -1109,28 +918,7 @@ impl Agent {
         tail_tokens: u64,
     ) -> vak_session::WorkingSetPlan {
         let session = self.session.lock().await;
-        let mut index = TurnIndex::from_log(&session);
-        index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
-        let directive = index
-            .turns
-            .last()
-            .map(|turn| turn.directive.text_content())
-            .unwrap_or_default();
-        // Boundary-aware (docs/design/68 §4): after a reset-with-handoff,
-        // the open turn's pre-reset text is invisible to the model, so it
-        // must not inflate the reserve either.
-        let current_turn_tokens =
-            profile.estimate_tokens(messages_chars(&session.open_turn_verbatim()));
-        let reading = session.latest_reading();
-        planner::plan(planner::PlanInput {
-            profile,
-            index: &index,
-            directive: &directive,
-            reading: reading.as_ref(),
-            prefix_tokens,
-            tail_tokens,
-            current_turn_tokens,
-        })
+        planner::plan_for_session(&session, profile, prefix_tokens, tail_tokens)
     }
 
     /// The `CapacityProfile` to plan this turn against: the host-wired one
@@ -1653,7 +1441,7 @@ impl Agent {
                             estimated_tokens: tokens_before,
                         })
                         .await;
-                    let req = context::compaction_request(&model, &transcript);
+                    let req = assemble::compaction_request(&model, &transcript);
                     let mut ledger = StepLedger::new(
                         WorkPurpose::Summarize,
                         self.provider.name(),
@@ -1754,7 +1542,7 @@ impl Agent {
             // digest describes what was SENT, not what came back
             // (docs/design/68-context-engine.md §6/§7).
             ledger.receipt.prefix_digest =
-                context::prefix_digest(&self.config.system_prefix, &tool_defs);
+                assemble::prefix_digest(&self.config.system_prefix, &tool_defs);
             let base_request = {
                 let session = self.session.lock().await;
                 // `messages` is already the fidelity-selected projection

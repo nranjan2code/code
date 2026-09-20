@@ -15,8 +15,10 @@ use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use vak_agent::capacity::{CacheBehaviour, CapacityProfile, Horizon, ProbeProvenance, ProfileKey};
 use vak_agent::{Agent, AgentConfig, AutoApprove, SteeringQueues, TurnOutcome};
+use vak_context::capacity::{
+    CacheBehaviour, CapacityProfile, Horizon, ProbeProvenance, ProfileKey,
+};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};

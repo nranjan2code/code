@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/vak-llm",
     "crates/vak-session",
+    "crates/vak-context",
     "crates/vak-store",
     "crates/vak-tools",
     "crates/vak-agent",
@@ -41,6 +42,7 @@ vak-llm = { path = "crates/vak-llm" }
 vak-ops = { path = "crates/vak-ops" }
 vak-server = { path = "crates/vak-server" }
 vak-session = { path = "crates/vak-session" }
+vak-context = { path = "crates/vak-context" }
 vak-store = { path = "crates/vak-store" }
 vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }

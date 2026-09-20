@@ -7,8 +7,8 @@
 
 use std::path::Path;
 
-use vak_agent::capacity::{CacheBehaviour, CapacityProfile, Horizon, ProbeProvenance};
-use vak_agent::planner::{self, Fidelity, PlanInput};
+use vak_context::capacity::{CacheBehaviour, CapacityProfile, Horizon, ProbeProvenance};
+use vak_context::planner::{self, Fidelity};
 use vak_llm::{ContentBlock, Message};
 use vak_session::types::{
     FrozenContract, MessageRecord, PresentationRecord, PresentationSource, SessionHeader,
@@ -253,31 +253,10 @@ fn synthetic_profile() -> CapacityProfile {
     )
 }
 
-/// Plans once against the fixture's current chain state, mirroring what
-/// `Agent::build_working_set_plan` does per step.
+/// Plans once against the fixture's current chain state, through the same
+/// entry point the agent loop and `/compact` use.
 fn plan_now(log: &SessionLog, profile: &CapacityProfile) -> WorkingSetPlan {
-    let index = TurnIndex::from_log(log);
-    let directive = index
-        .turns
-        .last()
-        .map(|t| t.directive.text_content())
-        .unwrap_or_default();
-    let reading = log.latest_reading();
-    let current_turn_tokens = profile.estimate_tokens(
-        log.open_turn_verbatim()
-            .iter()
-            .map(|m| m.text_content().len() as u64)
-            .sum(),
-    );
-    planner::plan(PlanInput {
-        profile,
-        index: &index,
-        directive: &directive,
-        reading: reading.as_ref(),
-        prefix_tokens: 400,
-        tail_tokens: 100,
-        current_turn_tokens,
-    })
+    planner::plan_for_session(log, profile, 400, 100)
 }
 
 /// Every non-open turn with a card must appear in EXACTLY one place: either
@@ -416,7 +395,7 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
 
     let plan_k = plan_now(&log, &profile);
     let messages_k = log.derive_with_plan(&plan_k);
-    let digest_k = vak_agent::context::prefix_digest(system_prefix, &tools);
+    let digest_k = vak_context::assemble::prefix_digest(system_prefix, &tools);
 
     log.append_message(assistant_tool_call(
         "open-call-2",
@@ -429,7 +408,7 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
 
     let plan_k1 = plan_now(&log, &profile);
     let messages_k1 = log.derive_with_plan(&plan_k1);
-    let digest_k1 = vak_agent::context::prefix_digest(system_prefix, &tools);
+    let digest_k1 = vak_context::assemble::prefix_digest(system_prefix, &tools);
 
     if digest_k != digest_k1 {
         return Ok(false);

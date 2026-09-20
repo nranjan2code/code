@@ -1191,7 +1191,7 @@ impl SessionLog {
     }
 
     /// Like `derive_keyed_tagged`, but a `WorkingSetPlan` (from
-    /// `vak_agent::planner::plan`) selects each closed turn's fidelity
+    /// `vak_context::planner::plan`) selects each closed turn's fidelity
     /// instead of defaulting every one to `Full` (docs/design/68-context-
     /// engine.md §4/§10) — one implementation, the plan just picks what each
     /// turn contributes:

@@ -58,6 +58,12 @@ declares. Nothing in Vak can learn it today.
 
 ## Components
 
+The engine is its own crate, `vak-context` (`capacity`, `planner`,
+`assemble`): pure functions over the ledger, no I/O. `vak-session` owns the
+ledger it reads (`TurnIndex`, `TurnCard`, range-keyed packets,
+`derive_with_plan`, `recall`); `vak-agent` and `vak-core` own the I/O around
+it (the probe, the summariser call, receipts and feedback written back).
+
 ```
                   ┌──────────────────┐
   provider ──────▶│ CapacityProbe    │──▶ CapacityProfile (ledger, per model)

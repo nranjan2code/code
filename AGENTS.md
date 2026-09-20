@@ -881,20 +881,34 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset
                      (docs/design/42-managed-work-contracts.md), workers (task tool) +
-                     parent-scoped WorkerRegistry. `capacity.rs`: the
-                     `CapacityProfile` type, the bind-time probe ladder
-                     (turn-shaped filler, majority-of-three samples per
-                     rung) and usage/latency feedback -- Core drives the
-                     probe and records it, this crate owns the math.
-                     `planner.rs`: the pure `WorkingSetPlan` -- per closed
-                     turn, `Full`/`Card` fill by descending
-                     max(recency, relevance, anaphora) value against the
-                     measured budget, overflow collapses into one packet,
-                     never a reserved share. Turn-close hook builds and
+                     parent-scoped WorkerRegistry. The loop orchestrates
+                     the context engine (`vak-context`) per step -- plan,
+                     assemble, dispatch, write the receipt and capacity
+                     feedback back -- and owns the summariser call behind an
+                     incremental compaction. Turn-close hook builds and
                      appends each turn's `TurnCard`; the freshness, empty-
                      step, steering-drift and card-repeat gates all live in
                      the loop itself (docs/design/03-agent-loop.md,
                      docs/design/68-context-engine.md)
+crates/vak-context   the context engine, pure functions over the ledger
+                     with no I/O (docs/design/68-context-engine.md).
+                     `capacity.rs`: the `CapacityProfile` type, the
+                     bind-time probe ladder (turn-shaped filler,
+                     majority-of-three samples per rung) and usage/latency
+                     feedback -- Core drives the probe and records it, this
+                     crate owns the math. `planner.rs`: the pure
+                     `WorkingSetPlan` -- per closed turn, `Full`/`Card` fill
+                     by descending max(recency, relevance, anaphora) value
+                     against the measured budget, overflow collapses into
+                     one packet, never a reserved share; `plan_for_session`
+                     is the one entry point the loop, `/compact` and the
+                     eval gate all plan through. `assemble.rs`: the
+                     byte-stable prefix and its digest, the per-turn tail
+                     on the last user message, cache breakpoints, the char
+                     accounting that feeds the profile, and the summariser
+                     request. The ledger it reads (`TurnIndex`, cards,
+                     range-keyed packets, `derive_with_plan`, `recall`) stays
+                     in `vak-session`.
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-engine gate and banned-token gate

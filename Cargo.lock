@@ -7195,6 +7195,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-config",
+ "vak-context",
  "vak-hooks",
  "vak-intent",
  "vak-llm",
@@ -7254,6 +7255,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-context"
+version = "3.5.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "vak-llm",
+ "vak-session",
+]
+
+[[package]]
 name = "vak-core"
 version = "3.5.1"
 dependencies = [
@@ -7276,6 +7290,7 @@ dependencies = [
  "vak-agent",
  "vak-commit",
  "vak-config",
+ "vak-context",
  "vak-delivery",
  "vak-flow",
  "vak-hooks",
@@ -7343,6 +7358,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-agent",
+ "vak-context",
  "vak-core",
  "vak-intent",
  "vak-llm",

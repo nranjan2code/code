@@ -8,7 +8,10 @@
 //! that `SessionLog::derive_with_plan` turns into messages.
 
 pub use vak_session::{Fidelity, WorkingSetPlan};
-use vak_session::{ReadingKey, TurnIndex};
+use vak_session::{ReadingKey, SessionLog, TurnIndex};
+
+use crate::assemble::messages_chars;
+use crate::capacity::CapacityProfile;
 
 /// Directive fragments that refer back to the immediately preceding turn
 /// without repeating its subject (§4/§10: "anaphora ... always promotes the
@@ -27,7 +30,7 @@ pub const ANAPHORA_PHRASES: [&str; 7] = [
 /// plan (the open turn is always verbatim), but it floors the reserve
 /// subtracted from the budget for it.
 pub struct PlanInput<'a> {
-    pub profile: &'a crate::capacity::CapacityProfile,
+    pub profile: &'a CapacityProfile,
     pub index: &'a TurnIndex,
     pub directive: &'a str,
     pub reading: Option<&'a ReadingKey>,
@@ -212,6 +215,40 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         budget,
         spent,
     }
+}
+
+/// Plans one request against the ledger as it stands: builds the
+/// `TurnIndex`, gives every closed turn a provisional card so it can be
+/// costed, reads the current directive and its resolved reading, sizes the
+/// open turn's reserve from what will actually be sent
+/// (`open_turn_verbatim`, reset-aware), and delegates to [`plan`]. The one
+/// entry point every caller — the agent loop per step, `/compact`, the
+/// eval gate — plans through, so they can never disagree on what a plan
+/// is computed from.
+pub fn plan_for_session(
+    log: &SessionLog,
+    profile: &CapacityProfile,
+    prefix_tokens: u64,
+    tail_tokens: u64,
+) -> WorkingSetPlan {
+    let mut index = TurnIndex::from_log(log);
+    index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
+    let directive = index
+        .turns
+        .last()
+        .map(|turn| turn.directive.text_content())
+        .unwrap_or_default();
+    let current_turn_tokens = profile.estimate_tokens(messages_chars(&log.open_turn_verbatim()));
+    let reading = log.latest_reading();
+    plan(PlanInput {
+        profile,
+        index: &index,
+        directive: &directive,
+        reading: reading.as_ref(),
+        prefix_tokens,
+        tail_tokens,
+        current_turn_tokens,
+    })
 }
 
 #[cfg(test)]

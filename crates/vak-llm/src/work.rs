@@ -106,7 +106,7 @@ pub struct WorkReceipt {
     pub winning_attempt: Option<u32>,
     pub attempts: Vec<DispatchAttempt>,
     /// SHA-256 hex digest of the stable prefix (system prompt + tool
-    /// schemas) this dispatch sent, per `vak_agent::context::prefix_digest`
+    /// schemas) this dispatch sent, per `vak_context::assemble::prefix_digest`
     /// (docs/design/68-context-engine.md §4). Empty for a receipt that
     /// predates prefix tracking or a work purpose with no request prefix
     /// (e.g. voice synthesis).

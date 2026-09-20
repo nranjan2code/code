@@ -86,9 +86,9 @@ pub struct Packet {
 
 /// The fidelity at which a closed turn rides along in one request
 /// (docs/design/68-context-engine.md §4/§10). Defined here (not in
-/// `vak-agent`, where `WorkingSetPlanner::plan` actually computes it) so
+/// `vak-context`, where `WorkingSetPlanner::plan` actually computes it) so
 /// `SessionLog::derive_with_plan` can consume a `WorkingSetPlan` without
-/// vak-session depending on vak-agent; `vak_agent::planner` re-exports both
+/// vak-session depending on vak-context; `vak_context::planner` re-exports both
 /// types for callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fidelity {
@@ -103,7 +103,7 @@ pub enum Fidelity {
 /// The plan for one request: which turns ride at which fidelity, which
 /// range (if any) is represented only by a packet, which older turns were
 /// promoted by relevance, and the budget accounting that produced it.
-/// Computed by `vak_agent::planner::plan`; consumed by
+/// Computed by `vak_context::planner::plan`; consumed by
 /// `SessionLog::derive_with_plan`.
 #[derive(Debug, Clone, Default)]
 pub struct WorkingSetPlan {
