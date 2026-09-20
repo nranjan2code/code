@@ -21,6 +21,28 @@ Authoritative architecture still comes from `64-agent-owned-platform.md`. Use `3
 
 These are generated visual proposals. Example names, dates, results, checks, venues, prices and code are illustrative, not app fixtures or claims about runtime evidence. Preserve the **relationships and interaction patterns**, not accidental text or fake proof. A later visual may replace an image only if it covers the same user decisions at least as clearly; record the replacement and why here. Do not silently revert to the old dense workbench or use the old `presentation-2026` mockups as the target.
 
+## Feasibility review — 2026-09-20
+
+**Decision: build these four as anchor journeys, not literal screenshots or an exhaustive screen set.** Their layout and interaction direction fit Vak's architecture. A working implementation must also include a voice-first entry/listening state and a shared-human conversation/review state, which the four images do not depict. Add those companion states without replacing the four anchors. Every example fact, check and action must come from runtime records and available capabilities.
+
+| Anchor | Existing support found | Required wiring before it is truthful |
+|---|---|---|
+| Everyday result | Agent-owned conversation/session; `OutputTimeline` and result IDs; structured/adaptive card renderer; artifact canvas; candidate review entry point. | Compose one primary result from the semantic timeline, attach the draft candidate and observed checks to that exact result/version, and expose review/preview/revise from the same identity. The current candidate record is keyed by ID and source path, not by a result or immutable preview version. The example “8 passed” cannot be shown without an observed check receipt. |
+| Everyday plan | Timeline, table, research, recipe, metric, card and other semantic renderers; voice composer; general Agent conversation. | Select a useful plan/option presentation from actual result data. Calendar, venue and other external actions appear only when an installed connector and a scoped action proposal exist. A rendered plan or invented venue is not a completed booking or calendar write. |
+| Review and accept | Draft file manifest, hash comparison, selectable file review, server-held candidate lookup and promotion receipt. | Freeze candidate content; bind approval to exact candidate digest/files/destination; journal and recover multi-file apply; verify integrated target; expose conflicts, missing checks and separate setup/publish decisions. Current per-file promotion is not crash-safe as a group and its `verified` field is false at export. |
+| Conversation and canvas | User-opened split/focused canvas, HTML/dev-server/PDF/image/code previews, viewport controls, Agent steering from the canvas. | Keep preview tied to a candidate version; anchor feedback to artifact/result/version and selected location rather than a mutable path string; isolate interactive preview from the control origin and live data; synchronize conversation, draft and review state. Current feedback is a steering text message, not an anchored comment. |
+
+Cross-cutting feasibility limits and decisions:
+
+1. **One product, two disclosure levels.** `57-adaptive-presentation-runtime.md` already defines Everyday and Advanced as projections of one conversation/history. Implement the four anchors on that state. Advanced can reveal files, diff, terminal, route, provenance and receipts; it must not fork the conversation or alter authority.
+2. **Voice is prominent, never ambient recording.** The governed WebSocket and composer control exist, but microphone use requires an explicit gesture and permission. “Voice as default” means an obvious, ready path with listening/processing/interruption states and text parity. Realtime providers and full desktop/browser coverage remain extensions in `49-live-voice.md`.
+3. **Character is a system, not five icons.** Agent identity already carries a name, personality and character. The current `AgentMark.tsx` is an initial mark renderer. The final design needs stable character assignment, readable names, voice/tone expression, accessible identification and behaviour across surfaces. The screenshots' Mira shape is a reference, not yet the implemented glyph.
+4. **Shared people need real principals.** `ConversationContext` names an audience, but the browser currently authenticates with one operator cookie. Same-conversation coworking requires invitations, distinct principals, route-wide audience guards, attributed append-only messages/comments, authority ceilings and immediate revocation. A participant chip or “Share” button alone would falsely imply safe collaboration. See `69-shared-conversation-coworking.md`.
+5. **Presentation breadth remains.** The current structured renderer registry and declarative primitives cover many result kinds, with a fixture harness. The screenshots show four compositions, not a replacement for the full renderer vocabulary. Add composition/selection and responsive variants; do not reduce Vak to weather, plans or code.
+6. **Technical proof follows the result.** Sandbox tests, browser checks, target checks and external receipts are separate evidence. Show “passed,” “ready,” “applied,” or “free shipping” only from the relevant observed result or live artifact. A preview may be unavailable, stopped, stale, or noninteractive; the UI must represent those states.
+
+The deep feasibility conclusion is **yes, conditional on the wiring above**. The proposed interaction does not require replacing Vak's Agent loop or card engine. The largest work is binding identities, candidate versions, evidence and authority across existing surfaces. The screens cannot be called implemented until end-to-end tests demonstrate those joins.
+
 ## Visual and interaction rules
 
 - Use a warm, quiet canvas, readable typography, gentle curves, sparse borders and deliberate contrast. Color and motion communicate state; they do not demand attention while idle.
@@ -53,6 +75,8 @@ These are generated visual proposals. Example names, dates, results, checks, ven
 - [ ] Make voice visibly primary in both screens, including listening, processing, interruption and fallback to text. Use the existing voice transport and personality contracts; verify actual speech and transcription flows.
 - [ ] Build Screen 3 as a first-class review route/surface, with candidate versions, selected files, readable change summary, observed checks and provenance, explicit destination, exact acceptance scope, revision request and keep-draft action. Keep advanced file/code diff available inside it.
 - [ ] Build Screen 4 as a synchronized split conversation and canvas: real artifact preview, contextual comments or selections, draft version, responsive viewport controls, focus/split modes and direct path to review. Preserve existing polyglot canvas formats.
+- [ ] Add the companion voice-first entry/listening state, showing microphone permission, capture, transcription, interruption, speaking and text fallback without auto-recording.
+- [ ] Add the companion shared-human state to conversation, canvas and review: invited participant identity, presence only when observed, attributed messages/comments, version anchors, individual authority and revocation.
 - [ ] Connect all four through one result/conversation identity and coherent navigation, rather than separate modal islands.
 
 ### Platform wiring required for the experience
