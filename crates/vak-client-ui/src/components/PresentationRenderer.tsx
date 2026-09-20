@@ -20,6 +20,7 @@ import {
   openArtifactPathInCanvas,
   openArtifactCanvas,
   openCandidateReview,
+  setReplyTarget,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -821,6 +822,18 @@ function ResultEvidence(props: { item: OutputItem }) {
   }}</Show>;
 }
 
+function ResultFollowUp(props: { item: OutputItem; sessionId: string }) {
+  const revise = () => {
+    setReplyTarget({
+      sessionId: props.sessionId,
+      resultId: props.item.outcome?.result_id ?? props.item.id,
+      label: "this result",
+    });
+    window.dispatchEvent(new CustomEvent("vak:focus-composer"));
+  };
+  return <div class="primary-result-follow-up"><button type="button" onClick={revise}>Ask for a change</button></div>;
+}
+
 function ActivityRow(props: { item: OutputItem }) {
   const label = () => {
     switch (props.item.content.type) {
@@ -1224,7 +1237,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       lead = [];
     };
     const grouping = !showOperatorChrome();
-    for (const { item, node } of visible()) {
+    const entries = visible();
+    for (let index = 0; index < entries.length; index += 1) {
+      const { item, node } = entries[index];
       const cardLike =
         item.role !== "user" &&
         (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
@@ -1239,6 +1254,19 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
             ? item.content.document
             : undefined;
       if (grouping && answer) {
+        const material = [...lead];
+        // Structured material can arrive on either side of the answer in
+        // the ledger. Keep adjacent cards with their result in both cases.
+        while (index + 1 < entries.length) {
+          const next = entries[index + 1];
+          if (next.item.role === "user" || !(
+            next.item.content.type === "structured" ||
+            next.item.content.type === "adaptive" ||
+            next.item.kind === "artifact"
+          )) break;
+          material.push(next);
+          index += 1;
+        }
         out.push(
           <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
             <article
@@ -1247,12 +1275,13 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
               aria-label="Agent result"
             >
               <div class="primary-result-answer"><PresentationDocumentView document={answer} /></div>
-              <Show when={lead.length > 0}>
+              <Show when={material.length > 0}>
                 <div class="primary-result-material" aria-label="Result material">
-                  {lead.map((entry) => entry.node)}
+                  {material.map((entry) => entry.node)}
                 </div>
               </Show>
               <ResultEvidence item={item} />
+              <ResultFollowUp item={item} sessionId={props.sessionId} />
             </article>
           </AssistantMessage>,
         );

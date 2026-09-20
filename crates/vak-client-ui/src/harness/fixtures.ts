@@ -119,6 +119,7 @@ const timelineFixtures: Fixture[] = [
   { label: "items[] rich objects with label/detail/status", payload: { title: "Rollout Plan", items: [{ label: "Kickoff", detail: "Initial step", status: "done" }, { label: "In progress", detail: "Current step", status: "active" }, { label: "Wrap up", status: "pending" }] } },
   { label: "alt array field: steps[] of plain strings", payload: { steps: ["Draft proposal", "Get sign-off", "Ship"] } },
   { label: "alt array field: milestones[] with question/task/activity keys", payload: { milestones: [{ task: "Design review" }, { activity: "Launch" }] } },
+  { label: "noncoding options[] stay readable as choices", payload: { title: "Ways to spend the afternoon", options: [{ name: "Walk in the park", description: "Low cost and flexible" }, { name: "Visit a museum", description: "Indoor option" }] } },
   { label: "no matching array field — falls back to flat key/value as items", payload: { owner: "Platform team", due: "2026-12-31", status: "on track" } },
   { label: "empty {}", payload: {} },
 ];

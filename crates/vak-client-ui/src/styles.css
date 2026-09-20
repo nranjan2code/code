@@ -2859,7 +2859,6 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   border: 1px solid color-mix(in srgb, var(--border-soft) 82%, transparent);
   border-radius: 18px;
   background: color-mix(in srgb, var(--surface) 94%, var(--accent-wash));
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--bg) 14%, transparent);
 }
 .primary-result-answer { padding: 17px 18px 15px; }
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }
@@ -2890,6 +2889,26 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .primary-result-evidence.partial { color: var(--yellow); }
 .primary-result-evidence.failed,
 .primary-result-evidence.denied { color: var(--red); }
+.primary-result-follow-up {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 12px;
+}
+.primary-result-follow-up button {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.primary-result-follow-up button:hover,
+.primary-result-follow-up button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
 .artifact-canvas-result {
   flex: none;
   padding: 3px 7px;

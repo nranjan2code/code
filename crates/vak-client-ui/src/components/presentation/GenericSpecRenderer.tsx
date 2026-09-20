@@ -1444,7 +1444,7 @@ function normalizeTimelineItems(data: unknown): RawTimelineItem[] {
   const record = data as Record<string, unknown>;
   let rawItems: unknown[] = [];
   let matchedArrayField = false;
-  const candidates = ["items", "steps", "milestones", "slots", "agenda", "tasks", "choices", "questions", "qa", "entries"];
+  const candidates = ["items", "steps", "milestones", "slots", "agenda", "tasks", "options", "choices", "questions", "qa", "entries"];
   for (const key of candidates) {
     if (Array.isArray(record[key])) {
       rawItems = record[key] as unknown[];
