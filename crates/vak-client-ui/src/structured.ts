@@ -233,9 +233,53 @@ export function parseVakFence(rawContent: string): StructuredOutput | null {
       trimmed = trimmed.replace(/^```[^\n]*\r?\n?/, "").replace(/\r?\n?```$/, "").trim();
     }
     const firstBrace = trimmed.indexOf("{");
-    const lastBrace = trimmed.lastIndexOf("}");
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      trimmed = trimmed.slice(firstBrace, lastBrace + 1);
+    if (firstBrace !== -1) {
+      const stack: string[] = [];
+      let normalized = "";
+      let inString = false;
+      let escape = false;
+      for (let index = firstBrace; index < trimmed.length; index++) {
+        let char = trimmed[index];
+        if (stack.length === 0 && normalized) break;
+        if (escape) {
+          escape = false;
+          normalized += char;
+          continue;
+        }
+        if (char === "\\" && inString) {
+          escape = true;
+          normalized += char;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          normalized += char;
+          continue;
+        }
+        if (inString) {
+          normalized += char;
+          continue;
+        }
+        if (char === "{") {
+          // A JSON object must place a colon after its first string key. Some
+          // local models emit positional table rows as {"a","b"}; when the
+          // comma proves this cannot be an object, preserve the values and
+          // normalize only the container delimiter to an array.
+          const remainder = trimmed.slice(index + 1);
+          const firstString = /^\s*"(?:\\.|[^"\\])*"\s*([,:}])/.exec(remainder);
+          if (stack[stack.length - 1] === "[" && firstString?.[1] === ",") char = "[";
+        }
+        if (char === "{" || char === "[") stack.push(char);
+        if (char === "}" || char === "]") {
+          const expected = stack[stack.length - 1] === "[" ? "]" : "}";
+          if (stack.length === 0) break;
+          stack.pop();
+          normalized += expected;
+          continue;
+        }
+        normalized += char;
+      }
+      if (stack.length === 0 && normalized.endsWith("}")) trimmed = normalized;
     }
     if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
     const parsed = JSON.parse(trimmed);

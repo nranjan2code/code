@@ -258,6 +258,11 @@ export const REGRESSION_TEXT_FIXTURES: { name: string; text: string; note: strin
     note: "Implicit json-fence detection path — should render as a card, not text.",
   },
   {
+    name: "mismatched row closer plus one stray closing brace",
+    text: "```vak\n{\"semantic_type\":\"travel_options\",\"payload\":{\"title\":\"Saturday options\",\"columns\":[\"Option\",\"Cost\"],\"rows\":[[\"Park\",\"Low\"},{\"Crafts\",\"Low\"]]}}\n}\n```",
+    note: "Observed from a real local-model response. A delimiter may be repaired only when the nesting stack proves the intended closer; model-supplied keys and values remain unchanged.",
+  },
+  {
     name: "empty document (no blocks, no source text)",
     text: "",
     note: "Should surface a 'no result' notice rather than a blank turn (fixed in 3.4.3). Verified separately against PresentationDocumentView, not assistantParts.",

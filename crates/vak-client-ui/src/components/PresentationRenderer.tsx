@@ -41,7 +41,9 @@ import type { AssistantPart } from "../structured";
  * grouped into a connected layout instead of independent stacked blocks —
  * shared by every render site that replays `assistantParts()` output
  * (streamed paragraphs, raw_markdown fallbacks, and whole-document view). */
-function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: string) => JSX.Element }) {
+type PresentationDocumentContext = { sessionId?: string; resultId?: string; presentationId?: string };
+
+function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: string) => JSX.Element } & PresentationDocumentContext) {
   const groups = createMemo(() => groupAssistantParts(props.parts));
   const wrapText = (text: string) => (props.textWrap ? props.textWrap(text) : <p class="semantic-paragraph">{text}</p>);
   return (
@@ -50,13 +52,13 @@ function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: s
         group.type === "text" ? (
           wrapText(group.text)
         ) : group.cards.length === 1 ? (
-          <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} />
+          <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />
         ) : (
           <div class="card-group" style={{ "--card-group-count": group.cards.length }}>
             <For each={group.cards}>
               {(card) => (
                 <div class="card-group-item">
-                  <StructuredView output={card.output} fallback={card.source} />
+                  <StructuredView output={card.output} fallback={card.source} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />
                 </div>
               )}
             </For>
@@ -415,7 +417,7 @@ function InteractiveTable(props: {
   );
 }
 
-function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Element {
+function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & PresentationDocumentContext): JSX.Element {
   return (
     <For each={props.blocks}>
       {(block) => {
@@ -427,13 +429,13 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             if (raw.includes('"semantic_type"')) {
               const parts = assistantParts(raw);
               if (parts.some((p) => p.type === "card")) {
-                return <AssistantPartsView parts={parts} />;
+                return <AssistantPartsView parts={parts} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
               }
             }
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
           }
           case "list": {
-            const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} /></li>}</For>;
+            const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} /></li>}</For>;
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
           }
           case "table": {
@@ -446,17 +448,17 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             );
           }
           case "quote":
-            return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
+            return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} /></blockquote>;
           case "code":
             if (block.language === "vak" || block.language === "json" || block.content.includes('"semantic_type"')) {
               const structured = parseVakFence(block.content);
-              if (structured) return <StructuredView output={structured} fallback={block.content} />;
+              if (structured) return <StructuredView output={structured} fallback={block.content} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
               // If it has vak language or semantic_type, attempt recovery and never leak as a raw code block
               if (block.language === "vak" || block.content.includes('"semantic_type"')) {
                 const match = block.content.match(/\{[\s\S]*"semantic_type"[\s\S]*\}/);
                 if (match) {
                   const recovered = parseVakFence(match[0]);
-                  if (recovered) return <StructuredView output={recovered} fallback={block.content} />;
+                  if (recovered) return <StructuredView output={recovered} fallback={block.content} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
                 }
                 // A genuinely malformed vak/semantic-type fence (the model
                 // emitted invalid JSON, e.g. mismatched brackets) used to
@@ -484,11 +486,11 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
           case "diff":
             return <DiffInspector rawDiff={block.content} />;
           case "structured":
-            return <StructuredView output={block.output} fallback={block.fallback_markdown} />;
+            return <StructuredView output={block.output} fallback={block.fallback_markdown} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
           case "diagram":
             return <MermaidViewer source={block.source} />;
           case "callout":
-            return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} /></section>;
+            return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} /></section>;
           case "citations":
             return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer noopener">{citation.label}</a></Show></li>}</For></ol>;
           case "media":
@@ -504,6 +506,9 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
                 return (
                   <AssistantPartsView
                     parts={parts}
+                    sessionId={props.sessionId}
+                    resultId={props.resultId}
+                    presentationId={props.presentationId}
                     textWrap={(text) => <div class="semantic-limited" title={block.reason}><pre>{text}</pre></div>}
                   />
                 );
@@ -517,7 +522,7 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
   );
 }
 
-export function PresentationDocumentView(props: { document: PresentationDocument }) {
+export function PresentationDocumentView(props: { document: PresentationDocument } & PresentationDocumentContext) {
   const recipeId = () => props.document.metadata.recipe_id;
   const outcomeStatus = () => props.document.metadata.outcome_status;
   const completion = () => props.document.metadata.outcome_completion;
@@ -535,6 +540,9 @@ export function PresentationDocumentView(props: { document: PresentationDocument
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}>
         <AssistantPartsView
           parts={assistantParts(props.document.source_markdown)}
+          sessionId={props.sessionId}
+          resultId={props.resultId}
+          presentationId={props.presentationId}
           textWrap={(text) => <div class="semantic-source">{text}</div>}
         />
       </Show>
@@ -547,7 +555,7 @@ export function PresentationDocumentView(props: { document: PresentationDocument
           </div>
         </section>
       </Show>
-      <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
+      <Blocks blocks={props.document.blocks} recipeId={recipeId()} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />
       <Show when={showOperatorChrome()}>
         <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
       </Show>
@@ -1149,7 +1157,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
     if (item.content.type === "document") return showOperatorChrome()
       ? <article class="semantic-outcome"><ResultOutcomeSummary item={item} /><Show when={item.role === "assistant"} fallback={<PresentationDocumentView document={item.content.document} />}><AnswerCard item={item} document={item.content.document} /></Show></article>
-      : item.role === "user" ? <UserMessage document={item.content.document} text={item.fallback_text} /> : <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      : item.role === "user" ? <UserMessage document={item.content.document} text={item.fallback_text} /> : <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     if (item.content.type === "outcome") {
       if (showOperatorChrome()) {
         return (
@@ -1162,7 +1170,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
       }
       // Never leak internal lifecycle metadata (e.g. "primary deliverable: produced", "completed") as assistant prose
       if (!item.content.document) return null;
-      return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} /></AssistantMessage>;
+      return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
@@ -1267,7 +1275,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
               aria-label="Agent result"
             >
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-              <div class="primary-result-answer"><PresentationDocumentView document={answer} /></div>
+              <div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>
               <Show when={material.length > 0}>
                 <div class="primary-result-material" aria-label="Result material">
                   {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
