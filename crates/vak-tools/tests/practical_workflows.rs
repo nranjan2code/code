@@ -64,7 +64,8 @@ PY
         workspace.path(),
     )
     .unwrap();
-    let receipt = vak_sandbox::promote(&candidate).unwrap();
+    let promotion_store = tempfile::tempdir().unwrap();
+    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
     assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("app/index.html").is_file());
 }
@@ -112,7 +113,8 @@ PY
         workspace.path(),
     )
     .unwrap();
-    let receipt = vak_sandbox::promote(&candidate).unwrap();
+    let promotion_store = tempfile::tempdir().unwrap();
+    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
     assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("research/synthesis.md").is_file());
 }
@@ -170,7 +172,8 @@ PY
         workspace.path(),
     )
     .unwrap();
-    let receipt = vak_sandbox::promote(&candidate).unwrap();
+    let promotion_store = tempfile::tempdir().unwrap();
+    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
     assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("deliverable/report.md").is_file());
 }

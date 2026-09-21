@@ -102,6 +102,44 @@ pub struct PromotionReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PromotionTransactionState {
+    Prepared,
+    Applying,
+    Completed,
+    RolledBack,
+    RecoveryRequired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PromotionFileState {
+    Prepared,
+    Applying,
+    Applied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromotionTransactionFile {
+    pub path: String,
+    pub before_hash: Option<String>,
+    pub after_hash: String,
+    pub backup_path: Option<PathBuf>,
+    pub state: PromotionFileState,
+}
+
+/// Crash-recovery journal for one exact candidate import. It is stored outside
+/// the destination workspace, so the Agent cannot edit its own transaction
+/// state and a partially-applied import remains recoverable after restart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromotionTransaction {
+    pub schema_version: u32,
+    pub candidate_id: String,
+    pub candidate_digest: String,
+    pub destination_root: PathBuf,
+    pub state: PromotionTransactionState,
+    pub files: Vec<PromotionTransactionFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationResult {
     pub path: String,
     pub status: String,
@@ -445,18 +483,187 @@ pub fn prepare_revision_copy(candidate: &CandidateManifest, task_root: &Path) ->
     Ok(())
 }
 
-pub fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
+fn write_transaction(path: &Path, transaction: &PromotionTransaction) -> Result<(), Error> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::InvalidPlan("promotion journal has no parent".into()))?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join("journal.json.tmp");
+    let bytes = serde_json::to_vec_pretty(transaction)
+        .map_err(|error| Error::InvalidPlan(format!("journal serialization failed: {error}")))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+    use std::io::Write;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn load_transaction(path: &Path) -> Result<PromotionTransaction, Error> {
+    serde_json::from_slice(&fs::read(path)?)
+        .map_err(|error| Error::InvalidPlan(format!("journal parse failed: {error}")))
+}
+
+fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
+    PromotionReceipt {
+        candidate_id: transaction.candidate_id.clone(),
+        applied: transaction
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect(),
+        before_hashes: transaction
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), file.before_hash.clone()))
+            .collect(),
+        after_hashes: transaction
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), file.after_hash.clone()))
+            .collect(),
+        verification: transaction
+            .files
+            .iter()
+            .map(|file| VerificationResult {
+                path: file.path.clone(),
+                status: "observed".into(),
+                evidence: format!("destination hash verified: {}", file.after_hash),
+            })
+            .collect(),
+    }
+}
+
+fn rollback_transaction(
+    transaction: &mut PromotionTransaction,
+    journal_path: &Path,
+) -> Result<(), Error> {
+    transaction.state = PromotionTransactionState::RecoveryRequired;
+    write_transaction(journal_path, transaction)?;
+    for index in (0..transaction.files.len()).rev() {
+        if transaction.files[index].state == PromotionFileState::Prepared {
+            continue;
+        }
+        let file = transaction.files[index].clone();
+        let target = confined(&transaction.destination_root, &file.path)?;
+        let current = match fs::read(&target) {
+            Ok(bytes) => Some(digest(&bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(Error::Io(error)),
+        };
+        if current == file.before_hash && file.state == PromotionFileState::Applying {
+            transaction.files[index].state = PromotionFileState::Prepared;
+            write_transaction(journal_path, transaction)?;
+            continue;
+        }
+        if current.as_deref() != Some(file.after_hash.as_str()) {
+            return Err(Error::Conflict(format!(
+                "promotion recovery blocked by a later workspace change: {}",
+                file.path
+            )));
+        }
+        if let Some(backup) = &file.backup_path {
+            let bytes = fs::read(backup)?;
+            if digest(&bytes) != file.before_hash.clone().unwrap_or_default() {
+                return Err(Error::CandidateChanged(format!(
+                    "promotion backup changed: {}",
+                    file.path
+                )));
+            }
+            let temporary =
+                target.with_extension(format!("vak-recovery-{}", transaction.candidate_id));
+            fs::write(&temporary, bytes)?;
+            fs::rename(temporary, target)?;
+        } else {
+            fs::remove_file(target)?;
+        }
+        transaction.files[index].state = PromotionFileState::Prepared;
+        write_transaction(journal_path, transaction)?;
+    }
+    transaction.state = PromotionTransactionState::RolledBack;
+    write_transaction(journal_path, transaction)
+}
+
+/// Import a reviewed candidate under a cross-process workspace lock. Before
+/// images and per-file progress are persisted before the first destination
+/// rename. An interrupted prior attempt is rolled back before a retry, while
+/// a completed journal is idempotently returned for durable-record recovery.
+pub fn promote_recoverable(
+    candidate: &CandidateManifest,
+    transaction_root: &Path,
+) -> Result<PromotionReceipt, Error> {
+    fs::create_dir_all(transaction_root)?;
+    let lock_destination = candidate
+        .destination_root
+        .canonicalize()
+        .map_err(Error::Io)?;
+    let workspace_key = digest(lock_destination.to_string_lossy().as_bytes()).replace(':', "_");
+    let lock_path = transaction_root.join(format!("{workspace_key}.lock"));
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(Error::Io)?;
+    lock_file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            Error::Conflict("another workspace acceptance is in progress".into())
+        }
+        std::fs::TryLockError::Error(error) => Error::Io(error),
+    })?;
+    let directory = transaction_root.join(&candidate.candidate_id);
+    let journal_path = directory.join("journal.json");
+    let selected_digest = candidate_digest(candidate)?;
+    if journal_path.exists() {
+        let mut previous = load_transaction(&journal_path)?;
+        if previous.candidate_id != candidate.candidate_id
+            || previous.candidate_digest != selected_digest
+            || previous.destination_root != candidate.destination_root
+        {
+            return Err(Error::InvalidPlan(
+                "promotion journal identity mismatch".into(),
+            ));
+        }
+        if previous.state == PromotionTransactionState::Completed {
+            for file in &previous.files {
+                let target = confined(&previous.destination_root, &file.path)?;
+                let observed = fs::read(&target).ok().map(|bytes| digest(&bytes));
+                if observed.as_deref() != Some(file.after_hash.as_str()) {
+                    return Err(Error::Conflict(format!(
+                        "completed promotion no longer matches the workspace: {}",
+                        file.path
+                    )));
+                }
+            }
+            return Ok(transaction_receipt(&previous));
+        }
+        if previous
+            .files
+            .iter()
+            .any(|file| file.state != PromotionFileState::Prepared)
+        {
+            rollback_transaction(&mut previous, &journal_path)?;
+        }
+        fs::remove_dir_all(&directory)?;
+    } else if directory.exists() {
+        // A process can stop during preflight before the first journal write.
+        // No destination rename is possible at that point, so the orphaned
+        // backup staging directory is safe to discard before retry.
+        fs::remove_dir_all(&directory)?;
+    }
+    fs::create_dir_all(directory.join("backups"))?;
     let mut staged = Vec::new();
-    let mut before_hashes = Vec::new();
-    for file in &candidate.files {
+    let mut files = Vec::new();
+    for (index, file) in candidate.files.iter().enumerate() {
         let source = confined(&candidate.source_root, &file.path)?;
         let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
         if digest(&bytes) != file.candidate_hash {
             return Err(Error::CandidateChanged(file.path.clone()));
         }
-        // Check every destination's shape before the first write. Otherwise a
-        // directory or an obstructed parent in a later file can leave an
-        // earlier file applied even though the request fails.
         let proposed_target = candidate.destination_root.join(&file.path);
         let mut parent = proposed_target.parent();
         while let Some(path) = parent {
@@ -474,50 +681,86 @@ pub fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error>
             parent = path.parent();
         }
         let target = confined(&candidate.destination_root, &file.path)?;
-        let before = match fs::metadata(&target) {
-            Ok(metadata) if metadata.is_file() => Some(digest(&fs::read(&target)?)),
+        let before_bytes = match fs::metadata(&target) {
+            Ok(metadata) if metadata.is_file() => Some(fs::read(&target)?),
             Ok(_) => return Err(Error::Conflict(file.path.clone())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(Error::Io(error)),
         };
-        if before != file.base_hash {
+        let before_hash = before_bytes.as_deref().map(digest);
+        if before_hash != file.base_hash {
             return Err(Error::Conflict(file.path.clone()));
         }
-        before_hashes.push((file.path.clone(), before));
-        staged.push((file.path.clone(), target, bytes));
-    }
-    let mut applied = Vec::new();
-    let mut after_hashes = Vec::new();
-    let mut verification = Vec::new();
-    for (path, target, bytes) in staged {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = target.with_extension(format!("vak-promotion-{}", candidate.candidate_id));
-        fs::write(&temporary, &bytes)?;
-        fs::rename(&temporary, &target)?;
-        applied.push(path.clone());
-        let after = digest(&bytes);
-        after_hashes.push((path.clone(), after.clone()));
-        let observed = fs::read(&target).ok().map(|written| digest(&written));
-        if observed.as_deref() != Some(after.as_str()) {
-            return Err(Error::Conflict(format!(
-                "post-apply verification failed: {path}"
-            )));
-        }
-        verification.push(VerificationResult {
-            path,
-            status: "observed".into(),
-            evidence: format!("destination hash verified: {after}"),
+        let backup_path = if let Some(before) = before_bytes {
+            let path = directory.join("backups").join(index.to_string());
+            let mut backup = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            use std::io::Write;
+            backup.write_all(&before)?;
+            backup.sync_all()?;
+            Some(path)
+        } else {
+            None
+        };
+        files.push(PromotionTransactionFile {
+            path: file.path.clone(),
+            before_hash,
+            after_hash: file.candidate_hash.clone(),
+            backup_path,
+            state: PromotionFileState::Prepared,
         });
+        staged.push((target, bytes));
     }
-    Ok(PromotionReceipt {
+    let mut transaction = PromotionTransaction {
+        schema_version: 1,
         candidate_id: candidate.candidate_id.clone(),
-        applied,
-        before_hashes,
-        after_hashes,
-        verification,
-    })
+        candidate_digest: selected_digest,
+        destination_root: candidate.destination_root.clone(),
+        state: PromotionTransactionState::Prepared,
+        files,
+    };
+    write_transaction(&journal_path, &transaction)?;
+    transaction.state = PromotionTransactionState::Applying;
+    write_transaction(&journal_path, &transaction)?;
+    for (index, (target, bytes)) in staged.into_iter().enumerate() {
+        let temporary = target.with_extension(format!("vak-promotion-{}", candidate.candidate_id));
+        let result = (|| -> Result<(), Error> {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            transaction.files[index].state = PromotionFileState::Applying;
+            write_transaction(&journal_path, &transaction)?;
+            let mut output = fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&temporary)?;
+            use std::io::Write;
+            output.write_all(&bytes)?;
+            output.sync_all()?;
+            fs::rename(&temporary, &target)?;
+            transaction.files[index].state = PromotionFileState::Applied;
+            write_transaction(&journal_path, &transaction)?;
+            let observed = digest(&fs::read(&target)?);
+            if observed != transaction.files[index].after_hash {
+                return Err(Error::Conflict(format!(
+                    "post-apply verification failed: {}",
+                    transaction.files[index].path
+                )));
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temporary);
+            rollback_transaction(&mut transaction, &journal_path)?;
+            return Err(error);
+        }
+    }
+    transaction.state = PromotionTransactionState::Completed;
+    write_transaction(&journal_path, &transaction)?;
+    Ok(transaction_receipt(&transaction))
 }
 
 #[cfg(test)]
@@ -525,6 +768,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
+        let control = tempfile::tempdir()?;
+        promote_recoverable(candidate, control.path())
+    }
+
     #[test]
     fn promotion_is_compare_before_write() {
         let source = tempfile::tempdir().unwrap();
@@ -744,6 +993,159 @@ mod tests {
         };
         assert!(matches!(promote(&candidate), Err(Error::PathEscape(_))));
         assert!(!target.path().join("candidate.txt").exists());
+    }
+
+    #[test]
+    fn recoverable_promotion_rolls_back_interrupted_apply_then_retries() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("a.txt"), "new a").unwrap();
+        fs::write(source.path().join("b.txt"), "new b").unwrap();
+        fs::write(target.path().join("a.txt"), "old a").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "recoverable".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![
+                CandidateFile {
+                    path: "a.txt".into(),
+                    candidate_hash: digest(b"new a"),
+                    base_hash: Some(digest(b"old a")),
+                    bytes: 5,
+                },
+                CandidateFile {
+                    path: "b.txt".into(),
+                    candidate_hash: digest(b"new b"),
+                    base_hash: None,
+                    bytes: 5,
+                },
+            ],
+        };
+        let directory = control.path().join("recoverable");
+        fs::create_dir_all(directory.join("backups")).unwrap();
+        let backup = directory.join("backups/0");
+        fs::write(&backup, "old a").unwrap();
+        fs::write(target.path().join("a.txt"), "new a").unwrap();
+        let interrupted = PromotionTransaction {
+            schema_version: 1,
+            candidate_id: "recoverable".into(),
+            candidate_digest: candidate_digest(&candidate).unwrap(),
+            destination_root: target.path().into(),
+            state: PromotionTransactionState::Applying,
+            files: vec![
+                PromotionTransactionFile {
+                    path: "a.txt".into(),
+                    before_hash: Some(digest(b"old a")),
+                    after_hash: digest(b"new a"),
+                    backup_path: Some(backup),
+                    state: PromotionFileState::Applied,
+                },
+                PromotionTransactionFile {
+                    path: "b.txt".into(),
+                    before_hash: None,
+                    after_hash: digest(b"new b"),
+                    backup_path: None,
+                    state: PromotionFileState::Applying,
+                },
+            ],
+        };
+        write_transaction(&directory.join("journal.json"), &interrupted).unwrap();
+
+        let receipt = promote_recoverable(&candidate, control.path()).unwrap();
+        assert_eq!(receipt.applied, vec!["a.txt", "b.txt"]);
+        assert_eq!(
+            fs::read_to_string(target.path().join("a.txt")).unwrap(),
+            "new a"
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("b.txt")).unwrap(),
+            "new b"
+        );
+        let journal = load_transaction(&directory.join("journal.json")).unwrap();
+        assert_eq!(journal.state, PromotionTransactionState::Completed);
+    }
+
+    #[test]
+    fn recovery_refuses_to_erase_a_later_workspace_edit() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("a.txt"), "candidate").unwrap();
+        fs::write(target.path().join("a.txt"), "human edit").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "conflicted-recovery".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![CandidateFile {
+                path: "a.txt".into(),
+                candidate_hash: digest(b"candidate"),
+                base_hash: Some(digest(b"original")),
+                bytes: 9,
+            }],
+        };
+        let directory = control.path().join("conflicted-recovery");
+        fs::create_dir_all(directory.join("backups")).unwrap();
+        let backup = directory.join("backups/0");
+        fs::write(&backup, "original").unwrap();
+        write_transaction(
+            &directory.join("journal.json"),
+            &PromotionTransaction {
+                schema_version: 1,
+                candidate_id: candidate.candidate_id.clone(),
+                candidate_digest: candidate_digest(&candidate).unwrap(),
+                destination_root: target.path().into(),
+                state: PromotionTransactionState::Applying,
+                files: vec![PromotionTransactionFile {
+                    path: "a.txt".into(),
+                    before_hash: Some(digest(b"original")),
+                    after_hash: digest(b"candidate"),
+                    backup_path: Some(backup),
+                    state: PromotionFileState::Applied,
+                }],
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            promote_recoverable(&candidate, control.path()),
+            Err(Error::Conflict(message)) if message.contains("later workspace change")
+        ));
+        assert_eq!(
+            fs::read_to_string(target.path().join("a.txt")).unwrap(),
+            "human edit"
+        );
+    }
+
+    #[test]
+    fn completed_transaction_is_bound_to_the_selected_file_set() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("a.txt"), "a").unwrap();
+        fs::write(source.path().join("b.txt"), "b").unwrap();
+        let file = |path: &str, bytes: &[u8]| CandidateFile {
+            path: path.into(),
+            candidate_hash: digest(bytes),
+            base_hash: None,
+            bytes: bytes.len() as u64,
+        };
+        let first = CandidateManifest {
+            candidate_id: "selection".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![file("a.txt", b"a")],
+        };
+        promote_recoverable(&first, control.path()).unwrap();
+        let different_selection = CandidateManifest {
+            files: vec![file("b.txt", b"b")],
+            ..first
+        };
+        assert!(matches!(
+            promote_recoverable(&different_selection, control.path()),
+            Err(Error::InvalidPlan(message)) if message.contains("identity mismatch")
+        ));
+        assert!(!target.path().join("b.txt").exists());
     }
 
     #[test]

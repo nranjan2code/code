@@ -161,6 +161,16 @@ runtime reads each destination after the atomic rename and records the digest
 it observed; a failed observation aborts the receipt rather than presenting a
 successful promotion to the UI.
 
+Multi-file acceptance now uses a shared cross-process workspace lock and a
+persistent transaction journal stored outside the destination workspace. The
+journal saves verified before-images before the first rename and advances each
+file through prepared, applying and applied states. On restart, an incomplete
+transaction is rolled back before retry; recovery stops if the destination no
+longer matches the recorded before or after hash, preserving later human work.
+Completed transactions can reconstruct a missing append-only promotion record
+only while every destination still matches its recorded after-hash. Deletion
+candidates, scoped undo and target integration verification remain open.
+
 Append model-visible plans, setup results, environment failures and result references to the session so `derive_messages()` reconstructs what the model saw. Logs/blobs can be external content-addressed data with durable ledger references. Version new records additively; never reinterpret old entries or label unknown history verified.
 
 Keep the model's working interface small: existing brokered file/Bash tools operate in the admitted task view; lifecycle requests use the existing orchestration/control boundary. Export, acceptance and permissions are broker-owned operations. Plugins can provide preparation/verification adapters but cannot authorize promotion. Avoid one new model tool per language/backend.

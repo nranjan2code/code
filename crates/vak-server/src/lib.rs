@@ -9937,6 +9937,14 @@ fn sandbox_candidates_root(state: &AppState) -> std::path::PathBuf {
         .join("candidates")
 }
 
+fn sandbox_promotions_root(state: &AppState) -> std::path::PathBuf {
+    state
+        .core
+        .shared_data_home()
+        .join("sandbox")
+        .join("promotions")
+}
+
 fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
     state
         .core
@@ -11079,12 +11087,24 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
-    let receipt = match vak_sandbox::promote(&candidate) {
-        Ok(receipt) => receipt,
-        Err(error) => {
+    let promotion_root = sandbox_promotions_root(&state);
+    let receipt = match tokio::task::spawn_blocking(move || {
+        vak_sandbox::promote_recoverable(&candidate, &promotion_root)
+    })
+    .await
+    {
+        Ok(Ok(receipt)) => receipt,
+        Ok(Err(error)) => {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("promotion worker failed: {error}") })),
             )
                 .into_response();
         }
