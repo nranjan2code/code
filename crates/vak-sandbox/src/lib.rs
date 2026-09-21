@@ -106,6 +106,15 @@ pub struct CandidateManifest {
     pub files: Vec<CandidateFile>,
     #[serde(default)]
     pub target_checks: Vec<TargetCheckPlan>,
+    #[serde(default)]
+    pub workspace_checks: Vec<WorkspaceCheckPlan>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCheckPlan {
+    pub id: String,
+    pub label: String,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -541,12 +550,25 @@ pub struct PromotionUndoRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCheckRecord {
+    pub record_id: String,
+    pub session_id: String,
+    pub candidate_id: String,
+    pub applied_state_digest: String,
+    pub check: WorkspaceCheckPlan,
+    pub status: String,
+    pub evidence: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "record")]
 pub enum DurableRecord {
     Environment(EnvironmentRecord),
     Candidate(CandidateRecord),
     Promotion(PromotionRecord),
     PromotionUndo(PromotionUndoRecord),
+    WorkspaceCheck(WorkspaceCheckRecord),
     CandidateRevision(CandidateRevisionRecord),
 }
 
@@ -692,6 +714,7 @@ pub fn candidate_manifest(
         destination_root: destination_root.to_path_buf(),
         files,
         target_checks: Vec::new(),
+        workspace_checks: Vec::new(),
     })
 }
 
@@ -1383,6 +1406,7 @@ mod tests {
                 },
             ],
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
         };
         let registry = default_target_verifiers();
         let plan = registry.plan(&candidate);
@@ -1649,6 +1673,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "candidate.txt".into(),
                 candidate_hash: digest(b"secret"),
@@ -1674,6 +1699,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![
                 CandidateFile {
                     path: "a.txt".into(),
@@ -1749,6 +1775,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "a.txt".into(),
                 candidate_hash: digest(b"candidate"),
@@ -1810,6 +1837,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![file("a.txt", b"a")],
         };
         promote_recoverable(&first, control.path()).unwrap();
@@ -1837,6 +1865,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![
                 CandidateFile {
                     path: "changed.txt".into(),
@@ -1882,6 +1911,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "draft.txt".into(),
                 candidate_hash: digest(b"accepted"),
@@ -1914,6 +1944,7 @@ mod tests {
             source_root: source.path().into(),
             destination_root: target.path().into(),
             target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "draft.txt".into(),
                 candidate_hash: digest(b"after"),

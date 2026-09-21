@@ -138,6 +138,9 @@ export default function WorkbenchPanel() {
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
   const [appliedPromotion, setAppliedPromotion] = createSignal<api.SandboxPromotionRecord | null>(null);
   const [appliedPromotionExecutionId, setAppliedPromotionExecutionId] = createSignal<string | null>(null);
+  const [appliedWorkspaceChecks, setAppliedWorkspaceChecks] = createSignal<api.WorkspaceCheckPlan[]>([]);
+  const [workspaceCheckReceipts, setWorkspaceCheckReceipts] = createSignal<api.SandboxWorkspaceCheckRecord[]>([]);
+  const [workspaceCheckBusy, setWorkspaceCheckBusy] = createSignal<string | null>(null);
   const [undoBusy, setUndoBusy] = createSignal(false);
   const [reviewOpen, setReviewOpen] = createSignal(false);
   const [reviewedPath, setReviewedPath] = createSignal<string | null>(null);
@@ -154,6 +157,8 @@ export default function WorkbenchPanel() {
     const sessionId = activeId();
     setAppliedPromotion(null);
     setAppliedPromotionExecutionId(null);
+    setAppliedWorkspaceChecks([]);
+    setWorkspaceCheckReceipts([]);
     if (!sessionId) return;
     let disposed = false;
     void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
@@ -164,6 +169,8 @@ export default function WorkbenchPanel() {
       if (latest) {
         const source = records.find((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.candidate.candidate_id === latest.candidate_id)?.record;
         setAppliedPromotionExecutionId(source?.execution_id ?? null);
+        setAppliedWorkspaceChecks(source?.candidate.workspace_checks ?? []);
+        setWorkspaceCheckReceipts(records.filter((record): record is { kind: "WorkspaceCheck"; record: api.SandboxWorkspaceCheckRecord } => record.kind === "WorkspaceCheck" && record.record.candidate_id === latest.candidate_id).map((record) => record.record));
       }
     }).catch(() => { /* Undo remains hidden when durable state is unavailable. */ });
     onCleanup(() => { disposed = true; });
@@ -591,6 +598,8 @@ export default function WorkbenchPanel() {
         : `Applied ${receipt.receipt.verification?.length ?? 0} change(s).`);
       setAppliedPromotion(receipt);
       setAppliedPromotionExecutionId(value.execution_id);
+      setAppliedWorkspaceChecks(value.candidate.workspace_checks ?? []);
+      setWorkspaceCheckReceipts([]);
       setReviewOpen(false);
       setPendingCandidates((current) => current.filter((record) => record.candidate.candidate_id !== value.candidate.candidate_id));
       setCandidate(null);
@@ -615,6 +624,22 @@ export default function WorkbenchPanel() {
       setPromotionMessage(`Could not undo: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setUndoBusy(false);
+    }
+  };
+
+  const runWorkspaceCheck = async (check: api.WorkspaceCheckPlan) => {
+    const id = activeId();
+    const applied = appliedPromotion();
+    if (!id || !applied || workspaceCheckBusy()) return;
+    setWorkspaceCheckBusy(check.id);
+    try {
+      const receipt = await api.runSandboxWorkspaceCheck(id, applied.candidate_id, check.id);
+      setWorkspaceCheckReceipts((current) => [...current, receipt]);
+      setPromotionMessage(`${check.label} ${receipt.status}.`);
+    } catch (error) {
+      setPromotionMessage(`Could not run ${check.label}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setWorkspaceCheckBusy(null);
     }
   };
 
@@ -651,6 +676,13 @@ export default function WorkbenchPanel() {
                 <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>Frozen copy verified: {prepared().verified ? "Yes" : "No"}</small></div>
                 <div><span>Target checks</span><strong>{prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "These format checks rerun from the applied workspace." : "No registered verifier supports these files."}</small></div>
               </div>
+              <Show when={(prepared().candidate.workspace_checks?.length ?? 0) > 0}>
+                <div class="candidate-review-checks">
+                  <strong>Optional workspace checks after acceptance</strong>
+                  <For each={prepared().candidate.workspace_checks}>{(check) => <p>{check.label} · <code>{check.command}</code></p>}</For>
+                  <small>These commands run only when you choose Run workspace check after the files are accepted.</small>
+                </div>
+              </Show>
               <details class="candidate-review-provenance">
                 <summary>Technical provenance</summary>
                 <p><strong>Agent execution</strong> <span>{prepared().execution_id}</span></p>
@@ -919,6 +951,14 @@ export default function WorkbenchPanel() {
                               <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "No registered verifier ran in the applied workspace." : integration().evidence}</div>
                               <For each={integration().target_checks ?? []}>{(check) => <div class="artifact-meta"><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</div>}</For>
                             </>}</Show>
+                            <For each={appliedWorkspaceChecks()}>{(check) => {
+                              const latest = () => workspaceCheckReceipts().filter((receipt) => receipt.check.id === check.id).at(-1);
+                              return <div class="promotion-workspace-check">
+                                <div class="artifact-meta"><strong>{check.label}</strong> · <code>{check.command}</code>{latest() ? ` · ${latest()?.status}` : ""}</div>
+                                <Show when={latest()?.evidence}>{(evidence) => <div class="artifact-meta">{evidence()}</div>}</Show>
+                                <button class="tool-open" disabled={!!workspaceCheckBusy()} onClick={() => void runWorkspaceCheck(check)}>{workspaceCheckBusy() === check.id ? "Running…" : latest() ? "Run again" : "Run workspace check"}</button>
+                              </div>;
+                            }}</For>
                             <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
                               {undoBusy() ? "Restoring…" : "Undo acceptance"}
                             </button>

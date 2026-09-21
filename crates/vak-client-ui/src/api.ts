@@ -971,15 +971,18 @@ export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
 }
 
-export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number; operation?: "Upsert" | "Delete" }>; target_checks?: Array<{ verifier: string; path: string }> };
+export type WorkspaceCheckPlan = { id: string; label: string; command: string };
+export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number; operation?: "Upsert" | "Delete" }>; target_checks?: Array<{ verifier: string; path: string }>; workspace_checks?: WorkspaceCheckPlan[] };
 export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; updated_at: string; parent_candidate_id?: string; revision_session_id?: string };
 export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { verification?: Array<{ path: string; status: string; evidence: string }>; deleted?: string[]; integration?: { applied_state_digest: string; workspace_state_status: string; target_checks_status: string; evidence: string; target_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }> } }; updated_at: string };
 export type SandboxPromotionUndoRecord = { record_id: string; session_id: string; candidate_id: string; receipt: { restored: string[]; verification: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
+export type SandboxWorkspaceCheckRecord = { record_id: string; session_id: string; candidate_id: string; applied_state_digest: string; check: WorkspaceCheckPlan; status: "passed" | "failed"; evidence: string; updated_at: string };
 export type SandboxCandidateRevisionRecord = { record_id: string; revision_id: string; session_id: string; parent_candidate_id: string; comment_id: string; child_session_id: string; status: "Running" | "Completed" | "Failed"; candidate_id?: string; detail?: string; updated_at: string };
 export type SandboxRecord =
   | { kind: "Candidate"; record: SandboxCandidateRecord }
   | { kind: "Promotion"; record: SandboxPromotionRecord }
   | { kind: "PromotionUndo"; record: SandboxPromotionUndoRecord }
+  | { kind: "WorkspaceCheck"; record: SandboxWorkspaceCheckRecord }
   | { kind: "Environment"; record: unknown }
   | { kind: "CandidateRevision"; record: SandboxCandidateRevisionRecord };
 
@@ -1067,6 +1070,11 @@ export async function exportSandboxCandidate(sessionId: string, executionId: str
 
 export async function promoteSandboxCandidate(sessionId: string, candidateId: string, files: string[]): Promise<SandboxPromotionRecord> {
   const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promote`, { method: "POST", body: JSON.stringify({ candidate_id: candidateId, files }) });
+  return response.record;
+}
+
+export async function runSandboxWorkspaceCheck(sessionId: string, candidateId: string, checkId: string): Promise<SandboxWorkspaceCheckRecord> {
+  const response = await req<{ kind: "WorkspaceCheck"; record: SandboxWorkspaceCheckRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promotions/${encodeURIComponent(candidateId)}/checks`, { method: "POST", body: JSON.stringify({ check_id: checkId }) });
   return response.record;
 }
 

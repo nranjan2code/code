@@ -749,6 +749,10 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/sandbox/promotions/{candidate_id}/undo",
             post(undo_sandbox_promotion),
         )
+        .route(
+            "/sessions/{id}/sandbox/promotions/{candidate_id}/checks",
+            post(run_sandbox_workspace_check),
+        )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route("/sessions/{id}/results/{result_id}", get(session_result))
         .route(
@@ -10045,6 +10049,7 @@ async fn list_session_sandbox_records(
                     vak_sandbox::DurableRecord::Candidate(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Promotion(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::PromotionUndo(value) => value.session_id == id,
+                    vak_sandbox::DurableRecord::WorkspaceCheck(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Environment(_) => false,
                     vak_sandbox::DurableRecord::CandidateRevision(value) => value.session_id == id,
                 })
@@ -10131,6 +10136,62 @@ struct SandboxCandidateBody {
     destination: String,
 }
 
+fn planned_workspace_checks(
+    candidate: &vak_sandbox::CandidateManifest,
+) -> Vec<vak_sandbox::WorkspaceCheckPlan> {
+    let has = |name: &str| {
+        candidate.files.iter().any(|file| {
+            file.path == name && file.operation == vak_sandbox::CandidateOperation::Upsert
+        }) || candidate.destination_root.join(name).is_file()
+    };
+    let mut checks = Vec::new();
+    if has("Cargo.toml") {
+        checks.push(vak_sandbox::WorkspaceCheckPlan {
+            id: "rust.cargo-test".into(),
+            label: "Rust tests".into(),
+            command: if has("Cargo.lock") {
+                "cargo test --locked".into()
+            } else {
+                "cargo test".into()
+            },
+        });
+    }
+    let package_path = if candidate.source_root.join("package.json").is_file() {
+        candidate.source_root.join("package.json")
+    } else {
+        candidate.destination_root.join("package.json")
+    };
+    if let Ok(bytes) = std::fs::read(package_path)
+        && let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && package
+            .get("scripts")
+            .and_then(|scripts| scripts.get("test"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|script| !script.trim().is_empty())
+    {
+        checks.push(vak_sandbox::WorkspaceCheckPlan {
+            id: "javascript.npm-test".into(),
+            label: "Project tests".into(),
+            command: "npm test".into(),
+        });
+    }
+    if has("go.mod") {
+        checks.push(vak_sandbox::WorkspaceCheckPlan {
+            id: "go.test".into(),
+            label: "Go tests".into(),
+            command: "go test ./...".into(),
+        });
+    }
+    if has("pytest.ini") || has("conftest.py") {
+        checks.push(vak_sandbox::WorkspaceCheckPlan {
+            id: "python.pytest".into(),
+            label: "Python tests".into(),
+            command: "python -m pytest".into(),
+        });
+    }
+    checks
+}
+
 async fn export_sandbox_candidate(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -10184,6 +10245,7 @@ async fn export_sandbox_candidate(
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
         Ok(mut candidate) => {
             candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
+            candidate.workspace_checks = planned_workspace_checks(&candidate);
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
@@ -10841,6 +10903,7 @@ async fn dispatch_candidate_revision(
                     Ok(mut candidate) => {
                         candidate.target_checks =
                             vak_sandbox::default_target_verifiers().plan(&candidate);
+                        candidate.workspace_checks = planned_workspace_checks(&candidate);
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
@@ -11230,6 +11293,101 @@ async fn undo_sandbox_promotion(
             .into_response();
     }
     (StatusCode::OK, Json(durable)).into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkspaceCheckBody {
+    check_id: String,
+}
+
+async fn run_sandbox_workspace_check(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    Json(body): Json<WorkspaceCheckBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records_path = sandbox_records_path(&state);
+    let records = match vak_sandbox::load_records(&records_path) {
+        Ok(records) => records,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if records.iter().any(|record| matches!(record, vak_sandbox::DurableRecord::PromotionUndo(undo) if undo.session_id == session_id && undo.candidate_id == candidate_id)) {
+        return (StatusCode::CONFLICT, "candidate acceptance was undone").into_response();
+    }
+    let Some(mut candidate) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(value)
+            if value.session_id == session_id && value.candidate.candidate_id == candidate_id =>
+        {
+            Some(value.candidate.clone())
+        }
+        _ => None,
+    }) else {
+        return (StatusCode::NOT_FOUND, "candidate not found").into_response();
+    };
+    let Some(promotion) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Promotion(value)
+            if value.session_id == session_id && value.candidate_id == candidate_id =>
+        {
+            Some(value.clone())
+        }
+        _ => None,
+    }) else {
+        return (StatusCode::CONFLICT, "candidate has not been accepted").into_response();
+    };
+    candidate
+        .files
+        .retain(|file| promotion.receipt.applied.contains(&file.path));
+    candidate
+        .target_checks
+        .retain(|check| promotion.receipt.applied.contains(&check.path));
+    let Some(check) = candidate
+        .workspace_checks
+        .iter()
+        .find(|check| check.id == body.check_id)
+        .cloned()
+    else {
+        return (StatusCode::BAD_REQUEST, "unknown workspace check").into_response();
+    };
+    let candidate_for_state = candidate.clone();
+    let promotion_root = sandbox_promotions_root(&state);
+    match tokio::task::spawn_blocking(move || {
+        vak_sandbox::promote_recoverable(&candidate_for_state, &promotion_root)
+    })
+    .await
+    {
+        Ok(Ok(receipt))
+            if receipt.integration.applied_state_digest
+                == promotion.receipt.integration.applied_state_digest => {}
+        Ok(Ok(_)) => {
+            return (StatusCode::CONFLICT, "applied state identity changed").into_response();
+        }
+        Ok(Err(error)) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("workspace state worker failed: {error}"),
+            )
+                .into_response();
+        }
+    }
+    let outcome = execute_script(&state.core, &candidate.destination_root, &check.command).await;
+    let record = vak_sandbox::WorkspaceCheckRecord {
+        record_id: format!("workspace-check-{}", uuid::Uuid::now_v7()),
+        session_id,
+        candidate_id,
+        applied_state_digest: promotion.receipt.integration.applied_state_digest,
+        check,
+        status: if outcome.ok { "passed" } else { "failed" }.into(),
+        evidence: outcome.text,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let durable = vak_sandbox::DurableRecord::WorkspaceCheck(record);
+    match vak_sandbox::append_record(&records_path, &durable) {
+        Ok(()) => Json(durable).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -18670,6 +18828,23 @@ mod sandbox_promotion_tests {
         assert_eq!(found[0].cmd, "npm");
         assert_eq!(found[0].args, vec!["run", "dev"]);
         assert_eq!(found[0].port, Some(5173));
+    }
+
+    #[test]
+    fn workspace_checks_are_declared_from_project_manifests() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(
+            source.path().join("package.json"),
+            r#"{"scripts":{"test":"vitest run"}}"#,
+        )
+        .unwrap();
+        let candidate = vak_sandbox::candidate_manifest("checks", source.path(), target.path())
+            .unwrap();
+        let checks = planned_workspace_checks(&candidate);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].id, "javascript.npm-test");
+        assert_eq!(checks[0].command, "npm test");
     }
 
     #[test]
