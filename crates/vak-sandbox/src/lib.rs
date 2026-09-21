@@ -322,6 +322,40 @@ pub fn freeze_candidate(
     Ok(manifest)
 }
 
+/// Seed a fresh revision environment from the exact reviewed version. Only
+/// manifest files are copied, and each byte stream is verified against the
+/// saved candidate before it becomes writable task input. The destination
+/// must not exist, so a prior run can never be silently reused.
+pub fn prepare_revision_copy(candidate: &CandidateManifest, task_root: &Path) -> Result<(), Error> {
+    fs::create_dir(task_root)?;
+    let copy = (|| -> Result<(), Error> {
+        for file in &candidate.files {
+            let source = confined(&candidate.source_root, &file.path)?;
+            let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
+            if digest(&bytes) != file.candidate_hash {
+                return Err(Error::CandidateChanged(file.path.clone()));
+            }
+            let target = confined(task_root, &file.path)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            use std::io::Write;
+            output.write_all(&bytes)?;
+            output.sync_all()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = copy {
+        let _ = fs::remove_dir_all(task_root);
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
     let mut staged = Vec::new();
     let mut before_hashes = Vec::new();
@@ -478,6 +512,43 @@ mod tests {
             fs::read_to_string(target.path().join("result.txt")).unwrap(),
             "reviewed"
         );
+    }
+
+    #[test]
+    fn revision_copy_uses_only_verified_saved_version() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::create_dir(source.path().join("pages")).unwrap();
+        fs::write(source.path().join("pages/index.html"), "version one").unwrap();
+        let saved = freeze_candidate(
+            "version-one",
+            source.path(),
+            target.path(),
+            &store.path().join("saved"),
+        )
+        .unwrap();
+        fs::write(source.path().join("pages/index.html"), "unreviewed change").unwrap();
+        fs::write(
+            saved.source_root.join("unlisted.txt"),
+            "must not enter copy",
+        )
+        .unwrap();
+        let copy = store.path().join("revision-copy");
+        prepare_revision_copy(&saved, &copy).unwrap();
+        assert_eq!(
+            fs::read_to_string(copy.join("pages/index.html")).unwrap(),
+            "version one"
+        );
+        assert!(!copy.join("unlisted.txt").exists());
+
+        fs::write(saved.source_root.join("pages/index.html"), "tampered").unwrap();
+        let failed_copy = store.path().join("failed-copy");
+        assert!(matches!(
+            prepare_revision_copy(&saved, &failed_copy),
+            Err(Error::CandidateChanged(path)) if path == "pages/index.html"
+        ));
+        assert!(!failed_copy.exists());
     }
 
     #[cfg(unix)]

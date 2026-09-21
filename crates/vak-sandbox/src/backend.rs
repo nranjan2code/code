@@ -66,10 +66,22 @@ pub struct Seatbelt {
     pub mode: SandboxMode,
     pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
+    /// Task copies must not inherit the broad host temp write allowances.
+    pub allow_host_temp: bool,
 }
 
 impl Seatbelt {
     pub fn new(mode: SandboxMode, cwd: &Path) -> Self {
+        Self::build(mode, cwd, true)
+    }
+
+    /// Contain a retained task copy, including when the original workspace
+    /// itself lives below a host temp directory.
+    pub fn task_copy(mode: SandboxMode, cwd: &Path) -> Self {
+        Self::build(mode, cwd, false)
+    }
+
+    fn build(mode: SandboxMode, cwd: &Path, allow_host_temp: bool) -> Self {
         let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
         let mut read_paths: Vec<PathBuf> = [
             "/System",
@@ -107,10 +119,12 @@ impl Seatbelt {
                 }
             }
         }
-        for path in Self::temp_write_paths() {
-            let path = PathBuf::from(path);
-            if path.exists() && !read_paths.contains(&path) {
-                read_paths.push(path);
+        if allow_host_temp {
+            for path in Self::temp_write_paths() {
+                let path = PathBuf::from(path);
+                if path.exists() && !read_paths.contains(&path) {
+                    read_paths.push(path);
+                }
             }
         }
         let write_paths = match mode {
@@ -121,6 +135,7 @@ impl Seatbelt {
             mode,
             read_paths,
             write_paths,
+            allow_host_temp,
         }
     }
 
@@ -172,11 +187,13 @@ impl Seatbelt {
                         sbpl_quote(&path.display().to_string())
                     ));
                 }
-                for tmp in Self::temp_write_paths() {
-                    p.push_str(&format!(
-                        "(allow file-write* (subpath {}))\n",
-                        sbpl_quote(&tmp)
-                    ));
+                if self.allow_host_temp {
+                    for tmp in Self::temp_write_paths() {
+                        p.push_str(&format!(
+                            "(allow file-write* (subpath {}))\n",
+                            sbpl_quote(&tmp)
+                        ));
+                    }
                 }
                 for dev in ["/dev/null", "/dev/urandom"] {
                     p.push_str(&format!(
@@ -241,6 +258,7 @@ impl Sandbox for Seatbelt {
             mode: SandboxMode::ReadOnly,
             read_paths: self.read_paths.clone(),
             write_paths: Vec::new(),
+            allow_host_temp: self.allow_host_temp,
         }))
     }
 }
@@ -263,6 +281,78 @@ fn shell_quote(s: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn task_copy_profile_does_not_grant_host_temp_writes() {
+        let copy = tempfile::tempdir().expect("task copy");
+        let sandbox = Seatbelt::task_copy(SandboxMode::WorkspaceWrite, copy.path());
+        let profile = sandbox.profile();
+        let canonical = copy.path().canonicalize().expect("canonical copy");
+        assert!(profile.contains(&format!(
+            "(allow file-write* (subpath \"{}\"))",
+            canonical.display()
+        )));
+        assert!(!profile.contains("(allow file-write* (subpath \"/private/tmp\"))"));
+        assert!(!profile.contains("(allow file-write* (subpath \"/private/var/folders\"))"));
+        assert!(!sandbox.read_paths.contains(&PathBuf::from("/private/tmp")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn task_copy_worker_can_write_copy_but_not_sibling_workspace() {
+        let root = tempfile::tempdir().expect("test root");
+        let copy = root.path().join("task-copy");
+        let source = root.path().join("original-workspace");
+        std::fs::create_dir_all(&copy).expect("copy directory");
+        std::fs::create_dir_all(&source).expect("source directory");
+        let sandbox = Seatbelt::task_copy(SandboxMode::WorkspaceWrite, &copy);
+        let inside = copy.join("allowed.txt");
+        let outside = source.join("forbidden.txt");
+        let escaped = copy.join("outside-link");
+        std::os::unix::fs::symlink(&source, &escaped).expect("link to original workspace");
+        let allowed = sandbox.wrap(&format!(
+            "echo allowed > {}",
+            shell_quote(&inside.display().to_string())
+        ));
+        let denied = sandbox.wrap(&format!(
+            "echo forbidden > {}",
+            shell_quote(&outside.display().to_string())
+        ));
+        let denied_link = sandbox.wrap(&format!(
+            "echo forbidden > {}",
+            shell_quote(&escaped.join("through-link.txt").display().to_string())
+        ));
+        assert!(
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(allowed)
+                .status()
+                .expect("allowed command")
+                .success()
+        );
+        assert!(
+            !std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(denied)
+                .status()
+                .expect("denied command")
+                .success()
+        );
+        assert!(
+            !std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(denied_link)
+                .status()
+                .expect("symlink escape command")
+                .success()
+        );
+        assert_eq!(
+            std::fs::read_to_string(inside).expect("copy write"),
+            "allowed\n"
+        );
+        assert!(!outside.exists());
+        assert!(!source.join("through-link.txt").exists());
+    }
 
     #[test]
     fn deny_sandbox_wrap_emits_exit_126_with_reason() {

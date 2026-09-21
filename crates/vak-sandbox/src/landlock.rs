@@ -82,6 +82,16 @@ pub struct Landlock {
 
 impl Landlock {
     pub fn new(mode: SandboxMode, cwd: &Path) -> Self {
+        Self::build(mode, cwd, true)
+    }
+
+    /// Task-copy containment excludes host temp roots even when the source
+    /// workspace is under one of them.
+    pub fn task_copy(mode: SandboxMode, cwd: &Path) -> Self {
+        Self::build(mode, cwd, false)
+    }
+
+    fn build(mode: SandboxMode, cwd: &Path, allow_host_temp: bool) -> Self {
         let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
         let mut read_paths: Vec<PathBuf> = [
             "/bin", "/usr", "/lib", "/lib64", "/etc", "/dev", "/proc", "/sys", "/opt",
@@ -110,10 +120,12 @@ impl Landlock {
                 }
             }
         }
-        for path in super::backend::Seatbelt::temp_write_paths() {
-            let path = PathBuf::from(path);
-            if path.exists() && !read_paths.contains(&path) {
-                read_paths.push(path);
+        if allow_host_temp {
+            for path in super::backend::Seatbelt::temp_write_paths() {
+                let path = PathBuf::from(path);
+                if path.exists() && !read_paths.contains(&path) {
+                    read_paths.push(path);
+                }
             }
         }
         let mut write_paths = match mode {
@@ -123,7 +135,7 @@ impl Landlock {
         // Workspace-write must include OS temp areas or every test suite
         // using tempfile/std::env::temp_dir dies under the sandbox (found
         // by dogfooding `cargo test` through the agent).
-        if mode == SandboxMode::WorkspaceWrite {
+        if mode == SandboxMode::WorkspaceWrite && allow_host_temp {
             for p in super::backend::Seatbelt::temp_write_paths() {
                 let pb = PathBuf::from(p);
                 if !write_paths.contains(&pb) {
@@ -136,6 +148,22 @@ impl Landlock {
             read_paths,
             write_paths,
         }
+    }
+}
+
+#[cfg(test)]
+mod task_copy_tests {
+    use super::*;
+
+    #[test]
+    fn task_copy_excludes_host_temp_write_roots() {
+        let copy = tempfile::tempdir().expect("task copy");
+        let sandbox = Landlock::task_copy(SandboxMode::WorkspaceWrite, copy.path());
+        assert_eq!(
+            sandbox.write_paths,
+            vec![copy.path().canonicalize().expect("canonical copy")]
+        );
+        assert!(!sandbox.read_paths.contains(&PathBuf::from("/private/tmp")));
     }
 }
 
