@@ -206,12 +206,17 @@ export function setActiveExecutionId(value: string | null) {
 }
 
 export const [workbenchTab, setWorkbenchTab] = createSignal<"execution" | "artifacts">("execution");
-export const [candidateReviewRequest, setCandidateReviewRequest] = createSignal<string | null>(null);
+export interface CandidateReviewRequest {
+  executionId: string;
+  sessionId?: string;
+  candidateId?: string;
+}
+export const [candidateReviewRequest, setCandidateReviewRequest] = createSignal<CandidateReviewRequest | null>(null);
 
-export function openCandidateReview(execId: string) {
+export function openCandidateReview(execId: string, sessionId?: string, candidateId?: string) {
   setActiveExecutionId(execId);
   setWorkbenchTab("execution");
-  setCandidateReviewRequest(execId);
+  setCandidateReviewRequest({ executionId: execId, sessionId, candidateId });
   setDockTab("workbench");
 }
 

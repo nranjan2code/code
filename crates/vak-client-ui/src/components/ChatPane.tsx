@@ -733,13 +733,13 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
                     <button
                       type="button"
                       class="artifact-chip-btn"
-                      onClick={() => openArtifactPathInCanvas(art.path)}
+                      onClick={() => openArtifactPathInCanvas(art.path, undefined, { sessionId: props.sessionId ?? undefined, executionId: art.execId })}
                       title={`Open ${art.path} in Artifact Canvas`}
                     >
                       <Icon name="preview" size={12} /> Open Canvas
                     </button>
                     <Show when={index() === 0 && art.execId}>
-                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!)}><Icon name="diff" size={12} /> Review draft</button>
+                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review draft</button>
                     </Show>
                   </div>
                 )}

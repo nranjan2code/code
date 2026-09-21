@@ -582,6 +582,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review { display: flex; flex-direction: column; width: min(1100px, 100%); max-height: min(780px, calc(100vh - 40px)); overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 18px 48px rgba(0,0,0,.24); }
 .candidate-review-header, .candidate-review-footer { display: flex; align-items: center; gap: 12px; padding: 18px 22px; }
 .candidate-review-header { justify-content: space-between; border-bottom: 1px solid var(--border-soft); }
+.candidate-review-header-actions { display: flex; align-items: center; gap: 8px; }
 .candidate-review-header h2 { margin: 0 0 4px; font-size: 19px; }
 .candidate-review-header p { margin: 0; color: var(--muted); font-size: 12px; }
 .candidate-review-summary { display: grid; gap: 5px; padding: 12px 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface-raised); }
@@ -3068,9 +3069,12 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   border: 1px solid var(--border-soft);
   border-radius: 999px;
   color: var(--muted);
+  background: transparent;
   font-size: 9.5px;
   white-space: nowrap;
 }
+button.artifact-canvas-result { cursor: pointer; }
+button.artifact-canvas-result:hover, button.artifact-canvas-result:focus-visible { border-color: var(--accent); color: var(--text); }
 .semantic-assistant .semantic-document > .semantic-paragraph:first-child {
   margin-top: 0;
 }

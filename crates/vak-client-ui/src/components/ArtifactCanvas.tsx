@@ -15,6 +15,7 @@ import * as api from "../api";
 import Icon from "./Icon";
 import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
+import { activate } from "../App";
 
 export type ArtifactDisplayType = "html" | "pdf" | "image" | "code" | "server";
 
@@ -488,10 +489,16 @@ export default function ArtifactCanvas() {
   };
   const commentsForArtifact = () => candidateComments().filter((comment) => !comment.path || comment.path === path());
   const returnToReview = () => {
-    const executionId = canvasArtifact()?.executionId;
+    const artifact = canvasArtifact();
+    const executionId = artifact?.executionId;
     if (!executionId) return;
     closeArtifactCanvas();
-    openCandidateReview(executionId);
+    openCandidateReview(executionId, artifact?.sessionId, artifact?.candidateId);
+  };
+  const returnToConversation = () => {
+    const sessionId = canvasArtifact()?.sessionId;
+    closeArtifactCanvas();
+    if (sessionId && sessionId !== activeId()) void activate(sessionId);
   };
 
   return (
@@ -532,7 +539,7 @@ export default function ArtifactCanvas() {
               <span class="artifact-canvas-path">{path()}</span>
             </Show>
             <Show when={canvasArtifact()?.resultId}>{(resultId) =>
-              <span class="artifact-canvas-result" title={resultId()}>From this conversation result</span>
+              <button type="button" class="artifact-canvas-result" title={resultId()} onClick={returnToConversation}>Back to conversation result</button>
             }</Show>
             <Show when={canvasArtifact()?.candidateId}>{(candidateId) =>
               <span class="artifact-canvas-result" title={candidateId()}>Saved draft{candidateVersion() ? ` · Version ${candidateVersion()}` : ""}</span>

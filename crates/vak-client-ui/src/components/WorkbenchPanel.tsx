@@ -15,11 +15,13 @@ import {
   setWorkbenchTab,
   candidateReviewRequest,
   setCandidateReviewRequest,
+  setDockTab,
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { trapFocus } from "../focusTrap";
+import { activate } from "../App";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -262,6 +264,8 @@ export default function WorkbenchPanel() {
       sizeBytes: number;
       execCommand: string;
       timestamp: string;
+      executionId: string;
+      sessionId?: string;
       revision?: number;
     }> = [];
     for (const e of executions()) {
@@ -270,6 +274,8 @@ export default function WorkbenchPanel() {
           ...a,
           execCommand: e.command,
           timestamp: e.timestamp,
+          executionId: e.id,
+          sessionId: e.ownerSessionId ?? activeId() ?? undefined,
         });
       }
     }
@@ -454,7 +460,7 @@ export default function WorkbenchPanel() {
     onCleanup(() => { disposed = true; updates.close(); });
   });
 
-  const reviewCandidate = async () => {
+  const reviewCandidate = async (requestedCandidateId?: string) => {
     const exec = currentExec();
     const sessionId = activeId();
     if (!sessionId || !exec || exec.artifacts.length === 0) return;
@@ -470,7 +476,9 @@ export default function WorkbenchPanel() {
       return;
     }
     if (saved.length > 0) {
-      if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
+      const requested = requestedCandidateId ? saved.find((record) => record.candidate.candidate_id === requestedCandidateId) : undefined;
+      if (requested) selectCandidate(requested);
+      else if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
       setReviewOpen(true);
       return;
     }
@@ -491,9 +499,14 @@ export default function WorkbenchPanel() {
 
   createEffect(() => {
     const requested = candidateReviewRequest();
-    if (!requested || currentExec()?.id !== requested) return;
+    if (!requested) return;
+    if (requested.sessionId && requested.sessionId !== activeId()) {
+      void activate(requested.sessionId);
+      return;
+    }
+    if (currentExec()?.id !== requested.executionId) return;
     setCandidateReviewRequest(null);
-    void reviewCandidate();
+    void reviewCandidate(requested.candidateId);
   });
 
   const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
@@ -650,7 +663,7 @@ export default function WorkbenchPanel() {
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
               <div><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
-              <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
+              <div class="candidate-review-header-actions"><button type="button" class="button subtle" onClick={() => { setReviewOpen(false); setDockTab(null); }}>Back to conversation</button><button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button></div>
             </header>
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
               <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
@@ -1158,7 +1171,7 @@ export default function WorkbenchPanel() {
                           class="artifact-popout-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openArtifactPathInCanvas(art.path);
+                            openArtifactPathInCanvas(art.path, undefined, { sessionId: art.sessionId, executionId: art.executionId });
                           }}
                           title="Open in Artifact Canvas"
                           aria-label={`Open ${art.path} in Artifact Canvas`}
@@ -1199,6 +1212,8 @@ export default function WorkbenchPanel() {
                           artifactPath: p,
                           html: artifactContent() || undefined,
                           timestamp: Date.now(),
+                          sessionId: allArtifacts().find((artifact) => artifact.path === p)?.sessionId,
+                          executionId: allArtifacts().find((artifact) => artifact.path === p)?.executionId,
                         });
                       }
                     }}

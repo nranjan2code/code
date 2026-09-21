@@ -640,7 +640,7 @@ function Artifact(props: { item: OutputItem; showActions?: boolean }) {
             class="artifact-open"
             onClick={() => {
               const executionId = action().data.execution_id;
-              if (executionId) openCandidateReview(executionId);
+              if (executionId) openCandidateReview(executionId, props.item.provenance?.session_id ?? undefined, action().data.candidate_id);
             }}
           >
             {action().label}
@@ -783,7 +783,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
           executionId: item.provenance?.tool_call_id ?? undefined,
         })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open working file" : `Open ${item.content.artifact.name}`}</button>;
       }}</For>
-      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id)}><Icon name="diff" size={13} />Review draft</button>}</For>
+      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id, props.sessionId, action.data.candidate_id)}><Icon name="diff" size={13} />Review draft</button>}</For>
       <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for a change"}</button></Show>
     </nav>
   </Show>;
