@@ -274,10 +274,49 @@ impl TargetVerifier for FileSignatureVerifier {
     }
 }
 
+pub struct OpenXmlPackageVerifier;
+
+impl TargetVerifier for OpenXmlPackageVerifier {
+    fn id(&self) -> &'static str {
+        "format.openxml"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        let path = path.to_ascii_lowercase();
+        [".docx", ".xlsx", ".pptx"]
+            .iter()
+            .any(|extension| path.ends_with(extension))
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        let file = fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| format!("Open XML package could not be opened: {error}"))?;
+        let lower = path.to_string_lossy().to_ascii_lowercase();
+        let required = if lower.ends_with(".docx") {
+            "word/document.xml"
+        } else if lower.ends_with(".xlsx") {
+            "xl/workbook.xml"
+        } else {
+            "ppt/presentation.xml"
+        };
+        for part in ["[Content_Types].xml", "_rels/.rels", required] {
+            archive
+                .by_name(part)
+                .map_err(|error| format!("Open XML package is missing {part}: {error}"))?;
+        }
+        Ok(format!(
+            "Open XML package opened with {} parts and contains {required}",
+            archive.len()
+        ))
+    }
+}
+
 pub fn default_target_verifiers() -> TargetVerifierRegistry {
     let mut registry = TargetVerifierRegistry::default();
     registry.register(JsonSyntaxVerifier);
     registry.register(FileSignatureVerifier);
+    registry.register(OpenXmlPackageVerifier);
     registry
 }
 
@@ -1273,6 +1312,28 @@ mod tests {
                 .iter()
                 .any(|result| { result.path == "preview.png" && result.status == "failed" })
         );
+    }
+
+    #[test]
+    fn openxml_verifier_requires_the_package_root_and_document_part() {
+        use std::io::Write;
+
+        let target = tempfile::tempdir().unwrap();
+        let valid_path = target.path().join("report.docx");
+        let file = fs::File::create(&valid_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for part in ["[Content_Types].xml", "_rels/.rels", "word/document.xml"] {
+            archive.start_file(part, options).unwrap();
+            archive.write_all(b"<xml/>").unwrap();
+        }
+        archive.finish().unwrap();
+
+        let invalid_path = target.path().join("broken.docx");
+        fs::write(&invalid_path, b"not a package").unwrap();
+        let verifier = OpenXmlPackageVerifier;
+        assert!(verifier.verify(&valid_path).is_ok());
+        assert!(verifier.verify(&invalid_path).is_err());
     }
     #[test]
     fn nested_artifacts_are_first_class() {

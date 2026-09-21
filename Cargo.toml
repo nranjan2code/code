@@ -94,6 +94,7 @@ regex = "1"
 # Standards-compliant CommonMark AST for lossless, surface-neutral output projection.
 pulldown-cmark = "=0.13.4"
 walkdir = "2"
+zip = { version = "4", default-features = false, features = ["deflate"] }
 # checkpoint file-content encoding
 base64 = "0.22"
 # Constant-time token comparison for auth (timing-attack resistance)
