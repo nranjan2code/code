@@ -12,15 +12,19 @@ type SharedCandidate = {
   };
 };
 type SharedComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number };
+type SharedMessage = Message & { author_id?: string; author_name?: string };
 
 function visibleText(message: Message): string {
-  return message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+  const shared = message as SharedMessage;
+  const prefix = shared.author_name ? `${shared.author_name}: ` : "";
+  return prefix && text.startsWith(prefix) ? text.slice(prefix.length) : text;
 }
 
 export default function SharedConversation() {
   const [code, setCode] = createSignal("");
   const [credential, setCredential] = createSignal<{ conversationId: string; token: string } | null>(null);
-  const [messages, setMessages] = createSignal<Message[]>([]);
+  const [messages, setMessages] = createSignal<SharedMessage[]>([]);
   const [candidates, setCandidates] = createSignal<SharedCandidate[]>([]);
   const [sharedResults, setSharedResults] = createSignal<OutputItem[]>([]);
   const [error, setError] = createSignal<string | null>(null);
@@ -33,6 +37,9 @@ export default function SharedConversation() {
   const [participantName, setParticipantName] = createSignal("");
   const [agent, setAgent] = createSignal({ name: "Vak", character: "vak" });
   const [canComment, setCanComment] = createSignal(false);
+  const [canMessage, setCanMessage] = createSignal(false);
+  const [messageText, setMessageText] = createSignal("");
+  const [messageBusy, setMessageBusy] = createSignal(false);
   const [commentText, setCommentText] = createSignal("");
   const [commentLine, setCommentLine] = createSignal("");
   const [commentBusy, setCommentBusy] = createSignal(false);
@@ -57,6 +64,8 @@ export default function SharedConversation() {
     setParticipantName("");
     setAgent({ name: "Vak", character: "vak" });
     setCanComment(false);
+    setCanMessage(false);
+    setMessageText("");
     setCommentText("");
     setCommentLine("");
   };
@@ -91,9 +100,11 @@ export default function SharedConversation() {
         read(current.conversationId, current.token, "/presentation"),
       ]);
       if (credential()?.token !== current.token) return;
-      if (transcript) setMessages((transcript.messages ?? []).filter((message: Message) =>
-        message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"
-      ));
+      if (transcript) setMessages((transcript.messages ?? []).map((message: Message, index: number) => ({
+        ...message,
+        author_id: transcript.entries?.[index]?.author_id,
+        author_name: transcript.entries?.[index]?.author_name,
+      })).filter((message: Message) => message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"));
       setCandidates((records.records ?? []).filter((item: SharedCandidate) => item.kind === "Candidate"));
       setSharedResults(((presentation as OutputTimeline).items ?? []).filter((item) =>
         item.status !== "running" && (item.content.type === "structured" || item.content.type === "adaptive")
@@ -209,6 +220,7 @@ export default function SharedConversation() {
       setParticipantName(me.display_name ?? "Guest");
       setAgent({ name: me.agent.name, character: me.agent.character });
       setCanComment(Array.isArray(me.capabilities) && me.capabilities.includes("comment"));
+      setCanMessage(Array.isArray(me.capabilities) && me.capabilities.includes("message"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
@@ -218,6 +230,32 @@ export default function SharedConversation() {
     if (current) {
       refreshTimer = setInterval(() => void refresh(), 10_000);
       void watchUpdates(current.conversationId, current.token);
+    }
+  };
+
+  const postMessage = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const current = credential();
+    const text = messageText().trim();
+    if (!current || !canMessage() || !text || messageBusy()) return;
+    setMessageBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/sessions/${encodeURIComponent(current.conversationId)}/coworking/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${current.token}`, "Content-Type": "application/json" },
+        credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+        body: JSON.stringify({ text, request_id: crypto.randomUUID() }),
+      });
+      if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended or messages are not allowed."); }
+      if (response.status === 409) throw new Error("The Agent is finishing work. Send this message when the turn settles.");
+      if (!response.ok) throw new Error(`Could not send message (${response.status}).`);
+      setMessageText("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setMessageBusy(false);
     }
   };
 
@@ -257,14 +295,15 @@ export default function SharedConversation() {
   return <main class="shared-conversation">
     <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><span class="shared-agent-identity"><AgentMark character={agent().character} size={22} /><span>{agent().name}</span></span><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
-      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation and its saved drafts{canComment() ? ", and leave comments on a draft" : ""}. Agent requests and workspace changes remain with the owner.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
+      <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation{canMessage() ? ", add messages" : ""}, and review its saved drafts{canComment() ? " with comments" : ""}. The owner decides when the Agent works.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
         <For each={messages().slice(-visibleCount())} fallback={<p class="shared-empty">No visible messages yet.</p>}>
-          {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author"><Show when={message.role.toLowerCase() === "assistant"} fallback={<>Person</>}><AgentMark character={agent().character} size={18} /><span>{agent().name}</span></Show></span><p>{text()}</p></article>}</Show>}
+          {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author"><Show when={message.role.toLowerCase() === "assistant"} fallback={<>{message.author_name || "Owner"}</>}><AgentMark character={agent().character} size={18} /><span>{agent().name}</span></Show></span><p>{text()}</p></article>}</Show>}
         </For>
       </section>
+      <Show when={canMessage()}><form class="shared-message-composer" onSubmit={(event) => void postMessage(event)}><label for="shared-message-text">Add to the conversation</label><textarea id="shared-message-text" value={messageText()} onInput={(event) => setMessageText(event.currentTarget.value)} maxLength={32768} rows={3} placeholder={`Message ${agent().name} and the people here`} required /><div><span>Your message is included when the owner next asks the Agent to work.</span><button type="submit" class="btn primary" disabled={messageBusy() || !messageText().trim()}>{messageBusy() ? "Sending…" : "Send message"}</button></div></form></Show>
       <Show when={sharedResults().length > 0}><section class="shared-results" aria-label="Shared results"><h2>Results</h2><For each={sharedResults()}>{(item) => <article class="shared-result" data-result-id={item.outcome?.result_id ?? item.id}><Show when={item.content.type === "structured"}>{item.content.type === "structured" && <StructuredView output={item.content.output} fallback={item.fallback_text} />}</Show><Show when={item.content.type === "adaptive"}>{item.content.type === "adaptive" && <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />}</Show></article>}</For></section></Show>
       <Show when={candidates().length > 0}><section class="shared-drafts"><h2>Saved drafts</h2><For each={candidates()}>{(record) => <div class="shared-draft"><strong>Draft {record.record.candidate?.candidate_id.slice(0, 8)}</strong><span>{record.record.candidate?.files.length ?? 0} files</span><ul><For each={record.record.candidate?.files ?? []}>{(file) => <li><button type="button" onClick={() => void showFile(record.record.candidate!.candidate_id, file.path)}><Icon name="file" size={13} />{file.path}</button></li>}</For></ul></div>}</For></section></Show>
       <Show when={fileError()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>

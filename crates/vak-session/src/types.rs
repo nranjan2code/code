@@ -246,6 +246,8 @@ pub struct TranscriptMessage {
     /// Set when the runtime derived this message into the model's input
     /// (compaction summary, intent note, work contract, conversation thread).
     pub context: bool,
+    pub author_id: Option<String>,
+    pub author_name: Option<String>,
 }
 
 impl MessageRecord {
@@ -281,6 +283,14 @@ pub struct MessageMeta {
     /// stop guard) rather than the user. See `vak_intent::control`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<vak_intent::control::ControlKind>,
+    /// Verified human principal for a shared-conversation message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    /// Client idempotency key, scoped to `author_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 /// A compaction packet (docs/design/68-context-engine.md §4): the summary

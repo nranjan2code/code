@@ -20,7 +20,7 @@ import type {
 export type Density = "outcome" | "balanced" | "audit";
 
 export type Item =
-  | { kind: "user"; text: string; entryId?: string }
+  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -1003,7 +1003,9 @@ export function transcriptToItems(
         }
       }
       const joined = stripControlScaffolding(texts.join("\n"));
-      if (joined) next.push({ kind: "user", text: joined, entryId: meta?.entry_id });
+      const authorPrefix = meta?.author_name ? `${meta.author_name}: ` : "";
+      const displayText = authorPrefix && joined.startsWith(authorPrefix) ? joined.slice(authorPrefix.length) : joined;
+      if (displayText) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(

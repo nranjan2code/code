@@ -1486,6 +1486,11 @@ impl SessionLog {
                     message: record.message.clone(),
                     control: record.control_kind(),
                     context: false,
+                    author_id: record.meta.as_ref().and_then(|meta| meta.author_id.clone()),
+                    author_name: record
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.author_name.clone()),
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
                     entry_id: entry.id.clone(),
@@ -1495,6 +1500,8 @@ impl SessionLog {
                     )),
                     control: None,
                     context: true,
+                    author_id: None,
+                    author_name: None,
                 }),
                 _ => None,
             })

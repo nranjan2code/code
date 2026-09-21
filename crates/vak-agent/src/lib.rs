@@ -3788,6 +3788,7 @@ impl Agent {
                     stop_reason: Some(format!("{:?}", response.stop_reason).to_lowercase()),
                     usage: Some(response.usage.clone()),
                     control: None,
+                    ..Default::default()
                 }),
             })
             .ok()

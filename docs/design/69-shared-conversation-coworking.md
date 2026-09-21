@@ -1,6 +1,6 @@
 # 69 — Shared conversation and draft coworking
 
-Status: **proposal; not shipped**. The user chose shared participation in the same Agent conversation and draft. This document defines the remaining cross-person contract; it does not describe the current single-operator browser authentication as multi-user access.
+Status: **in progress**. Scoped invitations, shared reading, attributed conversation messages, saved-draft comments, live refresh and isolated Agent revision are shipped. Presence and participant-specific approval delegation remain open.
 
 ## Product contract
 

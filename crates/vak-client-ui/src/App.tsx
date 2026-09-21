@@ -185,6 +185,12 @@ export async function refreshSessions() {
           if (visible.has(s.session_id)) {
             await hydrate(s.session_id);
           }
+        } else if (!s.running && visible.has(s.session_id)) {
+          // Shared-human messages are append-only ledger writes rather than
+          // Agent events. Reconcile visible settled conversations on the
+          // existing session heartbeat so an owner's open transcript picks
+          // them up without adding a third persistent SSE connection.
+          await hydrate(s.session_id);
         }
       }
       pruneStreams();

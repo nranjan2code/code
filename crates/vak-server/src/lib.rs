@@ -774,6 +774,10 @@ fn router_with_state(state: AppState) -> Router {
             get(list_coworking_invitations).post(create_coworking_invitation),
         )
         .route("/sessions/{id}/coworking/me", get(coworking_me))
+        .route(
+            "/sessions/{id}/coworking/messages",
+            post(create_coworking_message),
+        )
         .route("/sessions/{id}/coworking/updates", get(coworking_updates))
         .route(
             "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
@@ -3611,14 +3615,23 @@ fn participant_read_route_allowed(
         return false;
     }
     if method == axum::http::Method::POST {
+        let can_read = principal
+            .capabilities
+            .iter()
+            .any(|capability| capability == "read");
+        if !can_read {
+            return false;
+        }
+        if matches!(*rest, ["coworking", "messages"]) {
+            return principal
+                .capabilities
+                .iter()
+                .any(|capability| capability == "message");
+        }
         return principal
             .capabilities
             .iter()
             .any(|capability| capability == "comment")
-            && principal
-                .capabilities
-                .iter()
-                .any(|capability| capability == "read")
             && matches!(*rest, ["sandbox", "candidates", _, "comments"]);
     }
     if method != axum::http::Method::GET
@@ -7063,7 +7076,13 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
         .collect();
     let entries: Vec<serde_json::Value> = visible
         .iter()
-        .map(|item| serde_json::json!({ "entry_id": item.entry_id }))
+        .map(|item| {
+            serde_json::json!({
+                "entry_id": item.entry_id,
+                "author_id": item.author_id,
+                "author_name": item.author_name,
+            })
+        })
         .collect();
     let messages: Vec<&vak_llm::Message> = visible.iter().map(|item| &item.message).collect();
     serde_json::json!({
@@ -7127,6 +7146,14 @@ struct CoworkingInvitationBody {
     expires_in_hours: u32,
     #[serde(default)]
     can_comment: bool,
+    #[serde(default)]
+    can_message: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CoworkingMessageBody {
+    text: String,
+    request_id: String,
 }
 
 fn default_coworking_invitation_hours() -> u32 {
@@ -7187,6 +7214,106 @@ async fn coworking_me(
             .into_response()
         }
         AuthenticatedPrincipal::Participant(_) => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
+/// Add a verified human contribution to the shared ledger. This endpoint
+/// never dispatches the Agent or carries approval, tool, or control authority.
+async fn create_coworking_message(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Json(body): Json<CoworkingMessageBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let AuthenticatedPrincipal::Participant(participant) = principal else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    if participant.conversation_id != conversation_id
+        || !participant.capabilities.iter().any(|value| value == "read")
+        || !participant
+            .capabilities
+            .iter()
+            .any(|value| value == "message")
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let text = body.text.trim();
+    let request_id = body.request_id.trim();
+    if text.is_empty()
+        || text.chars().count() > 32_768
+        || request_id.is_empty()
+        || request_id.chars().count() > 120
+        || !request_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let append = |session: &mut vak_session::SessionLog| {
+        let duplicate = session.chain_to_root().iter().any(|entry| {
+            matches!(&entry.payload, vak_session::EntryPayload::Message(existing)
+                if existing.meta.as_ref().is_some_and(|meta|
+                    meta.author_id.as_deref() == Some(participant.principal_id.as_str())
+                    && meta.request_id.as_deref() == Some(request_id)))
+        });
+        if duplicate {
+            return Ok(false);
+        }
+        session.append_message(vak_session::MessageRecord {
+            // Authorship is present both structurally and in the model-visible
+            // text. Later turns therefore know who contributed the message;
+            // human transcript projections remove this exact display prefix.
+            message: vak_llm::Message::user_text(format!("{}: {text}", participant.display_name)),
+            meta: Some(vak_session::MessageMeta {
+                author_id: Some(participant.principal_id.clone()),
+                author_name: Some(participant.display_name.clone()),
+                request_id: Some(request_id.to_string()),
+                ..Default::default()
+            }),
+        })?;
+        Ok(true)
+    };
+    let result = if let Some(handle) = state.get(&conversation_id) {
+        let result = match handle.session.lock() {
+            Ok(mut guard) => match guard.as_mut() {
+                Some(session) => append(session),
+                None => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({"error":"Agent is working; send after this turn settles"})),
+                    )
+                        .into_response();
+                }
+            },
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if result.is_ok() {
+            let _ = handle.coworking_comments_tx.send(());
+        }
+        result
+    } else if let Some(read_only) = open_historical_session(&state, &conversation_id) {
+        let path = read_only.path().to_path_buf();
+        drop(read_only);
+        vak_session::SessionLog::open(path).and_then(|mut session| append(&mut session))
+    } else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match result {
+        Ok(created) => (
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            Json(serde_json::json!({
+                "request_id": request_id,
+                "created": created,
+                "agent_run_started": false,
+            })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -7304,6 +7431,7 @@ async fn create_coworking_invitation(
     let display_name = body.display_name.trim();
     if display_name.is_empty()
         || display_name.chars().count() > 120
+        || display_name.chars().any(char::is_control)
         || !(1..=30 * 24).contains(&body.expires_in_hours)
     {
         return StatusCode::BAD_REQUEST.into_response();
@@ -7316,10 +7444,15 @@ async fn create_coworking_invitation(
         display_name: display_name.to_string(),
         conversation_id: conversation_id.clone(),
         audience_id,
-        capabilities: if body.can_comment {
-            vec!["read".into(), "comment".into()]
-        } else {
-            vec!["read".into()]
+        capabilities: {
+            let mut capabilities = vec!["read".into()];
+            if body.can_message {
+                capabilities.push("message".into());
+            }
+            if body.can_comment {
+                capabilities.push("comment".into());
+            }
+            capabilities
         },
         token_hash: coworking::token_hash(&token),
         created_at: now.to_rfc3339(),
@@ -18839,8 +18972,8 @@ mod sandbox_promotion_tests {
             r#"{"scripts":{"test":"vitest run"}}"#,
         )
         .unwrap();
-        let candidate = vak_sandbox::candidate_manifest("checks", source.path(), target.path())
-            .unwrap();
+        let candidate =
+            vak_sandbox::candidate_manifest("checks", source.path(), target.path()).unwrap();
         let checks = planned_workspace_checks(&candidate);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].id, "javascript.npm-test");
@@ -18952,6 +19085,16 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             &participant(&["read", "comment"])
         ));
+        assert!(participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/coworking/messages",
+            &participant(&["read", "message"])
+        ));
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/coworking/messages",
+            &participant(&["read", "comment"])
+        ));
         assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,
             "/sessions/session-1/sandbox/promote",
@@ -19052,6 +19195,93 @@ mod sandbox_promotion_tests {
             .unwrap()
             .status(),
             StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn participant_message_is_attributed_idempotent_and_does_not_start_work() {
+        use tower::ServiceExt;
+
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-message", "exec-message");
+        let state = AppState::new(core.clone());
+        let path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join("session-message.jsonl");
+        let session = SessionLog::open(path).unwrap();
+        let handle = register_handle(
+            &state,
+            "session-message".into(),
+            session,
+            core.cwd().to_path_buf(),
+            core.clone(),
+        );
+        let token = "participant-message-token";
+        coworking::invite(
+            &coworking::store_path(&core.sessions_home()),
+            coworking::AudienceGrant {
+                grant_id: "grant-message".into(),
+                principal_id: "person-message".into(),
+                display_name: "Asha".into(),
+                conversation_id: "session-message".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "message".into()],
+                token_hash: coworking::token_hash(token),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            },
+        )
+        .unwrap();
+        let app = Router::new()
+            .route(
+                "/sessions/{id}/coworking/messages",
+                post(create_coworking_message),
+            )
+            .with_state(state)
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: core.sessions_home(),
+                    trusted_hosts: Vec::new(),
+                },
+                require_bearer,
+            ));
+        let request = || {
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/sessions/session-message/coworking/messages")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"text":"Please make the heading warmer.","request_id":"message-1"}"#,
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone().oneshot(request()).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            app.oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let guard = handle.session.lock().unwrap();
+        let log = guard.as_ref().unwrap();
+        let matching: Vec<_> = log
+            .derive_transcript()
+            .into_iter()
+            .filter(|item| item.author_id.as_deref() == Some("person-message"))
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].author_name.as_deref(), Some("Asha"));
+        assert_eq!(
+            matching[0].message.text_content(),
+            "Asha: Please make the heading warmer."
         );
     }
 

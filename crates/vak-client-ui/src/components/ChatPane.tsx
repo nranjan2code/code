@@ -562,7 +562,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
       <div class="msg user">
         <div class="msg-bubble-wrap">
           <div class="user-turn-head">
-            <span class="turn-author-chip">You</span>
+            <span class="turn-author-chip">{item.authorName || "You"}</span>
           </div>
           <div class="msg-user-content"><Markdown text={text} /></div>
           <MessageActions text={text} role="user" />

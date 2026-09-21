@@ -162,6 +162,8 @@ export interface OutputProvenance {
  */
 export interface TranscriptEntryMeta {
   entry_id: string;
+  author_id?: string | null;
+  author_name?: string | null;
 }
 
 export interface OutputItem {
