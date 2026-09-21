@@ -347,6 +347,38 @@ async fn a_thinking_only_step_gets_one_redo_to_act() {
     );
 }
 
+#[tokio::test]
+async fn two_thinking_only_steps_fail_instead_of_completing_without_work() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "empty-step-failure",
+        vec![thinking_only(), thinking_only()],
+        false,
+    )
+    .await;
+    let outcome = agent
+        .run(
+            "create a draft",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Failed { error: vak_llm::LlmError::Parse(message) }
+            if message.contains("no visible answer")),
+        "got {outcome:?}"
+    );
+    assert_eq!(
+        user_texts(&agent)
+            .iter()
+            .filter(|text| text.starts_with("[empty-step]"))
+            .count(),
+        1
+    );
+}
+
 fn card_call(id: &str, value: &str) -> AssistantMessage {
     AssistantMessage {
         content: vec![ContentBlock::ToolUse {

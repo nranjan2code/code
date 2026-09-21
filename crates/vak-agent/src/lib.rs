@@ -1864,10 +1864,15 @@ impl Agent {
                 // six). That is not an answer; one bounded redo asks it to
                 // act on the plan it already made. A card emitted earlier in
                 // the run IS the answer, so a card-only turn is left alone.
-                if response.text_content().trim().is_empty()
-                    && !cards_emitted_this_run
-                    && !empty_step_repair_attempted
-                {
+                if response.text_content().trim().is_empty() && !cards_emitted_this_run {
+                    if empty_step_repair_attempted {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Parse(
+                                "model returned no visible answer or tool call after one retry"
+                                    .into(),
+                            ),
+                        };
+                    }
                     empty_step_repair_attempted = true;
                     if turn + 1 >= self.config.max_turns {
                         return TurnOutcome::MaxTurnsReached;
