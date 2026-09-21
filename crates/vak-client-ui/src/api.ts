@@ -1051,10 +1051,10 @@ export function listCoworkingInvitations(sessionId: string): Promise<{ invitatio
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`);
 }
 
-export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number, canComment = false, canMessage = false): Promise<{ invitation: CoworkingInvitation; token: string }> {
+export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number, canComment = false, canMessage = false, canApproveOnce = false): Promise<{ invitation: CoworkingInvitation; token: string }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`, {
     method: "POST",
-    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours, can_comment: canComment, can_message: canMessage }),
+    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours, can_comment: canComment, can_message: canMessage, can_approve_once: canApproveOnce }),
   });
 }
 

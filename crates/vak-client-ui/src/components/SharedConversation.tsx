@@ -14,6 +14,7 @@ type SharedCandidate = {
 type SharedComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number };
 type SharedMessage = Message & { author_id?: string; author_name?: string };
 type PresentParticipant = { principal_id: string; display_name: string };
+type SharedApproval = { request_id: string; tool: string; args_json: string; reason: string; requested_at: string };
 
 function visibleText(message: Message): string {
   const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
@@ -43,6 +44,9 @@ export default function SharedConversation() {
   const [messageText, setMessageText] = createSignal("");
   const [messageBusy, setMessageBusy] = createSignal(false);
   const [presentParticipants, setPresentParticipants] = createSignal<PresentParticipant[]>([]);
+  const [canApproveOnce, setCanApproveOnce] = createSignal(false);
+  const [approvals, setApprovals] = createSignal<SharedApproval[]>([]);
+  const [approvalBusy, setApprovalBusy] = createSignal<string | null>(null);
   const [commentText, setCommentText] = createSignal("");
   const [commentLine, setCommentLine] = createSignal("");
   const [commentBusy, setCommentBusy] = createSignal(false);
@@ -71,6 +75,8 @@ export default function SharedConversation() {
     setCanMessage(false);
     setMessageText("");
     setPresentParticipants([]);
+    setCanApproveOnce(false);
+    setApprovals([]);
     setCommentText("");
     setCommentLine("");
   };
@@ -99,10 +105,11 @@ export default function SharedConversation() {
     if (!current || loading()) return;
     setLoading(true);
     try {
-      const [transcript, records, presentation] = await Promise.all([
+      const [transcript, records, presentation, pending] = await Promise.all([
         read(current.conversationId, current.token, "/transcript"),
         read(current.conversationId, current.token, "/sandbox/records"),
         read(current.conversationId, current.token, "/presentation"),
+        canApproveOnce() ? read(current.conversationId, current.token, "/coworking/approvals") : Promise.resolve({ approvals: [] }),
       ]);
       if (credential()?.token !== current.token) return;
       if (transcript) setMessages((transcript.messages ?? []).map((message: Message, index: number) => ({
@@ -114,6 +121,7 @@ export default function SharedConversation() {
       setSharedResults(((presentation as OutputTimeline).items ?? []).filter((item) =>
         item.status !== "running" && (item.content.type === "structured" || item.content.type === "adaptive")
       ));
+      setApprovals(pending.approvals ?? []);
       const selected = openFile();
       if (selected) {
         const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(selected.candidateId)}/comments`);
@@ -234,6 +242,7 @@ export default function SharedConversation() {
       setAgent({ name: me.agent.name, character: me.agent.character });
       setCanComment(Array.isArray(me.capabilities) && me.capabilities.includes("comment"));
       setCanMessage(Array.isArray(me.capabilities) && me.capabilities.includes("message"));
+      setCanApproveOnce(Array.isArray(me.capabilities) && me.capabilities.includes("approve_once"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
@@ -244,6 +253,33 @@ export default function SharedConversation() {
       refreshTimer = setInterval(() => void refresh(), 10_000);
       void watchUpdates(current.conversationId, current.token);
     }
+  };
+
+  const answerApproval = async (requestId: string, approve: boolean) => {
+    const current = credential();
+    if (!current || !canApproveOnce() || approvalBusy()) return;
+    setApprovalBusy(requestId);
+    setError(null);
+    try {
+      const response = await fetch(`/sessions/${encodeURIComponent(current.conversationId)}/coworking/approvals/${encodeURIComponent(requestId)}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${current.token}`, "Content-Type": "application/json" },
+        credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+        body: JSON.stringify({ approve }),
+      });
+      if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this decision ended."); }
+      if (response.status === 404) throw new Error("This decision was already answered or expired.");
+      if (!response.ok) throw new Error(`Could not answer decision (${response.status}).`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setApprovalBusy(null);
+    }
+  };
+
+  const approvalArgs = (approval: SharedApproval) => {
+    try { return JSON.stringify(JSON.parse(approval.args_json), null, 2); } catch { return approval.args_json; }
   };
 
   const postMessage = async (event: SubmitEvent) => {
@@ -310,6 +346,7 @@ export default function SharedConversation() {
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
       <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation{canMessage() ? ", add messages" : ""}, and review its saved drafts{canComment() ? " with comments" : ""}. The owner decides when the Agent works.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
+      <Show when={approvals().length > 0}><section class="shared-approvals" aria-label="Decisions requested"><h2>Decision needed</h2><For each={approvals()}>{(approval) => <article class="shared-approval"><strong>{agent().name} wants to use {approval.tool}</strong><p>{approval.reason || "This action needs a person’s decision before work can continue."}</p><details><summary>Review exact request</summary><pre>{approvalArgs(approval)}</pre></details><div><button type="button" class="btn primary" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, true)}>Allow once</button><button type="button" class="btn danger" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, false)}>Deny</button></div><span>This answers only this request. It cannot create a rule or accept files.</span></article>}</For></section></Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
         <For each={messages().slice(-visibleCount())} fallback={<p class="shared-empty">No visible messages yet.</p>}>
