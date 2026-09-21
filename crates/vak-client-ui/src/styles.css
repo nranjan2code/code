@@ -779,6 +779,16 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .voice-control[data-state="processing"] > button:first-child,
 .voice-control[data-state="speaking"] > button:first-child { border-color: var(--accent); color: var(--text); }
 .voice-control[data-state="listening"] > button:first-child > span:first-child { animation: working-breathe 1.8s ease-in-out infinite; }
+.voice-transcript {
+  max-width: min(38vw, 360px);
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-transcript::before { content: "Heard: "; color: var(--faint); }
+.voice-fallback { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .voice-control[data-state="listening"] > button:first-child > span:first-child { animation: none; } }
 .thinking { margin-bottom: 12px; padding: 1px 0; color: var(--muted); }
 .thinking summary { width: fit-content; cursor: pointer; color: var(--faint); font-size: 11.5px; }

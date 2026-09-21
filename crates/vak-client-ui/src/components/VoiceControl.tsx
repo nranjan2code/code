@@ -1,24 +1,40 @@
 import { createSignal, onCleanup } from "solid-js";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { VoiceSessionSocket } from "../voice";
+import { setNotice } from "../store";
 import AgentMark, { type CharacterState } from "./AgentMark";
 
 /** Governed voice capture control for the composer. It only streams PCM after
- * an explicit user gesture and reports final text back into the draft. */
-export default function VoiceControl(props: { sessionId?: string; character?: string; ensureSession(): Promise<string | null>; onFinal(text: string): void }) {
+ * an explicit user gesture and keeps interim speech local to the visible UI. */
+export default function VoiceControl(props: { sessionId?: string; character?: string; running?: boolean; ensureSession(): Promise<string | null>; onFinal(text: string): void }) {
   const [active, setActive] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [status, setStatus] = createSignal<string>("Voice");
   const [paused, setPaused] = createSignal(false);
   const [devices, setDevices] = createSignal<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = createSignal("");
+  const [transcript, setTranscript] = createSignal("");
+  const [voiceError, setVoiceError] = createSignal(false);
   let socket: VoiceSessionSocket | undefined;
   let capture: MicrophoneCapture | undefined;
   let playbackContext: AudioContext | undefined;
   let playbackSource: AudioBufferSourceNode | undefined;
   let playbackQueue: AudioBuffer[] = [];
-  let recognition: { start(): void; stop(): void; onresult: ((event: any) => void) | null; onerror: ((event: any) => void) | null; onend: (() => void) | null } | undefined;
+  let playbackStartedAt = 0;
+  let playbackCurrentDurationMs = 0;
+  let playbackCompletedMs = 0;
+  let recognition: {
+    start(): void;
+    stop(): void;
+    interimResults: boolean;
+    continuous: boolean;
+    onresult: ((event: any) => void) | null;
+    onerror: ((event: any) => void) | null;
+    onend: (() => void) | null;
+    onspeechstart: (() => void) | null;
+  } | undefined;
   let utterance = `voice-${Date.now()}`;
+  let playbackUtterance = "";
   // In-flight decode promises may resolve after stop/interrupt. Generation
   // guards prevent stale audio from starting a new playback session.
   let playbackGeneration = 0;
@@ -31,6 +47,12 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     if (socket) { try { socket.sendControl({ type: "speech_stopped", utterance_id: utterance }); } catch { /* already closed */ } socket.close(); socket = undefined; }
     playbackSource?.stop(); playbackSource = undefined;
     playbackQueue = [];
+    playbackUtterance = "";
+    playbackStartedAt = 0;
+    playbackCurrentDurationMs = 0;
+    playbackCompletedMs = 0;
+    setTranscript("");
+    setVoiceError(false);
     setPaused(false);
     setActive(false); setConnecting(false); setStatus("Voice");
   }
@@ -39,6 +61,8 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     if (connecting()) return;
     if (active()) { stopVoice(); return; }
     setConnecting(true);
+    setVoiceError(false);
+    setTranscript("");
     const generation = ++voiceGeneration;
     try {
       const sessionId = props.sessionId ?? await props.ensureSession();
@@ -46,18 +70,27 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       if (generation !== voiceGeneration) return;
       socket = new VoiceSessionSocket({
         sessionId,
-        onReady: () => setStatus("Listening"),
+        onReady: () => setStatus(active() ? "Listening" : "Allow microphone"),
         onTranscript: (event) => {
-          if (generation === voiceGeneration && event.final) {
+          if (generation !== voiceGeneration) return;
+          setTranscript(event.text);
+          if (event.final) {
             setStatus("Processing");
             props.onFinal(event.text);
             window.setTimeout(() => {
-              if (generation === voiceGeneration && active() && status() === "Processing") setStatus("Listening");
+              if (generation === voiceGeneration && active() && status() === "Processing") {
+                setTranscript("");
+                setStatus("Listening");
+              }
             }, 1500);
           }
         },
-        onPlayback: (bytes, _utterance, interrupted) => {
-          if (interrupted) { playbackGeneration += 1; playbackSource?.stop(); playbackSource = undefined; setStatus("Listening"); return; }
+        onPlayback: (bytes, playbackId, interrupted) => {
+          if (playbackId && playbackId !== playbackUtterance) {
+            playbackUtterance = playbackId;
+            playbackCompletedMs = 0;
+          }
+          if (interrupted) { stopPlayback(false); return; }
           if (!bytes.byteLength) return;
           const generation = playbackGeneration;
           playbackContext ??= new AudioContext();
@@ -73,33 +106,21 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
           void decode.then((buffer) => {
             if (generation !== playbackGeneration || !active() || !playbackContext) return;
             if (playbackSource) { playbackQueue.push(buffer); return; }
-            playbackSource = playbackContext!.createBufferSource();
-            playbackSource.buffer = buffer;
-            playbackSource.connect(playbackContext!.destination);
-            playbackSource.onended = () => {
-              playbackSource = undefined;
-              const next = playbackQueue.shift();
-              if (next && active() && playbackContext) {
-                const source = playbackContext.createBufferSource();
-                source.buffer = next; source.connect(playbackContext.destination); playbackSource = source;
-                source.onended = playbackSource.onended;
-                source.start(); setStatus("Speaking");
-              } else if (active()) setStatus("Listening");
-            };
-            playbackSource.start(); setStatus("Speaking");
+            startPlaybackBuffer(buffer, generation);
           }).catch(() => { if (generation === playbackGeneration) setStatus("Unsupported voice audio"); });
         },
         onReceipt: (_utterance, receipt) => {
           const provider = typeof receipt.provider === "string" ? receipt.provider : "voice";
           setStatus(`Speaking · ${provider}`);
         },
-        onError: (message) => { setStatus(message); setActive(false); setConnecting(false); capture?.stop(); capture = undefined; recognition?.stop(); recognition = undefined; socket?.close(); socket = undefined; },
+        onError: (message) => { failVoice(message); },
       });
       await socket.connect();
       if (generation !== voiceGeneration || !socket) return;
       utterance = `voice-${Date.now()}`;
       socket.sendControl({ type: "speech_started", utterance_id: utterance });
       const Recognition = (globalThis as any).SpeechRecognition ?? (globalThis as any).webkitSpeechRecognition;
+      setStatus("Allow microphone");
       const startedCapture = await startMicrophone((pcm) => {
         if (generation !== voiceGeneration || Recognition) return;
         try { socket?.sendAudio(pcm); } catch (error) { setStatus((error as Error).message); }
@@ -110,22 +131,76 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       setConnecting(false);
       if (Recognition) {
         recognition = new Recognition();
+        recognition!.interimResults = true;
+        recognition!.continuous = true;
         recognition!.onresult = (event) => {
           const result = event.results[event.results.length - 1];
-          if (result?.isFinal) {
-            const text = String(result[0]?.transcript ?? "").trim();
-            if (text) {
+          const text = String(result?.[0]?.transcript ?? "").trim();
+          if (text) {
+            setTranscript(text);
+            if (result.isFinal) {
               socket?.sendControl({ type: "transcript", utterance_id: utterance, text, final: true });
               utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
               socket?.sendControl({ type: "speech_started", utterance_id: utterance });
             }
           }
         };
-        recognition!.onerror = () => setStatus("Local transcription unavailable");
+        recognition!.onspeechstart = () => {
+          if (playbackSource) stopPlayback(true);
+          setStatus("Listening");
+        };
+        recognition!.onerror = () => failVoice("Live transcription became unavailable. You can keep working by typing.");
         recognition!.onend = () => { if (active()) { try { recognition?.start(); } catch { /* browser may reject restart */ } } };
         recognition!.start();
       } else setStatus("Listening (audio only)");
-    } catch (error) { socket?.close(); socket = undefined; capture?.stop(); capture = undefined; recognition?.stop(); recognition = undefined; setConnecting(false); setStatus((error as Error).message); }
+    } catch (error) { failVoice((error as Error).message); }
+  }
+  function failVoice(message: string) {
+    socket?.close(); socket = undefined;
+    capture?.stop(); capture = undefined;
+    recognition?.stop(); recognition = undefined;
+    playbackGeneration += 1;
+    playbackSource?.stop(); playbackSource = undefined; playbackQueue = [];
+    setActive(false); setConnecting(false); setVoiceError(true); setStatus("Voice unavailable");
+    setNotice({ kind: "error", text: message });
+  }
+  function stopPlayback(reportInterruption: boolean) {
+    const currentElapsedMs = playbackContext && playbackStartedAt
+      ? Math.min(playbackCurrentDurationMs, Math.max(0, (playbackContext.currentTime - playbackStartedAt) * 1000))
+      : 0;
+    const emittedMs = Math.round(playbackCompletedMs + currentElapsedMs);
+    playbackGeneration += 1;
+    playbackSource?.stop(); playbackSource = undefined; playbackQueue = [];
+    setPaused(false);
+    if (reportInterruption && playbackUtterance) {
+      try { socket?.sendControl({ type: "playback", utterance_id: playbackUtterance, emitted_ms: emittedMs, interrupted: true }); } catch { /* closed transport */ }
+    }
+    playbackUtterance = "";
+    playbackStartedAt = 0;
+    playbackCurrentDurationMs = 0;
+    playbackCompletedMs = 0;
+    if (active()) setStatus("Listening");
+  }
+  function startPlaybackBuffer(buffer: AudioBuffer, generation: number) {
+    if (!playbackContext || generation !== playbackGeneration || !active()) return;
+    const source = playbackContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(playbackContext.destination);
+    playbackSource = source;
+    playbackStartedAt = playbackContext.currentTime;
+    playbackCurrentDurationMs = buffer.duration * 1000;
+    source.onended = () => {
+      if (generation !== playbackGeneration || playbackSource !== source) return;
+      playbackCompletedMs += playbackCurrentDurationMs;
+      playbackStartedAt = 0;
+      playbackCurrentDurationMs = 0;
+      playbackSource = undefined;
+      const next = playbackQueue.shift();
+      if (next) startPlaybackBuffer(next, generation);
+      else if (active()) setStatus("Listening");
+    };
+    source.start();
+    setStatus("Speaking");
   }
   async function refreshDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -143,7 +218,8 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     if (paused()) { void playbackContext.resume(); setPaused(false); setStatus("Speaking"); }
     else { void playbackContext.suspend(); setPaused(true); setStatus("Paused"); }
   }
-  const state = () => connecting() ? "connecting" : paused() ? "paused" : status().toLowerCase().startsWith("speaking") ? "speaking" : status() === "Processing" ? "processing" : active() ? "listening" : "idle";
+  const visibleStatus = () => active() && props.running && status() === "Listening" ? "Processing" : status();
+  const state = () => connecting() ? "connecting" : paused() ? "paused" : status().toLowerCase().startsWith("speaking") ? "speaking" : visibleStatus() === "Processing" ? "processing" : active() ? "listening" : "idle";
   const characterState = (): CharacterState => {
     if (state() === "listening") return "listening";
     if (state() === "processing" || state() === "connecting") return "thinking";
@@ -152,7 +228,9 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     return "idle";
   };
   return <span class="voice-control" data-state={state()} role="group" aria-label="Voice conversation controls">
-    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} size={22} state={characterState()} interactive /><span>{connecting() ? "Connecting…" : status()}</span></button>
-    {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => { playbackGeneration += 1; playbackSource?.stop(); playbackSource = undefined; playbackQueue = []; setPaused(false); setStatus("Listening"); }}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
+    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} size={22} state={characterState()} interactive /><span>{connecting() ? "Connecting…" : visibleStatus()}</span></button>
+    {transcript() && <span class="voice-transcript" aria-live="polite">{transcript()}</span>}
+    {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
+    {voiceError() && <button class="composer-context voice-fallback" onClick={() => window.dispatchEvent(new CustomEvent("vak:focus-composer"))}>Type instead</button>}
   </span>;
 }

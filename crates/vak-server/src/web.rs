@@ -917,7 +917,8 @@ async fn drive_voice(
                         // Close the capture boundary and ask the selected
                         // provider for one authoritative final transcript.
                         // The browser receives it through the normal control
-                        // channel and dispatches it through the governed API.
+                        // channel while this socket dispatches the governed
+                        // Agent turn exactly once.
                         if !utterance_audio.is_empty() {
                             let cancel = tokio_util::sync::CancellationToken::new();
                             let provider = persisted
