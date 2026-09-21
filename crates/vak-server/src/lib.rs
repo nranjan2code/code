@@ -7511,10 +7511,40 @@ async fn delegate_coworking_approval(
     let Some(request) = pending.get(&request_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    *request
+    let mut assignment = request
         .delegated_to
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(grant.grant_id.clone());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if assignment.as_deref() == Some(grant.grant_id.as_str()) {
+        return Json(
+            serde_json::json!({"request_id": request_id, "delegated_to": grant.display_name}),
+        )
+        .into_response();
+    }
+    if assignment.is_some() {
+        return StatusCode::CONFLICT.into_response();
+    }
+    record_activity_or_buffer(
+        &handle,
+        vak_session::ActivityRecord {
+            activity_id: format!("approval-delegation-{request_id}"),
+            turn: None,
+            kind: vak_session::ActivityKind::Approval,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: format!("Approval assigned to {}", grant.display_name),
+            detail: Some("The owner assigned this pending decision to one invited person".into()),
+            data: std::collections::BTreeMap::from([
+                ("request_id".into(), request_id.clone()),
+                ("actor_id".into(), "operator".into()),
+                ("grant_id".into(), grant.grant_id.clone()),
+                ("delegate_id".into(), grant.principal_id.clone()),
+                ("delegate_name".into(), grant.display_name.clone()),
+            ]),
+        },
+    );
+    *assignment = Some(grant.grant_id.clone());
+    drop(assignment);
+    drop(pending);
     let _ = handle.coworking_comments_tx.send(());
     Json(serde_json::json!({"request_id": request_id, "delegated_to": grant.display_name}))
         .into_response()
@@ -19707,6 +19737,21 @@ mod sandbox_promotion_tests {
             },
         )
         .unwrap();
+        coworking::invite(
+            &coworking::store_path(&core.sessions_home()),
+            coworking::AudienceGrant {
+                grant_id: "grant-other".into(),
+                principal_id: "person-other".into(),
+                display_name: "Ravi".into(),
+                conversation_id: "session-approval".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into()],
+                token_hash: coworking::token_hash("participant-other-token"),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            },
+        )
+        .unwrap();
         let app = Router::new()
             .route(
                 "/sessions/{id}/coworking/approvals",
@@ -19761,6 +19806,38 @@ mod sandbox_promotion_tests {
             app.clone().oneshot(delegate).await.unwrap().status(),
             StatusCode::OK
         );
+        let reassign = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/sessions/session-approval/coworking/approvals/request-approval/delegate")
+            .header(axum::http::header::AUTHORIZATION, "Bearer operator-secret")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"grant_id":"grant-other"}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(reassign).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        let wrong_person = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/sessions/session-approval/coworking/approvals/request-approval")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer participant-other-token",
+            )
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"approve":true}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(wrong_person).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        let assignment_count = handle.session.lock().unwrap().as_ref().unwrap().chain_to_root()
+            .iter().filter(|entry| matches!(&entry.payload,
+                vak_session::EntryPayload::Activity(activity)
+                if activity.activity_id == "approval-delegation-request-approval"
+                    && activity.data.get("delegate_id").map(String::as_str) == Some("person-approval")))
+            .count();
+        assert_eq!(assignment_count, 1);
         let other_request = "other-request";
         let (other_respond, _other_answer) = oneshot::channel();
         handle.pending.lock().unwrap().insert(
