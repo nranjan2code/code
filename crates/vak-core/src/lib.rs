@@ -6851,8 +6851,9 @@ impl Core {
             });
             outcome_spec.evidence_max_age_secs =
                 Some(self.inner.config.intent.evidence_max_age_secs);
-            let mut tool_calls = std::collections::HashSet::new();
+            let mut tool_calls = std::collections::HashMap::<String, Option<String>>::new();
             let mut successful_receipts = std::collections::HashSet::new();
+            let mut written_paths = std::collections::HashSet::<String>::new();
             let mut failed_correctable = std::collections::HashSet::new();
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
@@ -6866,26 +6867,34 @@ impl Core {
                     {
                         tool_calls.clear();
                         successful_receipts.clear();
+                        written_paths.clear();
                         failed_correctable.clear();
                     }
                     for block in &record.message.content {
                         match block {
-                            vak_llm::ContentBlock::ToolUse { id, .. } => {
-                                tool_calls.insert(id.clone());
+                            vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                                let path = matches!(vak_tools::canonical_tool_name(name), "write" | "edit")
+                                    .then(|| input.get("path").and_then(serde_json::Value::as_str))
+                                    .flatten()
+                                    .map(str::to_ascii_lowercase);
+                                tool_calls.insert(id.clone(), path);
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
                                 is_error: false,
                                 ..
-                            } if tool_calls.contains(tool_use_id) => {
+                            } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
+                                if let Some(Some(path)) = tool_calls.get(tool_use_id) {
+                                    written_paths.insert(path.clone());
+                                }
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
                                 is_error: true,
                                 content,
                                 ..
-                            } if tool_calls.contains(tool_use_id)
+                            } if tool_calls.contains_key(tool_use_id)
                                 && vak_tools::ToolErrorKind::classify(content).is_correctable() =>
                             {
                                 failed_correctable.insert(tool_use_id.clone());
@@ -6909,7 +6918,7 @@ impl Core {
                 });
             let unresolved_correctable =
                 !failed_correctable.is_empty() && successful_receipts.is_empty();
-            let status = vak_intent::evaluate_response_with_failures(
+            let mut status = vak_intent::evaluate_response_with_failures(
                 response_text.as_deref(),
                 matches!(
                     outcome,
@@ -6918,6 +6927,16 @@ impl Core {
                 matches!(outcome, TurnOutcome::Aborted { .. }),
                 unresolved_correctable,
             );
+            // A named saved-file request needs an observed tool result. A
+            // model's sentence saying it wrote the file is not a deliverable.
+            if status == vak_intent::OutcomeStatus::Produced
+                && let Some(target) = outcome_spec.saved_file_target()
+                && !written_paths.iter().any(|path| {
+                    std::path::Path::new(path).file_name() == std::path::Path::new(&target).file_name()
+                })
+            {
+                status = vak_intent::OutcomeStatus::Unknown;
+            }
             let requirement_evaluations = vak_intent::evaluate_requirements_with_state(
                 &outcome_spec,
                 response_text.as_deref(),

@@ -608,7 +608,6 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 @media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } }
 .settings-load-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--red); border-radius: 8px; color: var(--red); font-size: 12px; }
 .composer-lookup-error { margin: 0 16px 8px; color: var(--yellow); font-size: 12px; }
-.intent-hud-error { margin: 4px 16px 8px; color: var(--yellow); font-size: 12px; }
 .run-revision { color: var(--text-soft); font-size: 12px; margin-left: auto; }
 .plan-change { display: flex; align-items: center; gap: 8px; padding: 0 16px 8px; border-bottom: 1px solid var(--border); }
 .plan-change input { flex: 1; min-width: 120px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 6px 9px; }
@@ -2963,6 +2962,10 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   border-radius: 18px;
   background: color-mix(in srgb, var(--surface) 94%, var(--accent-wash));
 }
+.primary-result-earlier { width: min(760px, 100%); margin: 8px 0 12px; }
+.primary-result-earlier > summary { width: fit-content; padding: 5px 2px; color: var(--muted); font-size: 11px; cursor: pointer; }
+.primary-result-earlier[open] > summary { margin-bottom: 8px; }
+.primary-result-caution { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--border-soft); background: color-mix(in srgb, var(--yellow) 9%, var(--surface)); color: var(--text); font-size: 12px; line-height: 1.4; }
 .primary-result-answer { padding: 17px 18px 15px; }
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }
 .primary-result-material {
@@ -2970,6 +2973,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   gap: 10px;
   padding: 0 12px 12px;
 }
+.primary-result-material:first-child { padding-top: 12px; }
 .primary-result-material > .artifact-shelf,
 .primary-result-material > .rich-structured-card,
 .primary-result-material > .adaptive-presentation,
@@ -2992,12 +2996,18 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .primary-result-evidence.partial { color: var(--yellow); }
 .primary-result-evidence.failed,
 .primary-result-evidence.denied { color: var(--red); }
-.primary-result-follow-up {
+.primary-result-actions {
   display: flex;
-  justify-content: flex-end;
-  padding: 0 14px 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-soft);
 }
-.primary-result-follow-up button {
+.primary-result-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border-soft);
   border-radius: 999px;
   padding: 6px 11px;
@@ -3007,8 +3017,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   font-size: 11px;
   cursor: pointer;
 }
-.primary-result-follow-up button:hover,
-.primary-result-follow-up button:focus-visible {
+.primary-result-actions button:hover,
+.primary-result-actions button:focus-visible {
   border-color: var(--accent);
   color: var(--text);
 }
@@ -4304,271 +4314,6 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 }
 .setup-banner-text strong { font-weight: 600; }
 .setup-banner-text .dim { font-size: 0.85rem; }
-
-/* ---- intent strip (docs/design/47-commitment-kernel.md) ----
-   Quiet in proportion to consequence. At rest this is chrome: micro-label
-/* ---- intent hud (lossless pre-flight telemetry) ---------------------
-   docs/design/47-commitment-kernel.md.
-   Strictly uses Vak theme variables for seamless light/dark/contrast switching.
-   Preserves 100% of telemetry (axes, limits, float weights, session context). */
-.intent-hud {
-  max-width: 820px;
-  margin: 0 auto 6px;
-  border-radius: var(--radius-sm, 7px);
-  border: 1px solid var(--border-soft);
-  background: var(--surface);
-  transition: border-color 140ms ease, background-color 140ms ease;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.intent-hud-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 28px;
-  background: var(--surface);
-}
-
-.intent-hud-toggle {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  color: var(--faint);
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 540;
-}
-.intent-hud-toggle:hover { color: var(--text-soft); background: var(--surface-hover); }
-.intent-hud-toggle:focus-visible { outline: 2px solid var(--border-focus, var(--accent)); outline-offset: -1px; }
-
-.intent-hud-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.intent-hud-mark {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  box-sizing: border-box;
-}
-
-.intent-hud-notice .intent-hud-toggle { color: var(--muted); }
-.intent-hud-notice .intent-hud-mark { background: currentColor; }
-
-.intent-hud-warn { border-color: var(--accent); background: var(--accent-wash); }
-.intent-hud-warn .intent-hud-toggle { color: var(--accent-bright); }
-.intent-hud-warn .intent-hud-mark { background: currentColor; }
-
-.intent-hud-inferred {
-  flex: none;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--yellow);
-}
-
-.intent-hud-chev { display: inline-flex; flex: none; transition: transform 160ms ease; color: var(--faint); }
-.intent-hud-chev-open { transform: rotate(180deg); }
-
-.intent-hud-controls {
-  display: flex;
-  align-items: center;
-  padding-right: 6px;
-  flex-shrink: 0;
-}
-.intent-hud-btn {
-  background: none;
-  border: none;
-  color: var(--faint);
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.intent-hud-btn:hover { color: var(--text-soft); background: var(--surface-hover); }
-
-.intent-hud-note {
-  margin: 0;
-  padding: 0 10px 6px 22px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-soft);
-}
-
-/* Expanded HUD Body */
-.intent-hud-body {
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface-raised);
-}
-
-/* Context Ribbon */
-.intent-hud-context {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  font-size: 10.5px;
-  border-bottom: 1px solid var(--border-soft);
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
-}
-.intent-hud-context-lead {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.intent-hud-context-val {
-  color: var(--text-soft);
-  font-family: var(--mono);
-  font-size: 10.5px;
-}
-
-/* 6-Axis Grid */
-.intent-hud-axes {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  border-bottom: 1px solid var(--border-soft);
-}
-.intent-hud-axis-cell {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 8px;
-  border-right: 1px solid var(--border-soft);
-  overflow: hidden;
-}
-.intent-hud-axis-cell:last-child { border-right: none; }
-.intent-hud-axis-key {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.intent-hud-axis-val {
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.intent-hud-axis-val.axis-answer,
-.intent-hud-axis-val.axis-analyze { color: var(--blue); }
-.intent-hud-axis-val.axis-modify,
-.intent-hud-axis-val.axis-operate { color: var(--accent); }
-.intent-hud-axis-val.axis-inert,
-.intent-hud-axis-val.axis-clear { color: var(--green); }
-.intent-hud-axis-val.axis-reversible { color: var(--yellow); }
-.intent-hud-axis-val.axis-irreversible { color: var(--red); }
-.intent-hud-axis-val.axis-interactive,
-.intent-hud-axis-val.axis-supervised { color: var(--accent-bright); }
-
-/* Narrowed Limits */
-.intent-hud-limits {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  flex-wrap: wrap;
-}
-.intent-hud-limits-lead {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
-}
-.intent-hud-limits-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.intent-hud-limit-tag {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--text-soft);
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm, 4px);
-  white-space: nowrap;
-}
-.intent-hud-limits-empty {
-  font-size: 10.5px;
-  color: var(--faint);
-}
-
-/* Signals Spectrum Tray */
-.intent-hud-signals {
-  padding: 6px 10px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.intent-hud-signals-lead {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.intent-hud-signals-list {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-}
-.intent-hud-signal-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-}
-.intent-hud-signal-item .sig-kind {
-  flex: none;
-  width: 72px;
-  color: var(--faint);
-}
-.intent-hud-signal-item .sig-weight {
-  flex: none;
-  width: 28px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--yellow);
-}
-.intent-hud-signal-item .sig-detail {
-  min-width: 0;
-  color: var(--text-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .intent-hud, .intent-hud-chev { transition: none; }
-}
 
 /* ---- commitments panel (dock tab) -----------------------------------
    docs/design/47-commitment-kernel.md. The evidence meter (.ev*) mirrors

@@ -12,9 +12,6 @@ import {
   agentForSession,
   openInEditor,
   openWorkbenchArtifact,
-  openWorkbenchFolder,
-  isScratchDirectory,
-  isDirectoryPath,
   uiPreferences,
   isPreviewableArtifact,
   openArtifactPathInCanvas,
@@ -24,9 +21,9 @@ import {
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import { approve, openFileSmart } from "../App";
+import { approve } from "../App";
 import Icon from "./Icon";
-import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "../safeUrl";
+import { safeUrl, isLocalArtifactPath } from "../safeUrl";
 import * as api from "../api";
 import { highlight, languageForFence } from "../highlight";
 import DiffInspector from "./presentation/DiffInspector";
@@ -131,58 +128,8 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
             return <em><InlineSequence nodes={node.content} /></em>;
           case "strikethrough":
             return <s><InlineSequence nodes={node.content} /></s>;
-          case "code": {
-            const raw = node.code.trim();
-            const clean = raw.replace(/[.,;:!?)]'"`]+$/, "").trim();
-            const isDir = isDirectoryPath(clean);
-            const isScratch = isScratchDirectory(clean);
-            const pathLike =
-              isDir ||
-              /^[\w@.-]+(\/[\w@.-]+)+$/.test(clean) ||
-              /^\.[\w/-]+$/.test(clean) ||
-              /\.\w{1,6}$/.test(clean);
-            const isPreview = !isDir && pathLike && isPreviewableArtifact(clean);
-            const handleAction = () => {
-              if (!pathLike) return;
-              if (isScratch || (isDir && clean.includes(".vak/scratch"))) {
-                openWorkbenchFolder(clean);
-              } else if (isPreview) {
-                openArtifactPathInCanvas(clean);
-              } else {
-                void openFileSmart(clean);
-              }
-            };
-            const label = pathLike
-              ? (isScratch
-                  ? `Open ${node.code} in Workbench folder view`
-                  : isPreview
-                    ? `Open ${node.code} in Artifact Canvas`
-                    : `Open ${node.code} in editor`)
-              : undefined;
-            return (
-              <code
-                class="ic"
-                classList={{
-                  "semantic-path": pathLike,
-                  "semantic-previewable": isPreview,
-                  "semantic-dir": isDir,
-                }}
-                tabIndex={pathLike ? 0 : undefined}
-                role={pathLike ? "button" : undefined}
-                aria-label={label}
-                title={label}
-                onClick={handleAction}
-                onKeyDown={(event) => {
-                  if (pathLike && (event.key === "Enter" || event.key === " ")) {
-                    event.preventDefault();
-                    handleAction();
-                  }
-                }}
-              >
-                {node.code}
-              </code>
-            );
-          }
+          case "code":
+            return <code class="ic">{node.code}</code>;
           case "link": {
             if (node.safe && safeUrl(node.url)) {
               return (
@@ -191,34 +138,7 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
                 </a>
               );
             }
-            if (isLocalArtifactPath(node.url)) {
-              const targetPath = cleanArtifactPath(node.url);
-              const isDir = isDirectoryPath(targetPath);
-              const isScratch = isScratchDirectory(targetPath);
-              const isPreview = !isDir && isPreviewableArtifact(targetPath);
-              const handleArtifactClick = (e: MouseEvent) => {
-                e.preventDefault();
-                if (isScratch || (isDir && targetPath.includes(".vak/scratch"))) {
-                  openWorkbenchFolder(targetPath);
-                } else if (isPreview) {
-                  openArtifactPathInCanvas(targetPath);
-                } else {
-                  void openFileSmart(targetPath);
-                }
-              };
-              const titleText = node.title ?? (isPreview ? `Open ${targetPath} in Artifact Canvas` : `Open ${targetPath} in editor`);
-              return (
-                <a
-                  class="semantic-link semantic-artifact-link"
-                  href="#"
-                  onClick={handleArtifactClick}
-                  title={titleText}
-                  role="button"
-                >
-                  <InlineSequence nodes={node.label} />
-                </a>
-              );
-            }
+            if (isLocalArtifactPath(node.url)) return <span class="semantic-artifact-link"><InlineSequence nodes={node.label} /></span>;
             return (
               <span class="semantic-unsafe-link" title="Unsafe link omitted">
                 <InlineSequence nodes={node.label} />
@@ -675,7 +595,7 @@ function RenderAudit(props: { document: PresentationDocument }) {
   </Show>;
 }
 
-function Artifact(props: { item: OutputItem }) {
+function Artifact(props: { item: OutputItem; showActions?: boolean }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const path = () => artifact.path ?? null;
@@ -684,7 +604,7 @@ function Artifact(props: { item: OutputItem }) {
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
-      <Show when={path()}>
+      <Show when={props.showActions !== false && path()}>
         {(value) => (
           <button
             type="button"
@@ -705,7 +625,7 @@ function Artifact(props: { item: OutputItem }) {
           </button>
         )}
       </Show>
-      <Show when={reviewAction()}>
+      <Show when={props.showActions !== false && reviewAction()}>
         {(action) => (
           <button
             type="button"
@@ -810,30 +730,51 @@ function ResultEvidence(props: { item: OutputItem }) {
   return <Show when={outcome()}>{(value) => {
     const receipts = () => value().evidence_receipt_ids.length;
     const requirements = () => value().requirement_ids.length;
-    const hasEvidence = () => receipts() > 0 || requirements() > 0 || Boolean(value().evidence_state) || Boolean(value().human_review);
+    const hasEvidence = () => receipts() > 0 || requirements() > 0 || Boolean(value().human_review && value().human_review !== "not_required");
     return <Show when={hasEvidence() || value().status !== "succeeded"}>
       <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
         <Show when={value().status !== "succeeded"}><span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span></Show>
         <Show when={receipts() > 0}><span><Icon name="check" size={12} />{receipts()} evidence {receipts() === 1 ? "receipt" : "receipts"}</span></Show>
-        <Show when={requirements() > 0}><span>{requirements()} requested {requirements() === 1 ? "check" : "checks"}</span></Show>
-        <Show when={value().human_review}><span>Review: {value().human_review}</span></Show>
+        <Show when={requirements() > 0}><span>{requirements()} {requirements() === 1 ? "check" : "checks"} requested{receipts() === 0 ? " · no receipt recorded" : ""}</span></Show>
+        <Show when={value().human_review && value().human_review !== "not_required"}><span>Review: {value().human_review}</span></Show>
       </footer>
     </Show>;
   }}</Show>;
 }
 
-function ResultFollowUp(props: { item: OutputItem; sessionId: string }) {
+function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string }) {
+  const artifacts = createMemo(() => props.material.filter((item) => item.content.type === "artifact"));
+  const previews = createMemo(() => artifacts().filter((item) => item.content.type === "artifact" && Boolean(item.content.artifact.path) && isPreviewableArtifact(item.content.artifact.path)));
+  const reviews = createMemo(() => {
+    const seen = new Set<string>();
+    return artifacts().flatMap((item) => item.actions.filter((action) => {
+      const executionId = action.data.execution_id;
+      if (action.verb !== "review_draft" || !executionId || seen.has(executionId)) return false;
+      seen.add(executionId);
+      return true;
+    }));
+  });
   const revise = () => {
-    const resultId = props.item.outcome?.result_id;
+    const resultId = props.answer.outcome?.result_id;
     if (!resultId) return;
-    setReplyTarget({
-      sessionId: props.sessionId,
-      resultId,
-      label: "this result",
-    });
+    setReplyTarget({ sessionId: props.sessionId, resultId, label: "this result" });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <Show when={props.item.outcome?.result_id}><div class="primary-result-follow-up"><button type="button" onClick={revise}>Ask for a change</button></div></Show>;
+  return <Show when={previews().length || reviews().length || props.answer.outcome?.result_id}>
+    <nav class="primary-result-actions" aria-label="Result actions">
+      <For each={previews()}>{(item) => {
+        if (item.content.type !== "artifact" || !item.content.artifact.path) return null;
+        const path = item.content.artifact.path;
+        return <button type="button" onClick={() => openArtifactPathInCanvas(path, undefined, {
+          sessionId: props.sessionId,
+          resultId: item.outcome?.result_id ?? props.answer.outcome?.result_id ?? undefined,
+          executionId: item.provenance?.tool_call_id ?? undefined,
+        })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open working file" : `Open ${item.content.artifact.name}`}</button>;
+      }}</For>
+      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id)}><Icon name="diff" size={13} />Review draft</button>}</For>
+      <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>Ask for a change</button></Show>
+    </nav>
+  </Show>;
 }
 
 function ActivityRow(props: { item: OutputItem }) {
@@ -1255,12 +1196,34 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const blocks = createMemo(() => {
     const out: JSX.Element[] = [];
     let lead: Array<{ item: OutputItem; node: JSX.Element }> = [];
+    let earlier: JSX.Element[] = [];
+    const flushEarlier = () => {
+      if (earlier.length === 0) return;
+      const drafts = earlier;
+      out.push(<details class="primary-result-earlier"><summary>{drafts.length} earlier {drafts.length === 1 ? "draft" : "drafts"} in this turn</summary>{drafts}</details>);
+      earlier = [];
+    };
     const flush = () => {
       if (lead.length === 0) return;
-      out.push(<AssistantMessage sessionId={props.sessionId}>{lead.map((entry) => entry.node)}</AssistantMessage>);
+      const material = lead;
+      const anchor = material.find((entry) => entry.item.outcome?.result_id)?.item;
+      out.push(<AssistantMessage sessionId={props.sessionId}>
+        <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
+          <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
+          <div class="primary-result-material">
+            {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
+          </div>
+          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} /></>}</Show>
+        </article>
+      </AssistantMessage>);
       lead = [];
     };
     const grouping = !showOperatorChrome();
+    const sameResult = (left: OutputItem, right: OutputItem) => {
+      const a = left.outcome?.result_id;
+      const b = right.outcome?.result_id;
+      return !a || !b || a === b;
+    };
     const entries = visible();
     for (let index = 0; index < entries.length; index += 1) {
       const { item, node } = entries[index];
@@ -1268,6 +1231,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
         item.role !== "user" &&
         (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
       if (grouping && cardLike) {
+        if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
         lead.push({ item, node });
         continue;
       }
@@ -1278,6 +1242,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
             ? item.content.document
             : undefined;
       if (grouping && answer) {
+        if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
         const material = [...lead];
         // Structured material can arrive on either side of the answer in
         // the ledger. Keep adjacent cards with their result in both cases.
@@ -1287,35 +1252,42 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
             next.item.content.type === "structured" ||
             next.item.content.type === "adaptive" ||
             next.item.kind === "artifact"
-          )) break;
+          ) || !sameResult(item, next.item)) break;
           material.push(next);
           index += 1;
         }
-        out.push(
-          <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
+        const result = <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
             <article
               class="primary-result"
               data-result-id={item.outcome?.result_id ?? item.id}
               aria-label="Agent result"
             >
+              <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
               <div class="primary-result-answer"><PresentationDocumentView document={answer} /></div>
               <Show when={material.length > 0}>
                 <div class="primary-result-material" aria-label="Result material">
-                  {material.map((entry) => entry.node)}
+                  {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
                 </div>
               </Show>
               <ResultEvidence item={item} />
-              <ResultFollowUp item={item} sessionId={props.sessionId} />
+              <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />
             </article>
-          </AssistantMessage>,
-        );
+          </AssistantMessage>;
+        const laterAnswer = entries.slice(index + 1).some((entry) => entry.item.role === "assistant" && (
+          entry.item.content.type === "document" ||
+          (entry.item.content.type === "outcome" && Boolean(entry.item.content.document))
+        ));
+        if (laterAnswer) earlier.push(result);
+        else { flushEarlier(); out.push(result); }
         lead = [];
         continue;
       }
       flush();
+      flushEarlier();
       out.push(node);
     }
     flush();
+    flushEarlier();
     return out;
   });
   return (

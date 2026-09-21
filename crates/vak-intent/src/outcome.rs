@@ -969,6 +969,27 @@ pub fn evaluate_requirements_with_state(
 }
 
 impl OutcomeSpec {
+    /// A named file deliverable cannot be established by prose alone. This
+    /// conservative signal only affects outcome assessment; it grants no tool.
+    pub fn saved_file_target(&self) -> Option<String> {
+        let request = self.objective.to_ascii_lowercase();
+        let asks_to_write = ["create ", "write ", "save ", "generate ", "make ", "build ", "export "]
+            .iter()
+            .any(|verb| request.contains(verb));
+        if !asks_to_write { return None; }
+        request.split_whitespace().find_map(|word| {
+            let token = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' && c != '/');
+            let is_file = [".html", ".htm", ".md", ".txt", ".json", ".csv", ".pdf", ".docx", ".pptx", ".xlsx", ".svg", ".png", ".js", ".ts", ".tsx", ".rs", ".py", ".css", ".sql"]
+                .iter()
+                .any(|extension| token.ends_with(extension) && token.len() > extension.len());
+            is_file.then(|| token.to_string())
+        })
+    }
+
+    pub fn expects_saved_file(&self) -> bool {
+        self.saved_file_target().is_some()
+    }
+
     /// Build the conservative baseline contract for an ordinary turn.
     ///
     /// The request text is preserved as the objective; inferred requirements
@@ -1122,6 +1143,20 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::{Act, Reading};
+
+    #[test]
+    fn named_saved_file_requires_evidence_but_an_inline_plan_does_not() {
+        let file = OutcomeSpec::from_reading(
+            "Create an invitation in this workspace as invitation.html",
+            &Reading::general(),
+            1,
+        );
+        assert!(file.expects_saved_file());
+        let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &Reading::general(), 1);
+        assert!(!plan.expects_saved_file());
+        let inspection = OutcomeSpec::from_reading("Explain README.md", &Reading::general(), 1);
+        assert!(!inspection.expects_saved_file());
+    }
 
     #[test]
     fn baseline_contract_preserves_objective_and_adds_only_inferred_requirements() {

@@ -7015,7 +7015,7 @@ async fn transcript(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(s) = guard.as_ref() else {
-            return Json(serde_json::json!({ "error": "run in progress" })).into_response();
+            return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "run in progress" }))).into_response();
         };
         return Json(transcript_json(s)).into_response();
     }

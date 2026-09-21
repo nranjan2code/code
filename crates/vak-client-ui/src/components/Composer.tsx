@@ -23,7 +23,6 @@ import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switch
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
-import { IntentStrip } from "./IntentStrip";
 import VoiceControl from "./VoiceControl";
 
 interface Mention {
@@ -521,10 +520,6 @@ export default function Composer(props: { cwd: string }) {
           </For>
         </div>
       </Show>
-      {/* Above the box, not inside it: this is a read-out about what you are
-          about to send, and putting it inside the field would make it look
-          like part of the message. */}
-      <IntentStrip prompt={text()} sessionId={activeId()} disabled={isRunning(activeId())} />
       <Show when={lookupError()}>
         <div class="composer-lookup-error" role="status">{lookupError()} Suggestions are unavailable; you can still type and send a prompt.</div>
       </Show>

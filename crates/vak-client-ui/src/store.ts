@@ -493,7 +493,9 @@ export function openArtifactPathInCanvas(
   context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId">,
 ) {
   let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
-  const executions = workbenchExecutions();
+  // A result-bound artifact already carries its exact path and execution.
+  // Fuzzy filename matching can silently open a different turn's file.
+  const executions = context ? [] : workbenchExecutions();
   // Check if there is an execution artifact matching this filename or ending with this path
   for (const exec of executions) {
     const match = exec.artifacts.find(
@@ -510,7 +512,7 @@ export function openArtifactPathInCanvas(
   }
 
   let resolvedHtml = html;
-  if (!resolvedHtml) {
+  if (!resolvedHtml && !context) {
     const sid = activeId();
     const items = itemsOf(sid);
     for (let i = items.length - 1; i >= 0; i--) {
