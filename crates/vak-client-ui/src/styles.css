@@ -4156,7 +4156,9 @@ body.is-resizing .split-divider {
 .agent-mark-fallback, .agent-mark-atlas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
 .agent-mark-fallback { object-fit: contain; }
 .agent-mark-atlas { background-repeat: no-repeat; background-size: 400% 200%; background-position: 0 0; }
-.agent-mark:has(.agent-mark-atlas) .agent-mark-fallback { opacity: 0; }
+.agent-mark-atlas-source { display: none; }
+.agent-mark:not(.atlas-failed) .agent-mark-fallback { opacity: 0; }
+.agent-mark.atlas-failed .agent-mark-atlas { display: none; }
 .agent-mark.state-listening .agent-mark-atlas { background-position: 66.6667% 0; }
 .agent-mark.state-thinking .agent-mark-atlas, .agent-mark.state-concern .agent-mark-atlas { background-position: 100% 0; }
 .agent-mark.state-working .agent-mark-atlas { background-position: 0 100%; }
@@ -4165,10 +4167,10 @@ body.is-resizing .split-divider {
 .agent-mark.state-acknowledge .agent-mark-atlas { background-position: 100% 100%; }
 .agent-mark.interactive { cursor: pointer; }
 @media (prefers-reduced-motion: no-preference) {
-  .agent-mark.state-idle .agent-mark-atlas { animation: companion-idle 6.4s steps(1, end) infinite; }
-  .agent-mark.state-working .agent-mark-atlas { animation: companion-work 1.4s steps(1, end) infinite; }
-  .agent-mark.state-waiting .agent-mark-atlas { animation: companion-wait 4.8s steps(1, end) infinite; }
-  .agent-mark.state-success .agent-mark-atlas, .agent-mark.state-acknowledge .agent-mark-atlas { animation: companion-respond .62s steps(1, end) 1; }
+  .agent-mark.is-visible.state-idle .agent-mark-atlas { animation: companion-idle 6.4s steps(1, end) infinite; }
+  .agent-mark.is-visible.state-working .agent-mark-atlas { animation: companion-work 1.4s steps(1, end) infinite; }
+  .agent-mark.is-visible.state-waiting .agent-mark-atlas { animation: companion-wait 4.8s steps(1, end) infinite; }
+  .agent-mark.is-visible.state-success .agent-mark-atlas, .agent-mark.is-visible.state-acknowledge .agent-mark-atlas { animation: companion-respond .62s steps(1, end) 1; }
   .agent-mark.moss .agent-mark-atlas, .agent-mark.lumi .agent-mark-atlas { animation-delay: -.9s; }
   .agent-mark.nori .agent-mark-atlas, .agent-mark.tavi .agent-mark-atlas { animation-delay: -1.8s; }
   .agent-mark.pip .agent-mark-atlas, .agent-mark.beni .agent-mark-atlas { animation-delay: -2.7s; }

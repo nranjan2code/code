@@ -1,6 +1,6 @@
 # Agent character system
 
-Status: In progress — built-in package and runtime identity shipped; installed user packs are the next slice.
+Status: In progress — eight built-in expression atlases and runtime states shipped; installed user packs are the next slice.
 
 ## Purpose
 
@@ -19,18 +19,18 @@ The product includes seven optional Agent companions: Mira (fox), Moss (forest f
 Each runtime character provides:
 
 - a stable id, display name, form, personality note, portrait, hue, and two-note interaction cue;
-- quiet breathing while idle and a clearer attentive reaction while working or selected;
+- a transparent 4×2 expression atlas with blink, attention, thought, work, wait, delight, and acknowledgement poses;
 - no autoplay sound; cues play only after direct interaction and obey the Sound cues setting;
 - a still presentation when either the OS or Vak requests reduced motion;
 - identical identity in conversation, coworking, sidebar, settings, and Agent creation because the character id is frozen with the Agent identity.
 
-Source portraits live in `crates/vak-client-ui/public/characters/`. Runtime metadata lives in `crates/vak-client-ui/src/agentGlyph.ts`; server validation lives in `crates/vak-server/src/agents.rs`. Additions must update both typed registries and the render harness. Portraits are transparent square PNGs, 512×512, framed to remain readable when cropped into the runtime container.
+Source portraits and expression atlases live in `crates/vak-client-ui/public/characters/`. Runtime metadata lives in `crates/vak-client-ui/src/agentGlyph.ts`; server validation lives in `crates/vak-server/src/agents.rs`. Additions must update both typed registries and the render harness. Portraits are transparent square PNGs, 512×512, framed to remain readable when cropped into the runtime container. Atlases are transparent 4×2 PNGs, 1024×512. Each frame must remain legible at 24 px.
 
 ## Animation contract
 
-The shipped portrait is source art, not the animation. `AgentMark` supplies the runtime motion layer. Motion is state based (`idle`, `working`, and selected), small in amplitude, never blocks interaction, and never carries information by itself. Future expression sheets may add blink, acknowledge, celebrate, and concern states behind this same component API.
+`AgentMark` selects atlas poses for `idle`, `listening`, `thinking`, `working`, `waiting`, `success`, `concern`, and `acknowledge`. Blink, work, and wait use brief pose changes; pointer interaction triggers a one-shot acknowledgement. Running work, voice capture, and approval waits supply their state from the relevant UI. An atlas load failure shows the still portrait. Motion is paused outside the viewport and disabled by OS or Vak reduced-motion settings. Motion never blocks interaction or carries information by itself. The individual poses are expression frames, not a full-body video sequence; a later rig may provide more natural gestures through this same state API.
 
-Animated GIF is not the package format: it cannot follow reduced motion, state, theme, or interaction reliably and consumes resources while hidden. A future expression sheet or vector rig belongs in a versioned character manifest and is driven by the same runtime state machine.
+Animated GIF is not the package format: it cannot follow reduced motion, state, theme, or interaction reliably and consumes resources while hidden. A future vector rig belongs in a versioned character manifest and is driven by the same runtime state machine.
 
 ## User supplied character packs
 
