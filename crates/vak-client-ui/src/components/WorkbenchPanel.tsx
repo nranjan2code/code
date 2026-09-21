@@ -136,6 +136,9 @@ export default function WorkbenchPanel() {
   const [pendingCandidates, setPendingCandidates] = createSignal<api.SandboxCandidateRecord[]>([]);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
+  const [appliedPromotion, setAppliedPromotion] = createSignal<api.SandboxPromotionRecord | null>(null);
+  const [appliedPromotionExecutionId, setAppliedPromotionExecutionId] = createSignal<string | null>(null);
+  const [undoBusy, setUndoBusy] = createSignal(false);
   const [reviewOpen, setReviewOpen] = createSignal(false);
   const [reviewedPath, setReviewedPath] = createSignal<string | null>(null);
   const [reviewedFiles, setReviewedFiles] = createSignal<string[]>([]);
@@ -146,6 +149,25 @@ export default function WorkbenchPanel() {
   const [reviewComment, setReviewComment] = createSignal("");
   const [reviewCommentBusy, setReviewCommentBusy] = createSignal(false);
   const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    const sessionId = activeId();
+    setAppliedPromotion(null);
+    setAppliedPromotionExecutionId(null);
+    if (!sessionId) return;
+    let disposed = false;
+    void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
+      if (disposed) return;
+      const undone = new Set(records.filter((record) => record.kind === "PromotionUndo").map((record) => record.record.candidate_id));
+      const latest = records.filter((record): record is { kind: "Promotion"; record: api.SandboxPromotionRecord } => record.kind === "Promotion" && !undone.has(record.record.candidate_id)).at(-1)?.record ?? null;
+      setAppliedPromotion(latest);
+      if (latest) {
+        const source = records.find((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.candidate.candidate_id === latest.candidate_id)?.record;
+        setAppliedPromotionExecutionId(source?.execution_id ?? null);
+      }
+    }).catch(() => { /* Undo remains hidden when durable state is unavailable. */ });
+    onCleanup(() => { disposed = true; });
+  });
   const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
@@ -559,6 +581,8 @@ export default function WorkbenchPanel() {
     try {
       const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
       setPromotionMessage(`Applied and verified ${receipt.receipt.verification?.length ?? 0} file(s).`);
+      setAppliedPromotion(receipt);
+      setAppliedPromotionExecutionId(value.execution_id);
       setReviewOpen(false);
       setPendingCandidates((current) => current.filter((record) => record.candidate.candidate_id !== value.candidate.candidate_id));
       setCandidate(null);
@@ -566,6 +590,23 @@ export default function WorkbenchPanel() {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setCandidateBusy(false);
+    }
+  };
+
+  const undoPromotion = async () => {
+    const id = activeId();
+    const applied = appliedPromotion();
+    if (!id || !applied || undoBusy()) return;
+    setUndoBusy(true);
+    try {
+      const undone = await api.undoSandboxPromotion(id, applied.candidate_id);
+      setPromotionMessage(`Restored ${undone.receipt.restored.length} file(s) to their pre-acceptance state.`);
+      setAppliedPromotion(null);
+      setAppliedPromotionExecutionId(null);
+    } catch (error) {
+      setPromotionMessage(`Could not undo: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setUndoBusy(false);
     }
   };
 
@@ -861,6 +902,11 @@ export default function WorkbenchPanel() {
                         </Show>
                         <Show when={promotionMessage()}>
                           {(message) => <div class="artifact-meta">{message()}</div>}
+                        </Show>
+                        <Show when={appliedPromotion() && appliedPromotionExecutionId() === exec().id}>
+                          <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
+                            {undoBusy() ? "Restoring…" : "Undo acceptance"}
+                          </button>
                         </Show>
                       </div>
                     </Show>

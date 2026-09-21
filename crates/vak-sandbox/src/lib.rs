@@ -108,6 +108,8 @@ pub enum PromotionTransactionState {
     Completed,
     RolledBack,
     RecoveryRequired,
+    Undoing,
+    Undone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +117,8 @@ pub enum PromotionFileState {
     Prepared,
     Applying,
     Applied,
+    Undoing,
+    Undone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -144,6 +148,13 @@ pub struct VerificationResult {
     pub path: String,
     pub status: String,
     pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UndoReceipt {
+    pub candidate_id: String,
+    pub restored: Vec<String>,
+    pub verification: Vec<VerificationResult>,
 }
 
 /// Durable control-plane fact for an environment lifecycle. The session ledger
@@ -214,11 +225,21 @@ pub struct PromotionRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromotionUndoRecord {
+    pub record_id: String,
+    pub session_id: String,
+    pub candidate_id: String,
+    pub receipt: UndoReceipt,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "record")]
 pub enum DurableRecord {
     Environment(EnvironmentRecord),
     Candidate(CandidateRecord),
     Promotion(PromotionRecord),
+    PromotionUndo(PromotionUndoRecord),
     CandidateRevision(CandidateRevisionRecord),
 }
 
@@ -508,6 +529,16 @@ fn load_transaction(path: &Path) -> Result<PromotionTransaction, Error> {
         .map_err(|error| Error::InvalidPlan(format!("journal parse failed: {error}")))
 }
 
+fn transaction_directory(root: &Path, candidate_id: &str) -> Result<PathBuf, Error> {
+    let mut components = Path::new(candidate_id).components();
+    let valid = matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if !valid {
+        return Err(Error::PathEscape(candidate_id.into()));
+    }
+    Ok(root.join(candidate_id))
+}
+
 fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
     PromotionReceipt {
         candidate_id: transaction.candidate_id.clone(),
@@ -615,7 +646,7 @@ pub fn promote_recoverable(
         }
         std::fs::TryLockError::Error(error) => Error::Io(error),
     })?;
-    let directory = transaction_root.join(&candidate.candidate_id);
+    let directory = transaction_directory(transaction_root, &candidate.candidate_id)?;
     let journal_path = directory.join("journal.json");
     let selected_digest = candidate_digest(candidate)?;
     if journal_path.exists() {
@@ -640,6 +671,14 @@ pub fn promote_recoverable(
                 }
             }
             return Ok(transaction_receipt(&previous));
+        }
+        if matches!(
+            previous.state,
+            PromotionTransactionState::Undoing | PromotionTransactionState::Undone
+        ) {
+            return Err(Error::Conflict(
+                "candidate acceptance has already been undone".into(),
+            ));
         }
         if previous
             .files
@@ -761,6 +800,152 @@ pub fn promote_recoverable(
     transaction.state = PromotionTransactionState::Completed;
     write_transaction(&journal_path, &transaction)?;
     Ok(transaction_receipt(&transaction))
+}
+
+/// Reverse one completed promotion while it still owns the destination bytes.
+/// Undo is itself journaled and resumes after a crash. Any later workspace
+/// edit blocks the operation instead of being erased.
+pub fn undo_promotion(candidate_id: &str, transaction_root: &Path) -> Result<UndoReceipt, Error> {
+    let directory = transaction_directory(transaction_root, candidate_id)?;
+    let journal_path = directory.join("journal.json");
+    let mut transaction = load_transaction(&journal_path)?;
+    if transaction.candidate_id != candidate_id {
+        return Err(Error::InvalidPlan(
+            "promotion journal identity mismatch".into(),
+        ));
+    }
+    fs::create_dir_all(transaction_root)?;
+    let lock_destination = transaction
+        .destination_root
+        .canonicalize()
+        .map_err(Error::Io)?;
+    let workspace_key = digest(lock_destination.to_string_lossy().as_bytes()).replace(':', "_");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(transaction_root.join(format!("{workspace_key}.lock")))?;
+    lock_file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            Error::Conflict("another workspace acceptance is in progress".into())
+        }
+        std::fs::TryLockError::Error(error) => Error::Io(error),
+    })?;
+    transaction = load_transaction(&journal_path)?;
+    if transaction.candidate_id != candidate_id {
+        return Err(Error::InvalidPlan(
+            "promotion journal identity mismatch".into(),
+        ));
+    }
+    if transaction.state == PromotionTransactionState::Undone {
+        let verification = transaction
+            .files
+            .iter()
+            .map(|file| VerificationResult {
+                path: file.path.clone(),
+                status: "observed".into(),
+                evidence: match &file.before_hash {
+                    Some(hash) => format!("restored destination hash verified: {hash}"),
+                    None => "new destination file removed".into(),
+                },
+            })
+            .collect();
+        return Ok(UndoReceipt {
+            candidate_id: candidate_id.into(),
+            restored: transaction
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
+            verification,
+        });
+    }
+    if !matches!(
+        transaction.state,
+        PromotionTransactionState::Completed | PromotionTransactionState::Undoing
+    ) {
+        return Err(Error::Conflict(
+            "candidate acceptance is not complete and cannot be undone".into(),
+        ));
+    }
+    transaction.state = PromotionTransactionState::Undoing;
+    write_transaction(&journal_path, &transaction)?;
+    for index in (0..transaction.files.len()).rev() {
+        let file = transaction.files[index].clone();
+        let target = confined(&transaction.destination_root, &file.path)?;
+        let current = match fs::read(&target) {
+            Ok(bytes) => Some(digest(&bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(Error::Io(error)),
+        };
+        if file.state == PromotionFileState::Undone {
+            if current != file.before_hash {
+                return Err(Error::Conflict(format!(
+                    "undo recovery blocked by a later workspace change: {}",
+                    file.path
+                )));
+            }
+            continue;
+        }
+        if file.state == PromotionFileState::Undoing && current == file.before_hash {
+            transaction.files[index].state = PromotionFileState::Undone;
+            write_transaction(&journal_path, &transaction)?;
+            continue;
+        }
+        if current.as_deref() != Some(file.after_hash.as_str()) {
+            return Err(Error::Conflict(format!(
+                "undo blocked by a later workspace change: {}",
+                file.path
+            )));
+        }
+        transaction.files[index].state = PromotionFileState::Undoing;
+        write_transaction(&journal_path, &transaction)?;
+        if let Some(backup) = &file.backup_path {
+            let bytes = fs::read(backup)?;
+            if Some(digest(&bytes)) != file.before_hash {
+                return Err(Error::CandidateChanged(format!(
+                    "promotion backup changed: {}",
+                    file.path
+                )));
+            }
+            let temporary = target.with_extension(format!("vak-undo-{candidate_id}"));
+            fs::write(&temporary, bytes)?;
+            fs::rename(temporary, &target)?;
+        } else {
+            fs::remove_file(&target)?;
+        }
+        let observed = fs::read(&target).ok().map(|bytes| digest(&bytes));
+        if observed != file.before_hash {
+            return Err(Error::Conflict(format!(
+                "post-undo verification failed: {}",
+                file.path
+            )));
+        }
+        transaction.files[index].state = PromotionFileState::Undone;
+        write_transaction(&journal_path, &transaction)?;
+    }
+    transaction.state = PromotionTransactionState::Undone;
+    write_transaction(&journal_path, &transaction)?;
+    Ok(UndoReceipt {
+        candidate_id: candidate_id.into(),
+        restored: transaction
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect(),
+        verification: transaction
+            .files
+            .iter()
+            .map(|file| VerificationResult {
+                path: file.path.clone(),
+                status: "observed".into(),
+                evidence: match &file.before_hash {
+                    Some(hash) => format!("restored destination hash verified: {hash}"),
+                    None => "new destination file removed".into(),
+                },
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -1146,6 +1331,116 @@ mod tests {
             Err(Error::InvalidPlan(message)) if message.contains("identity mismatch")
         ));
         assert!(!target.path().join("b.txt").exists());
+    }
+
+    #[test]
+    fn scoped_undo_restores_changed_files_and_removes_new_files() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("changed.txt"), "after").unwrap();
+        fs::write(source.path().join("new.txt"), "new").unwrap();
+        fs::write(target.path().join("changed.txt"), "before").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "undoable".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![
+                CandidateFile {
+                    path: "changed.txt".into(),
+                    candidate_hash: digest(b"after"),
+                    base_hash: Some(digest(b"before")),
+                    bytes: 5,
+                },
+                CandidateFile {
+                    path: "new.txt".into(),
+                    candidate_hash: digest(b"new"),
+                    base_hash: None,
+                    bytes: 3,
+                },
+            ],
+        };
+        promote_recoverable(&candidate, control.path()).unwrap();
+        let receipt = undo_promotion("undoable", control.path()).unwrap();
+        assert_eq!(receipt.restored, vec!["changed.txt", "new.txt"]);
+        assert_eq!(
+            fs::read_to_string(target.path().join("changed.txt")).unwrap(),
+            "before"
+        );
+        assert!(!target.path().join("new.txt").exists());
+        assert_eq!(
+            load_transaction(&control.path().join("undoable/journal.json"))
+                .unwrap()
+                .state,
+            PromotionTransactionState::Undone
+        );
+        assert_eq!(undo_promotion("undoable", control.path()).unwrap(), receipt);
+    }
+
+    #[test]
+    fn scoped_undo_refuses_to_erase_post_acceptance_edits() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("draft.txt"), "accepted").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "undo-conflict".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![CandidateFile {
+                path: "draft.txt".into(),
+                candidate_hash: digest(b"accepted"),
+                base_hash: None,
+                bytes: 8,
+            }],
+        };
+        promote_recoverable(&candidate, control.path()).unwrap();
+        fs::write(target.path().join("draft.txt"), "human changed it").unwrap();
+        assert!(matches!(
+            undo_promotion("undo-conflict", control.path()),
+            Err(Error::Conflict(message)) if message.contains("later workspace change")
+        ));
+        assert_eq!(
+            fs::read_to_string(target.path().join("draft.txt")).unwrap(),
+            "human changed it"
+        );
+    }
+
+    #[test]
+    fn scoped_undo_resumes_after_restore_before_progress_was_recorded() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("draft.txt"), "after").unwrap();
+        fs::write(target.path().join("draft.txt"), "before").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "undo-resume".into(),
+            source_root: source.path().into(),
+            destination_root: target.path().into(),
+            files: vec![CandidateFile {
+                path: "draft.txt".into(),
+                candidate_hash: digest(b"after"),
+                base_hash: Some(digest(b"before")),
+                bytes: 5,
+            }],
+        };
+        promote_recoverable(&candidate, control.path()).unwrap();
+        let journal_path = control.path().join("undo-resume/journal.json");
+        let mut journal = load_transaction(&journal_path).unwrap();
+        journal.state = PromotionTransactionState::Undoing;
+        journal.files[0].state = PromotionFileState::Undoing;
+        write_transaction(&journal_path, &journal).unwrap();
+        fs::write(target.path().join("draft.txt"), "before").unwrap();
+
+        undo_promotion("undo-resume", control.path()).unwrap();
+        assert_eq!(
+            load_transaction(&journal_path).unwrap().state,
+            PromotionTransactionState::Undone
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("draft.txt")).unwrap(),
+            "before"
+        );
     }
 
     #[test]

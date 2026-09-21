@@ -745,6 +745,10 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
+        .route(
+            "/sessions/{id}/sandbox/promotions/{candidate_id}/undo",
+            post(undo_sandbox_promotion),
+        )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route("/sessions/{id}/results/{result_id}", get(session_result))
         .route(
@@ -10040,6 +10044,7 @@ async fn list_session_sandbox_records(
                 .filter(|record| match record {
                     vak_sandbox::DurableRecord::Candidate(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Promotion(value) => value.session_id == id,
+                    vak_sandbox::DurableRecord::PromotionUndo(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Environment(_) => false,
                     vak_sandbox::DurableRecord::CandidateRevision(value) => value.session_id == id,
                 })
@@ -11126,6 +11131,83 @@ async fn promote_sandbox_candidate(
             .into_response();
     }
     (StatusCode::OK, Json(record)).into_response()
+}
+
+async fn undo_sandbox_promotion(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let records_path = sandbox_records_path(&state);
+    let records = match vak_sandbox::load_records(&records_path) {
+        Ok(records) => records,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    if let Some(existing) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::PromotionUndo(record)
+            if record.session_id == session_id && record.candidate_id == candidate_id =>
+        {
+            Some(record.clone())
+        }
+        _ => None,
+    }) {
+        return Json(vak_sandbox::DurableRecord::PromotionUndo(existing)).into_response();
+    }
+    let promoted = records.iter().any(|record| {
+        matches!(
+            record,
+            vak_sandbox::DurableRecord::Promotion(record)
+                if record.session_id == session_id && record.candidate_id == candidate_id
+        )
+    });
+    if !promoted {
+        return (StatusCode::NOT_FOUND, "applied candidate not found").into_response();
+    }
+    let promotion_root = sandbox_promotions_root(&state);
+    let undo_id = candidate_id.clone();
+    let receipt = match tokio::task::spawn_blocking(move || {
+        vak_sandbox::undo_promotion(&undo_id, &promotion_root)
+    })
+    .await
+    {
+        Ok(Ok(receipt)) => receipt,
+        Ok(Err(error)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("undo worker failed: {error}") })),
+            )
+                .into_response();
+        }
+    };
+    let record = vak_sandbox::PromotionUndoRecord {
+        record_id: format!("promotion-undo-{candidate_id}"),
+        session_id,
+        candidate_id,
+        receipt,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let durable = vak_sandbox::DurableRecord::PromotionUndo(record);
+    if let Err(error) = vak_sandbox::append_record(&records_path, &durable) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(durable)).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -18016,11 +18098,12 @@ mod sandbox_promotion_tests {
         assert_eq!(candidate.execution_id, "exec-1");
         assert!(!candidate.result_id.is_empty());
 
+        let candidate_id = candidate.candidate.candidate_id.clone();
         let response = promote_sandbox_candidate(
             State(state.clone()),
             Path("session-1".into()),
             Json(SandboxPromotionBody {
-                candidate_id: candidate.candidate.candidate_id,
+                candidate_id: candidate_id.clone(),
                 files: vec!["result.txt".into()],
             }),
         )
@@ -18042,11 +18125,18 @@ mod sandbox_promotion_tests {
                 .unwrap(),
             "candidate"
         );
+        let response = undo_sandbox_promotion(
+            State(state.clone()),
+            Path(("session-1".into(), candidate_id)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!dir.path().join("result.txt").exists());
         assert_eq!(
             vak_sandbox::load_records(&sandbox_records_path(&state))
                 .unwrap()
                 .len(),
-            2
+            3
         );
     }
 

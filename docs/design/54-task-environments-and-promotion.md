@@ -169,7 +169,16 @@ transaction is rolled back before retry; recovery stops if the destination no
 longer matches the recorded before or after hash, preserving later human work.
 Completed transactions can reconstruct a missing append-only promotion record
 only while every destination still matches its recorded after-hash. Deletion
-candidates, scoped undo and target integration verification remain open.
+candidates and target integration verification remain open.
+
+Scoped undo uses the same transaction journal and workspace lock. It is
+available only for a recorded completed promotion, verifies that every target
+still has the accepted after-hash, restores the saved before-image or removes a
+file that acceptance added, and records per-file undo progress before and after
+each mutation. Interrupted undo resumes from destination hashes. If any later
+workspace edit is observed, undo stops without erasing it and requires human
+resolution. The append-only sandbox ledger records the authenticated undo
+receipt separately from the original promotion receipt.
 
 Append model-visible plans, setup results, environment failures and result references to the session so `derive_messages()` reconstructs what the model saw. Logs/blobs can be external content-addressed data with durable ledger references. Version new records additively; never reinterpret old entries or label unknown history verified.
 
