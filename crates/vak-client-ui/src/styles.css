@@ -1095,6 +1095,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-options li.is-option::after { display: none; }
 .adaptive-option-action { align-self: center; border: 1px solid var(--border-soft); border-radius: 999px; padding: 6px 10px; color: var(--muted); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 .adaptive-option-action:hover, .adaptive-option-action:focus-visible { border-color: var(--accent); color: var(--text); }
+.option-table-action { width: 1%; white-space: nowrap; text-align: right; }
 
 .assistant-structured-card {
   margin: 12px 0;

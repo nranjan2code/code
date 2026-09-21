@@ -32,7 +32,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 
 // Runtime diagnostics belong in explicit task details and receipt views.
 const showOperatorChrome = () => false;
-import GenericSpecRenderer, { PresentationInteractionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
+import GenericSpecRenderer, { PresentationInteractionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -754,6 +754,10 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
       return true;
     }));
   });
+  const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
+    if (item.content.type !== "structured") return false;
+    return /(?:^|[._-])(plan|timeline|checklist|options)(?:$|[._-])/.test(item.content.output.semantic_type.toLowerCase());
+  }));
   const revise = () => {
     const resultId = props.answer.outcome?.result_id;
     if (!resultId) return;
@@ -772,7 +776,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
         })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open working file" : `Open ${item.content.artifact.name}`}</button>;
       }}</For>
       <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id)}><Icon name="diff" size={13} />Review draft</button>}</For>
-      <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>Ask for a change</button></Show>
+      <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for a change"}</button></Show>
     </nav>
   </Show>;
 }
@@ -860,7 +864,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
     if (!sessionId || !resultId) return undefined;
     return { onOptionSelect: (label: string) => {
       setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
-      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `I'd like to discuss “${label}”.`, mode: "append" } }));
+      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
     } };
   };
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
@@ -1006,7 +1010,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
       Array.isArray(data?.pros) || Array.isArray(data?.cons) ||
       (data?.left && data?.right)
     );
-    return <GenericSpecRenderer node={tableShape ? buildTableSpec(data, "Travel Options") : buildTimelineSpec(data, "Travel Options", "Travel")} />;
+    return <GenericSpecRenderer node={tableShape ? buildOptionsTableSpec(data, "Travel Options") : buildTimelineSpec(data, "Travel Options", "Travel")} />;
   },
   "home_project": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Home Project", "Project")} />,
   "care_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Care Plan", "Care Plan")} />,

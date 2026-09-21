@@ -130,15 +130,20 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
       const label = str(itemProps, "label") ?? str(itemProps, "title") ?? "Item";
       const detail = str(itemProps, "detail");
       const status = str(itemProps, "status");
-      return <li classList={{ complete: status === "complete" || status === "done", "is-option": options }}>
+      const time = str(itemProps, "time");
+      const normalizedStatus = status?.trim().toLowerCase().replace(/[ _-]+/g, "");
+      const complete = normalizedStatus === "complete" || normalizedStatus === "completed" || normalizedStatus === "done";
+      const showStatus = Boolean(status && !["pending", "todo", "notstarted"].includes(normalizedStatus ?? ""));
+      return <li classList={{ complete, "is-option": options }}>
         <Show when={!options}><span class="adaptive-timeline-marker" aria-hidden="true">{index() + 1}</span></Show>
         <div>
           <strong>{label}</strong>
+          <Show when={time}><small class="adaptive-timeline-time">{time}</small></Show>
           <Show when={detail && !compact}><p>{detail}</p></Show>
-          <Show when={status}><small>{status}</small></Show>
+          <Show when={showStatus}><small class="adaptive-timeline-status">{complete ? "Done" : status}</small></Show>
         </div>
         <Show when={options && interaction && !compact}>
-          <button type="button" class="adaptive-option-action" onClick={() => interaction?.onOptionSelect(label)} aria-label={`Discuss ${label}`}>Discuss</button>
+          <button type="button" class="adaptive-option-action" onClick={() => interaction?.onOptionSelect(label)} aria-label={`Use ${label}`}>Use this</button>
         </Show>
       </li>;
     }}
@@ -247,6 +252,8 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
   const [sortAsc, setSortAsc] = createSignal<boolean>(true);
   const [copied, setCopied] = createSignal(false);
   const compact = surface === "compact";
+  const options = str(node.props, "variant") === "options";
+  const interaction = useContext(PresentationInteractionContext);
 
   const columns = () => specColumns(node);
   const rows = () => specRows(node);
@@ -298,13 +305,13 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">Data Grid</span>
+          <span class="card-badge badge-indigo">{options ? "Options" : "Data Grid"}</span>
           <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
-          <span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
+          <Show when={!options}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
             {filteredAndSortedRows().length} of {rows().length} rows
-          </span>
+          </span></Show>
         </div>
-        <div class="card-actions">
+        <Show when={!options}><div class="card-actions">
           <input
             type="text"
             class="grid-search-input"
@@ -316,7 +323,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
           <button type="button" class="pill-action-btn" onClick={handleExportCsv}>
             {copied() ? "Downloaded" : "Download CSV"}
           </button>
-        </div>
+        </div></Show>
       </div>
 
       <div class="grid-table-container">
@@ -336,6 +343,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                   </th>
                 )}
               </For>
+              <Show when={options && interaction}><th scope="col"><span class="sr-only">Choose</span></th></Show>
             </tr>
           </thead>
           <tbody>
@@ -362,6 +370,11 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                       );
                     }}
                   </For>
+                  <Show when={options && interaction}>{(() => {
+                    const firstColumn = columns()[0]?.key;
+                    const label = String((firstColumn && row[firstColumn]) ?? "this option");
+                    return <td class="option-table-action"><button type="button" class="adaptive-option-action" onClick={() => interaction?.onOptionSelect(label)} aria-label={`Use ${label}`}>Use this</button></td>;
+                  })()}</Show>
                 </tr>
               )}
             </For>
@@ -1440,6 +1453,7 @@ interface RawTimelineItem {
   label: string;
   detail?: string;
   status?: string;
+  time?: string;
 }
 
 const TIMELINE_ARRAY_FIELDS = ["items", "steps", "milestones", "slots", "agenda", "tasks", "options", "choices", "questions", "qa", "entries"] as const;
@@ -1475,10 +1489,12 @@ function normalizeTimelineItems(data: unknown): RawTimelineItem[] {
       const label = String(o.label ?? o.title ?? o.name ?? o.question ?? o.task ?? o.text ?? o.choice ?? o.activity ?? "Item");
       const detail = o.detail ?? o.description ?? o.answer ?? o.notes ?? o.time ?? o.snippet ?? (o.reason ? String(o.reason) : undefined);
       const status = o.status ?? (typeof o.done === "boolean" ? (o.done ? "complete" : "pending") : undefined);
+      const time = o.time ?? o.when ?? o.window ?? o.duration;
       return {
         label,
-        detail: detail != null ? String(detail) : undefined,
+        detail: detail != null && detail !== time ? String(detail) : undefined,
         status: status != null ? String(status) : undefined,
+        time: time != null ? String(time) : undefined,
       };
     }
     return { label: "Item" };
@@ -1495,7 +1511,7 @@ export function buildTimelineSpec(data: unknown, defaultTitle = "Plan", kicker =
     props: { title, kicker, variant: timelineArrayField(record) === "options" ? "options" : "sequence" },
     children: items.map((item) => ({
       primitive: "section",
-      props: { label: item.label, detail: item.detail ?? "", status: item.status ?? "" },
+      props: { label: item.label, detail: item.detail ?? "", status: item.status ?? "", time: item.time ?? "" },
       children: [],
     })),
   };
@@ -1532,7 +1548,11 @@ export function buildTableSpec(data: unknown, defaultTitle = "Dataset"): Adaptiv
         ? { key: String(c.key ?? c.name ?? c.label), label: String(c.label ?? c.name ?? c.key), isNumeric: Boolean(c.isNumeric || c.is_numeric) }
         : { key: String(c), label: String(c) },
     );
-    return tableNode(title, columns, d.rows);
+    const rows = d.rows.map((row: unknown) => {
+      if (!Array.isArray(row)) return row;
+      return Object.fromEntries(columns.map((column, index) => [column.key, row[index] ?? ""]));
+    });
+    return tableNode(title, columns, rows);
   }
 
   if (Array.isArray(d.pros) || Array.isArray(d.cons)) {
@@ -1593,6 +1613,11 @@ export function buildTableSpec(data: unknown, defaultTitle = "Dataset"): Adaptiv
   }
 
   return tableNode(title, [], []);
+}
+
+export function buildOptionsTableSpec(data: unknown, defaultTitle = "Options"): AdaptiveRenderNode {
+  const node = buildTableSpec(data, defaultTitle);
+  return { ...node, props: { ...node.props, variant: "options" } };
 }
 
 /**

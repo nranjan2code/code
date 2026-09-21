@@ -108,6 +108,7 @@ const terminalFixtures: Fixture[] = [
 
 const tableFixtures: Fixture[] = [
   { label: "explicit columns[] + rows[]", payload: { title: "Benchmark", columns: [{ key: "name", label: "Name" }, { key: "score", label: "Score", isNumeric: true }], rows: [{ name: "A", score: 92 }, { name: "B", score: 81 }] } },
+  { label: "string columns[] + array rows[]", payload: { title: "Weekend options", columns: ["Option", "Cost", "Weather fit", "Effort"], rows: [["Indoor food trail", "₹₹", "Excellent", "Low"], ["Museum and garden", "₹", "Good", "Medium"]] } },
   { label: "pros[] / cons[]", payload: { title: "Tradeoffs", pros: ["Fast", "Cheap"], cons: ["Less accurate"] } },
   { label: "left/right comparison objects", payload: { title: "Plan A vs B", left_label: "Plan A", right_label: "Plan B", left: { latency_ms: 120, cost: "$$" }, right: { latency_ms: 340, cost: "$" } } },
   { label: "bare array of row objects (columns inferred from keys)", payload: { rows: [{ sku: "A1", qty: 3, price: 9.99 }, { sku: "B2", qty: 1, price: 14.5 }] } },
