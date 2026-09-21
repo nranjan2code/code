@@ -44,7 +44,6 @@ export default function SharedConversation() {
   const [messageText, setMessageText] = createSignal("");
   const [messageBusy, setMessageBusy] = createSignal(false);
   const [presentParticipants, setPresentParticipants] = createSignal<PresentParticipant[]>([]);
-  const [canApproveOnce, setCanApproveOnce] = createSignal(false);
   const [approvals, setApprovals] = createSignal<SharedApproval[]>([]);
   const [approvalBusy, setApprovalBusy] = createSignal<string | null>(null);
   const [commentText, setCommentText] = createSignal("");
@@ -75,7 +74,6 @@ export default function SharedConversation() {
     setCanMessage(false);
     setMessageText("");
     setPresentParticipants([]);
-    setCanApproveOnce(false);
     setApprovals([]);
     setCommentText("");
     setCommentLine("");
@@ -109,7 +107,7 @@ export default function SharedConversation() {
         read(current.conversationId, current.token, "/transcript"),
         read(current.conversationId, current.token, "/sandbox/records"),
         read(current.conversationId, current.token, "/presentation"),
-        canApproveOnce() ? read(current.conversationId, current.token, "/coworking/approvals") : Promise.resolve({ approvals: [] }),
+        read(current.conversationId, current.token, "/coworking/approvals"),
       ]);
       if (credential()?.token !== current.token) return;
       if (transcript) setMessages((transcript.messages ?? []).map((message: Message, index: number) => ({
@@ -242,7 +240,6 @@ export default function SharedConversation() {
       setAgent({ name: me.agent.name, character: me.agent.character });
       setCanComment(Array.isArray(me.capabilities) && me.capabilities.includes("comment"));
       setCanMessage(Array.isArray(me.capabilities) && me.capabilities.includes("message"));
-      setCanApproveOnce(Array.isArray(me.capabilities) && me.capabilities.includes("approve_once"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
@@ -257,7 +254,7 @@ export default function SharedConversation() {
 
   const answerApproval = async (requestId: string, approve: boolean) => {
     const current = credential();
-    if (!current || !canApproveOnce() || approvalBusy()) return;
+    if (!current || approvalBusy()) return;
     setApprovalBusy(requestId);
     setError(null);
     try {

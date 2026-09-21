@@ -1869,6 +1869,10 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .ap-args { max-height: 180px; margin: 9px 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--bg); font-size: 10.5px; }
 .ap-actions { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 .ap-rule-hint { flex-basis: 100%; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.ap-delegation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-soft); font-size: 12px; }
+.ap-delegation label { flex-basis: 100%; color: var(--muted); }
+.ap-delegation select { min-width: 150px; max-width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); }
+.ap-delegation [role="alert"] { flex-basis: 100%; color: var(--red); }
 .ap-rule-modal { max-width: 520px; }
 .ap-rule-preview { margin: 16px 0; display: grid; gap: 10px; }
 .ap-rule-preview div { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }

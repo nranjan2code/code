@@ -409,6 +409,7 @@ pub struct ApprovalRequest {
     pub requested_at: chrono::DateTime<chrono::Utc>,
     respond: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
     answered_by: Arc<Mutex<Option<(String, String)>>>,
+    delegated_to: Arc<Mutex<Option<String>>>,
 }
 
 impl ApprovalRequest {
@@ -476,6 +477,7 @@ impl Approver for HttpApprover {
                     requested_at: chrono::Utc::now(),
                     respond: Arc::new(Mutex::new(Some(respond))),
                     answered_by: answered_by.clone(),
+                    delegated_to: Arc::new(Mutex::new(None)),
                 },
             );
         let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
@@ -484,10 +486,6 @@ impl Approver for HttpApprover {
             args_json: args_json.to_string(),
             reason: reason.to_string(),
         });
-        let answered_by = answered_by
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
         self.activity_buffer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -503,14 +501,7 @@ impl Approver for HttpApprover {
                     ("tool".into(), tool.to_string()),
                     ("args_json".into(), args_json.to_string()),
                 ]
-                .into_iter()
-                .chain(answered_by.into_iter().flat_map(|(actor_id, actor_name)| {
-                    [
-                        ("actor_id".into(), actor_id),
-                        ("actor_name".into(), actor_name),
-                    ]
-                }))
-                .collect(),
+                .into(),
             });
         if let Some(hub) = events::global() {
             hub.emit(events::SystemEvent::ApprovalRequested {
@@ -539,6 +530,10 @@ impl Approver for HttpApprover {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
+        let answered_by = answered_by
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         self.activity_buffer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -561,7 +556,14 @@ impl Approver for HttpApprover {
                     ("tool".into(), tool.to_string()),
                     ("args_json".into(), args_json.to_string()),
                 ]
-                .into(),
+                .into_iter()
+                .chain(answered_by.into_iter().flat_map(|(actor_id, actor_name)| {
+                    [
+                        ("actor_id".into(), actor_id),
+                        ("actor_name".into(), actor_name),
+                    ]
+                }))
+                .collect(),
             });
         if let Some(hub) = events::global() {
             hub.emit(if approved {
@@ -814,6 +816,10 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/sessions/{id}/coworking/approvals/{req_id}",
             post(answer_coworking_approval),
+        )
+        .route(
+            "/sessions/{id}/coworking/approvals/{req_id}/delegate",
+            post(delegate_coworking_approval),
         )
         .route("/sessions/{id}/coworking/updates", get(coworking_updates))
         .route(
@@ -3666,10 +3672,7 @@ fn participant_read_route_allowed(
                 .any(|capability| capability == "message");
         }
         if matches!(*rest, ["coworking", "approvals", _]) {
-            return principal
-                .capabilities
-                .iter()
-                .any(|capability| capability == "approve_once");
+            return true;
         }
         return principal
             .capabilities
@@ -5944,6 +5947,10 @@ async fn answer_approval(
     };
     let tool = req.tool.clone();
     let args_json = req.args_json.clone();
+    *req.answered_by
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(("operator".into(), "You".into()));
     req.respond(body.approve);
 
     let mut learned: Option<String> = None;
@@ -7193,8 +7200,6 @@ struct CoworkingInvitationBody {
     can_comment: bool,
     #[serde(default)]
     can_message: bool,
-    #[serde(default)]
-    can_approve_once: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -7206,6 +7211,11 @@ struct CoworkingMessageBody {
 #[derive(Debug, serde::Deserialize)]
 struct CoworkingApprovalBody {
     approve: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CoworkingDelegationBody {
+    grant_id: String,
 }
 
 fn default_coworking_invitation_hours() -> u32 {
@@ -7378,12 +7388,7 @@ async fn list_coworking_approvals(
     let AuthenticatedPrincipal::Participant(participant) = principal else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    if participant.conversation_id != conversation_id
-        || !participant
-            .capabilities
-            .iter()
-            .any(|value| value == "approve_once")
-    {
+    if participant.conversation_id != conversation_id {
         return StatusCode::FORBIDDEN.into_response();
     }
     let Some(handle) = state.get(&conversation_id) else {
@@ -7394,6 +7399,14 @@ async fn list_coworking_approvals(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
+        .filter(|request| {
+            request
+                .delegated_to
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref()
+                == Some(participant.grant_id.as_str())
+        })
         .map(|request| {
             serde_json::json!({
                 "request_id": request.id,
@@ -7417,25 +7430,32 @@ async fn answer_coworking_approval(
     let AuthenticatedPrincipal::Participant(participant) = principal else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    if participant.conversation_id != conversation_id
-        || !participant
-            .capabilities
-            .iter()
-            .any(|value| value == "approve_once")
-    {
+    if participant.conversation_id != conversation_id {
         return StatusCode::FORBIDDEN.into_response();
     }
     let Some(handle) = state.get(&conversation_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(request) = handle
+    let mut pending = handle
         .pending
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&request_id)
-    else {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(request) = pending.get(&request_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if request
+        .delegated_to
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_deref()
+        != Some(participant.grant_id.as_str())
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(request) = pending.remove(&request_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    drop(pending);
     *request
         .answered_by
         .lock()
@@ -7453,6 +7473,51 @@ async fn answer_coworking_approval(
         "remembered": false,
     }))
     .into_response()
+}
+
+/// The owner delegates this pending gate to one currently active invitation.
+/// The grant is bound to this request id; the participant cannot answer another gate.
+async fn delegate_coworking_approval(
+    State(state): State<AppState>,
+    Path((conversation_id, request_id)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Json(body): Json<CoworkingDelegationBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if operator_only(&principal).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(audience_id) = conversation_audience(&state, &conversation_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let path = coworking::store_path(&state.core.sessions_home());
+    let Ok(grants) = coworking::list(&path, &conversation_id, chrono::Utc::now()) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Some(grant) = grants.iter().find(|grant| {
+        grant.grant_id == body.grant_id
+            && grant.audience_id == audience_id
+            && grant.status == coworking::GrantStatus::Active
+    }) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let Some(handle) = state.get(&conversation_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let pending = handle
+        .pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(request) = pending.get(&request_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    *request
+        .delegated_to
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(grant.grant_id.clone());
+    let _ = handle.coworking_comments_tx.send(());
+    Json(serde_json::json!({"request_id": request_id, "delegated_to": grant.display_name}))
+        .into_response()
 }
 
 const COWORKING_PRESENCE_TTL: Duration = Duration::from_secs(7);
@@ -7674,9 +7739,6 @@ async fn create_coworking_invitation(
             }
             if body.can_comment {
                 capabilities.push("comment".into());
-            }
-            if body.can_approve_once {
-                capabilities.push("approve_once".into());
             }
             capabilities
         },
@@ -17744,6 +17806,7 @@ mod configuration_control_tests {
                     requested_at: chrono::Utc::now(),
                     respond: Arc::new(Mutex::new(Some(respond))),
                     answered_by: Arc::new(Mutex::new(None)),
+                    delegated_to: Arc::new(Mutex::new(None)),
                 },
             );
         id
@@ -17913,6 +17976,40 @@ mod configuration_control_tests {
         // Returns immediately; without the guard this would block until the
         // 15-minute deadline, which the test would never reach.
         assert!(!approver.approve("bash", "{}", "needs approval").await);
+    }
+
+    #[tokio::test]
+    async fn resolved_approval_activity_names_the_verified_decision_maker() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let activity_buffer = Arc::new(Mutex::new(Vec::new()));
+        let approver = HttpApprover {
+            events_tx: events::EventBus::new(),
+            pending: pending.clone(),
+            session_id: "session-approval".into(),
+            activity_buffer: activity_buffer.clone(),
+            answerable: true,
+        };
+        let task = tokio::spawn(async move { approver.approve("write", "{}", "save draft").await });
+        let request = loop {
+            if let Some(request) = pending.lock().unwrap().values().next().cloned() {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        };
+        *request.answered_by.lock().unwrap() = Some(("person-1".into(), "Asha".into()));
+        request.respond(true);
+        assert!(task.await.unwrap());
+        let activities = activity_buffer.lock().unwrap();
+        assert_eq!(activities.len(), 2);
+        assert!(!activities[0].data.contains_key("actor_id"));
+        assert_eq!(
+            activities[1].data.get("actor_id").map(String::as_str),
+            Some("person-1")
+        );
+        assert_eq!(
+            activities[1].data.get("actor_name").map(String::as_str),
+            Some("Asha")
+        );
     }
 
     /// `Core::approver_answerable` is stamped before a run and the approver
@@ -19331,9 +19428,9 @@ mod sandbox_promotion_tests {
         assert!(participant_read_route_allowed(
             &axum::http::Method::POST,
             "/sessions/session-1/coworking/approvals/request-1",
-            &participant(&["read", "approve_once"])
+            &participant(&["read"])
         ));
-        assert!(!participant_read_route_allowed(
+        assert!(participant_read_route_allowed(
             &axum::http::Method::POST,
             "/sessions/session-1/coworking/approvals/request-1",
             &participant(&["read", "message"])
@@ -19591,6 +19688,7 @@ mod sandbox_promotion_tests {
                 requested_at: chrono::Utc::now(),
                 respond: Arc::new(Mutex::new(Some(respond))),
                 answered_by: answered_by.clone(),
+                delegated_to: Arc::new(Mutex::new(None)),
             },
         );
         let token = "participant-approval-token";
@@ -19602,7 +19700,7 @@ mod sandbox_promotion_tests {
                 display_name: "Asha".into(),
                 conversation_id: "session-approval".into(),
                 audience_id: "local".into(),
-                capabilities: vec!["read".into(), "approve_once".into()],
+                capabilities: vec!["read".into()],
                 token_hash: coworking::token_hash(token),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
@@ -19617,6 +19715,10 @@ mod sandbox_promotion_tests {
             .route(
                 "/sessions/{id}/coworking/approvals/{req_id}",
                 post(answer_coworking_approval),
+            )
+            .route(
+                "/sessions/{id}/coworking/approvals/{req_id}/delegate",
+                post(delegate_coworking_approval),
             )
             .with_state(state)
             .layer(axum::middleware::from_fn_with_state(
@@ -19637,6 +19739,57 @@ mod sandbox_promotion_tests {
             app.clone().oneshot(list).await.unwrap().status(),
             StatusCode::OK
         );
+        let premature = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/sessions/session-approval/coworking/approvals/request-approval")
+            .header(axum::http::header::AUTHORIZATION, authorization.clone())
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"approve":true}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(premature).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        let delegate = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/sessions/session-approval/coworking/approvals/request-approval/delegate")
+            .header(axum::http::header::AUTHORIZATION, "Bearer operator-secret")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"grant_id":"grant-approval"}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(delegate).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let other_request = "other-request";
+        let (other_respond, _other_answer) = oneshot::channel();
+        handle.pending.lock().unwrap().insert(
+            other_request.into(),
+            ApprovalRequest {
+                id: other_request.into(),
+                tool: "write".into(),
+                args_json: r#"{"path":"other.txt"}"#.into(),
+                reason: "Save another draft".into(),
+                requested_at: chrono::Utc::now(),
+                respond: Arc::new(Mutex::new(Some(other_respond))),
+                answered_by: Arc::new(Mutex::new(None)),
+                delegated_to: Arc::new(Mutex::new(None)),
+            },
+        );
+        let other_decision = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(format!(
+                "/sessions/session-approval/coworking/approvals/{other_request}"
+            ))
+            .header(axum::http::header::AUTHORIZATION, authorization.clone())
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"approve":true}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(other_decision).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        handle.pending.lock().unwrap().remove(other_request);
         let decide = axum::http::Request::builder()
             .method(axum::http::Method::POST)
             .uri("/sessions/session-approval/coworking/approvals/request-approval")

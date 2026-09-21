@@ -22,7 +22,7 @@ The same Agent and conversation stay visible to everyone admitted to that audien
 - Agent feedback is an explicit intervention derived from a comment or a new message. Comments do not silently become model instructions. The conversion is logged, attributed, and permission checked.
 - Candidate review is bound to the server-held candidate ID and exact selected paths. Review, candidate acceptance, target setup, and publish/deploy are separate decisions with separate receipts.
 - Only an authorized approver can accept a candidate. The accept action records actor identity and candidate digest, rechecks destination state, and produces a promotion receipt. A conversation message or previewed document cannot resolve an approval.
-- A participant may receive `approve_once` authority for this conversation. It reaches only a server-held pending request by its exact request ID, is consumed by the first valid answer, records the verified actor on the approval activity, and can never create a persistent permission rule. Candidate acceptance remains a separate authority.
+- The owner may assign one server-held pending approval to one active participant. The assignment binds that invitation to the exact request ID and grants no standing approval authority. The first valid answer consumes the gate, records the verified actor on the resolved approval activity, and cannot create a persistent permission rule. Candidate acceptance remains a separate authority.
 - The conversation displays the current result, review state, outstanding comments, and any blocking decision. Technical execution remains available from that result without becoming the default layout.
 
 ## Implementation boundaries

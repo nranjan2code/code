@@ -443,6 +443,30 @@ const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "d
 
 const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => {
   const [showRulePreview, setShowRulePreview] = createSignal(false);
+  const [invitees, setInvitees] = createSignal<api.CoworkingInvitation[]>([]);
+  const [delegateTo, setDelegateTo] = createSignal("");
+  const [delegatedName, setDelegatedName] = createSignal("");
+  const [delegateError, setDelegateError] = createSignal("");
+  const [delegating, setDelegating] = createSignal(false);
+  createEffect(() => {
+    const sessionId = props.sessionId;
+    if (!sessionId || props.item.resolved) return;
+    void api.listCoworkingInvitations(sessionId).then((result) => {
+      setInvitees(result.invitations.filter((invitation) => invitation.status === "active"));
+    }).catch(() => setInvitees([]));
+  });
+  const delegate = async () => {
+    const sessionId = props.sessionId;
+    if (!sessionId || !delegateTo() || delegating()) return;
+    setDelegating(true);
+    setDelegateError("");
+    try {
+      const result = await api.delegateCoworkingApproval(sessionId, props.item.id, delegateTo());
+      setDelegatedName(result.delegated_to);
+    } catch (error) {
+      setDelegateError(error instanceof Error ? error.message : String(error));
+    } finally { setDelegating(false); }
+  };
   // Webfetch-style tools name their target under different keys; whatever
   // the tool calls its subject (url/path/command…) is what the user needs
   // to see before deciding, so it gets the prominent slot.
@@ -517,6 +541,18 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
           {isApprovalPending(props.item.id) ? "Resolving…" : "Deny"}
         </button>
       </div>
+      <Show when={invitees().length > 0}>
+        <div class="ap-delegation">
+          <label for={`delegate-${props.item.id}`}>Ask someone in this conversation</label>
+          <select id={`delegate-${props.item.id}`} value={delegateTo()} onChange={(event) => setDelegateTo(event.currentTarget.value)}>
+            <option value="">Choose a person</option>
+            <For each={invitees()}>{(invitation) => <option value={invitation.grant_id}>{invitation.display_name}</option>}</For>
+          </select>
+          <button type="button" class="btn" disabled={!delegateTo() || delegating()} onClick={() => void delegate()}>{delegating() ? "Asking…" : "Ask to decide this request"}</button>
+          <Show when={delegatedName()}><span role="status">Waiting for {delegatedName()} to decide.</span></Show>
+          <Show when={delegateError()}><span role="alert">{delegateError()}</span></Show>
+        </div>
+      </Show>
     </Show>
     <Show when={showRulePreview()}>
       <div class="modal-back" onClick={() => setShowRulePreview(false)}>
