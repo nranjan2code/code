@@ -6851,9 +6851,10 @@ impl Core {
             });
             outcome_spec.evidence_max_age_secs =
                 Some(self.inner.config.intent.evidence_max_age_secs);
-            let mut tool_calls = std::collections::HashMap::<String, Option<String>>::new();
+            let mut tool_calls = std::collections::HashMap::<String, (Option<String>, Option<String>)>::new();
             let mut successful_receipts = std::collections::HashSet::new();
             let mut written_paths = std::collections::HashSet::<String>::new();
+            let mut successful_effect_inputs = Vec::<String>::new();
             let mut failed_correctable = std::collections::HashSet::new();
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
@@ -6868,16 +6869,20 @@ impl Core {
                         tool_calls.clear();
                         successful_receipts.clear();
                         written_paths.clear();
+                        successful_effect_inputs.clear();
                         failed_correctable.clear();
                     }
                     for block in &record.message.content {
                         match block {
                             vak_llm::ContentBlock::ToolUse { id, name, input } => {
-                                let path = matches!(vak_tools::canonical_tool_name(name), "write" | "edit")
+                                let canonical = vak_tools::canonical_tool_name(name);
+                                let path = matches!(canonical, "write" | "edit")
                                     .then(|| input.get("path").and_then(serde_json::Value::as_str))
                                     .flatten()
                                     .map(str::to_ascii_lowercase);
-                                tool_calls.insert(id.clone(), path);
+                                let effect_input = matches!(canonical, "write" | "edit" | "apply_patch" | "bash" | "imagegen")
+                                    .then(|| input.to_string().to_ascii_lowercase());
+                                tool_calls.insert(id.clone(), (path, effect_input));
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
@@ -6885,8 +6890,11 @@ impl Core {
                                 ..
                             } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
-                                if let Some(Some(path)) = tool_calls.get(tool_use_id) {
+                                if let Some((Some(path), _)) = tool_calls.get(tool_use_id) {
                                     written_paths.insert(path.clone());
+                                }
+                                if let Some((_, Some(input))) = tool_calls.get(tool_use_id) {
+                                    successful_effect_inputs.push(input.clone());
                                 }
                             }
                             vak_llm::ContentBlock::ToolResult {
@@ -6934,6 +6942,7 @@ impl Core {
                 && !written_paths.iter().any(|path| {
                     std::path::Path::new(path).file_name() == std::path::Path::new(&target).file_name()
                 })
+                && !successful_effect_inputs.iter().any(|input| input.contains(&target))
             {
                 status = vak_intent::OutcomeStatus::Unknown;
             }
