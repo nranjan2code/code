@@ -1008,6 +1008,11 @@ export function listSandboxCandidateComments(sessionId: string, candidateId: str
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
 }
 
+/** Content-free signal to refresh the currently open shared draft. */
+export function openCoworkingUpdates(sessionId: string): EventSource {
+  return eventSource(`/sessions/${encodeURIComponent(sessionId)}/coworking/updates`);
+}
+
 export function requestRevisionFromCandidateComment(sessionId: string, candidateId: string, commentId: string): Promise<InterventionReceipt> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments/${encodeURIComponent(commentId)}/request-revision`, { method: "POST" });
 }

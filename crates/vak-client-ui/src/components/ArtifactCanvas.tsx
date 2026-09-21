@@ -89,6 +89,23 @@ export default function ArtifactCanvas() {
     }
   });
 
+  createEffect(() => {
+    const artifact = canvasArtifact();
+    if (!canvasOpen() || !artifact?.candidateId || !artifact.sessionId) return;
+    const sessionId = artifact.sessionId;
+    const candidateId = artifact.candidateId;
+    let disposed = false;
+    const updates = api.openCoworkingUpdates(sessionId);
+    updates.addEventListener("refresh", () => {
+      void api.listSandboxCandidateComments(sessionId, candidateId)
+        .then(({ comments }) => {
+          if (!disposed && canvasArtifact()?.candidateId === candidateId) setCandidateComments(comments);
+        })
+        .catch(() => { /* Preserve the visible comment history while offline. */ });
+    });
+    onCleanup(() => { disposed = true; updates.close(); });
+  });
+
   const sendRevision = async () => {
     const artifact = canvasArtifact();
     const sessionId = artifact?.sessionId ?? activeId();

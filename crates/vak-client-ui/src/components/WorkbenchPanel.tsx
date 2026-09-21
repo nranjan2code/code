@@ -391,6 +391,24 @@ export default function WorkbenchPanel() {
       .catch(() => { /* Review remains usable if comment history is unavailable. */ });
   }
 
+  createEffect(() => {
+    const prepared = candidate();
+    const sessionId = activeId();
+    if (!reviewOpen() || !prepared || !sessionId || prepared.session_id !== sessionId) return;
+    let disposed = false;
+    const refresh = () => {
+      void api.listSandboxCandidateComments(sessionId, prepared.candidate.candidate_id)
+        .then(({ comments }) => {
+          if (!disposed && candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
+        })
+        .catch(() => { /* Keep the last known comments during a connection failure. */ });
+    };
+    refresh();
+    const updates = api.openCoworkingUpdates(sessionId);
+    updates.addEventListener("refresh", refresh);
+    onCleanup(() => { disposed = true; updates.close(); });
+  });
+
   const reviewCandidate = async (prepareNew = false, executionId?: string) => {
     const exec = executionId ? executions().find((item) => item.id === executionId) : currentExec();
     const sessionId = activeId();
@@ -493,7 +511,7 @@ export default function WorkbenchPanel() {
     try {
       await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined });
       setReviewComment("");
-      setReviewCommentMessage("Feedback sent to the Agent. This draft remains unchanged until it prepares a new version.");
+      setReviewCommentMessage("Comment saved on this draft. Agent revision will be available after isolated draft editing is ready.");
       void api.listSandboxCandidateComments(id, prepared.candidate.candidate_id)
         .then(({ comments }) => setCandidateComments(comments))
         .catch(() => { /* The accepted comment remains durable. */ });
@@ -622,9 +640,9 @@ export default function WorkbenchPanel() {
                   </div>
                 </Show>
                 <div class="candidate-review-feedback">
-                  <label for="candidate-review-comment">Ask the Agent to change this draft</label>
+                  <label for="candidate-review-comment">Comment on this draft</label>
                   <textarea id="candidate-review-comment" value={reviewComment()} onInput={(event) => setReviewComment(event.currentTarget.value)} placeholder="Describe what you want changed…" />
-                  <button type="button" class="button subtle" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Sending…" : "Send feedback"}</button>
+                  <button type="button" class="button subtle" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
                   <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>
                 </div>
               </div>

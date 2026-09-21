@@ -7178,8 +7178,9 @@ async fn coworking_me(
     }
 }
 
-/// A content-free refresh signal. Participant credentials never reach the
-/// general Agent SSE route, and each signal rechecks the durable grant.
+/// A content-free refresh signal for both sides of a shared conversation.
+/// Participant credentials never reach the general Agent SSE route, and each
+/// participant signal rechecks the durable grant.
 async fn coworking_updates(
     State(state): State<AppState>,
     Path(conversation_id): Path<String>,
@@ -7187,28 +7188,30 @@ async fn coworking_updates(
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let AuthenticatedPrincipal::Participant(participant) = principal else {
-        return StatusCode::FORBIDDEN.into_response();
-    };
-    if participant.conversation_id != conversation_id
-        || conversation_audience(&state, &conversation_id).as_deref()
-            != Some(participant.audience_id.as_str())
-    {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let Some(token) = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(ToOwned::to_owned)
-    else {
-        return StatusCode::UNAUTHORIZED.into_response();
-    };
     let Some(handle) = state.get(&conversation_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let grant = match principal {
+        AuthenticatedPrincipal::Operator => None,
+        AuthenticatedPrincipal::Participant(participant) => {
+            if participant.conversation_id != conversation_id
+                || conversation_audience(&state, &conversation_id).as_deref()
+                    != Some(participant.audience_id.as_str())
+            {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            let Some(token) = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer "))
+                .map(ToOwned::to_owned)
+            else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            Some((token, participant.grant_id))
+        }
+    };
     let grant_path = coworking::store_path(&state.core.sessions_home());
-    let grant_id = participant.grant_id;
     let stream = futures::stream::unfold(
         (
             handle.events_tx.subscribe(),
@@ -7218,8 +7221,7 @@ async fn coworking_updates(
         ),
         move |(mut events, mut comments, mut tick, active)| {
             let grant_path = grant_path.clone();
-            let token = token.clone();
-            let grant_id = grant_id.clone();
+            let grant = grant.clone();
             async move {
                 if !active {
                     return None;
@@ -7229,10 +7231,12 @@ async fn coworking_updates(
                     _ = events.recv() => true,
                     _ = comments.recv() => true,
                 };
-                let valid = matches!(
-                    coworking::verify(&grant_path, &token, chrono::Utc::now()),
-                    Ok(Some(current)) if current.grant_id == grant_id
-                );
+                let valid = grant.as_ref().is_none_or(|(token, grant_id)| {
+                    matches!(
+                        coworking::verify(&grant_path, token, chrono::Utc::now()),
+                        Ok(Some(current)) if current.grant_id == *grant_id
+                    )
+                });
                 let event = if valid {
                     Event::default()
                         .event(if changed { "refresh" } else { "heartbeat" })
@@ -10501,61 +10505,27 @@ async fn comment_on_sandbox_candidate(
         )
             .into_response();
     }
-    let location = match (path, body.line_start, body.line_end) {
-        (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
-        (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
-        (Some(path), _, _) => format!(" file {path}"),
-        _ => String::new(),
-    };
-    let revision_prompt = format!(
-        "Revise candidate {candidate_id} for result {}{location}. Human comment: {text}",
-        saved.result_id
-    );
-    dispatch_candidate_revision(state, session_id, request_id, revision_prompt).await
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "comment_id": format!("comment-{request_id}"), "intervention": false })),
+    )
+        .into_response()
 }
 
-/// Route draft feedback into the owning conversation at its current turn
-/// boundary. A settled conversation has no steering consumer, so it needs a
-/// new governed turn; an active run receives the same text as steering.
+/// A normal Agent turn can write to the owning workspace. Until revisions run
+/// inside a candidate-scoped task environment, dispatching one from review
+/// would bypass the human acceptance boundary. Fail closed here.
 async fn dispatch_candidate_revision(
-    state: AppState,
-    session_id: String,
-    request_id: String,
-    revision_prompt: String,
+    _state: AppState,
+    _session_id: String,
+    _request_id: String,
+    _revision_prompt: String,
 ) -> axum::response::Response {
-    let Some(handle) = state.get(&session_id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let run_active = handle.session.lock().is_ok_and(|session| session.is_none());
-    if run_active {
-        send_steering(
-            State(state),
-            Path(session_id),
-            Json(SteeringBody {
-                text: revision_prompt,
-                request_id: Some(request_id),
-                routing: None,
-                source: "candidate_comment".into(),
-                attachments: Vec::new(),
-            }),
-        )
-        .await
-    } else {
-        run_prompt(
-            State(state),
-            Path(session_id),
-            Json(RunBody {
-                prompt: revision_prompt,
-                request_id: Some(request_id),
-                routing: None,
-                work_mode: None,
-                attachments: Vec::new(),
-                goal: None,
-                criteria: Vec::new(),
-            }),
-        )
-        .await
-    }
+    (
+        StatusCode::CONFLICT,
+        "Draft revision requires an isolated task environment",
+    )
+        .into_response()
 }
 
 /// Owner decision: make one saved human comment an Agent revision request.
@@ -17747,6 +17717,14 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
+        let unsafe_revision = dispatch_candidate_revision(
+            state.clone(),
+            "session-1".into(),
+            "revision-request".into(),
+            "Change the reviewed file".into(),
+        )
+        .await;
+        assert_eq!(unsafe_revision.status(), StatusCode::CONFLICT);
         let ledger_path = find_session_on_disk(&state.core, "session-1")
             .unwrap()
             .path()
@@ -17805,7 +17783,7 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test]
-    async fn saved_human_comment_on_historical_conversation_tries_a_new_turn() {
+    async fn saved_human_comment_cannot_start_unsafe_workspace_revision() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -17862,11 +17840,63 @@ mod sandbox_promotion_tests {
             )),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
         assert!(state.get("session-1").unwrap().session.lock().unwrap().is_some());
         assert!(!SessionLog::open_read_only(session_path)
             .unwrap()
             .has_request_admission("revision-from-comment-from-asha"));
+    }
+
+    #[tokio::test]
+    async fn owner_receives_live_comment_refresh_for_open_review() {
+        use futures::StreamExt;
+
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        let path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join("session-1.jsonl");
+        let session = SessionLog::open(path).unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            session,
+            core.cwd().to_path_buf(),
+            core,
+        );
+        let response = coworking_updates(
+            State(state.clone()),
+            Path("session-1".into()),
+            axum::Extension(AuthenticatedPrincipal::Operator),
+            axum::http::HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut events = response.into_body().into_data_stream();
+        let heartbeat = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(std::str::from_utf8(&heartbeat).unwrap().contains("event: heartbeat"));
+        state
+            .get("session-1")
+            .unwrap()
+            .coworking_comments_tx
+            .send(())
+            .unwrap();
+        let refresh = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(std::str::from_utf8(&refresh).unwrap().contains("event: refresh"));
     }
 
     #[test]

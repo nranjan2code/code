@@ -73,6 +73,9 @@ export default function SharedConversation() {
       stop();
       throw new Error("This invitation has expired or access was revoked. Ask the owner for a new invitation.");
     }
+    // A turn temporarily owns the writable ledger. Preserve the last
+    // transcript until the next scoped update announces settled content.
+    if (path === "/transcript" && response.status === 409) return null;
     if (!response.ok) throw new Error(`Could not load the shared conversation (${response.status}).`);
     return response.json();
   };
@@ -88,7 +91,7 @@ export default function SharedConversation() {
         read(current.conversationId, current.token, "/presentation"),
       ]);
       if (credential()?.token !== current.token) return;
-      setMessages((transcript.messages ?? []).filter((message: Message) =>
+      if (transcript) setMessages((transcript.messages ?? []).filter((message: Message) =>
         message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"
       ));
       setCandidates((records.records ?? []).filter((item: SharedCandidate) => item.kind === "Candidate"));
