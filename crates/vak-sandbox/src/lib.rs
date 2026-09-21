@@ -77,11 +77,25 @@ pub struct EnvironmentPlan {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum CandidateOperation {
+    Upsert,
+    Delete,
+}
+
+impl Default for CandidateOperation {
+    fn default() -> Self {
+        Self::Upsert
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct CandidateFile {
     pub path: String,
     pub candidate_hash: String,
     pub base_hash: Option<String>,
     pub bytes: u64,
+    #[serde(default)]
+    pub operation: CandidateOperation,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -99,6 +113,8 @@ pub struct PromotionReceipt {
     pub before_hashes: Vec<(String, Option<String>)>,
     pub after_hashes: Vec<(String, String)>,
     pub verification: Vec<VerificationResult>,
+    #[serde(default)]
+    pub deleted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,6 +144,8 @@ pub struct PromotionTransactionFile {
     pub after_hash: String,
     pub backup_path: Option<PathBuf>,
     pub state: PromotionFileState,
+    #[serde(default)]
+    pub operation: CandidateOperation,
 }
 
 /// Crash-recovery journal for one exact candidate import. It is stored outside
@@ -375,6 +393,7 @@ pub fn candidate_manifest(
             candidate_hash: digest(&bytes),
             base_hash,
             bytes: bytes.len() as u64,
+            operation: CandidateOperation::Upsert,
         });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -398,6 +417,9 @@ pub fn freeze_candidate(
     fs::create_dir(frozen_root)?;
     let copy = (|| -> Result<(), Error> {
         for file in &manifest.files {
+            if file.operation == CandidateOperation::Delete {
+                continue;
+            }
             let source = confined(source_root, &file.path)?;
             let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
             if digest(&bytes) != file.candidate_hash {
@@ -437,9 +459,23 @@ pub fn freeze_revision_candidate(
     let mut revision = freeze_candidate(id, task_root, &parent.destination_root, frozen_root)?;
     let result = (|| -> Result<(), Error> {
         for original in &parent.files {
-            if !revision.files.iter().any(|file| file.path == original.path) {
-                return Err(Error::Missing(original.path.clone()));
+            if !revision.files.iter().any(|file| file.path == original.path)
+                && original.base_hash.is_some()
+            {
+                revision.files.push(CandidateFile {
+                    path: original.path.clone(),
+                    candidate_hash: original.candidate_hash.clone(),
+                    base_hash: original.base_hash.clone(),
+                    bytes: 0,
+                    operation: CandidateOperation::Delete,
+                });
             }
+        }
+        revision.files.sort_by(|a, b| a.path.cmp(&b.path));
+        if revision.files.is_empty() {
+            return Err(Error::InvalidPlan(
+                "revision has no workspace changes to review".into(),
+            ));
         }
         let changed = revision.files.len() != parent.files.len()
             || revision.files.iter().any(|file| {
@@ -447,7 +483,9 @@ pub fn freeze_revision_candidate(
                     .files
                     .iter()
                     .find(|old| old.path == file.path)
-                    .is_some_and(|old| old.candidate_hash != file.candidate_hash)
+                    .is_some_and(|old| {
+                        old.candidate_hash != file.candidate_hash || old.operation != file.operation
+                    })
             });
         if !changed {
             return Err(Error::InvalidPlan(
@@ -478,6 +516,9 @@ pub fn prepare_revision_copy(candidate: &CandidateManifest, task_root: &Path) ->
     fs::create_dir(task_root)?;
     let copy = (|| -> Result<(), Error> {
         for file in &candidate.files {
+            if file.operation == CandidateOperation::Delete {
+                continue;
+            }
             let source = confined(&candidate.source_root, &file.path)?;
             let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
             if digest(&bytes) != file.candidate_hash {
@@ -555,6 +596,7 @@ fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
         after_hashes: transaction
             .files
             .iter()
+            .filter(|file| file.operation == CandidateOperation::Upsert)
             .map(|file| (file.path.clone(), file.after_hash.clone()))
             .collect(),
         verification: transaction
@@ -563,8 +605,18 @@ fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
             .map(|file| VerificationResult {
                 path: file.path.clone(),
                 status: "observed".into(),
-                evidence: format!("destination hash verified: {}", file.after_hash),
+                evidence: if file.operation == CandidateOperation::Delete {
+                    "destination absence verified".into()
+                } else {
+                    format!("destination hash verified: {}", file.after_hash)
+                },
             })
+            .collect(),
+        deleted: transaction
+            .files
+            .iter()
+            .filter(|file| file.operation == CandidateOperation::Delete)
+            .map(|file| file.path.clone())
             .collect(),
     }
 }
@@ -591,7 +643,9 @@ fn rollback_transaction(
             write_transaction(journal_path, transaction)?;
             continue;
         }
-        if current.as_deref() != Some(file.after_hash.as_str()) {
+        let expected_after =
+            (file.operation == CandidateOperation::Upsert).then_some(file.after_hash.as_str());
+        if current.as_deref() != expected_after {
             return Err(Error::Conflict(format!(
                 "promotion recovery blocked by a later workspace change: {}",
                 file.path
@@ -663,7 +717,9 @@ pub fn promote_recoverable(
             for file in &previous.files {
                 let target = confined(&previous.destination_root, &file.path)?;
                 let observed = fs::read(&target).ok().map(|bytes| digest(&bytes));
-                if observed.as_deref() != Some(file.after_hash.as_str()) {
+                let expected = (file.operation == CandidateOperation::Upsert)
+                    .then_some(file.after_hash.as_str());
+                if observed.as_deref() != expected {
                     return Err(Error::Conflict(format!(
                         "completed promotion no longer matches the workspace: {}",
                         file.path
@@ -698,11 +754,16 @@ pub fn promote_recoverable(
     let mut staged = Vec::new();
     let mut files = Vec::new();
     for (index, file) in candidate.files.iter().enumerate() {
-        let source = confined(&candidate.source_root, &file.path)?;
-        let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
-        if digest(&bytes) != file.candidate_hash {
-            return Err(Error::CandidateChanged(file.path.clone()));
-        }
+        let bytes = if file.operation == CandidateOperation::Delete {
+            Vec::new()
+        } else {
+            let source = confined(&candidate.source_root, &file.path)?;
+            let bytes = fs::read(&source).map_err(|_| Error::Missing(file.path.clone()))?;
+            if digest(&bytes) != file.candidate_hash {
+                return Err(Error::CandidateChanged(file.path.clone()));
+            }
+            bytes
+        };
         let proposed_target = candidate.destination_root.join(&file.path);
         let mut parent = proposed_target.parent();
         while let Some(path) = parent {
@@ -749,6 +810,7 @@ pub fn promote_recoverable(
             after_hash: file.candidate_hash.clone(),
             backup_path,
             state: PromotionFileState::Prepared,
+            operation: file.operation.clone(),
         });
         staged.push((target, bytes));
     }
@@ -771,19 +833,25 @@ pub fn promote_recoverable(
             }
             transaction.files[index].state = PromotionFileState::Applying;
             write_transaction(&journal_path, &transaction)?;
-            let mut output = fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(&temporary)?;
-            use std::io::Write;
-            output.write_all(&bytes)?;
-            output.sync_all()?;
-            fs::rename(&temporary, &target)?;
+            if transaction.files[index].operation == CandidateOperation::Delete {
+                fs::remove_file(&target)?;
+            } else {
+                let mut output = fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open(&temporary)?;
+                use std::io::Write;
+                output.write_all(&bytes)?;
+                output.sync_all()?;
+                fs::rename(&temporary, &target)?;
+            }
             transaction.files[index].state = PromotionFileState::Applied;
             write_transaction(&journal_path, &transaction)?;
-            let observed = digest(&fs::read(&target)?);
-            if observed != transaction.files[index].after_hash {
+            let observed = fs::read(&target).ok().map(|bytes| digest(&bytes));
+            let expected = (transaction.files[index].operation == CandidateOperation::Upsert)
+                .then_some(transaction.files[index].after_hash.as_str());
+            if observed.as_deref() != expected {
                 return Err(Error::Conflict(format!(
                     "post-apply verification failed: {}",
                     transaction.files[index].path
@@ -892,7 +960,9 @@ pub fn undo_promotion(candidate_id: &str, transaction_root: &Path) -> Result<Und
             write_transaction(&journal_path, &transaction)?;
             continue;
         }
-        if current.as_deref() != Some(file.after_hash.as_str()) {
+        let expected_after =
+            (file.operation == CandidateOperation::Upsert).then_some(file.after_hash.as_str());
+        if current.as_deref() != expected_after {
             return Err(Error::Conflict(format!(
                 "undo blocked by a later workspace change: {}",
                 file.path
@@ -1174,6 +1244,7 @@ mod tests {
                 candidate_hash: digest(b"secret"),
                 base_hash: None,
                 bytes: 6,
+                operation: CandidateOperation::Upsert,
             }],
         };
         assert!(matches!(promote(&candidate), Err(Error::PathEscape(_))));
@@ -1198,12 +1269,14 @@ mod tests {
                     candidate_hash: digest(b"new a"),
                     base_hash: Some(digest(b"old a")),
                     bytes: 5,
+                    operation: CandidateOperation::Upsert,
                 },
                 CandidateFile {
                     path: "b.txt".into(),
                     candidate_hash: digest(b"new b"),
                     base_hash: None,
                     bytes: 5,
+                    operation: CandidateOperation::Upsert,
                 },
             ],
         };
@@ -1225,6 +1298,7 @@ mod tests {
                     after_hash: digest(b"new a"),
                     backup_path: Some(backup),
                     state: PromotionFileState::Applied,
+                    operation: CandidateOperation::Upsert,
                 },
                 PromotionTransactionFile {
                     path: "b.txt".into(),
@@ -1232,6 +1306,7 @@ mod tests {
                     after_hash: digest(b"new b"),
                     backup_path: None,
                     state: PromotionFileState::Applying,
+                    operation: CandidateOperation::Upsert,
                 },
             ],
         };
@@ -1267,6 +1342,7 @@ mod tests {
                 candidate_hash: digest(b"candidate"),
                 base_hash: Some(digest(b"original")),
                 bytes: 9,
+                operation: CandidateOperation::Upsert,
             }],
         };
         let directory = control.path().join("conflicted-recovery");
@@ -1287,6 +1363,7 @@ mod tests {
                     after_hash: digest(b"candidate"),
                     backup_path: Some(backup),
                     state: PromotionFileState::Applied,
+                    operation: CandidateOperation::Upsert,
                 }],
             },
         )
@@ -1314,6 +1391,7 @@ mod tests {
             candidate_hash: digest(bytes),
             base_hash: None,
             bytes: bytes.len() as u64,
+            operation: CandidateOperation::Upsert,
         };
         let first = CandidateManifest {
             candidate_id: "selection".into(),
@@ -1351,12 +1429,14 @@ mod tests {
                     candidate_hash: digest(b"after"),
                     base_hash: Some(digest(b"before")),
                     bytes: 5,
+                    operation: CandidateOperation::Upsert,
                 },
                 CandidateFile {
                     path: "new.txt".into(),
                     candidate_hash: digest(b"new"),
                     base_hash: None,
                     bytes: 3,
+                    operation: CandidateOperation::Upsert,
                 },
             ],
         };
@@ -1392,6 +1472,7 @@ mod tests {
                 candidate_hash: digest(b"accepted"),
                 base_hash: None,
                 bytes: 8,
+                operation: CandidateOperation::Upsert,
             }],
         };
         promote_recoverable(&candidate, control.path()).unwrap();
@@ -1422,6 +1503,7 @@ mod tests {
                 candidate_hash: digest(b"after"),
                 base_hash: Some(digest(b"before")),
                 bytes: 5,
+                operation: CandidateOperation::Upsert,
             }],
         };
         promote_recoverable(&candidate, control.path()).unwrap();
@@ -1440,6 +1522,39 @@ mod tests {
         assert_eq!(
             fs::read_to_string(target.path().join("draft.txt")).unwrap(),
             "before"
+        );
+    }
+
+    #[test]
+    fn revised_candidate_can_review_accept_and_undo_a_deletion() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        fs::write(target.path().join("obsolete.txt"), "workspace original").unwrap();
+        fs::write(source.path().join("obsolete.txt"), "draft version").unwrap();
+        let first = freeze_candidate(
+            "delete-v1",
+            source.path(),
+            target.path(),
+            &store.path().join("v1"),
+        )
+        .unwrap();
+        let task = store.path().join("task");
+        prepare_revision_copy(&first, &task).unwrap();
+        fs::remove_file(task.join("obsolete.txt")).unwrap();
+        let deletion =
+            freeze_revision_candidate("delete-v2", &task, &first, &store.path().join("v2"))
+                .unwrap();
+        assert_eq!(deletion.files.len(), 1);
+        assert_eq!(deletion.files[0].operation, CandidateOperation::Delete);
+        let receipt = promote_recoverable(&deletion, control.path()).unwrap();
+        assert_eq!(receipt.deleted, vec!["obsolete.txt"]);
+        assert!(!target.path().join("obsolete.txt").exists());
+        undo_promotion("delete-v2", control.path()).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.path().join("obsolete.txt")).unwrap(),
+            "workspace original"
         );
     }
 

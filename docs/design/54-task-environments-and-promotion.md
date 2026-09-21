@@ -168,8 +168,9 @@ file through prepared, applying and applied states. On restart, an incomplete
 transaction is rolled back before retry; recovery stops if the destination no
 longer matches the recorded before or after hash, preserving later human work.
 Completed transactions can reconstruct a missing append-only promotion record
-only while every destination still matches its recorded after-hash. Deletion
-candidates and target integration verification remain open.
+only while every destination still matches its recorded after-hash. Addition,
+change and deletion candidates are supported; target integration verification
+remains open.
 
 Scoped undo uses the same transaction journal and workspace lock. It is
 available only for a recorded completed promotion, verifies that every target
@@ -179,6 +180,15 @@ each mutation. Interrupted undo resumes from destination hashes. If any later
 workspace edit is observed, undo stops without erasing it and requires human
 resolution. The append-only sandbox ledger records the authenticated undo
 receipt separately from the original promotion receipt.
+
+Candidate manifests represent deletion explicitly. A revised task copy that
+omits a path with an existing imported workspace baseline freezes a `Delete`
+operation carrying that baseline and the reviewed parent identity. Review
+shows the current bytes and the absence that will result. Acceptance verifies
+the destination still matches the baseline before removing it, records
+observed absence separately from after-hashes, and retains the before-image for
+scoped undo. Removing a file that existed only in an unaccepted draft creates
+no workspace deletion operation.
 
 Append model-visible plans, setup results, environment failures and result references to the session so `derive_messages()` reconstructs what the model saw. Logs/blobs can be external content-addressed data with durable ledger references. Version new records additively; never reinterpret old entries or label unknown history verified.
 

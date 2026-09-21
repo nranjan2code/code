@@ -490,13 +490,14 @@ export default function WorkbenchPanel() {
   });
 
   const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
-  const fileState = (file: { candidate_hash: string; base_hash?: string }) =>
-    !file.base_hash ? "New" : file.base_hash === file.candidate_hash ? "Unchanged" : "Changed";
+  const fileState = (file: { candidate_hash: string; base_hash?: string; operation?: "Upsert" | "Delete" }) =>
+    file.operation === "Delete" ? "Deleted" : !file.base_hash ? "New" : file.base_hash === file.candidate_hash ? "Unchanged" : "Changed";
   const candidateSummary = createMemo(() => {
     const files = candidate()?.candidate.files ?? [];
     return {
       newFiles: files.filter((file) => fileState(file) === "New").length,
       changedFiles: files.filter((file) => fileState(file) === "Changed").length,
+      deletedFiles: files.filter((file) => fileState(file) === "Deleted").length,
       unchangedFiles: files.filter((file) => fileState(file) === "Unchanged").length,
     };
   });
@@ -520,9 +521,13 @@ export default function WorkbenchPanel() {
     setBeforeContent(null);
     setAfterContent(null);
     setReviewFileError(null);
+    const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
+    const afterRequest = reviewedFile?.operation === "Delete"
+      ? Promise.resolve({ content: null })
+      : api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path);
     void Promise.allSettled([
       api.readFile(candidatePath(prepared.candidate.destination_root, path)),
-      api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path),
+      afterRequest,
     ]).then(([before, after]) => {
       if (disposed) return;
       setBeforeContent(before.status === "fulfilled" ? before.value.content ?? null : null);
@@ -634,6 +639,7 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-counts">
                 <strong>{candidateSummary().newFiles} new</strong>
                 <strong>{candidateSummary().changedFiles} changed</strong>
+                <Show when={candidateSummary().deletedFiles > 0}><strong>{candidateSummary().deletedFiles} deleted</strong></Show>
                 <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
               </div>
               <div class="candidate-review-decision-grid">
@@ -661,7 +667,7 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-preview">
                 <h3>{reviewedPath() ?? "Choose a file"}</h3>
                 <Show when={reviewedPath()}>{(path) =>
-                  <button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
+                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
                     const version = prepared();
                     setReviewOpen(false);
                     openArtifactCanvas({
@@ -673,14 +679,14 @@ export default function WorkbenchPanel() {
                       executionId: version.execution_id,
                       candidateId: version.candidate.candidate_id,
                     });
-                  }}>Open saved version in Canvas</button>
+                  }}>Open saved version in Canvas</button></Show>
                 }</Show>
                 <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={reviewedPath() && !reviewFileError()}>
                   <div class="candidate-review-columns">
                     <div><strong>Current workspace</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
-                    <div><strong>Draft</strong><pre>{afterContent() ?? "Loading or preview unavailable"}</pre></div>
+                    <div><strong>Draft</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre></div>
                   </div>
                 </Show>
                 <Show when={candidateComments().length > 0}>
@@ -702,7 +708,7 @@ export default function WorkbenchPanel() {
               </div>
             </div>
             <footer class="candidate-review-footer">
-              <span>Accepting writes {reviewedFiles().length} selected {reviewedFiles().length === 1 ? "file" : "files"} to {destinationLabel()} · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
+              <span>Applying {reviewedFiles().length} selected {reviewedFiles().length === 1 ? "change" : "changes"} to {destinationLabel()} · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
               <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
               <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
             </footer>
