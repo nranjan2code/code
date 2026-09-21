@@ -1332,6 +1332,15 @@ impl Core {
         }
     }
 
+    /// Carry the pinned, version-matched worker into an isolated child Core.
+    pub fn tool_worker_exe(&self) -> PathBuf {
+        self.inner
+            .tool_worker_exe
+            .lock()
+            .map(|worker| worker.clone())
+            .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__"))
+    }
+
     pub fn agent_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
         let worker = self
             .inner

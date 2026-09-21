@@ -61,17 +61,21 @@ fn result_outcome(
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 
-fn sandbox_artifact_actions(execution_id: &str, path: &str, reviewable: bool) -> Vec<DeliveryAction> {
+fn sandbox_artifact_actions(
+    execution_id: &str,
+    path: &str,
+    reviewable: bool,
+) -> Vec<DeliveryAction> {
     let mut open_data = BTreeMap::new();
     open_data.insert("path".into(), path.into());
     let mut review_data = BTreeMap::new();
     review_data.insert("execution_id".into(), execution_id.into());
     let mut actions = vec![DeliveryAction {
-            id: format!("open-{execution_id}-{path}"),
-            label: "Open".into(),
-            verb: "open_artifact".into(),
-            data: open_data,
-        }];
+        id: format!("open-{execution_id}-{path}"),
+        label: "Open".into(),
+        verb: "open_artifact".into(),
+        data: open_data,
+    }];
     if reviewable {
         actions.push(DeliveryAction {
             id: format!("review-{execution_id}"),
@@ -207,17 +211,23 @@ pub(crate) fn append_sandbox_artifacts(
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
     };
-    let events = text.lines()
+    let events = text
+        .lines()
         .filter_map(|line| serde_json::from_str::<vak_tools::SandboxEvent>(line).ok())
         .collect::<Vec<_>>();
-    let reviewable_roots = events.iter().filter_map(|event| match event {
-        vak_tools::SandboxEvent::ExecutionStarted { execution_id, scratch_dir, .. }
-            if std::path::Path::new(scratch_dir).is_dir() =>
-        {
-            Some((execution_id.clone(), scratch_dir.clone()))
-        }
-        _ => None,
-    }).collect::<HashMap<_, _>>();
+    let reviewable_roots = events
+        .iter()
+        .filter_map(|event| match event {
+            vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id,
+                scratch_dir,
+                ..
+            } if std::path::Path::new(scratch_dir).is_dir() => {
+                Some((execution_id.clone(), scratch_dir.clone()))
+            }
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
     for event in events {
         let vak_tools::SandboxEvent::ArtifactGenerated {
             execution_id,
@@ -249,15 +259,20 @@ pub(crate) fn append_sandbox_artifacts(
         let reviewable = reviewable_roots.get(&execution_id).is_some_and(|root| {
             let artifact = std::path::Path::new(&path);
             let scratch = std::path::Path::new(root);
-            artifact.is_absolute().then(|| artifact.starts_with(scratch)).unwrap_or_else(|| {
-                let workspace = scratch.ancestors()
-                    .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
-                    .and_then(std::path::Path::parent)
-                    .unwrap_or(scratch);
-                scratch.strip_prefix(workspace)
-                    .ok()
-                    .is_some_and(|relative_scratch| artifact.starts_with(relative_scratch))
-            })
+            artifact
+                .is_absolute()
+                .then(|| artifact.starts_with(scratch))
+                .unwrap_or_else(|| {
+                    let workspace = scratch
+                        .ancestors()
+                        .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
+                        .and_then(std::path::Path::parent)
+                        .unwrap_or(scratch);
+                    scratch
+                        .strip_prefix(workspace)
+                        .ok()
+                        .is_some_and(|relative_scratch| artifact.starts_with(relative_scratch))
+                })
         });
         // A successful write/edit is already projected from the durable tool
         // result. Its sandbox event is stronger evidence about the same file,
@@ -265,7 +280,10 @@ pub(crate) fn append_sandbox_artifacts(
         // result presents one file and one Canvas entry point.
         if let Some(existing) = timeline.items.iter_mut().find(|item| {
             if item.kind != OutputKind::Artifact
-                || item.provenance.as_ref().and_then(|p| p.tool_call_id.as_deref())
+                || item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.tool_call_id.as_deref())
                     != Some(execution_id.as_str())
             {
                 return false;
@@ -282,11 +300,7 @@ pub(crate) fn append_sandbox_artifacts(
             existing.turn_id = turn_id.clone();
             existing.timestamp = timestamp;
             existing.outcome = result_by_turn.get(&turn_id).cloned();
-            existing.actions = sandbox_artifact_actions(
-                &execution_id,
-                &path,
-                reviewable,
-            );
+            existing.actions = sandbox_artifact_actions(&execution_id, &path, reviewable);
             existing.fallback_text = format!("Generated artifact: {path}");
             if let OutputContent::Artifact { artifact } = &mut existing.content {
                 artifact.path = Some(path.clone());
@@ -322,11 +336,7 @@ pub(crate) fn append_sandbox_artifacts(
                 source: Some("sandbox_artifact".into()),
                 presentation_id: None,
             }),
-            actions: sandbox_artifact_actions(
-                &execution_id,
-                &path,
-                reviewable,
-            ),
+            actions: sandbox_artifact_actions(&execution_id, &path, reviewable),
             fallback_text: format!("Generated artifact: {path}"),
         });
     }
@@ -1489,6 +1499,15 @@ fn activity_item(
                 detail: activity.data.get("comment").cloned(),
             },
         ),
+        ActivityKind::CandidateRevision => (
+            OutputRole::Assistant,
+            OutputKind::Progress,
+            OutputContent::Progress {
+                label: activity.label.clone(),
+                detail: activity.detail.clone(),
+                percent: None,
+            },
+        ),
         ActivityKind::Worker => (
             OutputRole::Worker,
             OutputKind::Progress,
@@ -2218,7 +2237,10 @@ mod tests {
         };
         std::fs::write(
             events.join("session-1.jsonl"),
-            format!("{}\n", serde_json::to_string(&observed).expect("event json")),
+            format!(
+                "{}\n",
+                serde_json::to_string(&observed).expect("event json")
+            ),
         )
         .expect("event sidecar");
         let mut timeline = OutputTimeline::empty("session-1");
@@ -2230,12 +2252,14 @@ mod tests {
             kind: OutputKind::Artifact,
             status: OutputStatus::Succeeded,
             outcome: None,
-            content: OutputContent::Artifact { artifact: vak_delivery::ArtifactRef {
-                name: "page.html".into(),
-                path: Some("page.html".into()),
-                media_type: Some("text/html".into()),
-                description: Some("Produced by write".into()),
-            } },
+            content: OutputContent::Artifact {
+                artifact: vak_delivery::ArtifactRef {
+                    name: "page.html".into(),
+                    path: Some("page.html".into()),
+                    media_type: Some("text/html".into()),
+                    description: Some("Produced by write".into()),
+                },
+            },
             provenance: Some(OutputProvenance {
                 session_id: Some("session-1".into()),
                 entry_id: Some("entry-1".into()),
@@ -2249,10 +2273,24 @@ mod tests {
 
         super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
 
-        let artifacts = timeline.items.iter().filter(|item| item.kind == OutputKind::Artifact).collect::<Vec<_>>();
+        let artifacts = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Artifact)
+            .collect::<Vec<_>>();
         assert_eq!(artifacts.len(), 1);
-        assert!(artifacts[0].actions.iter().any(|action| action.verb == "open_artifact"));
-        assert!(!artifacts[0].actions.iter().any(|action| action.verb == "review_draft"));
+        assert!(
+            artifacts[0]
+                .actions
+                .iter()
+                .any(|action| action.verb == "open_artifact")
+        );
+        assert!(
+            !artifacts[0]
+                .actions
+                .iter()
+                .any(|action| action.verb == "review_draft")
+        );
     }
 
     #[test]

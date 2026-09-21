@@ -972,12 +972,14 @@ export function writeFile(path: string, content: string): Promise<unknown> {
 }
 
 export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number }> };
-export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; updated_at: string };
+export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; updated_at: string; parent_candidate_id?: string; revision_session_id?: string };
 export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { verification?: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
+export type SandboxCandidateRevisionRecord = { record_id: string; revision_id: string; session_id: string; parent_candidate_id: string; comment_id: string; child_session_id: string; status: "Running" | "Completed" | "Failed"; candidate_id?: string; detail?: string; updated_at: string };
 export type SandboxRecord =
   | { kind: "Candidate"; record: SandboxCandidateRecord }
   | { kind: "Promotion"; record: SandboxPromotionRecord }
-  | { kind: "Environment"; record: unknown };
+  | { kind: "Environment"; record: unknown }
+  | { kind: "CandidateRevision"; record: SandboxCandidateRevisionRecord };
 
 export function readSandboxCandidateFile(sessionId: string, candidateId: string, path: string): Promise<FileResponse> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
@@ -989,7 +991,7 @@ export async function readSandboxCandidateFileRaw(sessionId: string, candidateId
   return URL.createObjectURL(await response.blob());
 }
 
-export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number }): Promise<InterventionReceipt> {
+export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number }): Promise<{ comment_id: string; intervention: boolean }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`, {
     method: "POST",
     body: JSON.stringify({

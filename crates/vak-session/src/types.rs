@@ -613,6 +613,8 @@ pub enum ActivityKind {
     PresentationFeedback,
     /// Human feedback anchored to an immutable candidate result and file.
     CandidateComment,
+    /// A human-requested isolated Agent revision of a saved candidate.
+    CandidateRevision,
     /// A bind-time capacity probe ran and recorded a `CapacityProfile`
     /// (docs/design/68-context-engine.md §1). Never model-visible.
     CapacityProbe,

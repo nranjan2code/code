@@ -7015,7 +7015,11 @@ async fn transcript(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(s) = guard.as_ref() else {
-            return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "run in progress" }))).into_response();
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "run in progress" })),
+            )
+                .into_response();
         };
         return Json(transcript_json(s)).into_response();
     }
@@ -10029,6 +10033,7 @@ async fn list_session_sandbox_records(
                     vak_sandbox::DurableRecord::Candidate(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Promotion(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Environment(_) => false,
+                    vak_sandbox::DurableRecord::CandidateRevision(value) => value.session_id == id,
                 })
                 .collect::<Vec<_>>();
             Json(serde_json::json!({ "records": records })).into_response()
@@ -10187,6 +10192,8 @@ async fn export_sandbox_candidate(
                 candidate: candidate.clone(),
                 verified: true,
                 updated_at: chrono::Utc::now().to_rfc3339(),
+                parent_candidate_id: None,
+                revision_session_id: None,
             });
             match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
                 Ok(()) => Json(record).into_response(),
@@ -10512,18 +10519,411 @@ async fn comment_on_sandbox_candidate(
         .into_response()
 }
 
-/// A normal Agent turn can write to the owning workspace. Until revisions run
-/// inside a candidate-scoped task environment, dispatching one from review
-/// would bypass the human acceptance boundary. Fail closed here.
+fn append_candidate_revision_activity(
+    handle: &Arc<SessionHandle>,
+    revision_id: &str,
+    candidate_id: &str,
+    child_session_id: &str,
+    status: vak_session::ActivityStatus,
+    detail: Option<String>,
+) -> bool {
+    let activity = vak_session::ActivityRecord {
+        activity_id: format!(
+            "candidate-revision-{revision_id}-{}",
+            match status {
+                vak_session::ActivityStatus::Running => "started",
+                _ => "finished",
+            }
+        ),
+        turn: None,
+        kind: vak_session::ActivityKind::CandidateRevision,
+        status,
+        label: "Draft revision".into(),
+        detail,
+        data: std::collections::BTreeMap::from([
+            ("revision_id".into(), revision_id.into()),
+            ("candidate_id".into(), candidate_id.into()),
+            ("child_session_id".into(), child_session_id.into()),
+        ]),
+    };
+    match handle.session.lock() {
+        Ok(mut session) => match session.as_mut() {
+            Some(session) if session.is_read_only() => {
+                vak_session::SessionLog::open(session.path().to_path_buf())
+                    .and_then(|mut writable| writable.append_activity(activity))
+                    .is_ok()
+            }
+            Some(session) => session.append_activity(activity).is_ok(),
+            None => handle
+                .activity_buffer
+                .lock()
+                .map(|mut buffer| buffer.push(activity))
+                .is_ok(),
+        },
+        Err(_) => false,
+    }
+}
+
+/// Run a saved-draft revision in a fresh child Core rooted in verified copy
+/// bytes. Its worker has no write path to the owning workspace, even when the
+/// owner has FullAccess. A new candidate is published only after a completed
+/// Agent turn changes the task copy.
 async fn dispatch_candidate_revision(
-    _state: AppState,
-    _session_id: String,
-    _request_id: String,
-    _revision_prompt: String,
+    state: AppState,
+    saved: vak_sandbox::CandidateRecord,
+    comment_id: String,
+    revision_prompt: String,
 ) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(parent) = state.get(&saved.session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if parent.core.effective_permission_mode() == vak_config::PermissionMode::ReadOnly {
+        return (
+            StatusCode::CONFLICT,
+            "Draft editing is disabled in read-only mode",
+        )
+            .into_response();
+    }
+    let Some(agent_identity) = find_session_on_disk(&state.core, &saved.session_id)
+        .and_then(|log| log.header().and_then(|header| header.agent.clone()))
+    else {
+        return (
+            StatusCode::CONFLICT,
+            "Agent identity for this conversation is unavailable",
+        )
+            .into_response();
+    };
+    let records_path = sandbox_records_path(&state);
+    let records = match vak_sandbox::load_records(&records_path) {
+        Ok(records) => records,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let admission = format!("candidate-revision:{comment_id}");
+    if let Some(previous) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::CandidateRevision(record)
+            if record.session_id == saved.session_id
+                && record.parent_candidate_id == saved.candidate.candidate_id
+                && record.comment_id == comment_id =>
+        {
+            Some(record)
+        }
+        _ => None,
+    }) {
+        match previous.status {
+            vak_sandbox::CandidateRevisionStatus::Completed => {
+                return Json(
+                    serde_json::json!({"request_id": previous.revision_id, "state": "completed"}),
+                )
+                .into_response();
+            }
+            vak_sandbox::CandidateRevisionStatus::Running => {
+                if records.iter().any(|record| matches!(record,
+                    vak_sandbox::DurableRecord::Candidate(candidate)
+                        if candidate.revision_session_id.as_deref() == Some(previous.child_session_id.as_str()))) {
+                    return Json(serde_json::json!({"request_id": previous.revision_id, "state": "completed"})).into_response();
+                }
+                let active = parent
+                    .admissions
+                    .lock()
+                    .is_ok_and(|admissions| admissions.contains(&admission))
+                    || state.get(&previous.child_session_id).is_some_and(|handle| {
+                        handle.session.lock().is_ok_and(|session| session.is_none())
+                    });
+                if active {
+                    return (StatusCode::ACCEPTED, Json(serde_json::json!({"request_id": previous.revision_id, "state": "running"}))).into_response();
+                }
+                let _ = vak_sandbox::append_record(&records_path, &vak_sandbox::DurableRecord::CandidateRevision(vak_sandbox::CandidateRevisionRecord {
+                    record_id: format!("revision-{}-interrupted", previous.revision_id),
+                    status: vak_sandbox::CandidateRevisionStatus::Failed,
+                    detail: Some("The isolated revision was interrupted before a new candidate was saved".into()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    ..previous.clone()
+                }));
+            }
+            _ => {}
+        }
+    }
+    let admitted = match parent.admissions.lock() {
+        Ok(mut admissions) => admissions.insert(admission.clone()),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !admitted {
+        return (StatusCode::CONFLICT, "Revision request already starting").into_response();
+    }
+    let revision_id = uuid::Uuid::now_v7().to_string();
+    let task_root = state
+        .core
+        .sessions_home()
+        .join("sandbox")
+        .join("revisions")
+        .join(&revision_id)
+        .join("work");
+    let setup = (|| -> Result<(), String> {
+        std::fs::create_dir_all(task_root.parent().ok_or("revision root unavailable")?)
+            .map_err(|error| error.to_string())?;
+        vak_sandbox::prepare_revision_copy(&saved.candidate, &task_root)
+            .map_err(|error| error.to_string())
+    })();
+    if let Err(error) = setup {
+        if let Ok(mut admissions) = parent.admissions.lock() {
+            admissions.remove(&admission);
+        }
+        return (StatusCode::CONFLICT, error).into_response();
+    }
+    let child_core = match Core::new_with_trust(task_root.clone(), false) {
+        Ok(core) => core
+            .with_agent_identity(Some(agent_identity))
+            .with_surface(vak_core::Surface::Background)
+            .with_approver_answerable(false)
+            .with_task_copy_boundary(),
+        Err(error) => {
+            if let Ok(mut admissions) = parent.admissions.lock() {
+                admissions.remove(&admission);
+            }
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    child_core.set_sessions_home(state.core.shared_data_home());
+    child_core.set_tool_worker_exe(parent.core.tool_worker_exe());
+    child_core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
+    child_core.set_route(
+        parent.core.effective_provider(),
+        parent.core.effective_model(),
+    );
+    match parent.core.provider() {
+        Ok(provider) => child_core.set_provider_instance(provider),
+        Err(error) => {
+            if let Ok(mut admissions) = parent.admissions.lock() {
+                admissions.remove(&admission);
+            }
+            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+        }
+    }
+    let child_log = match child_core.start_session().await {
+        Ok(log) => log,
+        Err(error) => {
+            if let Ok(mut admissions) = parent.admissions.lock() {
+                admissions.remove(&admission);
+            }
+            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+        }
+    };
+    let Some(child_session_id) = child_log.header().map(|header| header.session_id.clone()) else {
+        if let Ok(mut admissions) = parent.admissions.lock() {
+            admissions.remove(&admission);
+        }
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let child = register_handle(
+        &state,
+        child_session_id.clone(),
+        child_log,
+        task_root.clone(),
+        child_core.clone(),
+    );
+    let running = vak_sandbox::CandidateRevisionRecord {
+        record_id: format!("revision-{revision_id}-running"),
+        revision_id: revision_id.clone(),
+        session_id: saved.session_id.clone(),
+        parent_candidate_id: saved.candidate.candidate_id.clone(),
+        comment_id: comment_id.clone(),
+        child_session_id: child_session_id.clone(),
+        task_root: task_root.clone(),
+        status: vak_sandbox::CandidateRevisionStatus::Running,
+        candidate_id: None,
+        detail: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Err(error) = vak_sandbox::append_record(
+        &records_path,
+        &vak_sandbox::DurableRecord::CandidateRevision(running.clone()),
+    ) {
+        if let Ok(mut admissions) = parent.admissions.lock() {
+            admissions.remove(&admission);
+        }
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    if !append_candidate_revision_activity(
+        &parent,
+        &revision_id,
+        &saved.candidate.candidate_id,
+        &child_session_id,
+        vak_session::ActivityStatus::Running,
+        None,
+    ) {
+        // The durable revision record survives; a failed conversation append
+        // must not launch work that the conversation cannot account for.
+        if let Ok(mut admissions) = parent.admissions.lock() {
+            admissions.remove(&admission);
+        }
+        let _ = vak_sandbox::append_record(
+            &records_path,
+            &vak_sandbox::DurableRecord::CandidateRevision(vak_sandbox::CandidateRevisionRecord {
+                record_id: format!("revision-{revision_id}-failed"),
+                status: vak_sandbox::CandidateRevisionStatus::Failed,
+                detail: Some("Could not record revision start in the conversation".into()),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+                ..running
+            }),
+        );
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let prompt = format!(
+        "Revise the saved draft in this isolated working copy. {revision_prompt}. Keep existing candidate files; add files only when needed. The person must review and accept a new version before any workspace change. Available files: {}.",
+        saved
+            .candidate
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let reply_id = revision_id.clone();
+    tokio::spawn(async move {
+        let taken = child
+            .session
+            .lock()
+            .ok()
+            .and_then(|mut session| session.take());
+        let outcome = if let Some(log) = taken {
+            child_core
+                .run_turn_with(
+                    log,
+                    &prompt,
+                    child
+                        .cancel
+                        .lock()
+                        .map(|cancel| cancel.clone())
+                        .unwrap_or_else(|_| CancellationToken::new()),
+                    Some(Arc::new(vak_agent::AutoDeny)),
+                    None,
+                    None,
+                    mpsc_to_broadcast(child.events_tx.clone()),
+                )
+                .await
+        } else {
+            Err(vak_core::CoreError::InvalidConfig(
+                "revision session unavailable".into(),
+            ))
+        };
+        let detail: Option<String>;
+        let mut new_candidate_id = None;
+        let completed = match outcome {
+            Ok((vak_agent::TurnOutcome::Completed { response }, log)) => {
+                if let Ok(mut slot) = child.session.lock() {
+                    *slot = Some(log);
+                }
+                let id = uuid::Uuid::now_v7().to_string();
+                let frozen_root = sandbox_candidates_root(&state).join(&id);
+                match vak_sandbox::freeze_revision_candidate(
+                    &id,
+                    &task_root,
+                    &saved.candidate,
+                    &frozen_root,
+                ) {
+                    Ok(candidate) => match vak_sandbox::candidate_digest(&candidate) {
+                        Ok(candidate_digest) => {
+                            let record = vak_sandbox::CandidateRecord {
+                                record_id: format!("candidate-{id}"),
+                                session_id: saved.session_id.clone(),
+                                turn_id: saved.turn_id.clone(),
+                                result_id: saved.result_id.clone(),
+                                execution_id: saved.execution_id.clone(),
+                                environment_id: revision_id.clone(),
+                                candidate_digest,
+                                candidate,
+                                verified: true,
+                                updated_at: chrono::Utc::now().to_rfc3339(),
+                                parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
+                                revision_session_id: Some(child_session_id.clone()),
+                            };
+                            match vak_sandbox::append_record(
+                                &records_path,
+                                &vak_sandbox::DurableRecord::Candidate(record),
+                            ) {
+                                Ok(()) => {
+                                    let answer = response.text_content();
+                                    let answer = answer.chars().take(2000).collect::<String>();
+                                    detail = Some(if answer.trim().is_empty() {
+                                        format!("New draft version {id} is ready for review")
+                                    } else {
+                                        format!(
+                                            "New draft version {id} is ready for review. {answer}"
+                                        )
+                                    });
+                                    new_candidate_id = Some(id);
+                                    true
+                                }
+                                Err(error) => {
+                                    detail = Some(error.to_string());
+                                    false
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            detail = Some(error.to_string());
+                            false
+                        }
+                    },
+                    Err(error) => {
+                        detail = Some(error.to_string());
+                        false
+                    }
+                }
+            }
+            Ok((outcome, log)) => {
+                if let Ok(mut slot) = child.session.lock() {
+                    *slot = Some(log);
+                }
+                detail = Some(format!(
+                    "Agent revision ended without a completed result: {outcome:?}"
+                ));
+                false
+            }
+            Err(error) => {
+                detail = Some(error.to_string());
+                false
+            }
+        };
+        let finished = vak_sandbox::CandidateRevisionRecord {
+            record_id: format!("revision-{revision_id}-finished"),
+            status: if completed {
+                vak_sandbox::CandidateRevisionStatus::Completed
+            } else {
+                vak_sandbox::CandidateRevisionStatus::Failed
+            },
+            candidate_id: new_candidate_id.clone(),
+            detail: detail.clone(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            ..running
+        };
+        let _ = vak_sandbox::append_record(
+            &records_path,
+            &vak_sandbox::DurableRecord::CandidateRevision(finished),
+        );
+        let _ = append_candidate_revision_activity(
+            &parent,
+            &revision_id,
+            &saved.candidate.candidate_id,
+            &child_session_id,
+            if completed {
+                vak_session::ActivityStatus::Succeeded
+            } else {
+                vak_session::ActivityStatus::Failed
+            },
+            detail,
+        );
+        let _ = parent.coworking_comments_tx.send(());
+        if let Ok(mut admissions) = parent.admissions.lock() {
+            admissions.remove(&admission);
+        }
+    });
     (
-        StatusCode::CONFLICT,
-        "Draft revision requires an isolated task environment",
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"request_id": reply_id, "state": "running"})),
     )
         .into_response()
 }
@@ -10592,8 +10992,8 @@ async fn request_revision_from_candidate_comment(
     };
     dispatch_candidate_revision(
         state,
-        session_id,
-        format!("revision-from-{comment_id}"),
+        saved.clone(),
+        comment_id.clone(),
         format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
     ).await
 }
@@ -17436,6 +17836,57 @@ mod voice_admission_tests {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod sandbox_promotion_tests {
     use super::*;
+    use std::collections::VecDeque;
+    use vak_llm::stream;
+    use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
+    use vak_llm::{EventStream, LlmError};
+
+    struct RevisionProvider {
+        replies: Mutex<VecDeque<AssistantMessage>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for RevisionProvider {
+        fn name(&self) -> &str {
+            "revision-test"
+        }
+
+        async fn stream(
+            &self,
+            _request: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<EventStream, LlmError> {
+            let reply = self
+                .replies
+                .lock()
+                .ok()
+                .and_then(|mut replies| replies.pop_front());
+            let (mut sink, rx) = stream::channel(64);
+            match reply {
+                Some(message) => {
+                    sink.push(stream::StreamEvent::Start {
+                        partial: message.clone(),
+                    });
+                    sink.close_message(message).await;
+                }
+                None => {
+                    sink.close_error(LlmError::Parse("revision test replies exhausted".into()))
+                        .await
+                }
+            }
+            Ok(rx)
+        }
+    }
+
+    fn revision_message(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage {
+        AssistantMessage {
+            content,
+            stop_reason,
+            usage: Usage::default(),
+            model: "test-model".into(),
+            response_id: None,
+        }
+    }
 
     fn seed_bound_result(core: &Core, session_id: &str, execution_id: &str) {
         let path = core
@@ -17446,7 +17897,7 @@ mod sandbox_promotion_tests {
         let mut log = vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
-                agent: None,
+                agent: Some(vak_core::vak_agent_identity()),
                 session_id: session_id.into(),
                 created_at: chrono::Utc::now(),
                 cwd: core.cwd().to_path_buf(),
@@ -17717,14 +18168,6 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
-        let unsafe_revision = dispatch_candidate_revision(
-            state.clone(),
-            "session-1".into(),
-            "revision-request".into(),
-            "Change the reviewed file".into(),
-        )
-        .await;
-        assert_eq!(unsafe_revision.status(), StatusCode::CONFLICT);
         let ledger_path = find_session_on_disk(&state.core, "session-1")
             .unwrap()
             .path()
@@ -17783,7 +18226,7 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test]
-    async fn saved_human_comment_cannot_start_unsafe_workspace_revision() {
+    async fn saved_human_comment_revision_fails_before_run_without_provider() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -17813,8 +18256,14 @@ mod sandbox_promotion_tests {
             data: std::collections::BTreeMap::from([
                 ("actor_id".into(), "person-2".into()),
                 ("actor_name".into(), "Asha".into()),
-                ("candidate_id".into(), candidate.candidate.candidate_id.clone()),
-                ("candidate_digest".into(), candidate.candidate_digest.clone()),
+                (
+                    "candidate_id".into(),
+                    candidate.candidate.candidate_id.clone(),
+                ),
+                (
+                    "candidate_digest".into(),
+                    candidate.candidate_digest.clone(),
+                ),
                 ("comment".into(), "Please make the opening warmer".into()),
                 ("path".into(), "result.txt".into()),
                 ("line_start".into(), "1".into()),
@@ -17840,11 +18289,145 @@ mod sandbox_promotion_tests {
             )),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert!(state.get("session-1").unwrap().session.lock().unwrap().is_some());
-        assert!(!SessionLog::open_read_only(session_path)
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state
+                .get("session-1")
+                .unwrap()
+                .session
+                .lock()
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            !SessionLog::open_read_only(session_path)
+                .unwrap()
+                .has_request_admission("revision-from-comment-from-asha")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn human_feedback_produces_new_candidate_without_workspace_write() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+        core.set_route("revision-test".into(), "test-model".into());
+        let worker = std::env::current_exe()
             .unwrap()
-            .has_request_admission("revision-from-comment-from-asha"));
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("vak-tool-worker");
+        if !worker.is_file() {
+            eprintln!("build vak-tool-worker to exercise this broker integration test");
+            return;
+        }
+        core.set_tool_worker_exe(worker);
+        core.set_provider_instance(Arc::new(RevisionProvider {
+            replies: Mutex::new(VecDeque::from(vec![
+                revision_message(
+                    vec![ContentBlock::ToolUse {
+                        id: "edit-version-two".into(),
+                        name: "write".into(),
+                        input: serde_json::json!({"path": "result.txt", "content": "version two"}),
+                    }],
+                    StopReason::ToolUse,
+                ),
+                revision_message(
+                    vec![ContentBlock::text("Prepared the revised draft for review.")],
+                    StopReason::EndTurn,
+                ),
+            ])),
+        }));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "version one")
+            .await
+            .unwrap();
+        let first = export_candidate(&state).await;
+        let parent_log = find_session_on_disk(&core, "session-1").unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            parent_log,
+            core.cwd().to_path_buf(),
+            core.clone(),
+        );
+
+        let response = dispatch_candidate_revision(
+            state.clone(),
+            first.clone(),
+            "comment-1".into(),
+            "Replace the text with version two".into(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let newer = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let records = vak_sandbox::load_records(&sandbox_records_path(&state)).unwrap();
+                if let Some(record) = records.iter().rev().find_map(|record| match record {
+                    vak_sandbox::DurableRecord::Candidate(candidate)
+                        if candidate.parent_candidate_id.as_deref()
+                            == Some(first.candidate.candidate_id.as_str()) =>
+                    {
+                        Some(candidate.clone())
+                    }
+                    _ => None,
+                }) {
+                    break record;
+                }
+                if let Some(failed) = records.iter().rev().find_map(|record| match record {
+                    vak_sandbox::DurableRecord::CandidateRevision(revision)
+                        if revision.comment_id == "comment-1"
+                            && revision.status == vak_sandbox::CandidateRevisionStatus::Failed =>
+                    {
+                        Some(revision.clone())
+                    }
+                    _ => None,
+                }) {
+                    panic!("revision failed: {:?}", failed.detail);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            tokio::fs::read_to_string(newer.candidate.source_root.join("result.txt"))
+                .await
+                .unwrap(),
+            "version two"
+        );
+        assert_eq!(
+            newer.candidate.files[0].base_hash,
+            first.candidate.files[0].base_hash
+        );
+        assert!(
+            !dir.path().join("result.txt").exists(),
+            "revision must not touch the original workspace"
+        );
+        assert!(newer.revision_session_id.is_some());
+        let accepted = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: newer.candidate.candidate_id,
+                files: vec!["result.txt".into()],
+            }),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("result.txt"))
+                .await
+                .unwrap(),
+            "version two"
+        );
     }
 
     #[tokio::test]
@@ -17884,7 +18467,11 @@ mod sandbox_promotion_tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(std::str::from_utf8(&heartbeat).unwrap().contains("event: heartbeat"));
+        assert!(
+            std::str::from_utf8(&heartbeat)
+                .unwrap()
+                .contains("event: heartbeat")
+        );
         state
             .get("session-1")
             .unwrap()
@@ -17896,7 +18483,11 @@ mod sandbox_promotion_tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(std::str::from_utf8(&refresh).unwrap().contains("event: refresh"));
+        assert!(
+            std::str::from_utf8(&refresh)
+                .unwrap()
+                .contains("event: refresh")
+        );
     }
 
     #[test]

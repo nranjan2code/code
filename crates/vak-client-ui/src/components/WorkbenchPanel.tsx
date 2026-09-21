@@ -402,6 +402,22 @@ export default function WorkbenchPanel() {
           if (!disposed && candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
         })
         .catch(() => { /* Keep the last known comments during a connection failure. */ });
+      void api.listSessionSandboxRecords(sessionId)
+        .then(({ records }) => {
+          if (disposed || candidate()?.candidate.candidate_id !== prepared.candidate.candidate_id) return;
+          const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
+          const versions = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === prepared.execution_id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+          setPendingCandidates(versions);
+          const next = versions.findLast((record) => record.parent_candidate_id === prepared.candidate.candidate_id);
+          if (next) {
+            selectCandidate(next);
+            setReviewCommentMessage("The Agent prepared a new draft version. Review its files before accepting.");
+            return;
+          }
+          const revision = records.filter((record): record is { kind: "CandidateRevision"; record: api.SandboxCandidateRevisionRecord } => record.kind === "CandidateRevision" && record.record.parent_candidate_id === prepared.candidate.candidate_id).at(-1)?.record;
+          if (revision?.status === "Failed") setReviewCommentMessage(`Could not prepare a new version: ${revision.detail ?? "Agent revision failed"}`);
+        })
+        .catch(() => { /* Keep the current reviewed version while offline. */ });
     };
     refresh();
     const updates = api.openCoworkingUpdates(sessionId);
@@ -409,27 +425,25 @@ export default function WorkbenchPanel() {
     onCleanup(() => { disposed = true; updates.close(); });
   });
 
-  const reviewCandidate = async (prepareNew = false, executionId?: string) => {
-    const exec = executionId ? executions().find((item) => item.id === executionId) : currentExec();
+  const reviewCandidate = async () => {
+    const exec = currentExec();
     const sessionId = activeId();
     if (!sessionId || !exec || exec.artifacts.length === 0) return;
-    if (!prepareNew) {
-      let saved: api.SandboxCandidateRecord[];
-      try {
-        const { records } = await api.listSessionSandboxRecords(sessionId);
-        if (activeId() !== sessionId) return;
-        const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-        saved = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
-        setPendingCandidates(saved);
-      } catch (error) {
-        setPromotionMessage(error instanceof Error ? error.message : String(error));
-        return;
-      }
-      if (saved.length > 0) {
-        if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
-        setReviewOpen(true);
-        return;
-      }
+    let saved: api.SandboxCandidateRecord[];
+    try {
+      const { records } = await api.listSessionSandboxRecords(sessionId);
+      if (activeId() !== sessionId) return;
+      const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
+      saved = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+      setPendingCandidates(saved);
+    } catch (error) {
+      setPromotionMessage(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (saved.length > 0) {
+      if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
+      setReviewOpen(true);
+      return;
     }
     setCandidateBusy(true);
     setPromotionMessage(null);
@@ -530,7 +544,7 @@ export default function WorkbenchPanel() {
     setReviewCommentMessage(null);
     try {
       await api.requestRevisionFromCandidateComment(id, prepared.candidate.candidate_id, commentId);
-      setReviewCommentMessage("The Agent received this comment as a revision request. The saved draft is unchanged until it prepares a new version.");
+      setReviewCommentMessage("The Agent is preparing a new version in its isolated draft. The saved version stays available for review.");
     } catch (error) {
       setReviewCommentMessage(`Could not request a revision: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -567,12 +581,12 @@ export default function WorkbenchPanel() {
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
               <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
                 <label for="candidate-review-version">Draft version</label>
-                <select id="candidate-review-version" value={prepared().candidate.candidate_id} onChange={(event) => {
+                <select id="candidate-review-version" onChange={(event) => {
                   const selected = pendingCandidates().find((record) => record.candidate.candidate_id === event.currentTarget.value);
                   if (selected) selectCandidate(selected);
                 }}>
                   <For each={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id)}>{(record, index) =>
-                    <option value={record.candidate.candidate_id}>Version {index() + 1} · {new Date(record.updated_at).toLocaleString()}</option>
+                    <option value={record.candidate.candidate_id} selected={record.candidate.candidate_id === prepared().candidate.candidate_id}>Version {index() + 1} · {new Date(record.updated_at).toLocaleString()}</option>
                   }</For>
                 </select>
               </Show>
@@ -594,7 +608,6 @@ export default function WorkbenchPanel() {
                 <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
                 <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
               </details>
-              <button type="button" class="button subtle" disabled={candidateBusy()} onClick={() => void reviewCandidate(true, prepared().execution_id)}>Prepare newer version from current draft</button>
             </div>
             <div class="candidate-review-body">
               <div class="candidate-review-files" aria-label="Draft files">
@@ -635,7 +648,7 @@ export default function WorkbenchPanel() {
                     <For each={candidateComments()}>{(comment) => <article>
                       <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
-                      <Show when={comment.actor_id !== "operator"}><button type="button" class="button subtle" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button></Show>
+                      <button type="button" class="button subtle" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button>
                     </article>}</For>
                   </div>
                 </Show>

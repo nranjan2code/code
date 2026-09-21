@@ -47,7 +47,7 @@ export default function ArtifactCanvas() {
   const [reloadKey, setReloadKey] = createSignal(0);
   const [isClosing, setIsClosing] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
-  const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "error">("idle");
+  const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "saved_only" | "error">("idle");
   const [commentLineStart, setCommentLineStart] = createSignal("");
   const [commentLineEnd, setCommentLineEnd] = createSignal("");
   const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
@@ -112,29 +112,31 @@ export default function ArtifactCanvas() {
     const note = feedback().trim();
     if (!sessionId || !artifact || !note || feedbackState() === "sending") return;
     setFeedbackState("sending");
+    let commentSaved = false;
     const subject = artifact.artifactPath || artifact.title;
     try {
       if (artifact.candidateId) {
         const lineStart = Number.parseInt(commentLineStart(), 10);
         const lineEnd = Number.parseInt(commentLineEnd(), 10);
-        await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, {
+        const saved = await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, {
           path: artifact.artifactPath || undefined,
           lineStart: Number.isFinite(lineStart) && lineStart > 0 ? lineStart : undefined,
           lineEnd: Number.isFinite(lineEnd) && lineEnd > 0 ? lineEnd : undefined,
         });
+        commentSaved = true;
+        setFeedback("");
+        void api.listSandboxCandidateComments(sessionId, artifact.candidateId)
+          .then(({ comments }) => setCandidateComments(comments))
+          .catch(() => { /* The accepted comment remains durable. */ });
+        await api.requestRevisionFromCandidateComment(sessionId, artifact.candidateId, saved.comment_id);
       } else {
         const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
         await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
       }
       setFeedback("");
       setFeedbackState("sent");
-      if (artifact.candidateId) {
-        void api.listSandboxCandidateComments(sessionId, artifact.candidateId)
-          .then(({ comments }) => setCandidateComments(comments))
-          .catch(() => { /* The accepted comment remains durable. */ });
-      }
     } catch {
-      setFeedbackState("error");
+      setFeedbackState(commentSaved ? "saved_only" : "error");
     }
   };
 
@@ -782,6 +784,7 @@ export default function ArtifactCanvas() {
             </button>
           </div>
           <Show when={feedbackState() === "sent"}><small role="status">Sent to the Agent conversation.</small></Show>
+          <Show when={feedbackState() === "saved_only"}><small role="status">Comment saved. Open Review to ask the Agent to address it.</small></Show>
           <Show when={feedbackState() === "error"}><small role="alert">Could not send. Your feedback is still here to retry.</small></Show>
           <Show when={commentsForArtifact().length > 0}>
             <div class="artifact-canvas-comments" aria-label="Comments on this saved draft">

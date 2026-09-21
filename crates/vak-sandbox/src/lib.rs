@@ -134,6 +134,34 @@ pub struct CandidateRecord {
     pub candidate: CandidateManifest,
     pub verified: bool,
     pub updated_at: String,
+    /// The saved version used as input for a human-requested revision.
+    #[serde(default)]
+    pub parent_candidate_id: Option<String>,
+    /// Durable child session whose tool receipts produced this version.
+    #[serde(default)]
+    pub revision_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CandidateRevisionStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CandidateRevisionRecord {
+    pub record_id: String,
+    pub revision_id: String,
+    pub session_id: String,
+    pub parent_candidate_id: String,
+    pub comment_id: String,
+    pub child_session_id: String,
+    pub task_root: PathBuf,
+    pub status: CandidateRevisionStatus,
+    pub candidate_id: Option<String>,
+    pub detail: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -153,6 +181,7 @@ pub enum DurableRecord {
     Environment(EnvironmentRecord),
     Candidate(CandidateRecord),
     Promotion(PromotionRecord),
+    CandidateRevision(CandidateRevisionRecord),
 }
 
 pub fn append_record(path: &Path, record: &DurableRecord) -> Result<(), Error> {
@@ -251,6 +280,21 @@ pub fn candidate_manifest(
     let mut files = Vec::new();
     for item in WalkDir::new(source_root).follow_links(false) {
         let item = item.map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
+        // A task Core may maintain local control state. It is never part of
+        // the deliverable and must not enter a reviewed candidate.
+        if item
+            .path()
+            .strip_prefix(source_root)
+            .ok()
+            .is_some_and(|relative| {
+                relative
+                    .components()
+                    .next()
+                    .is_some_and(|component| component.as_os_str() == ".vak")
+            })
+        {
+            continue;
+        }
         if !item.file_type().is_file() {
             continue;
         }
@@ -320,6 +364,51 @@ pub fn freeze_candidate(
     }
     manifest.source_root = frozen_root.to_path_buf();
     Ok(manifest)
+}
+
+/// Freeze a later version while retaining the baseline the person originally
+/// reviewed. Re-reading the destination here would let intervening workspace
+/// edits become an implicitly accepted baseline.
+pub fn freeze_revision_candidate(
+    id: &str,
+    task_root: &Path,
+    parent: &CandidateManifest,
+    frozen_root: &Path,
+) -> Result<CandidateManifest, Error> {
+    let mut revision = freeze_candidate(id, task_root, &parent.destination_root, frozen_root)?;
+    let result = (|| -> Result<(), Error> {
+        for original in &parent.files {
+            if !revision.files.iter().any(|file| file.path == original.path) {
+                return Err(Error::Missing(original.path.clone()));
+            }
+        }
+        let changed = revision.files.len() != parent.files.len()
+            || revision.files.iter().any(|file| {
+                parent
+                    .files
+                    .iter()
+                    .find(|old| old.path == file.path)
+                    .is_some_and(|old| old.candidate_hash != file.candidate_hash)
+            });
+        if !changed {
+            return Err(Error::InvalidPlan(
+                "revision did not change candidate files".into(),
+            ));
+        }
+        for file in &mut revision.files {
+            file.base_hash = parent
+                .files
+                .iter()
+                .find(|old| old.path == file.path)
+                .and_then(|old| old.base_hash.clone());
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(frozen_root);
+        return Err(error);
+    }
+    Ok(revision)
 }
 
 /// Seed a fresh revision environment from the exact reviewed version. Only
@@ -549,6 +638,84 @@ mod tests {
             Err(Error::CandidateChanged(path)) if path == "pages/index.html"
         ));
         assert!(!failed_copy.exists());
+    }
+
+    #[test]
+    fn revised_candidate_keeps_original_baseline_and_excludes_control_files() {
+        let source = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::write(
+            workspace.path().join("page.html"),
+            "workspace before review",
+        )
+        .unwrap();
+        fs::write(source.path().join("page.html"), "version one").unwrap();
+        let first = freeze_candidate(
+            "v1",
+            source.path(),
+            workspace.path(),
+            &store.path().join("v1"),
+        )
+        .unwrap();
+        let original_base = first.files[0].base_hash.clone();
+        fs::write(
+            workspace.path().join("page.html"),
+            "human changed workspace",
+        )
+        .unwrap();
+        let task = store.path().join("task");
+        prepare_revision_copy(&first, &task).unwrap();
+        fs::write(task.join("page.html"), "version two").unwrap();
+        fs::write(task.join("added.txt"), "new draft file").unwrap();
+        fs::create_dir(task.join(".vak")).unwrap();
+        fs::write(task.join(".vak/config.toml"), "private control state").unwrap();
+        let second =
+            freeze_revision_candidate("v2", &task, &first, &store.path().join("v2")).unwrap();
+        assert_eq!(second.files.len(), 2);
+        assert_eq!(
+            second
+                .files
+                .iter()
+                .find(|file| file.path == "page.html")
+                .unwrap()
+                .base_hash,
+            original_base
+        );
+        assert_eq!(
+            second
+                .files
+                .iter()
+                .find(|file| file.path == "added.txt")
+                .unwrap()
+                .base_hash,
+            None
+        );
+        assert!(!second.source_root.join(".vak").exists());
+        assert!(matches!(promote(&second), Err(Error::Conflict(path)) if path == "page.html"));
+    }
+
+    #[test]
+    fn unchanged_revision_does_not_create_another_version() {
+        let source = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("draft.txt"), "same").unwrap();
+        let first = freeze_candidate(
+            "v1",
+            source.path(),
+            workspace.path(),
+            &store.path().join("v1"),
+        )
+        .unwrap();
+        let task = store.path().join("task");
+        prepare_revision_copy(&first, &task).unwrap();
+        let next = store.path().join("v2");
+        assert!(matches!(
+            freeze_revision_candidate("v2", &task, &first, &next),
+            Err(Error::InvalidPlan(_))
+        ));
+        assert!(!next.exists());
     }
 
     #[cfg(unix)]
