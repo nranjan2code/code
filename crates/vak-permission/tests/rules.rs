@@ -370,3 +370,29 @@ fn declared_write_scope_denies_other_direct_file_mutations_before_rules() {
     );
     assert!(matches!(denied, Decision::Deny { .. }));
 }
+
+#[test]
+fn task_tool_scope_beats_full_access_and_explicit_allow() {
+    let engine = PermissionEngine::from_rule_strings(&["+remember".into(), "+write".into()])
+        .unwrap()
+        .restrict_tools(&["read", "write", "edit"]);
+    let cwd = std::env::temp_dir();
+    assert!(matches!(
+        engine.evaluate(
+            "remember",
+            &json!({"text": "secret"}),
+            Mode::FullAccess,
+            &cwd
+        ),
+        Decision::Deny { .. }
+    ));
+    assert_eq!(
+        engine.evaluate(
+            "write",
+            &json!({"path": "draft.txt"}),
+            Mode::FullAccess,
+            &cwd
+        ),
+        Decision::Allow
+    );
+}

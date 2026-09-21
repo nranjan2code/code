@@ -24,6 +24,8 @@ pub enum AskSource {
 pub struct PermissionEngine {
     rules: Vec<Rule>,
     write_scope: Option<Vec<PathBuf>>,
+    /// Host-imposed execution vocabulary. Checked before user allow rules.
+    allowed_tools: Option<Vec<String>>,
     /// Tools that only display something to the user (`Tool::presents_cards`).
     /// Supplied by the host from the tools' own declarations, never inferred
     /// from a name here.
@@ -64,6 +66,7 @@ impl PermissionEngine {
         PermissionEngine {
             rules,
             write_scope: None,
+            allowed_tools: None,
             presenting: Vec::new(),
         }
     }
@@ -76,6 +79,7 @@ impl PermissionEngine {
         Ok(PermissionEngine {
             rules,
             write_scope: None,
+            allowed_tools: None,
             presenting: Vec::new(),
         })
     }
@@ -121,6 +125,13 @@ impl PermissionEngine {
         self
     }
 
+    /// Narrow an isolated run to these tool names. No configured allow rule
+    /// or broad permission mode can re-enable a tool outside this set.
+    pub fn restrict_tools(mut self, names: &[&str]) -> Self {
+        self.allowed_tools = Some(names.iter().map(|name| name.to_ascii_lowercase()).collect());
+        self
+    }
+
     /// Restrictive rules first — Deny beats Ask no matter what order they
     /// were registered in — then allow-coverage, then the mode default.
     ///
@@ -135,6 +146,15 @@ impl PermissionEngine {
         mode: Mode,
         cwd: &std::path::Path,
     ) -> Decision {
+        if self
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|allowed| !allowed.iter().any(|name| name.eq_ignore_ascii_case(tool)))
+        {
+            return Decision::Deny {
+                reason: format!("'{tool}' is outside this run's tool scope"),
+            };
+        }
         if WRITE_TOOLS.contains(&tool)
             && let Some(scope) = &self.write_scope
         {

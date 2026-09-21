@@ -314,6 +314,7 @@ fn managed_run_component(value: &str) -> String {
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
+const TASK_COPY_TOOLS: &[&str] = &["read", "glob", "grep", "ls", "write", "edit", "bash"];
 
 /// Re-exported so consumers (and tests) can name config types via vak_core.
 pub use vak_config;
@@ -623,6 +624,9 @@ struct PermissionsLocal {
 #[derive(Clone)]
 pub struct Core {
     inner: Arc<CoreInner>,
+    /// A child Core rooted in a retained, separate task copy. Never stamp
+    /// this on the owner's ordinary conversation Core.
+    task_copy_boundary: bool,
     /// `<surface>:<chat>` for the conversation this turn is running
     /// inside, when known (set by the gateway per inbound message; unset
     /// for the CLI and desktop app, which have no chat to reply into).
@@ -1031,6 +1035,7 @@ impl Core {
             Vec::new()
         };
         Ok(Core {
+            task_copy_boundary: false,
             default_deliver_to: None,
             surface: Surface::Unknown,
             prompt_role: None,
@@ -1554,6 +1559,13 @@ impl Core {
             &allow, &ask, &deny, extra,
         ))
         .map(|engine| engine.with_presenting_tools(presentation_tools::presenting_tool_names()))
+        .map(|engine| {
+            if self.task_copy_boundary {
+                engine.restrict_tools(TASK_COPY_TOOLS)
+            } else {
+                engine
+            }
+        })
         .map_err(CoreError::Rule)
     }
 
@@ -2316,6 +2328,11 @@ impl Core {
     }
 
     pub fn effective_hooks(&self) -> Vec<vak_config::HookConfig> {
+        // Hooks are host commands, outside the brokered worker sandbox.
+        // A task-copy run may not inherit one from Shared configuration.
+        if self.task_copy_boundary {
+            return Vec::new();
+        }
         let hooks = if let Ok(current) = self.inner.hooks_override.lock()
             && let Some(hooks) = current.as_ref()
         {
@@ -2738,6 +2755,14 @@ impl Core {
     /// value — so the gateway can clone-and-stamp per inbound message.
     pub fn with_surface(mut self, surface: Surface) -> Self {
         self.surface = surface;
+        self
+    }
+
+    /// Use only for a child Core whose cwd is a freshly prepared task copy.
+    /// It caps the turn at workspace-write and removes host temp write grants
+    /// from the native worker sandbox. It never changes shared Core state.
+    pub fn with_task_copy_boundary(mut self) -> Self {
+        self.task_copy_boundary = true;
         self
     }
 
@@ -6006,11 +6031,22 @@ impl Core {
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         };
+        if self.task_copy_boundary && cfg.mode == vak_permission::Mode::FullAccess {
+            cfg.mode = vak_permission::Mode::WorkspaceWrite;
+        }
         let permission_rules = self.channel_permission_rules();
         cfg.permission = Some(match permission {
             Some(p) => p,
             None => std::sync::Arc::new(self.build_permission_engine(&permission_rules)?),
         });
+        if self.task_copy_boundary {
+            let Some(engine) = cfg.permission.take() else {
+                return Err(CoreError::MissingEngine);
+            };
+            cfg.permission = Some(std::sync::Arc::new(
+                engine.as_ref().clone().restrict_tools(TASK_COPY_TOOLS),
+            ));
+        }
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
         };
@@ -6851,7 +6887,8 @@ impl Core {
             });
             outcome_spec.evidence_max_age_secs =
                 Some(self.inner.config.intent.evidence_max_age_secs);
-            let mut tool_calls = std::collections::HashMap::<String, (Option<String>, Option<String>)>::new();
+            let mut tool_calls =
+                std::collections::HashMap::<String, (Option<String>, Option<String>)>::new();
             let mut successful_receipts = std::collections::HashSet::new();
             let mut written_paths = std::collections::HashSet::<String>::new();
             let mut successful_effect_inputs = Vec::<String>::new();
@@ -6880,8 +6917,11 @@ impl Core {
                                     .then(|| input.get("path").and_then(serde_json::Value::as_str))
                                     .flatten()
                                     .map(str::to_ascii_lowercase);
-                                let effect_input = matches!(canonical, "write" | "edit" | "apply_patch" | "bash" | "imagegen")
-                                    .then(|| input.to_string().to_ascii_lowercase());
+                                let effect_input = matches!(
+                                    canonical,
+                                    "write" | "edit" | "apply_patch" | "bash" | "imagegen"
+                                )
+                                .then(|| input.to_string().to_ascii_lowercase());
                                 tool_calls.insert(id.clone(), (path, effect_input));
                             }
                             vak_llm::ContentBlock::ToolResult {
@@ -6940,9 +6980,12 @@ impl Core {
             if status == vak_intent::OutcomeStatus::Produced
                 && let Some(target) = outcome_spec.saved_file_target()
                 && !written_paths.iter().any(|path| {
-                    std::path::Path::new(path).file_name() == std::path::Path::new(&target).file_name()
+                    std::path::Path::new(path).file_name()
+                        == std::path::Path::new(&target).file_name()
                 })
-                && !successful_effect_inputs.iter().any(|input| input.contains(&target))
+                && !successful_effect_inputs
+                    .iter()
+                    .any(|input| input.contains(&target))
             {
                 status = vak_intent::OutcomeStatus::Unknown;
             }
@@ -7291,8 +7334,30 @@ impl Core {
         let mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess if self.task_copy_boundary => {
+                SandboxMode::WorkspaceWrite
+            }
             vak_config::PermissionMode::FullAccess => return None,
         };
+        if self.task_copy_boundary {
+            if self.effective_sandbox_backend() == "docker" {
+                return Some(std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(
+                    "strict task-copy containment is unavailable for the Docker backend",
+                )));
+            }
+            #[cfg(target_os = "macos")]
+            return Some(std::sync::Arc::new(
+                vak_tools::sandbox::Seatbelt::task_copy(mode, self.inner.cwd.as_path()),
+            ));
+            #[cfg(target_os = "linux")]
+            return Some(std::sync::Arc::new(
+                vak_tools::landlock::Landlock::task_copy(mode, self.inner.cwd.as_path()),
+            ));
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            return Some(std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(
+                "strict task-copy containment is unsupported on this platform",
+            )));
+        }
         let backend = self.effective_sandbox_backend();
         let backend = backend.as_str();
         if backend == "docker" {
@@ -7339,6 +7404,9 @@ impl Core {
     }
 
     fn build_execution_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {
+        if self.task_copy_boundary {
+            return self.build_sandbox();
+        }
         let mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
@@ -7362,9 +7430,10 @@ impl Core {
 
     fn session_sandbox(&self, session_id: &str) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
         let identity = format!(
-            "{}:{}",
+            "{}:{}:{}",
             self.effective_permission_mode().as_str(),
-            self.effective_sandbox_backend()
+            self.effective_sandbox_backend(),
+            self.task_copy_boundary
         );
         if let Some((existing_identity, sandbox)) = self
             .inner
@@ -7406,6 +7475,45 @@ impl Core {
 #[cfg(test)]
 fn isolate_global_config() {
     let _ = vak_config::paths::isolate_home_for_tests();
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod task_copy_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn full_access_owner_does_not_make_task_copy_unsandboxed() {
+        isolate_global_config();
+        let copy = tempfile::tempdir().unwrap();
+        let owner = Core::new_with_trust(copy.path().to_path_buf(), true).unwrap();
+        owner.set_permission_mode(vak_config::PermissionMode::FullAccess);
+        owner.set_hooks(vec![vak_config::HookConfig {
+            event: "session_start".into(),
+            matcher: None,
+            command: "echo should-not-run".into(),
+            timeout_ms: None,
+            enabled: true,
+            failure_mode: None,
+        }]);
+        assert!(owner.build_execution_sandbox().is_none());
+        let task = owner.with_task_copy_boundary();
+        assert!(task.effective_hooks().is_empty());
+        let sandbox = task.build_execution_sandbox().expect("task sandbox");
+        assert_ne!(sandbox.name(), "unavailable-deny");
+        let wrapped = sandbox.wrap("true");
+        assert!(!wrapped.contains("(allow file-write* (subpath \"/private/tmp\"))"));
+        let policy = task.build_permission_engine(&["+remember".into()]).unwrap();
+        assert!(matches!(
+            policy.evaluate(
+                "remember",
+                &serde_json::json!({"text": "outside copy"}),
+                vak_permission::Mode::FullAccess,
+                copy.path(),
+            ),
+            vak_permission::Decision::Deny { .. }
+        ));
+    }
 }
 
 #[cfg(test)]
