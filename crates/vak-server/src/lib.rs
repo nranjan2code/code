@@ -10475,6 +10475,12 @@ async fn comment_on_sandbox_candidate(
     // A comment receipt must not claim success if its append-only record failed.
     let recorded = match handle.session.lock() {
         Ok(mut session) => match session.as_mut() {
+            Some(session) if session.is_read_only() => {
+                let path = session.path().to_path_buf();
+                vak_session::SessionLog::open(path)
+                    .and_then(|mut writable| writable.append_activity(comment))
+                    .is_ok()
+            }
             Some(session) => session.append_activity(comment).is_ok(),
             None => handle
                 .activity_buffer
@@ -10501,21 +10507,44 @@ async fn comment_on_sandbox_candidate(
         (Some(path), _, _) => format!(" file {path}"),
         _ => String::new(),
     };
-    send_steering(
-        State(state),
-        Path(session_id),
-        Json(SteeringBody {
-            text: format!(
-                "Revise candidate {candidate_id} for result {}{location}. Human comment: {text}",
-                saved.result_id
-            ),
-            request_id: Some(request_id),
-            routing: None,
-            source: "candidate_comment".into(),
-            attachments: Vec::new(),
-        }),
-    )
-    .await
+    let revision_prompt = format!(
+        "Revise candidate {candidate_id} for result {}{location}. Human comment: {text}",
+        saved.result_id
+    );
+    let run_active = handle
+        .session
+        .lock()
+        .map(|session| session.is_none())
+        .unwrap_or(false);
+    if run_active {
+        send_steering(
+            State(state),
+            Path(session_id),
+            Json(SteeringBody {
+                text: revision_prompt,
+                request_id: Some(request_id),
+                routing: None,
+                source: "candidate_comment".into(),
+                attachments: Vec::new(),
+            }),
+        )
+        .await
+    } else {
+        run_prompt(
+            State(state),
+            Path(session_id),
+            Json(RunBody {
+                prompt: revision_prompt,
+                request_id: Some(request_id),
+                routing: None,
+                work_mode: None,
+                attachments: Vec::new(),
+                goal: None,
+                criteria: Vec::new(),
+            }),
+        )
+        .await
+    }
 }
 
 /// Owner decision: make one saved human comment an Agent revision request.

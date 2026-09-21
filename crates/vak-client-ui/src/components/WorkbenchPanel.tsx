@@ -543,7 +543,7 @@ export default function WorkbenchPanel() {
         {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
-              <div><span class="candidate-review-eyebrow">Draft ready</span><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
+              <div><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
               <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
             </header>
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">

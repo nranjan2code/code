@@ -8,6 +8,7 @@ import {
   closeArtifactCanvas,
   toggleCanvasMode,
   activeId,
+  openCandidateReview,
   type ActiveComponentPreview,
 } from "../store";
 import * as api from "../api";
@@ -50,6 +51,7 @@ export default function ArtifactCanvas() {
   const [commentLineStart, setCommentLineStart] = createSignal("");
   const [commentLineEnd, setCommentLineEnd] = createSignal("");
   const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
+  const [candidateVersion, setCandidateVersion] = createSignal<number | null>(null);
   const commentLineInvalid = () => {
     const start = Number.parseInt(commentLineStart(), 10);
     const end = Number.parseInt(commentLineEnd(), 10);
@@ -68,11 +70,21 @@ export default function ArtifactCanvas() {
     setCommentLineStart("");
     setCommentLineEnd("");
     setCandidateComments([]);
+    setCandidateVersion(null);
     if (artifact?.candidateId && artifact.sessionId) {
       let disposed = false;
-      void api.listSandboxCandidateComments(artifact.sessionId, artifact.candidateId)
-        .then(({ comments }) => { if (!disposed) setCandidateComments(comments); })
-        .catch(() => { /* Comments are supplementary; revision remains usable. */ });
+      void Promise.allSettled([
+        api.listSandboxCandidateComments(artifact.sessionId, artifact.candidateId),
+        api.listSessionSandboxRecords(artifact.sessionId),
+      ]).then(([commentsResult, recordsResult]) => {
+        if (disposed) return;
+        if (commentsResult.status === "fulfilled") setCandidateComments(commentsResult.value.comments);
+        if (recordsResult.status === "fulfilled") {
+          const versions = recordsResult.value.records.filter((record) => record.kind === "Candidate" && (!artifact.executionId || record.record.execution_id === artifact.executionId));
+          const index = versions.findIndex((record) => record.kind === "Candidate" && record.record.candidate.candidate_id === artifact.candidateId);
+          if (index >= 0) setCandidateVersion(index + 1);
+        }
+      });
       onCleanup(() => { disposed = true; });
     }
   });
@@ -438,6 +450,30 @@ export default function ArtifactCanvas() {
     const separator = base.includes("?") ? "&" : "?";
     return `${base}${separator}_k=${reloadKey()}`;
   };
+  const sourceLines = () => rawText().split("\n");
+  const selectedLine = (line: number) => {
+    const start = Number.parseInt(commentLineStart(), 10);
+    const end = Number.parseInt(commentLineEnd(), 10);
+    if (!Number.isFinite(start)) return false;
+    return line >= start && line <= (Number.isFinite(end) ? end : start);
+  };
+  const selectSourceLine = (line: number, extend: boolean) => {
+    const start = Number.parseInt(commentLineStart(), 10);
+    if (extend && Number.isFinite(start)) {
+      setCommentLineStart(String(Math.min(start, line)));
+      setCommentLineEnd(String(Math.max(start, line)));
+    } else {
+      setCommentLineStart(String(line));
+      setCommentLineEnd("");
+    }
+  };
+  const commentsForArtifact = () => candidateComments().filter((comment) => !comment.path || comment.path === path());
+  const returnToReview = () => {
+    const executionId = canvasArtifact()?.executionId;
+    if (!executionId) return;
+    closeArtifactCanvas();
+    openCandidateReview(executionId);
+  };
 
   return (
     <Show when={canvasOpen()}>
@@ -480,7 +516,7 @@ export default function ArtifactCanvas() {
               <span class="artifact-canvas-result" title={resultId()}>From this conversation result</span>
             }</Show>
             <Show when={canvasArtifact()?.candidateId}>{(candidateId) =>
-              <span class="artifact-canvas-result" title={candidateId()}>Saved draft version</span>
+              <span class="artifact-canvas-result" title={candidateId()}>Saved draft{candidateVersion() ? ` · Version ${candidateVersion()}` : ""}</span>
             }</Show>
           </div>
 
@@ -574,6 +610,11 @@ export default function ArtifactCanvas() {
             >
               <Icon name="preview" size={14} />
             </button>
+            <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
+              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Return to candidate review">
+                <Icon name="diff" size={14} /> Review draft
+              </button>
+            </Show>
             <button
               type="button"
               class="artifact-canvas-close"
@@ -676,9 +717,15 @@ export default function ArtifactCanvas() {
                     {copied() ? "Copied!" : "Copy"}
                   </button>
                 </div>
-                <pre class="artifact-canvas-code">
-                  <code>{rawText()}</code>
-                </pre>
+                <div class="artifact-canvas-code" role="list" aria-label="Source lines">
+                  <For each={sourceLines()}>{(line, index) => {
+                    const lineNumber = index() + 1;
+                    return <div class="artifact-canvas-code-line" classList={{ selected: selectedLine(lineNumber) }} role="listitem">
+                      <button type="button" class="artifact-canvas-line-number" aria-label={`Select line ${lineNumber}`} aria-pressed={selectedLine(lineNumber)} onClick={(event) => selectSourceLine(lineNumber, event.shiftKey)}>{lineNumber}</button>
+                      <code>{line || " "}</code>
+                    </div>;
+                  }}</For>
+                </div>
               </div>
             </Show>
           </Show>
@@ -719,9 +766,9 @@ export default function ArtifactCanvas() {
           </div>
           <Show when={feedbackState() === "sent"}><small role="status">Sent to the Agent conversation.</small></Show>
           <Show when={feedbackState() === "error"}><small role="alert">Could not send. Your feedback is still here to retry.</small></Show>
-          <Show when={candidateComments().length > 0}>
+          <Show when={commentsForArtifact().length > 0}>
             <div class="artifact-canvas-comments" aria-label="Comments on this saved draft">
-              <For each={candidateComments()}>{(comment) =>
+              <For each={commentsForArtifact()}>{(comment) =>
                 <article>
                   <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                   <p>{comment.text}</p>
