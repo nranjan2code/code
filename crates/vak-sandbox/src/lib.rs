@@ -115,6 +115,22 @@ pub struct PromotionReceipt {
     pub verification: Vec<VerificationResult>,
     #[serde(default)]
     pub deleted: Vec<String>,
+    #[serde(default)]
+    pub integration: IntegrationVerification,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct IntegrationVerification {
+    /// Digest of the exact accepted selection and the state observed after
+    /// apply. This lets every later check name the workspace state it tested.
+    pub applied_state_digest: String,
+    /// `observed` means the accepted bytes/absences still match. Target checks
+    /// have their own status and must never be inferred from this value.
+    pub workspace_state_status: String,
+    /// `unavailable` until a registered target verifier runs against this
+    /// applied state. A sandbox run is deliberately not copied into this field.
+    pub target_checks_status: String,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -581,6 +597,7 @@ fn transaction_directory(root: &Path, candidate_id: &str) -> Result<PathBuf, Err
 }
 
 fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
+    let applied_state_digest = promotion_state_digest(transaction);
     PromotionReceipt {
         candidate_id: transaction.candidate_id.clone(),
         applied: transaction
@@ -618,7 +635,29 @@ fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
             .filter(|file| file.operation == CandidateOperation::Delete)
             .map(|file| file.path.clone())
             .collect(),
+        integration: IntegrationVerification {
+            applied_state_digest,
+            workspace_state_status: "observed".into(),
+            target_checks_status: "unavailable".into(),
+            evidence: "accepted files and deletions were read back from the target workspace; no registered target verifier ran".into(),
+        },
     }
+}
+
+fn promotion_state_digest(transaction: &PromotionTransaction) -> String {
+    let mut state = format!("candidate:{}\n", transaction.candidate_digest);
+    for file in &transaction.files {
+        let observed = if file.operation == CandidateOperation::Delete {
+            "absent"
+        } else {
+            file.after_hash.as_str()
+        };
+        state.push_str(&file.path);
+        state.push('\t');
+        state.push_str(observed);
+        state.push('\n');
+    }
+    digest(state.as_bytes())
 }
 
 fn rollback_transaction(
@@ -1052,6 +1091,14 @@ mod tests {
         let receipt = promote(&candidate).unwrap();
         assert_eq!(receipt.applied, vec!["assets/chart.csv"]);
         assert_eq!(receipt.verification[0].status, "observed");
+        assert_eq!(receipt.integration.workspace_state_status, "observed");
+        assert_eq!(receipt.integration.target_checks_status, "unavailable");
+        assert!(
+            receipt
+                .integration
+                .applied_state_digest
+                .starts_with("sha256:")
+        );
     }
 
     #[test]

@@ -585,7 +585,10 @@ export default function WorkbenchPanel() {
     setCandidateBusy(true);
     try {
       const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
-      setPromotionMessage(`Applied and verified ${receipt.receipt.verification?.length ?? 0} file(s).`);
+      const integration = receipt.receipt.integration;
+      setPromotionMessage(integration?.workspace_state_status === "observed"
+        ? `Applied ${receipt.receipt.verification?.length ?? 0} change(s). Exact workspace state verified; target checks ${integration.target_checks_status}.`
+        : `Applied ${receipt.receipt.verification?.length ?? 0} change(s).`);
       setAppliedPromotion(receipt);
       setAppliedPromotionExecutionId(value.execution_id);
       setReviewOpen(false);
@@ -910,9 +913,15 @@ export default function WorkbenchPanel() {
                           {(message) => <div class="artifact-meta">{message()}</div>}
                         </Show>
                         <Show when={appliedPromotion() && appliedPromotionExecutionId() === exec().id}>
-                          <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
-                            {undoBusy() ? "Restoring…" : "Undo acceptance"}
-                          </button>
+                          <div class="promotion-verification">
+                            <Show when={appliedPromotion()?.receipt.integration}>{(integration) => <>
+                              <div class="artifact-meta"><strong>Workspace state verified</strong> · {integration().applied_state_digest.slice(0, 19)}</div>
+                              <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "No registered verifier ran in the applied workspace." : integration().evidence}</div>
+                            </>}</Show>
+                            <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
+                              {undoBusy() ? "Restoring…" : "Undo acceptance"}
+                            </button>
+                          </div>
                         </Show>
                       </div>
                     </Show>
