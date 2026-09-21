@@ -10511,11 +10511,22 @@ async fn comment_on_sandbox_candidate(
         "Revise candidate {candidate_id} for result {}{location}. Human comment: {text}",
         saved.result_id
     );
-    let run_active = handle
-        .session
-        .lock()
-        .map(|session| session.is_none())
-        .unwrap_or(false);
+    dispatch_candidate_revision(state, session_id, request_id, revision_prompt).await
+}
+
+/// Route draft feedback into the owning conversation at its current turn
+/// boundary. A settled conversation has no steering consumer, so it needs a
+/// new governed turn; an active run receives the same text as steering.
+async fn dispatch_candidate_revision(
+    state: AppState,
+    session_id: String,
+    request_id: String,
+    revision_prompt: String,
+) -> axum::response::Response {
+    let Some(handle) = state.get(&session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let run_active = handle.session.lock().is_ok_and(|session| session.is_none());
     if run_active {
         send_steering(
             State(state),
@@ -10609,16 +10620,11 @@ async fn request_revision_from_candidate_comment(
         (Some(path), _, _) => format!(" file {path}"),
         _ => String::new(),
     };
-    send_steering(
-        State(state),
-        Path(session_id),
-        Json(SteeringBody {
-            text: format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
-            request_id: Some(format!("revision-from-{comment_id}")),
-            routing: None,
-            source: "candidate_comment".into(),
-            attachments: Vec::new(),
-        }),
+    dispatch_candidate_revision(
+        state,
+        session_id,
+        format!("revision-from-{comment_id}"),
+        format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
     ).await
 }
 
@@ -17796,6 +17802,71 @@ mod sandbox_promotion_tests {
                 .unwrap(),
             "reviewed"
         );
+    }
+
+    #[tokio::test]
+    async fn saved_human_comment_on_historical_conversation_tries_a_new_turn() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "saved candidate")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let session_path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join("session-1.jsonl");
+        let comment_id = "comment-from-asha";
+        let mut log = SessionLog::open(session_path.clone()).unwrap();
+        log.append_activity(vak_session::ActivityRecord {
+            activity_id: comment_id.into(),
+            turn: None,
+            kind: vak_session::ActivityKind::CandidateComment,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: "Candidate comment".into(),
+            detail: None,
+            data: std::collections::BTreeMap::from([
+                ("actor_id".into(), "person-2".into()),
+                ("actor_name".into(), "Asha".into()),
+                ("candidate_id".into(), candidate.candidate.candidate_id.clone()),
+                ("candidate_digest".into(), candidate.candidate_digest.clone()),
+                ("comment".into(), "Please make the opening warmer".into()),
+                ("path".into(), "result.txt".into()),
+                ("line_start".into(), "1".into()),
+            ]),
+        })
+        .unwrap();
+        drop(log);
+        let historical = SessionLog::open_read_only(session_path.clone()).unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            historical,
+            core.cwd().to_path_buf(),
+            core.clone(),
+        );
+        core.set_route("no-such-provider".into(), "no-such-model".into());
+        let response = request_revision_from_candidate_comment(
+            State(state.clone()),
+            Path((
+                "session-1".into(),
+                candidate.candidate.candidate_id.clone(),
+                comment_id.into(),
+            )),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(state.get("session-1").unwrap().session.lock().unwrap().is_some());
+        assert!(!SessionLog::open_read_only(session_path)
+            .unwrap()
+            .has_request_admission("revision-from-comment-from-asha"));
     }
 
     #[test]
