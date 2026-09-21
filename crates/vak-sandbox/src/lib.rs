@@ -312,11 +312,97 @@ impl TargetVerifier for OpenXmlPackageVerifier {
     }
 }
 
+pub struct DelimitedDataVerifier;
+
+impl TargetVerifier for DelimitedDataVerifier {
+    fn id(&self) -> &'static str {
+        "data.delimited"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        let path = path.to_ascii_lowercase();
+        path.ends_with(".csv") || path.ends_with(".tsv")
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        let delimiter = if path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".tsv")
+        {
+            b'\t'
+        } else {
+            b','
+        };
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .flexible(false)
+            .from_path(path)
+            .map_err(|error| format!("delimited data could not be opened: {error}"))?;
+        let columns = reader
+            .headers()
+            .map_err(|error| format!("header parse failed: {error}"))?
+            .len();
+        if columns == 0 {
+            return Err("delimited data has no columns".into());
+        }
+        let mut rows = 0_u64;
+        for record in reader.records() {
+            record.map_err(|error| format!("record parse failed: {error}"))?;
+            rows += 1;
+        }
+        Ok(format!(
+            "parsed {rows} data row(s) with {columns} consistent column(s) from the applied workspace"
+        ))
+    }
+}
+
+pub struct SvgStructureVerifier;
+
+impl TargetVerifier for SvgStructureVerifier {
+    fn id(&self) -> &'static str {
+        "format.svg"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        path.to_ascii_lowercase().ends_with(".svg")
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        let mut reader = quick_xml::Reader::from_file(path)
+            .map_err(|error| format!("SVG could not be opened: {error}"))?;
+        reader.config_mut().trim_text(true);
+        let mut buffer = Vec::new();
+        loop {
+            match reader.read_event_into(&mut buffer) {
+                Ok(quick_xml::events::Event::Start(element))
+                | Ok(quick_xml::events::Event::Empty(element)) => {
+                    let name = element.local_name();
+                    return if name.as_ref() == b"svg" {
+                        Ok("parsed SVG root from the applied workspace".into())
+                    } else {
+                        Err(format!(
+                            "XML root is {}, expected svg",
+                            String::from_utf8_lossy(name.as_ref())
+                        ))
+                    };
+                }
+                Ok(quick_xml::events::Event::Eof) => return Err("SVG has no root element".into()),
+                Ok(_) => {}
+                Err(error) => return Err(format!("SVG parse failed: {error}")),
+            }
+            buffer.clear();
+        }
+    }
+}
+
 pub fn default_target_verifiers() -> TargetVerifierRegistry {
     let mut registry = TargetVerifierRegistry::default();
     registry.register(JsonSyntaxVerifier);
     registry.register(FileSignatureVerifier);
     registry.register(OpenXmlPackageVerifier);
+    registry.register(DelimitedDataVerifier);
+    registry.register(SvgStructureVerifier);
     registry
 }
 
@@ -1334,6 +1420,28 @@ mod tests {
         let verifier = OpenXmlPackageVerifier;
         assert!(verifier.verify(&valid_path).is_ok());
         assert!(verifier.verify(&invalid_path).is_err());
+    }
+
+    #[test]
+    fn data_and_svg_verifiers_reject_structural_errors() {
+        let target = tempfile::tempdir().unwrap();
+        let csv = target.path().join("table.csv");
+        let broken_csv = target.path().join("broken.csv");
+        let svg = target.path().join("figure.svg");
+        let broken_svg = target.path().join("broken.svg");
+        fs::write(&csv, "name,value\nalpha,1\nbeta,2\n").unwrap();
+        fs::write(&broken_csv, "name,value\nalpha\n").unwrap();
+        fs::write(
+            &svg,
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>"#,
+        )
+        .unwrap();
+        fs::write(&broken_svg, "<html></html>").unwrap();
+
+        assert!(DelimitedDataVerifier.verify(&csv).is_ok());
+        assert!(DelimitedDataVerifier.verify(&broken_csv).is_err());
+        assert!(SvgStructureVerifier.verify(&svg).is_ok());
+        assert!(SvgStructureVerifier.verify(&broken_svg).is_err());
     }
     #[test]
     fn nested_artifacts_are_first_class() {
