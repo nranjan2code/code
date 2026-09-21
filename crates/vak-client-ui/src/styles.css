@@ -568,6 +568,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-header { justify-content: space-between; border-bottom: 1px solid var(--border-soft); }
 .candidate-review-header h2 { margin: 0 0 4px; font-size: 19px; }
 .candidate-review-header p { margin: 0; color: var(--muted); font-size: 12px; }
+.candidate-review-eyebrow { display: block; margin-bottom: 4px; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .candidate-review-summary { display: grid; gap: 5px; padding: 12px 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface-raised); }
 .candidate-review-summary label { color: var(--text-soft); font-size: 11px; font-weight: 620; }
 .candidate-review-summary select { width: min(340px, 100%); padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
@@ -579,6 +580,14 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-counts { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 13px; margin-bottom: 3px; }
 .candidate-review-counts strong { color: var(--text); font-size: 12px; font-weight: 620; }
 .candidate-review-counts span { color: var(--muted); font-size: 11px; }
+.candidate-review-decision-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 4px 0; }
+.candidate-review-decision-grid > div { display: grid; align-content: start; gap: 3px; min-width: 0; padding: 10px 11px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.candidate-review-decision-grid span { color: var(--muted); font-size: 10px; }
+.candidate-review-decision-grid strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 650; }
+.candidate-review-decision-grid small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-review-provenance { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.candidate-review-provenance summary { width: fit-content; cursor: pointer; color: var(--text-soft); }
+.candidate-review-provenance[open] { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
 .candidate-review-body { display: grid; grid-template-columns: minmax(190px, 27%) minmax(0, 1fr); min-height: 0; flex: 1; }
 .candidate-review-files { overflow: auto; border-right: 1px solid var(--border-soft); padding: 10px; }
 .candidate-review-file { display: flex; align-items: center; gap: 7px; padding: 6px; border-radius: 7px; }
@@ -605,7 +614,8 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-comments article p, .artifact-canvas-comments article p { margin: 5px 0 0; color: var(--text); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .candidate-review-footer { justify-content: flex-end; border-top: 1px solid var(--border-soft); }
 .candidate-review-footer span { margin-right: auto; color: var(--muted); font-size: 12px; }
-@media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } }
+@media (max-width: 900px) { .candidate-review-decision-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-decision-grid { grid-template-columns: 1fr; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } .candidate-review-footer { flex-wrap: wrap; } .candidate-review-footer span { flex-basis: 100%; } }
 .settings-load-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--red); border-radius: 8px; color: var(--red); font-size: 12px; }
 .composer-lookup-error { margin: 0 16px 8px; color: var(--yellow); font-size: 12px; }
 .run-revision { color: var(--text-soft); font-size: 12px; margin-left: auto; }

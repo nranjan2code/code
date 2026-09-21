@@ -446,6 +446,17 @@ export default function WorkbenchPanel() {
       unchangedFiles: files.filter((file) => fileState(file) === "Unchanged").length,
     };
   });
+  const destinationLabel = () => {
+    const root = candidate()?.candidate.destination_root.replace(/\/$/, "") ?? "";
+    return root.split("/").filter(Boolean).pop() || root || "workspace";
+  };
+  const candidateVersion = () => {
+    const prepared = candidate();
+    if (!prepared) return 0;
+    return pendingCandidates()
+      .filter((record) => record.execution_id === prepared.execution_id)
+      .findIndex((record) => record.candidate.candidate_id === prepared.candidate.candidate_id) + 1;
+  };
 
   createEffect(() => {
     const prepared = candidate();
@@ -532,7 +543,7 @@ export default function WorkbenchPanel() {
         {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
-              <div><h2>Review this draft</h2><p>Choose the files to apply. Vak checks the draft and workspace against this candidate before writing.</p></div>
+              <div><span class="candidate-review-eyebrow">Draft ready</span><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
               <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
             </header>
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
@@ -552,9 +563,19 @@ export default function WorkbenchPanel() {
                 <strong>{candidateSummary().changedFiles} changed</strong>
                 <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
               </div>
-              <p><strong>Destination</strong> <span>{prepared().candidate.destination_root}</span></p>
-              <p><strong>From Agent work</strong> <span>{prepared().execution_id.slice(0, 12)} · candidate {prepared().candidate.candidate_id.slice(0, 12)}</span></p>
-              <p class="candidate-review-limitation">No candidate-bound check receipts are attached. Review the selected files before applying them.</p>
+              <div class="candidate-review-decision-grid">
+                <div><span>Change</span><strong>{prepared().candidate.files.length === 1 ? `${fileState(prepared().candidate.files[0])}: ${prepared().candidate.files[0].path}` : `${prepared().candidate.files.length} files in this draft`}</strong></div>
+                <div><span>Destination</span><strong>{destinationLabel()}</strong><small title={prepared().candidate.destination_root}>{prepared().candidate.destination_root}</small></div>
+                <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>Frozen copy verified: {prepared().verified ? "Yes" : "No"}</small></div>
+                <div><span>Observed checks</span><strong>No checks attached</strong><small>Review every selected file before accepting.</small></div>
+              </div>
+              <details class="candidate-review-provenance">
+                <summary>Technical provenance</summary>
+                <p><strong>Agent execution</strong> <span>{prepared().execution_id}</span></p>
+                <p><strong>Candidate</strong> <span>{prepared().candidate.candidate_id}</span></p>
+                <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
+                <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
+              </details>
               <button type="button" class="button subtle" disabled={candidateBusy()} onClick={() => void reviewCandidate(true, prepared().execution_id)}>Prepare newer version from current draft</button>
             </div>
             <div class="candidate-review-body">
@@ -609,9 +630,9 @@ export default function WorkbenchPanel() {
               </div>
             </div>
             <footer class="candidate-review-footer">
-              <span>{reviewedFiles().length} selected · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
+              <span>Accepting writes {reviewedFiles().length} selected {reviewedFiles().length === 1 ? "file" : "files"} to {destinationLabel()} · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
               <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Applying…" : `Apply ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
+              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
             </footer>
           </section>
         </div>}

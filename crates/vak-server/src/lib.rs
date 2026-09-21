@@ -9916,8 +9916,7 @@ async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) 
 fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
     state
         .core
-        .cwd()
-        .join(".vak")
+        .sessions_home()
         .join("sandbox")
         .join("records.jsonl")
 }
@@ -9937,6 +9936,14 @@ fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path:
         .join("sandbox")
         .join("executions")
         .join(format!("{session_id}.jsonl"))
+}
+
+fn sandbox_session_workspace(state: &AppState, session_id: &str) -> Option<std::path::PathBuf> {
+    if let Some(handle) = state.get(session_id) {
+        return Some(handle.cwd.clone());
+    }
+    open_historical_session(state, session_id)
+        .and_then(|session| session.header().map(|header| header.contract_cwd()))
 }
 
 async fn session_sandbox_executions(
@@ -10079,6 +10086,7 @@ fn sandbox_execution_scratch(
     session_id: &str,
     execution_id: &str,
 ) -> Option<std::path::PathBuf> {
+    let workspace = sandbox_session_workspace(state, session_id)?;
     let text = std::fs::read_to_string(session_sandbox_events_path(state, session_id)).ok()?;
     text.lines().find_map(|line| {
         let event = serde_json::from_str::<vak_tools::SandboxEvent>(line).ok()?;
@@ -10087,7 +10095,7 @@ fn sandbox_execution_scratch(
                 execution_id: observed,
                 scratch_dir,
                 ..
-            } if observed == execution_id => confined_path(state.core.cwd(), &scratch_dir),
+            } if observed == execution_id => confined_path(&workspace, &scratch_dir),
             _ => None,
         }
     })
@@ -10112,7 +10120,10 @@ async fn export_sandbox_candidate(
         Ok(binding) => binding,
         Err(error) => return error.into_response(),
     };
-    let Some(source) = confined_path(state.core.cwd(), &body.source) else {
+    let Some(workspace) = sandbox_session_workspace(&state, &session_id) else {
+        return (StatusCode::NOT_FOUND, "unknown session").into_response();
+    };
+    let Some(source) = confined_path(&workspace, &body.source) else {
         return (StatusCode::FORBIDDEN, "candidate source outside workspace").into_response();
     };
     let Some(execution_scratch) =
@@ -10136,7 +10147,7 @@ async fn export_sandbox_candidate(
     } else {
         body.destination
     };
-    let Some(destination) = confined_path(state.core.cwd(), &destination_text) else {
+    let Some(destination) = confined_path(&workspace, &destination_text) else {
         return (
             StatusCode::FORBIDDEN,
             "candidate destination outside workspace",
@@ -17556,7 +17567,7 @@ mod sandbox_promotion_tests {
             "candidate"
         );
         assert_eq!(
-            vak_sandbox::load_records(&dir.path().join(".vak/sandbox/records.jsonl"))
+            vak_sandbox::load_records(&sandbox_records_path(&state))
                 .unwrap()
                 .len(),
             2
