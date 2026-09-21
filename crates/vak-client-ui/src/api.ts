@@ -1041,6 +1041,12 @@ export type CoworkingInvitation = {
   revoked_at?: string;
 };
 
+export type CoworkingParticipant = { principal_id: string; display_name: string };
+
+export function coworkingPresence(sessionId: string): Promise<{ participants: CoworkingParticipant[] }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/presence`);
+}
+
 export function listCoworkingInvitations(sessionId: string): Promise<{ invitations: CoworkingInvitation[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`);
 }

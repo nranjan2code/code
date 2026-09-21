@@ -209,6 +209,10 @@ pub struct AppState {
     /// process being inspected.
     ops_port: u16,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    /// Ephemeral, observation-based coworking presence. It is deliberately
+    /// outside the append-only work ledger and expires without disconnect
+    /// bookkeeping when a browser vanishes.
+    coworking_presence: Arc<Mutex<HashMap<String, HashMap<String, CoworkingPresence>>>>,
     /// Live best-of-N runs keyed by child session id.
     pub(crate) best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
     /// Scheduled tasks for this workspace (store shape owned by vak-core).
@@ -280,6 +284,7 @@ impl AppState {
             started_at: Instant::now(),
             ops_port: vak_ops::OpsConfig::detect().port,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            coworking_presence: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
             next_fire: Arc::new(Mutex::new(HashMap::new())),
@@ -387,6 +392,12 @@ impl AppState {
             .cloned()
             .collect()
     }
+}
+
+#[derive(Clone)]
+struct CoworkingPresence {
+    display_name: String,
+    seen_at: Instant,
 }
 
 #[derive(Clone)]
@@ -774,6 +785,10 @@ fn router_with_state(state: AppState) -> Router {
             get(list_coworking_invitations).post(create_coworking_invitation),
         )
         .route("/sessions/{id}/coworking/me", get(coworking_me))
+        .route(
+            "/sessions/{id}/coworking/presence",
+            get(coworking_presence),
+        )
         .route(
             "/sessions/{id}/coworking/messages",
             post(create_coworking_message),
@@ -3653,6 +3668,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "candidates", _, "files", "raw"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
+            | ["coworking", "presence"]
             | ["coworking", "updates"]
     )
 }
@@ -7317,6 +7333,81 @@ async fn create_coworking_message(
     }
 }
 
+const COWORKING_PRESENCE_TTL: Duration = Duration::from_secs(7);
+
+fn touch_coworking_presence(
+    state: &AppState,
+    conversation_id: &str,
+    principal_id: &str,
+    display_name: &str,
+) {
+    let mut all = state
+        .coworking_presence
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    all.entry(conversation_id.to_string()).or_default().insert(
+        principal_id.to_string(),
+        CoworkingPresence {
+            display_name: display_name.to_string(),
+            seen_at: Instant::now(),
+        },
+    );
+}
+
+fn coworking_presence_snapshot(state: &AppState, conversation_id: &str) -> serde_json::Value {
+    let now = Instant::now();
+    let mut all = state
+        .coworking_presence
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(conversation) = all.get_mut(conversation_id) else {
+        return serde_json::json!({ "participants": [] });
+    };
+    conversation
+        .retain(|_, presence| now.duration_since(presence.seen_at) <= COWORKING_PRESENCE_TTL);
+    let mut participants: Vec<_> = conversation
+        .iter()
+        .map(|(principal_id, presence)| {
+            serde_json::json!({
+                "principal_id": principal_id,
+                "display_name": presence.display_name,
+            })
+        })
+        .collect();
+    participants.sort_by(|left, right| {
+        left["display_name"]
+            .as_str()
+            .cmp(&right["display_name"].as_str())
+    });
+    serde_json::json!({ "participants": participants })
+}
+
+async fn coworking_presence(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !conversation_exists(&state, &conversation_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match principal {
+        AuthenticatedPrincipal::Operator => {}
+        AuthenticatedPrincipal::Participant(participant) => {
+            if participant.conversation_id != conversation_id {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            touch_coworking_presence(
+                &state,
+                &conversation_id,
+                &participant.principal_id,
+                &participant.display_name,
+            );
+        }
+    }
+    Json(coworking_presence_snapshot(&state, &conversation_id)).into_response()
+}
+
 /// A content-free refresh signal for both sides of a shared conversation.
 /// Participant credentials never reach the general Agent SSE route, and each
 /// participant signal rechecks the durable grant.
@@ -7347,7 +7438,12 @@ async fn coworking_updates(
             else {
                 return StatusCode::UNAUTHORIZED.into_response();
             };
-            Some((token, participant.grant_id))
+            Some((
+                token,
+                participant.grant_id,
+                participant.principal_id,
+                participant.display_name,
+            ))
         }
     };
     let grant_path = coworking::store_path(&state.core.sessions_home());
@@ -7361,6 +7457,8 @@ async fn coworking_updates(
         move |(mut events, mut comments, mut tick, active)| {
             let grant_path = grant_path.clone();
             let grant = grant.clone();
+            let state = state.clone();
+            let conversation_id = conversation_id.clone();
             async move {
                 if !active {
                     return None;
@@ -7370,16 +7468,19 @@ async fn coworking_updates(
                     _ = events.recv() => true,
                     _ = comments.recv() => true,
                 };
-                let valid = grant.as_ref().is_none_or(|(token, grant_id)| {
+                let valid = grant.as_ref().is_none_or(|(token, grant_id, _, _)| {
                     matches!(
                         coworking::verify(&grant_path, token, chrono::Utc::now()),
                         Ok(Some(current)) if current.grant_id == *grant_id
                     )
                 });
+                if valid && let Some((_, _, principal_id, display_name)) = &grant {
+                    touch_coworking_presence(&state, &conversation_id, principal_id, display_name);
+                }
                 let event = if valid {
                     Event::default()
                         .event(if changed { "refresh" } else { "heartbeat" })
-                        .data("{}")
+                        .data(coworking_presence_snapshot(&state, &conversation_id).to_string())
                 } else {
                     Event::default().event("revoked").data("{}")
                 };
@@ -19053,6 +19154,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
+            "/sessions/session-1/coworking/presence",
         ] {
             assert!(participant_read_route_allowed(
                 &axum::http::Method::GET,
@@ -19110,6 +19212,34 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/transcript",
             &participant(&["comment"])
         ));
+    }
+
+    #[test]
+    fn coworking_presence_is_observed_and_expires() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let state = AppState::new(core);
+        touch_coworking_presence(&state, "conversation-1", "person-1", "Asha");
+        let snapshot = coworking_presence_snapshot(&state, "conversation-1");
+        assert_eq!(snapshot["participants"][0]["principal_id"], "person-1");
+        assert_eq!(snapshot["participants"][0]["display_name"], "Asha");
+        state
+            .coworking_presence
+            .lock()
+            .unwrap()
+            .get_mut("conversation-1")
+            .unwrap()
+            .get_mut("person-1")
+            .unwrap()
+            .seen_at = Instant::now() - COWORKING_PRESENCE_TTL - Duration::from_secs(1);
+        assert_eq!(
+            coworking_presence_snapshot(&state, "conversation-1")["participants"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[tokio::test]

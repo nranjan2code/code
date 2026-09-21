@@ -26,6 +26,7 @@ import {
   setAgentPickerOpen,
   setAgentPickerTab,
   backend,
+  coworkingPresence,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -171,6 +172,14 @@ export default function WorkspaceHeader() {
                   aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
                 {taskStatus()}
               </span>
+            </Show>
+            <Show when={coworkingPresence(activeId()).length > 0}>
+              <div class="coworking-presence" aria-label="People here now">
+                <For each={coworkingPresence(activeId()).slice(0, 3)}>
+                  {(person) => <span class="coworking-presence-person" title={`${person.display_name} is here`}>{person.display_name.slice(0, 1).toLocaleUpperCase()}</span>}
+                </For>
+                <span>{coworkingPresence(activeId()).length === 1 ? `${coworkingPresence(activeId())[0].display_name} is here` : `${coworkingPresence(activeId()).length} people here`}</span>
+              </div>
             </Show>
           </div>
         </div>

@@ -1,6 +1,6 @@
 # 69 — Shared conversation and draft coworking
 
-Status: **in progress**. Scoped invitations, shared reading, attributed conversation messages, saved-draft comments, live refresh and isolated Agent revision are shipped. Presence and participant-specific approval delegation remain open.
+Status: **in progress**. Scoped invitations, shared reading, attributed conversation messages, observed participant presence, saved-draft comments, live refresh and isolated Agent revision are shipped. Participant-specific approval delegation remains open.
 
 ## Product contract
 

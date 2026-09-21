@@ -23,6 +23,7 @@ import {
   setHealth,
   setShowShortcuts,
   setSessions,
+  setCoworkingPresence,
   setUsageFor,
   hydrateFromTranscript,
   hydrateFromPresentation,
@@ -179,6 +180,14 @@ export async function refreshSessions() {
       // whether anything is being viewed, so the correction lands
       // without the user needing to do anything.
       const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
+      await Promise.all([...visible].map(async (sessionId) => {
+        try {
+          const presence = await api.coworkingPresence(sessionId);
+          setCoworkingPresence(sessionId, presence.participants ?? []);
+        } catch {
+          /* presence is optional and never replaces the last observed state */
+        }
+      }));
       for (const s of res.sessions) {
         if (!s.running && isRunning(s.session_id)) {
           markRunning(s.session_id, false);
