@@ -104,6 +104,22 @@ pub struct CandidateManifest {
     pub source_root: PathBuf,
     pub destination_root: PathBuf,
     pub files: Vec<CandidateFile>,
+    #[serde(default)]
+    pub target_checks: Vec<TargetCheckPlan>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TargetCheckPlan {
+    pub verifier: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TargetCheckResult {
+    pub verifier: String,
+    pub path: String,
+    pub status: String,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -131,6 +147,138 @@ pub struct IntegrationVerification {
     /// applied state. A sandbox run is deliberately not copied into this field.
     pub target_checks_status: String,
     pub evidence: String,
+    #[serde(default)]
+    pub target_checks: Vec<TargetCheckResult>,
+}
+
+pub trait TargetVerifier: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn supports(&self, path: &str) -> bool;
+    fn verify(&self, path: &Path) -> Result<String, String>;
+}
+
+#[derive(Default)]
+pub struct TargetVerifierRegistry {
+    verifiers: Vec<Box<dyn TargetVerifier>>,
+}
+
+impl TargetVerifierRegistry {
+    pub fn register(&mut self, verifier: impl TargetVerifier + 'static) {
+        self.verifiers.push(Box::new(verifier));
+    }
+
+    pub fn plan(&self, candidate: &CandidateManifest) -> Vec<TargetCheckPlan> {
+        candidate
+            .files
+            .iter()
+            .filter(|file| file.operation == CandidateOperation::Upsert)
+            .flat_map(|file| {
+                self.verifiers
+                    .iter()
+                    .filter(|verifier| verifier.supports(&file.path))
+                    .map(|verifier| TargetCheckPlan {
+                        verifier: verifier.id().to_string(),
+                        path: file.path.clone(),
+                    })
+            })
+            .collect()
+    }
+
+    pub fn verify(
+        &self,
+        destination_root: &Path,
+        checks: &[TargetCheckPlan],
+    ) -> Vec<TargetCheckResult> {
+        checks
+            .iter()
+            .map(|check| {
+                let result = self
+                    .verifiers
+                    .iter()
+                    .find(|verifier| verifier.id() == check.verifier)
+                    .ok_or_else(|| "registered verifier is unavailable".to_string())
+                    .and_then(|verifier| {
+                        confined(destination_root, &check.path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|path| verifier.verify(&path))
+                    });
+                match result {
+                    Ok(evidence) => TargetCheckResult {
+                        verifier: check.verifier.clone(),
+                        path: check.path.clone(),
+                        status: "passed".into(),
+                        evidence,
+                    },
+                    Err(evidence) => TargetCheckResult {
+                        verifier: check.verifier.clone(),
+                        path: check.path.clone(),
+                        status: "failed".into(),
+                        evidence,
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+pub struct JsonSyntaxVerifier;
+
+impl TargetVerifier for JsonSyntaxVerifier {
+    fn id(&self) -> &'static str {
+        "format.json"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        path.to_ascii_lowercase().ends_with(".json")
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        let bytes = fs::read(path).map_err(|error| error.to_string())?;
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map(|_| "JSON parsed from the applied workspace".into())
+            .map_err(|error| format!("JSON parse failed: {error}"))
+    }
+}
+
+pub struct FileSignatureVerifier;
+
+impl TargetVerifier for FileSignatureVerifier {
+    fn id(&self) -> &'static str {
+        "format.signature"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        let path = path.to_ascii_lowercase();
+        [".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"]
+            .iter()
+            .any(|extension| path.ends_with(extension))
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        let bytes = fs::read(path).map_err(|error| error.to_string())?;
+        let lower = path.to_string_lossy().to_ascii_lowercase();
+        let valid = if lower.ends_with(".png") {
+            bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+            bytes.starts_with(&[0xff, 0xd8, 0xff])
+        } else if lower.ends_with(".gif") {
+            bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
+        } else if lower.ends_with(".webp") {
+            bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP")
+        } else {
+            bytes.starts_with(b"%PDF-")
+        };
+        valid
+            .then(|| "file signature matched the applied format".into())
+            .ok_or_else(|| "file signature does not match its extension".into())
+    }
+}
+
+pub fn default_target_verifiers() -> TargetVerifierRegistry {
+    let mut registry = TargetVerifierRegistry::default();
+    registry.register(JsonSyntaxVerifier);
+    registry.register(FileSignatureVerifier);
+    registry
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -418,6 +566,7 @@ pub fn candidate_manifest(
         source_root: source_root.to_path_buf(),
         destination_root: destination_root.to_path_buf(),
         files,
+        target_checks: Vec::new(),
     })
 }
 
@@ -640,6 +789,7 @@ fn transaction_receipt(transaction: &PromotionTransaction) -> PromotionReceipt {
             workspace_state_status: "observed".into(),
             target_checks_status: "unavailable".into(),
             evidence: "accepted files and deletions were read back from the target workspace; no registered target verifier ran".into(),
+            target_checks: Vec::new(),
         },
     }
 }
@@ -1081,6 +1231,49 @@ mod tests {
             "user-edit"
         );
     }
+
+    #[test]
+    fn registered_target_verifiers_plan_and_check_applied_files() {
+        let target = tempfile::tempdir().unwrap();
+        fs::write(target.path().join("result.json"), br#"{"ready":true}"#).unwrap();
+        fs::write(target.path().join("preview.png"), b"not a png").unwrap();
+        let candidate = CandidateManifest {
+            candidate_id: "formats".into(),
+            source_root: target.path().into(),
+            destination_root: target.path().into(),
+            files: vec![
+                CandidateFile {
+                    path: "preview.png".into(),
+                    candidate_hash: digest(b"not a png"),
+                    base_hash: None,
+                    bytes: 9,
+                    operation: CandidateOperation::Upsert,
+                },
+                CandidateFile {
+                    path: "result.json".into(),
+                    candidate_hash: digest(br#"{"ready":true}"#),
+                    base_hash: None,
+                    bytes: 14,
+                    operation: CandidateOperation::Upsert,
+                },
+            ],
+            target_checks: Vec::new(),
+        };
+        let registry = default_target_verifiers();
+        let plan = registry.plan(&candidate);
+        assert_eq!(plan.len(), 2);
+        let results = registry.verify(target.path(), &plan);
+        assert!(
+            results
+                .iter()
+                .any(|result| { result.path == "result.json" && result.status == "passed" })
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| { result.path == "preview.png" && result.status == "failed" })
+        );
+    }
     #[test]
     fn nested_artifacts_are_first_class() {
         let source = tempfile::tempdir().unwrap();
@@ -1286,6 +1479,7 @@ mod tests {
             candidate_id: "symlink".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "candidate.txt".into(),
                 candidate_hash: digest(b"secret"),
@@ -1310,6 +1504,7 @@ mod tests {
             candidate_id: "recoverable".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![
                 CandidateFile {
                     path: "a.txt".into(),
@@ -1384,6 +1579,7 @@ mod tests {
             candidate_id: "conflicted-recovery".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "a.txt".into(),
                 candidate_hash: digest(b"candidate"),
@@ -1444,6 +1640,7 @@ mod tests {
             candidate_id: "selection".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![file("a.txt", b"a")],
         };
         promote_recoverable(&first, control.path()).unwrap();
@@ -1470,6 +1667,7 @@ mod tests {
             candidate_id: "undoable".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![
                 CandidateFile {
                     path: "changed.txt".into(),
@@ -1514,6 +1712,7 @@ mod tests {
             candidate_id: "undo-conflict".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "draft.txt".into(),
                 candidate_hash: digest(b"accepted"),
@@ -1545,6 +1744,7 @@ mod tests {
             candidate_id: "undo-resume".into(),
             source_root: source.path().into(),
             destination_root: target.path().into(),
+            target_checks: Vec::new(),
             files: vec![CandidateFile {
                 path: "draft.txt".into(),
                 candidate_hash: digest(b"after"),

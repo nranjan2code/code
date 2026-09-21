@@ -649,7 +649,7 @@ export default function WorkbenchPanel() {
                 <div><span>Change</span><strong>{prepared().candidate.files.length === 1 ? `${fileState(prepared().candidate.files[0])}: ${prepared().candidate.files[0].path}` : `${prepared().candidate.files.length} files in this draft`}</strong></div>
                 <div><span>Destination</span><strong>{destinationLabel()}</strong><small title={prepared().candidate.destination_root}>{prepared().candidate.destination_root}</small></div>
                 <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>Frozen copy verified: {prepared().verified ? "Yes" : "No"}</small></div>
-                <div><span>Observed checks</span><strong>No checks attached</strong><small>Review every selected file before accepting.</small></div>
+                <div><span>Target checks</span><strong>{prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "These format checks rerun from the applied workspace." : "No registered verifier supports these files."}</small></div>
               </div>
               <details class="candidate-review-provenance">
                 <summary>Technical provenance</summary>
@@ -917,6 +917,7 @@ export default function WorkbenchPanel() {
                             <Show when={appliedPromotion()?.receipt.integration}>{(integration) => <>
                               <div class="artifact-meta"><strong>Workspace state verified</strong> · {integration().applied_state_digest.slice(0, 19)}</div>
                               <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "No registered verifier ran in the applied workspace." : integration().evidence}</div>
+                              <For each={integration().target_checks ?? []}>{(check) => <div class="artifact-meta"><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</div>}</For>
                             </>}</Show>
                             <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
                               {undoBusy() ? "Restoring…" : "Undo acceptance"}

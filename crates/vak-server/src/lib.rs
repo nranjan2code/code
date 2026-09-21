@@ -10182,7 +10182,8 @@ async fn export_sandbox_candidate(
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
-        Ok(candidate) => {
+        Ok(mut candidate) => {
+            candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
@@ -10837,50 +10838,54 @@ async fn dispatch_candidate_revision(
                     &saved.candidate,
                     &frozen_root,
                 ) {
-                    Ok(candidate) => match vak_sandbox::candidate_digest(&candidate) {
-                        Ok(candidate_digest) => {
-                            let record = vak_sandbox::CandidateRecord {
-                                record_id: format!("candidate-{id}"),
-                                session_id: saved.session_id.clone(),
-                                turn_id: saved.turn_id.clone(),
-                                result_id: saved.result_id.clone(),
-                                execution_id: saved.execution_id.clone(),
-                                environment_id: revision_id.clone(),
-                                candidate_digest,
-                                candidate,
-                                verified: true,
-                                updated_at: chrono::Utc::now().to_rfc3339(),
-                                parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
-                                revision_session_id: Some(child_session_id.clone()),
-                            };
-                            match vak_sandbox::append_record(
-                                &records_path,
-                                &vak_sandbox::DurableRecord::Candidate(record),
-                            ) {
-                                Ok(()) => {
-                                    let answer = response.text_content();
-                                    let answer = answer.chars().take(2000).collect::<String>();
-                                    detail = Some(if answer.trim().is_empty() {
-                                        format!("New draft version {id} is ready for review")
-                                    } else {
-                                        format!(
-                                            "New draft version {id} is ready for review. {answer}"
-                                        )
-                                    });
-                                    new_candidate_id = Some(id);
-                                    true
-                                }
-                                Err(error) => {
-                                    detail = Some(error.to_string());
-                                    false
+                    Ok(mut candidate) => {
+                        candidate.target_checks =
+                            vak_sandbox::default_target_verifiers().plan(&candidate);
+                        match vak_sandbox::candidate_digest(&candidate) {
+                            Ok(candidate_digest) => {
+                                let record = vak_sandbox::CandidateRecord {
+                                    record_id: format!("candidate-{id}"),
+                                    session_id: saved.session_id.clone(),
+                                    turn_id: saved.turn_id.clone(),
+                                    result_id: saved.result_id.clone(),
+                                    execution_id: saved.execution_id.clone(),
+                                    environment_id: revision_id.clone(),
+                                    candidate_digest,
+                                    candidate,
+                                    verified: true,
+                                    updated_at: chrono::Utc::now().to_rfc3339(),
+                                    parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
+                                    revision_session_id: Some(child_session_id.clone()),
+                                };
+                                match vak_sandbox::append_record(
+                                    &records_path,
+                                    &vak_sandbox::DurableRecord::Candidate(record),
+                                ) {
+                                    Ok(()) => {
+                                        let answer = response.text_content();
+                                        let answer = answer.chars().take(2000).collect::<String>();
+                                        detail = Some(if answer.trim().is_empty() {
+                                            format!("New draft version {id} is ready for review")
+                                        } else {
+                                            format!(
+                                                "New draft version {id} is ready for review. {answer}"
+                                            )
+                                        });
+                                        new_candidate_id = Some(id);
+                                        true
+                                    }
+                                    Err(error) => {
+                                        detail = Some(error.to_string());
+                                        false
+                                    }
                                 }
                             }
+                            Err(error) => {
+                                detail = Some(error.to_string());
+                                false
+                            }
                         }
-                        Err(error) => {
-                            detail = Some(error.to_string());
-                            false
-                        }
-                    },
+                    }
                     Err(error) => {
                         detail = Some(error.to_string());
                         false
@@ -11072,6 +11077,9 @@ async fn promote_sandbox_candidate(
     candidate
         .files
         .retain(|file| body.files.contains(&file.path));
+    candidate
+        .target_checks
+        .retain(|check| body.files.contains(&check.path));
     // Compare canonical paths: macOS temporary directories can be addressed
     // through `/var` or `/private/var`, which are the same workspace but do
     // not satisfy lexical `starts_with` checks.
@@ -11094,7 +11102,21 @@ async fn promote_sandbox_candidate(
     }
     let promotion_root = sandbox_promotions_root(&state);
     let receipt = match tokio::task::spawn_blocking(move || {
-        vak_sandbox::promote_recoverable(&candidate, &promotion_root)
+        let mut receipt = vak_sandbox::promote_recoverable(&candidate, &promotion_root)?;
+        let checks = vak_sandbox::default_target_verifiers()
+            .verify(&candidate.destination_root, &candidate.target_checks);
+        if !checks.is_empty() {
+            let failed = checks.iter().any(|check| check.status == "failed");
+            receipt.integration.target_checks_status =
+                if failed { "failed" } else { "passed" }.into();
+            receipt.integration.evidence = format!(
+                "{} registered target format check(s) ran against applied state {}",
+                checks.len(),
+                receipt.integration.applied_state_digest
+            );
+            receipt.integration.target_checks = checks;
+        }
+        Ok::<_, vak_sandbox::Error>(receipt)
     })
     .await
     {
@@ -18080,7 +18102,7 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test]
-    async fn candidate_export_and_promotion_records_observed_verification() {
+    async fn candidate_export_and_promotion_runs_planned_target_verifier() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -18089,7 +18111,7 @@ mod sandbox_promotion_tests {
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
-        tokio::fs::write(scratch.join("result.txt"), "candidate")
+        tokio::fs::write(scratch.join("result.json"), r#"{"ready":true}"#)
             .await
             .unwrap();
 
@@ -18097,6 +18119,8 @@ mod sandbox_promotion_tests {
         assert_eq!(candidate.session_id, "session-1");
         assert_eq!(candidate.execution_id, "exec-1");
         assert!(!candidate.result_id.is_empty());
+        assert_eq!(candidate.candidate.target_checks.len(), 1);
+        assert_eq!(candidate.candidate.target_checks[0].verifier, "format.json");
 
         let candidate_id = candidate.candidate.candidate_id.clone();
         let response = promote_sandbox_candidate(
@@ -18104,7 +18128,7 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxPromotionBody {
                 candidate_id: candidate_id.clone(),
-                files: vec!["result.txt".into()],
+                files: vec!["result.json".into()],
             }),
         )
         .await;
@@ -18119,11 +18143,17 @@ mod sandbox_promotion_tests {
             panic!("promotion response")
         };
         assert_eq!(promoted.receipt.verification.len(), 1);
+        assert_eq!(promoted.receipt.integration.target_checks_status, "passed");
+        assert_eq!(promoted.receipt.integration.target_checks.len(), 1);
         assert_eq!(
-            tokio::fs::read_to_string(dir.path().join("result.txt"))
+            promoted.receipt.integration.target_checks[0].status,
+            "passed"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("result.json"))
                 .await
                 .unwrap(),
-            "candidate"
+            r#"{"ready":true}"#
         );
         let response = undo_sandbox_promotion(
             State(state.clone()),
@@ -18131,7 +18161,7 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(!dir.path().join("result.txt").exists());
+        assert!(!dir.path().join("result.json").exists());
         assert_eq!(
             vak_sandbox::load_records(&sandbox_records_path(&state))
                 .unwrap()
