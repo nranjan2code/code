@@ -314,27 +314,40 @@ impl TargetVerifier for PdfStructureVerifier {
 
 pub struct OpenXmlPackageVerifier;
 
-fn verify_xml_root(reader: impl BufRead, part: &str, expected_root: &[u8]) -> Result<(), String> {
+fn verify_xml_root(
+    reader: impl BufRead,
+    part: &str,
+    expected_root: &[u8],
+    counted_element: Option<&[u8]>,
+) -> Result<usize, String> {
     let mut reader = quick_xml::Reader::from_reader(reader);
     reader.config_mut().trim_text(true);
     let mut buffer = Vec::new();
+    let mut saw_root = false;
+    let mut count = 0;
     loop {
         match reader.read_event_into(&mut buffer) {
             Ok(quick_xml::events::Event::Start(element))
             | Ok(quick_xml::events::Event::Empty(element)) => {
                 let name = element.local_name();
-                return if name.as_ref() == expected_root {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "Open XML part {part} has root {}, expected {}",
-                        String::from_utf8_lossy(name.as_ref()),
-                        String::from_utf8_lossy(expected_root)
-                    ))
-                };
+                if !saw_root {
+                    if name.as_ref() != expected_root {
+                        return Err(format!(
+                            "Open XML part {part} has root {}, expected {}",
+                            String::from_utf8_lossy(name.as_ref()),
+                            String::from_utf8_lossy(expected_root)
+                        ));
+                    }
+                    saw_root = true;
+                }
+                if counted_element.is_some_and(|expected| name.as_ref() == expected) {
+                    count += 1;
+                }
             }
             Ok(quick_xml::events::Event::Eof) => {
-                return Err(format!("Open XML part {part} has no root element"));
+                return saw_root
+                    .then_some(count)
+                    .ok_or_else(|| format!("Open XML part {part} has no root element"));
             }
             Ok(_) => {}
             Err(error) => return Err(format!("Open XML part {part} is invalid: {error}")),
@@ -360,26 +373,36 @@ impl TargetVerifier for OpenXmlPackageVerifier {
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|error| format!("Open XML package could not be opened: {error}"))?;
         let lower = path.to_string_lossy().to_ascii_lowercase();
-        let (required, required_root): (&str, &[u8]) = if lower.ends_with(".docx") {
-            ("word/document.xml", b"document")
-        } else if lower.ends_with(".xlsx") {
-            ("xl/workbook.xml", b"workbook")
-        } else {
-            ("ppt/presentation.xml", b"presentation")
-        };
-        for (part, root) in [
-            ("[Content_Types].xml", b"Types".as_slice()),
-            ("_rels/.rels", b"Relationships".as_slice()),
-            (required, required_root),
+        let (required, required_root, unit, counted_element): (&str, &[u8], &str, &[u8]) =
+            if lower.ends_with(".docx") {
+                ("word/document.xml", b"document", "paragraph(s)", b"p")
+            } else if lower.ends_with(".xlsx") {
+                ("xl/workbook.xml", b"workbook", "worksheet(s)", b"sheet")
+            } else {
+                (
+                    "ppt/presentation.xml",
+                    b"presentation",
+                    "slide(s)",
+                    b"sldId",
+                )
+            };
+        let mut primary_count = 0;
+        for (part, root, count_element) in [
+            ("[Content_Types].xml", b"Types".as_slice(), None),
+            ("_rels/.rels", b"Relationships".as_slice(), None),
+            (required, required_root, Some(counted_element)),
         ] {
             let entry = archive
                 .by_name(part)
                 .map_err(|error| format!("Open XML package is missing {part}: {error}"))?;
-            verify_xml_root(BufReader::new(entry), part, root)?;
+            let count = verify_xml_root(BufReader::new(entry), part, root, count_element)?;
+            if part == required {
+                primary_count = count;
+            }
         }
         Ok(format!(
-            "Open XML package opened with {} parts and parsed the required {required} structure",
-            archive.len()
+            "Open XML package opened with {} parts, parsed {required}, and found {primary_count} {unit}",
+            archive.len(),
         ))
     }
 }
@@ -1578,7 +1601,10 @@ mod tests {
         for (part, xml) in [
             ("[Content_Types].xml", "<Types/>"),
             ("_rels/.rels", "<Relationships/>"),
-            ("word/document.xml", "<w:document xmlns:w=\"urn:test\"/>"),
+            (
+                "word/document.xml",
+                "<w:document xmlns:w=\"urn:test\"><w:body><w:p/><w:p/></w:body></w:document>",
+            ),
         ] {
             archive.start_file(part, options).unwrap();
             archive.write_all(xml.as_bytes()).unwrap();
@@ -1601,9 +1627,39 @@ mod tests {
         let invalid_path = target.path().join("broken.docx");
         fs::write(&invalid_path, b"not a package").unwrap();
         let verifier = OpenXmlPackageVerifier;
-        assert!(verifier.verify(&valid_path).is_ok());
+        let evidence = verifier.verify(&valid_path).unwrap();
+        assert!(evidence.contains("2 paragraph(s)"));
         assert!(verifier.verify(&wrong_root_path).is_err());
         assert!(verifier.verify(&invalid_path).is_err());
+
+        for (name, part, primary, expected) in [
+            (
+                "book.xlsx",
+                "xl/workbook.xml",
+                "<workbook><sheets><sheet/><sheet/></sheets></workbook>",
+                "2 worksheet(s)",
+            ),
+            (
+                "deck.pptx",
+                "ppt/presentation.xml",
+                "<p:presentation xmlns:p=\"urn:test\"><p:sldIdLst><p:sldId/><p:sldId/><p:sldId/></p:sldIdLst></p:presentation>",
+                "3 slide(s)",
+            ),
+        ] {
+            let path = target.path().join(name);
+            let file = fs::File::create(&path).unwrap();
+            let mut archive = zip::ZipWriter::new(file);
+            for (entry, xml) in [
+                ("[Content_Types].xml", "<Types/>"),
+                ("_rels/.rels", "<Relationships/>"),
+                (part, primary),
+            ] {
+                archive.start_file(entry, options).unwrap();
+                archive.write_all(xml.as_bytes()).unwrap();
+            }
+            archive.finish().unwrap();
+            assert!(verifier.verify(&path).unwrap().contains(expected));
+        }
     }
 
     #[test]
