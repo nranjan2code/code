@@ -878,6 +878,20 @@ fn main() {
     }
     if internal.as_deref()
         == Some(std::ffi::OsStr::new(
+            vak_tools::broker::PERSISTENT_WORKER_SUBCOMMAND,
+        ))
+    {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(_) => std::process::exit(125),
+        };
+        std::process::exit(runtime.block_on(vak_tools::broker::persistent_worker_main()));
+    }
+    if internal.as_deref()
+        == Some(std::ffi::OsStr::new(
             vak_delivery::worker::WORKER_SUBCOMMAND,
         ))
     {

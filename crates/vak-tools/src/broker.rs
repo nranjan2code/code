@@ -12,6 +12,7 @@ use crate::sandbox_events::SandboxEvent;
 use crate::{Tool, ToolContext, ToolOutput};
 
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
+pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
 const PROTOCOL_VERSION: u8 = 1;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
@@ -30,6 +31,125 @@ struct WorkerResponse {
     content: String,
     is_error: bool,
     events: Vec<SandboxEvent>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistentWorkerRequest {
+    version: u8,
+    command: String,
+    args: Vec<String>,
+}
+
+pub async fn spawn_persistent_worker(
+    worker_exe: &Path,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    sandbox: Option<&dyn crate::sandbox::Sandbox>,
+) -> Result<tokio::process::Child, String> {
+    if !worker_exe.is_file() {
+        return Err(format!(
+            "tool broker unavailable: worker executable not found: {}",
+            worker_exe.display()
+        ));
+    }
+    let worker_command = format!(
+        "{} {}",
+        shell_quote(&worker_exe.display().to_string()),
+        PERSISTENT_WORKER_SUBCOMMAND
+    );
+    let mut request = PersistentWorkerRequest {
+        version: PROTOCOL_VERSION,
+        command: command.to_string(),
+        args: args.to_vec(),
+    };
+    let effective = match sandbox {
+        Some(value) if value.target() == SandboxTarget::WorkerProcess => {
+            value.wrap(&worker_command)
+        }
+        Some(value) => {
+            let invocation = std::iter::once(request.command.as_str())
+                .chain(request.args.iter().map(String::as_str))
+                .map(shell_quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+            request.command = "sh".into();
+            request.args = vec!["-c".into(), value.wrap(&invocation)];
+            worker_command
+        }
+        None => worker_command,
+    };
+    let mut process = tokio::process::Command::new("sh");
+    process
+        .arg("-c")
+        .arg(effective)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    crate::bash::scrub_environment(&mut process);
+    process.env(WORKER_ENV, "1");
+    crate::bash::isolate_process_group(&mut process);
+    let mut child = process
+        .spawn()
+        .map_err(|error| format!("persistent tool broker spawn failed: {error}"))?;
+    let payload = serde_json::to_vec(&request)
+        .map_err(|error| format!("persistent tool broker encode failed: {error}"))?;
+    let Some(mut stdin) = child.stdin.take() else {
+        crate::bash::kill_process_group(&child.id());
+        return Err("persistent tool broker has no stdin".into());
+    };
+    if let Err(error) = stdin.write_all(&payload).await {
+        crate::bash::kill_process_group(&child.id());
+        let _ = child.wait().await;
+        return Err(format!("persistent tool broker request failed: {error}"));
+    }
+    drop(stdin);
+    Ok(child)
+}
+
+pub async fn persistent_worker_main() -> i32 {
+    let mut bytes = Vec::new();
+    if tokio::io::stdin()
+        .take(MAX_PROTOCOL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .is_err()
+        || bytes.len() as u64 > MAX_PROTOCOL_BYTES
+    {
+        return 125;
+    }
+    let request = match serde_json::from_slice::<PersistentWorkerRequest>(&bytes) {
+        Ok(request) if request.version == PROTOCOL_VERSION => request,
+        _ => return 125,
+    };
+    let mut command = tokio::process::Command::new(&request.command);
+    command
+        .args(&request.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    crate::bash::scrub_environment(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("preview spawn failed: {error}");
+            return 125;
+        }
+    };
+    match child.wait().await {
+        Ok(status) => status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .unwrap_or(125)
+            .into(),
+        Err(error) => {
+            eprintln!("preview wait failed: {error}");
+            125
+        }
+    }
 }
 
 pub struct BrokeredTool {

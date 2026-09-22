@@ -5,11 +5,14 @@
 //! harness cannot speak the broker protocol.
 
 fn main() -> std::process::ExitCode {
-    let invoked = std::env::args_os()
-        .nth(1)
-        .as_deref()
-        .is_some_and(|a| a == std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND));
-    if !invoked {
+    let invoked = std::env::args_os().nth(1);
+    let tool_worker =
+        invoked.as_deref() == Some(std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND));
+    let persistent_worker = invoked.as_deref()
+        == Some(std::ffi::OsStr::new(
+            vak_tools::broker::PERSISTENT_WORKER_SUBCOMMAND,
+        ));
+    if !tool_worker && !persistent_worker {
         eprintln!("internal tool worker; do not invoke directly");
         return std::process::ExitCode::from(64);
     }
@@ -17,6 +20,9 @@ fn main() -> std::process::ExitCode {
         .enable_all()
         .build()
     {
+        Ok(runtime) if persistent_worker => {
+            runtime.block_on(vak_tools::broker::persistent_worker_main())
+        }
         Ok(runtime) => runtime.block_on(vak_tools::broker::worker_main()),
         Err(_) => 125,
     };

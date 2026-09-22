@@ -17816,24 +17816,20 @@ async fn start_launch(
         }
     }
 
-    let mut command = tokio::process::Command::new(&cfg.cmd);
-    command
-        .args(&cfg.args)
-        .current_dir(&launch_root)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    vak_tools::bash::scrub_environment(&mut command);
-    vak_tools::bash::isolate_process_group(&mut command);
-    let child = command.spawn();
-
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => {
+    let mut child = match vak_tools::broker::spawn_persistent_worker(
+        &state.core.tool_worker_exe(),
+        &launch_root,
+        &cfg.cmd,
+        &cfg.args,
+        state.core.agent_sandbox().as_deref(),
+    )
+    .await
+    {
+        Ok(child) => child,
+        Err(error) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("spawn failed: {e}") })),
+                Json(serde_json::json!({ "error": error })),
             )
                 .into_response();
         }

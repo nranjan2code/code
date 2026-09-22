@@ -320,6 +320,13 @@ async fn main() {
     }
     if internal.as_deref()
         == Some(std::ffi::OsStr::new(
+            vak_tools::broker::PERSISTENT_WORKER_SUBCOMMAND,
+        ))
+    {
+        std::process::exit(vak_tools::broker::persistent_worker_main().await);
+    }
+    if internal.as_deref()
+        == Some(std::ffi::OsStr::new(
             vak_delivery::worker::WORKER_SUBCOMMAND,
         ))
     {
