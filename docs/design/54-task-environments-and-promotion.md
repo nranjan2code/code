@@ -241,6 +241,8 @@ Executable project checks are a second boundary. The frozen candidate declares a
 
 Workspace checks are planned from the exact candidate or destination manifest and run only after acceptance, after the applied-state digest is revalidated. Rust, Go and Python test checks remain available where their project markers exist. JavaScript projects expose both a declared production build (`npm run build`) and declared project tests (`npm test`) as separate user-invoked checks; neither is inferred as passed from sandbox activity.
 
+When a person accepts only some files, the promotion record stores the checks planned from that selected file set. A candidate manifest that was not selected cannot introduce a command; a selected deletion removes its project checks. Before each run, the command is compared with the current effective manifest. The accepted digest is checked again after execution, so a build or test that changes an accepted file records a failed check with its output instead of a pass attributed to the older state.
+
 Approval can be expressed through an authenticated UI action or a clearly bound human response in the existing approval system. Model messages, artifact HTML and tool output cannot resolve it. Gateway surfaces keep their configured approver requirements; unattended work prepares a candidate and waits or records an unresolved gate. Silence is never acceptance.
 
 “Accept files,” “install target dependencies,” “run migrations,” and “deploy/publish” must not silently collapse into one operation. A user may explicitly authorize a combined concrete plan; otherwise preserve those boundaries.

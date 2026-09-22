@@ -532,6 +532,8 @@ pub struct PromotionRecord {
     pub candidate_digest: String,
     pub candidate_id: String,
     pub receipt: PromotionReceipt,
+    #[serde(default)]
+    pub workspace_checks: Vec<WorkspaceCheckPlan>,
     pub updated_at: String,
 }
 

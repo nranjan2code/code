@@ -10656,11 +10656,14 @@ struct SandboxCandidateBody {
 fn planned_workspace_checks(
     candidate: &vak_sandbox::CandidateManifest,
 ) -> Vec<vak_sandbox::WorkspaceCheckPlan> {
-    let has = |name: &str| {
-        candidate.files.iter().any(|file| {
-            file.path == name && file.operation == vak_sandbox::CandidateOperation::Upsert
-        }) || candidate.destination_root.join(name).is_file()
+    let effective_file = |name: &str| match candidate.files.iter().find(|file| file.path == name) {
+        Some(file) if file.operation == vak_sandbox::CandidateOperation::Upsert => {
+            Some(candidate.source_root.join(name))
+        }
+        Some(_) => None,
+        None => Some(candidate.destination_root.join(name)),
     };
+    let has = |name: &str| effective_file(name).is_some_and(|path| path.is_file());
     let mut checks = Vec::new();
     if has("Cargo.toml") {
         checks.push(vak_sandbox::WorkspaceCheckPlan {
@@ -10673,12 +10676,8 @@ fn planned_workspace_checks(
             },
         });
     }
-    let package_path = if candidate.source_root.join("package.json").is_file() {
-        candidate.source_root.join("package.json")
-    } else {
-        candidate.destination_root.join("package.json")
-    };
-    if let Ok(bytes) = std::fs::read(package_path)
+    if let Some(package_path) = effective_file("package.json")
+        && let Ok(bytes) = std::fs::read(package_path)
         && let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes)
     {
         let has_script = |name: &str| {
@@ -11692,6 +11691,7 @@ async fn promote_sandbox_candidate(
             .into_response();
     }
     let promotion_root = sandbox_promotions_root(&state);
+    let selected_workspace_checks = planned_workspace_checks(&candidate);
     let receipt = match tokio::task::spawn_blocking(move || {
         let mut receipt = vak_sandbox::promote_recoverable(&candidate, &promotion_root)?;
         let checks = vak_sandbox::default_target_verifiers()
@@ -11734,6 +11734,7 @@ async fn promote_sandbox_candidate(
         candidate_digest: saved.candidate_digest,
         candidate_id: receipt.candidate_id.clone(),
         receipt: receipt.clone(),
+        workspace_checks: selected_workspace_checks,
         updated_at: chrono::Utc::now().to_rfc3339(),
     });
     if let Err(error) = vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
@@ -11870,7 +11871,7 @@ async fn run_sandbox_workspace_check(
     candidate
         .target_checks
         .retain(|check| promotion.receipt.applied.contains(&check.path));
-    let Some(check) = candidate
+    let Some(check) = promotion
         .workspace_checks
         .iter()
         .find(|check| check.id == body.check_id)
@@ -11878,6 +11879,13 @@ async fn run_sandbox_workspace_check(
     else {
         return (StatusCode::BAD_REQUEST, "unknown workspace check").into_response();
     };
+    if !planned_workspace_checks(&candidate).contains(&check) {
+        return (
+            StatusCode::CONFLICT,
+            "workspace check no longer matches accepted files",
+        )
+            .into_response();
+    }
     let candidate_for_state = candidate.clone();
     let promotion_root = sandbox_promotions_root(&state);
     match tokio::task::spawn_blocking(move || {
@@ -11901,14 +11909,41 @@ async fn run_sandbox_workspace_check(
         }
     }
     let outcome = execute_script(&state.core, &candidate.destination_root, &check.command).await;
+    let candidate_after_check = candidate;
+    let promotion_root = sandbox_promotions_root(&state);
+    let expected_digest = promotion.receipt.integration.applied_state_digest.clone();
+    let state_after_check = tokio::task::spawn_blocking(move || {
+        vak_sandbox::promote_recoverable(&candidate_after_check, &promotion_root)
+    })
+    .await;
+    let state_evidence = match state_after_check {
+        Ok(Ok(receipt)) if receipt.integration.applied_state_digest == expected_digest => None,
+        Ok(Ok(_)) => Some("accepted workspace state changed during this check".to_string()),
+        Ok(Err(error)) => Some(format!(
+            "accepted workspace state changed during this check: {error}"
+        )),
+        Err(error) => Some(format!(
+            "accepted workspace state could not be verified after this check: {error}"
+        )),
+    };
+    let evidence = match state_evidence.as_deref() {
+        Some(reason) if outcome.text.is_empty() => reason.to_string(),
+        Some(reason) => format!("{}\n\n{reason}", outcome.text),
+        None => outcome.text,
+    };
     let record = vak_sandbox::WorkspaceCheckRecord {
         record_id: format!("workspace-check-{}", uuid::Uuid::now_v7()),
         session_id,
         candidate_id,
         applied_state_digest: promotion.receipt.integration.applied_state_digest,
         check,
-        status: if outcome.ok { "passed" } else { "failed" }.into(),
-        evidence: outcome.text,
+        status: if outcome.ok && state_evidence.is_none() {
+            "passed"
+        } else {
+            "failed"
+        }
+        .into(),
+        evidence,
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
     let durable = vak_sandbox::DurableRecord::WorkspaceCheck(record);
@@ -18981,12 +19016,17 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(wrong_session.status(), StatusCode::NOT_FOUND);
-        tokio::fs::write(
-            candidate.candidate.source_root.join("result.txt"),
-            "tampered",
-        )
-        .await
-        .unwrap();
+        let saved_file = candidate.candidate.source_root.join("result.txt");
+        let mut permissions = std::fs::metadata(&saved_file).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() | 0o200);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&saved_file, permissions).unwrap();
+        tokio::fs::write(&saved_file, "tampered").await.unwrap();
         let tampered = read_sandbox_candidate_file(
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
@@ -18996,12 +19036,7 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(tampered.status(), StatusCode::CONFLICT);
-        tokio::fs::write(
-            candidate.candidate.source_root.join("result.txt"),
-            "reviewed",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(&saved_file, "reviewed").await.unwrap();
         let invalid_comment = comment_on_sandbox_candidate(
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
@@ -19411,6 +19446,35 @@ mod sandbox_promotion_tests {
         assert_eq!(checks[0].command, "npm run build");
         assert_eq!(checks[1].id, "javascript.npm-test");
         assert_eq!(checks[1].command, "npm test");
+    }
+
+    #[test]
+    fn workspace_checks_follow_the_effective_candidate_manifest() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(
+            target.path().join("package.json"),
+            r#"{"scripts":{"test":"old test"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            source.path().join("package.json"),
+            r#"{"scripts":{"build":"vite build"}}"#,
+        )
+        .unwrap();
+        let mut candidate =
+            vak_sandbox::candidate_manifest("checks", source.path(), target.path()).unwrap();
+        let checks = planned_workspace_checks(&candidate);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].id, "javascript.npm-build");
+
+        candidate.files[0].operation = vak_sandbox::CandidateOperation::Delete;
+        assert!(planned_workspace_checks(&candidate).is_empty());
+
+        candidate.files.clear();
+        let inherited = planned_workspace_checks(&candidate);
+        assert_eq!(inherited.len(), 1);
+        assert_eq!(inherited[0].id, "javascript.npm-test");
     }
 
     #[test]

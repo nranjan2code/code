@@ -171,7 +171,7 @@ export default function WorkbenchPanel() {
       if (latest) {
         const source = records.find((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.candidate.candidate_id === latest.candidate_id)?.record;
         setAppliedPromotionExecutionId(source?.execution_id ?? null);
-        setAppliedWorkspaceChecks(source?.candidate.workspace_checks ?? []);
+        setAppliedWorkspaceChecks(latest.workspace_checks ?? []);
         setWorkspaceCheckReceipts(records.filter((record): record is { kind: "WorkspaceCheck"; record: api.SandboxWorkspaceCheckRecord } => record.kind === "WorkspaceCheck" && record.record.candidate_id === latest.candidate_id).map((record) => record.record));
       }
     }).catch(() => { /* Undo remains hidden when durable state is unavailable. */ });
@@ -611,7 +611,7 @@ export default function WorkbenchPanel() {
         : `Applied ${receipt.receipt.verification?.length ?? 0} change(s).`);
       setAppliedPromotion(receipt);
       setAppliedPromotionExecutionId(value.execution_id);
-      setAppliedWorkspaceChecks(value.candidate.workspace_checks ?? []);
+      setAppliedWorkspaceChecks(receipt.workspace_checks ?? []);
       setWorkspaceCheckReceipts([]);
       setReviewOpen(false);
       setPendingCandidates((current) => current.filter((record) => record.candidate.candidate_id !== value.candidate.candidate_id));
