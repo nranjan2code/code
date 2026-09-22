@@ -10680,17 +10680,28 @@ fn planned_workspace_checks(
     };
     if let Ok(bytes) = std::fs::read(package_path)
         && let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        && package
-            .get("scripts")
-            .and_then(|scripts| scripts.get("test"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|script| !script.trim().is_empty())
     {
-        checks.push(vak_sandbox::WorkspaceCheckPlan {
-            id: "javascript.npm-test".into(),
-            label: "Project tests".into(),
-            command: "npm test".into(),
-        });
+        let has_script = |name: &str| {
+            package
+                .get("scripts")
+                .and_then(|scripts| scripts.get(name))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|script| !script.trim().is_empty())
+        };
+        if has_script("build") {
+            checks.push(vak_sandbox::WorkspaceCheckPlan {
+                id: "javascript.npm-build".into(),
+                label: "Production build".into(),
+                command: "npm run build".into(),
+            });
+        }
+        if has_script("test") {
+            checks.push(vak_sandbox::WorkspaceCheckPlan {
+                id: "javascript.npm-test".into(),
+                label: "Project tests".into(),
+                command: "npm test".into(),
+            });
+        }
     }
     if has("go.mod") {
         checks.push(vak_sandbox::WorkspaceCheckPlan {
@@ -19389,15 +19400,17 @@ mod sandbox_promotion_tests {
         let target = tempfile::tempdir().unwrap();
         std::fs::write(
             source.path().join("package.json"),
-            r#"{"scripts":{"test":"vitest run"}}"#,
+            r#"{"scripts":{"build":"vite build","test":"vitest run"}}"#,
         )
         .unwrap();
         let candidate =
             vak_sandbox::candidate_manifest("checks", source.path(), target.path()).unwrap();
         let checks = planned_workspace_checks(&candidate);
-        assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].id, "javascript.npm-test");
-        assert_eq!(checks[0].command, "npm test");
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].id, "javascript.npm-build");
+        assert_eq!(checks[0].command, "npm run build");
+        assert_eq!(checks[1].id, "javascript.npm-test");
+        assert_eq!(checks[1].command, "npm test");
     }
 
     #[test]
