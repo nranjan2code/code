@@ -76,16 +76,11 @@ pub struct EnvironmentPlan {
     pub setup_recipe: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum CandidateOperation {
+    #[default]
     Upsert,
     Delete,
-}
-
-impl Default for CandidateOperation {
-    fn default() -> Self {
-        Self::Upsert
-    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -718,6 +713,72 @@ pub fn candidate_manifest(
     })
 }
 
+fn protect_frozen_tree(root: &Path) -> Result<(), Error> {
+    let mut directories = Vec::new();
+    for item in WalkDir::new(root).follow_links(false) {
+        let item = item.map_err(|error| Error::Io(std::io::Error::other(error.to_string())))?;
+        let path = item.path();
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(Error::PathEscape(path.display().to_string()));
+        }
+        if metadata.is_dir() {
+            directories.push(path.to_path_buf());
+            continue;
+        }
+        let mut permissions = metadata.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() & 0o555);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(true);
+        fs::set_permissions(path, permissions)?;
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in directories {
+        let mut permissions = fs::symlink_metadata(&path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() & 0o555);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(true);
+        fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+fn remove_frozen_tree(root: &Path) {
+    let mut entries: Vec<PathBuf> = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+    entries.sort_by_key(|path| path.components().count());
+    for path in entries {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        let mut permissions = metadata.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() | 0o700);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(false);
+        let _ = fs::set_permissions(path, permissions);
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
 /// Capture the reviewed bytes under a new, server-owned directory. The
 /// manifest still records the destination baseline observed at export time.
 pub fn freeze_candidate(
@@ -750,10 +811,10 @@ pub fn freeze_candidate(
             output.write_all(&bytes)?;
             output.sync_all()?;
         }
-        Ok(())
+        protect_frozen_tree(frozen_root)
     })();
     if let Err(error) = copy {
-        let _ = fs::remove_dir_all(frozen_root);
+        remove_frozen_tree(frozen_root);
         return Err(error);
     }
     manifest.source_root = frozen_root.to_path_buf();
@@ -815,7 +876,7 @@ pub fn freeze_revision_candidate(
         Ok(())
     })();
     if let Err(error) = result {
-        let _ = fs::remove_dir_all(frozen_root);
+        remove_frozen_tree(frozen_root);
         return Err(error);
     }
     Ok(revision)
@@ -1027,6 +1088,7 @@ pub fn promote_recoverable(
     let lock_path = transaction_root.join(format!("{workspace_key}.lock"));
     let lock_file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
@@ -1227,6 +1289,7 @@ pub fn undo_promotion(candidate_id: &str, transaction_root: &Path) -> Result<Und
     let workspace_key = digest(lock_destination.to_string_lossy().as_bytes()).replace(':', "_");
     let lock_file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(transaction_root.join(format!("{workspace_key}.lock")))?;
@@ -1555,11 +1618,13 @@ mod tests {
         )
         .unwrap();
         fs::write(source.path().join("pages/index.html"), "unreviewed change").unwrap();
-        fs::write(
-            saved.source_root.join("unlisted.txt"),
-            "must not enter copy",
-        )
-        .unwrap();
+        assert!(
+            fs::write(
+                saved.source_root.join("unlisted.txt"),
+                "must not enter copy",
+            )
+            .is_err()
+        );
         let copy = store.path().join("revision-copy");
         prepare_revision_copy(&saved, &copy).unwrap();
         assert_eq!(
@@ -1568,7 +1633,17 @@ mod tests {
         );
         assert!(!copy.join("unlisted.txt").exists());
 
-        fs::write(saved.source_root.join("pages/index.html"), "tampered").unwrap();
+        let saved_file = saved.source_root.join("pages/index.html");
+        let mut permissions = fs::metadata(&saved_file).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() | 0o200);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(false);
+        fs::set_permissions(&saved_file, permissions).unwrap();
+        fs::write(&saved_file, "tampered").unwrap();
         let failed_copy = store.path().join("failed-copy");
         assert!(matches!(
             prepare_revision_copy(&saved, &failed_copy),

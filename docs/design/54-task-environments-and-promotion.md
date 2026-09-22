@@ -181,6 +181,14 @@ workspace edit is observed, undo stops without erasing it and requires human
 resolution. The append-only sandbox ledger records the authenticated undo
 receipt separately from the original promotion receipt.
 
+Frozen review trees are made read only after every byte has been copied and
+verified. On Unix this removes write bits while preserving executable bits;
+other platforms use their native read-only permission. Files cannot be edited
+and directories cannot receive unreviewed additions through ordinary process
+access. Acceptance and revision seeding still rehash every selected file, so a
+privileged permission change cannot bypass the reviewed-byte check. Server-owned
+cleanup explicitly unlocks the tree before removal.
+
 Candidate manifests represent deletion explicitly. A revised task copy that
 omits a path with an existing imported workspace baseline freezes a `Delete`
 operation carrying that baseline and the reviewed parent identity. Review
