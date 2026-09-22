@@ -978,12 +978,14 @@ export type SandboxPromotionRecord = { record_id: string; session_id: string; re
 export type SandboxPromotionUndoRecord = { record_id: string; session_id: string; candidate_id: string; receipt: { restored: string[]; verification: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
 export type SandboxWorkspaceCheckRecord = { record_id: string; session_id: string; candidate_id: string; applied_state_digest: string; check: WorkspaceCheckPlan; status: "passed" | "failed"; evidence: string; updated_at: string };
 export type SandboxCandidateRevisionRecord = { record_id: string; revision_id: string; session_id: string; parent_candidate_id: string; comment_id: string; child_session_id: string; status: "Running" | "Completed" | "Failed"; candidate_id?: string; detail?: string; updated_at: string };
+export type SandboxPreviewPreparationRecord = { record_id: string; session_id: string; result_id: string; candidate_id: string; candidate_digest: string; environment_id: string; state: "Planned" | "Preparing" | "Ready" | "Running" | "Stopped" | "Failed" | "Expired"; command: string; evidence: string; updated_at: string };
 export type SandboxRecord =
   | { kind: "Candidate"; record: SandboxCandidateRecord }
   | { kind: "Promotion"; record: SandboxPromotionRecord }
   | { kind: "PromotionUndo"; record: SandboxPromotionUndoRecord }
   | { kind: "WorkspaceCheck"; record: SandboxWorkspaceCheckRecord }
   | { kind: "Environment"; record: unknown }
+  | { kind: "PreviewPreparation"; record: SandboxPreviewPreparationRecord }
   | { kind: "CandidateRevision"; record: SandboxCandidateRevisionRecord };
 
 export function readSandboxCandidateFile(sessionId: string, candidateId: string, path: string): Promise<FileResponse> {

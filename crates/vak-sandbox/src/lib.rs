@@ -575,6 +575,20 @@ pub struct EnvironmentRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviewPreparationRecord {
+    pub record_id: String,
+    pub session_id: String,
+    pub result_id: String,
+    pub candidate_id: String,
+    pub candidate_digest: String,
+    pub environment_id: String,
+    pub state: EnvironmentState,
+    pub command: String,
+    pub evidence: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CandidateRecord {
     pub record_id: String,
     pub session_id: String,
@@ -654,6 +668,7 @@ pub struct WorkspaceCheckRecord {
 #[serde(tag = "kind", content = "record")]
 pub enum DurableRecord {
     Environment(EnvironmentRecord),
+    PreviewPreparation(PreviewPreparationRecord),
     Candidate(CandidateRecord),
     Promotion(PromotionRecord),
     PromotionUndo(PromotionUndoRecord),
@@ -2319,7 +2334,19 @@ mod tests {
             detail: None,
         });
         append_record(&path, &record).unwrap();
-        append_record(&path, &record).unwrap();
-        assert_eq!(load_records(&path).unwrap().len(), 2);
+        let preparation = DurableRecord::PreviewPreparation(PreviewPreparationRecord {
+            record_id: "preview-1".into(),
+            session_id: "session-1".into(),
+            result_id: "result-1".into(),
+            candidate_id: "candidate-1".into(),
+            candidate_digest: "sha256:digest".into(),
+            environment_id: "preview:candidate-1".into(),
+            state: EnvironmentState::Ready,
+            command: "npm ci --ignore-scripts --no-audit --no-fund".into(),
+            evidence: "dependencies prepared".into(),
+            updated_at: "2026-09-08T00:01:00Z".into(),
+        });
+        append_record(&path, &preparation).unwrap();
+        assert_eq!(load_records(&path).unwrap(), vec![record, preparation]);
     }
 }

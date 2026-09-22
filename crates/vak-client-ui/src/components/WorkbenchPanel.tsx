@@ -154,6 +154,7 @@ export default function WorkbenchPanel() {
   const [reviewComment, setReviewComment] = createSignal("");
   const [reviewCommentBusy, setReviewCommentBusy] = createSignal(false);
   const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
+  const [previewPreparations, setPreviewPreparations] = createSignal<api.SandboxPreviewPreparationRecord[]>([]);
 
   createEffect(() => {
     const sessionId = activeId();
@@ -215,6 +216,7 @@ export default function WorkbenchPanel() {
     setReviewComment("");
     setReviewCommentMessage(null);
     setCandidateComments([]);
+    setPreviewPreparations([]);
   });
 
   const executions = () => workbenchExecutions();
@@ -440,6 +442,7 @@ export default function WorkbenchPanel() {
       void api.listSessionSandboxRecords(sessionId)
         .then(({ records }) => {
           if (disposed || candidate()?.candidate.candidate_id !== prepared.candidate.candidate_id) return;
+          setPreviewPreparations(records.filter((record): record is { kind: "PreviewPreparation"; record: api.SandboxPreviewPreparationRecord } => record.kind === "PreviewPreparation").map((record) => record.record));
           const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
           const versions = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === prepared.execution_id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
           setPendingCandidates(versions);
@@ -696,6 +699,18 @@ export default function WorkbenchPanel() {
                   <small>These commands run only when you choose Run workspace check after the files are accepted.</small>
                 </div>
               </Show>
+              <Show when={previewPreparations().filter((record) => record.candidate_id === prepared().candidate.candidate_id).at(-1)}>{(record) =>
+                <div class="candidate-review-checks">
+                  <h3>Preview environment</h3>
+                  <p>{record().state} · <code>{record().command}</code></p>
+                  <Show when={record().evidence}>
+                    <details class="candidate-review-provenance">
+                      <summary>Preparation details</summary>
+                      <pre>{record().evidence.slice(-4_000)}</pre>
+                    </details>
+                  </Show>
+                </div>
+              }</Show>
               <details class="candidate-review-provenance">
                 <summary>Technical provenance</summary>
                 <p><strong>Agent execution</strong> <span>{prepared().execution_id}</span></p>

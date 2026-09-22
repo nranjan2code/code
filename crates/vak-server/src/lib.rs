@@ -10569,6 +10569,7 @@ async fn list_session_sandbox_records(
                     vak_sandbox::DurableRecord::PromotionUndo(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::WorkspaceCheck(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::Environment(_) => false,
+                    vak_sandbox::DurableRecord::PreviewPreparation(value) => value.session_id == id,
                     vak_sandbox::DurableRecord::CandidateRevision(value) => value.session_id == id,
                 })
                 .collect::<Vec<_>>();
@@ -17830,6 +17831,30 @@ async fn read_capped_output(
     captured
 }
 
+fn append_preview_preparation(
+    state: &AppState,
+    saved: &vak_sandbox::CandidateRecord,
+    status: vak_sandbox::EnvironmentState,
+    command: &str,
+    evidence: impl Into<String>,
+) -> Result<(), String> {
+    let record =
+        vak_sandbox::DurableRecord::PreviewPreparation(vak_sandbox::PreviewPreparationRecord {
+            record_id: format!("preview-preparation-{}", uuid::Uuid::now_v7()),
+            session_id: saved.session_id.clone(),
+            result_id: saved.result_id.clone(),
+            candidate_id: saved.candidate.candidate_id.clone(),
+            candidate_digest: saved.candidate_digest.clone(),
+            environment_id: format!("preview:{}", saved.candidate.candidate_id),
+            state: status,
+            command: command.to_string(),
+            evidence: evidence.into(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        });
+    vak_sandbox::append_record(&sandbox_records_path(state), &record)
+        .map_err(|error| error.to_string())
+}
+
 async fn prepare_launch(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -17924,6 +17949,20 @@ async fn prepare_launch(
             runtime_home.join("npm").to_string_lossy().into_owned(),
         ),
     ];
+    let command_display = std::iter::once(command)
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if let Err(error) = append_preview_preparation(
+        &state,
+        &saved,
+        vak_sandbox::EnvironmentState::Preparing,
+        &command_display,
+        "dependency preparation started",
+    ) {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
+    }
     let child = vak_tools::broker::spawn_persistent_worker(
         &state.core.tool_worker_exe(),
         &prepared,
@@ -17937,6 +17976,13 @@ async fn prepare_launch(
         Ok(child) => child,
         Err(error) => {
             let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            let _ = append_preview_preparation(
+                &state,
+                &saved,
+                vak_sandbox::EnvironmentState::Failed,
+                &command_display,
+                &error,
+            );
             return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
         }
     };
@@ -17955,6 +18001,13 @@ async fn prepare_launch(
             vak_tools::bash::kill_process_group(&child.id());
             let _ = child.wait().await;
             let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            let _ = append_preview_preparation(
+                &state,
+                &saved,
+                vak_sandbox::EnvironmentState::Failed,
+                &command_display,
+                "dependency preparation timed out",
+            );
             return (
                 StatusCode::GATEWAY_TIMEOUT,
                 "dependency preparation timed out",
@@ -17977,6 +18030,13 @@ async fn prepare_launch(
     );
     if !status.success() || verify_launch_tree(&saved.candidate, &prepared).is_err() {
         let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        let _ = append_preview_preparation(
+            &state,
+            &saved,
+            vak_sandbox::EnvironmentState::Failed,
+            &command_display,
+            &evidence,
+        );
         return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": "dependency preparation failed", "evidence": evidence }))).into_response();
     }
     if let Err(error) = std::fs::write(
@@ -17984,7 +18044,24 @@ async fn prepare_launch(
         &saved.candidate_digest,
     ) {
         let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        let _ = append_preview_preparation(
+            &state,
+            &saved,
+            vak_sandbox::EnvironmentState::Failed,
+            &command_display,
+            format!("prepared runtime marker could not be written: {error}"),
+        );
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    if let Err(error) = append_preview_preparation(
+        &state,
+        &saved,
+        vak_sandbox::EnvironmentState::Ready,
+        &command_display,
+        &evidence,
+    ) {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
     }
     Json(
         serde_json::json!({ "prepared": true, "candidate_id": candidate_id, "evidence": evidence }),
