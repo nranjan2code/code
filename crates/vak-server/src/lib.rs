@@ -10680,6 +10680,21 @@ fn planned_workspace_checks(
         && let Ok(bytes) = std::fs::read(package_path)
         && let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes)
     {
+        let declared_manager = package
+            .get("packageManager")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.split_once('@').map(|(manager, _)| manager));
+        let package_manager = match declared_manager {
+            Some("pnpm") => "pnpm",
+            Some("yarn") => "yarn",
+            Some("bun") => "bun",
+            Some("npm") => "npm",
+            _ if has("pnpm-lock.yaml") => "pnpm",
+            _ if has("yarn.lock") => "yarn",
+            _ if has("bun.lock") || has("bun.lockb") => "bun",
+            _ => "npm",
+        };
+        let script_command = |name: &str| format!("{package_manager} run {name}");
         let has_script = |name: &str| {
             package
                 .get("scripts")
@@ -10689,16 +10704,16 @@ fn planned_workspace_checks(
         };
         if has_script("build") {
             checks.push(vak_sandbox::WorkspaceCheckPlan {
-                id: "javascript.npm-build".into(),
+                id: "javascript.build".into(),
                 label: "Production build".into(),
-                command: "npm run build".into(),
+                command: script_command("build"),
             });
         }
         if has_script("test") {
             checks.push(vak_sandbox::WorkspaceCheckPlan {
-                id: "javascript.npm-test".into(),
+                id: "javascript.test".into(),
                 label: "Project tests".into(),
-                command: "npm test".into(),
+                command: script_command("test"),
             });
         }
     }
@@ -19444,10 +19459,10 @@ mod sandbox_promotion_tests {
             vak_sandbox::candidate_manifest("checks", source.path(), target.path()).unwrap();
         let checks = planned_workspace_checks(&candidate);
         assert_eq!(checks.len(), 2);
-        assert_eq!(checks[0].id, "javascript.npm-build");
+        assert_eq!(checks[0].id, "javascript.build");
         assert_eq!(checks[0].command, "npm run build");
-        assert_eq!(checks[1].id, "javascript.npm-test");
-        assert_eq!(checks[1].command, "npm test");
+        assert_eq!(checks[1].id, "javascript.test");
+        assert_eq!(checks[1].command, "npm run test");
     }
 
     #[test]
@@ -19468,7 +19483,7 @@ mod sandbox_promotion_tests {
             vak_sandbox::candidate_manifest("checks", source.path(), target.path()).unwrap();
         let checks = planned_workspace_checks(&candidate);
         assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].id, "javascript.npm-build");
+        assert_eq!(checks[0].id, "javascript.build");
 
         candidate.files[0].operation = vak_sandbox::CandidateOperation::Delete;
         assert!(planned_workspace_checks(&candidate).is_empty());
@@ -19476,7 +19491,31 @@ mod sandbox_promotion_tests {
         candidate.files.clear();
         let inherited = planned_workspace_checks(&candidate);
         assert_eq!(inherited.len(), 1);
-        assert_eq!(inherited[0].id, "javascript.npm-test");
+        assert_eq!(inherited[0].id, "javascript.test");
+    }
+
+    #[test]
+    fn workspace_checks_use_the_effective_package_manager_without_command_injection() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(
+            source.path().join("package.json"),
+            r#"{"packageManager":"pnpm@10.0.0; touch /tmp/no","scripts":{"build":"vite build","test":"vitest run"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            source.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        let candidate =
+            vak_sandbox::candidate_manifest("pnpm-checks", source.path(), target.path()).unwrap();
+
+        let checks = planned_workspace_checks(&candidate);
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].command, "pnpm run build");
+        assert_eq!(checks[1].command, "pnpm run test");
+        assert!(checks.iter().all(|check| !check.command.contains("touch")));
     }
 
     #[test]
