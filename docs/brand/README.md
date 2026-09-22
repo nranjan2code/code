@@ -25,9 +25,10 @@ face, calm expression, legible at 24 px.
 
 ## Mark
 
-`mark/vak-mark-glyph.png` — the Devanagari **व** with the prompt chevron, amber bar and blue dash,
-keyed out of the app icon tile. Use this on paper backgrounds; never place the white tile on paper.
-The tiled icon remains `crates/vak-desktop/icons/icon.png`.
+`mark/vak-logo-master.png` is the single canonical Vak trademark: the complete warm-paper rounded
+tile with the navy-and-saffron woven mark. The same artwork is resized for every surface — tray,
+favicon, desktop/mobile app icon, website, documents, and social. Never extract the inner glyph,
+recolour it, swap the tile, or create light/dark variants.
 
 ## Palette (light / paper — the marketing ground)
 

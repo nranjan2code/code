@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vak Write Paths &amp; Growth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f4f2ec; --surface: #fbfaf6; --surface-2: #ffffff; --surface-3: #f0ede4;
+    --border: #ddd8cb; --border-soft: #e7e3d8;
+    --text: #232019; --text-soft: #4f4a3f; --muted: #7c7565; --faint: #9a9384;
+    --accent: #c85a3c; --accent-bright: #b64d31; --accent-wash: rgba(200,90,60,.10);
+    --green: #4f8a5f; --green-wash: rgba(79,138,95,.12);
+    --yellow: #b0842f; --yellow-wash: rgba(176,132,47,.13);
+    --red: #c1494c; --red-wash: rgba(193,73,76,.12);
+    --blue: #4d76ad; --blue-wash: rgba(77,118,173,.12);
+    /* chart series (validated pair, light) */
+    --c1: #c85a3c; --c2: #3567c9; --c-grid: #e7e3d8;
+    --shadow: 0 1px 2px rgba(40,34,22,.05), 0 8px 24px rgba(40,34,22,.06);
+    --mono: 'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
+    --sans: 'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+      --border:#34342f; --border-soft:#2a2a26;
+      --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+      --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.13);
+      --green:#73a982; --green-wash:rgba(115,169,130,.14);
+      --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.14);
+      --red:#d86f72; --red-wash:rgba(216,111,114,.14);
+      --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.14);
+      --c1:#d9683f; --c2:#5b8fe0; --c-grid:#2a2a26;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.13);
+    --green:#73a982; --green-wash:rgba(115,169,130,.14);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.14);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.14);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.14);
+    --c1:#d9683f; --c2:#5b8fe0; --c-grid:#2a2a26;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.34);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1140px; margin:0 auto; padding:0 16px; }
+  @media (min-width:720px) { .wrap { padding:0 24px; } }
+
+  header.masthead { border-bottom:1px solid var(--border);
+    background: radial-gradient(120% 140% at 85% -20%, var(--accent-wash), transparent 60%), var(--surface); }
+  .masthead-inner { padding:54px 0 42px; }
+  .eyebrow { font-family:var(--mono); font-size:12px; font-weight:500; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 18px; }
+  h1 { font-weight:600; font-size:clamp(30px,5vw,46px); line-height:1.08; letter-spacing:-.025em;
+    margin:0 0 16px; text-wrap:balance; max-width:20ch; }
+  .lede { font-size:17px; color:var(--text-soft); max-width:64ch; margin:0 0 26px; }
+  .lede b { color:var(--text); font-weight:600; }
+  .meta-row { display:flex; flex-wrap:wrap; gap:8px; font-family:var(--mono); font-size:12px; }
+  .tag { display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid var(--border);
+    border-radius:999px; background:var(--surface-2); color:var(--text-soft); }
+  .tag b { color:var(--text); font-weight:600; }
+  .swatch { width:9px; height:9px; border-radius:3px; }
+  .sw-ledger { background:var(--accent); }
+  .sw-rewrite { background:var(--blue); }
+  .sw-derived { background:var(--green); }
+  .sw-warn { background:var(--yellow); }
+
+  section { padding:48px 0; border-bottom:1px solid var(--border-soft); }
+  .sec-head { margin-bottom:30px; max-width:72ch; }
+  .sec-kicker { font-family:var(--mono); font-size:11.5px; font-weight:500; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
+  h2 { font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0 0 10px; line-height:1.2; text-wrap:balance; }
+  h3 { font-size:16px; font-weight:600; letter-spacing:-.01em; margin:0 0 6px; }
+  .sec-head p { margin:0; color:var(--text-soft); font-size:15px; }
+  .sec-head p + p { margin-top:10px; }
+  code.k { font-family:var(--mono); font-size:.88em; color:var(--accent); font-weight:500;
+    background:var(--accent-wash); padding:1px 5px; border-radius:5px; }
+  code.p { font-family:var(--mono); font-size:.86em; color:var(--text); }
+
+  /* stat tiles */
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:26px; }
+  .stat { border:1px solid var(--border); border-radius:14px; background:var(--surface); padding:16px 18px; }
+  .stat .n { font-family:var(--mono); font-weight:600; font-size:26px; letter-spacing:-.02em; line-height:1.1; }
+  .stat .l { font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.4; }
+  .stat .l b { color:var(--text-soft); font-weight:500; }
+
+  /* keystone */
+  .keystone { border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--surface); }
+  .keystone-top { padding:22px 24px; background:var(--accent-wash); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .keystone-top .glyph { font-family:var(--mono); font-weight:600; font-size:15px; color:var(--accent);
+    border:1px solid var(--accent); border-radius:10px; padding:8px 13px; background:var(--surface-2); white-space:nowrap; }
+  .keystone-top div p { margin:0; }
+  .keystone-top .t { font-weight:600; font-size:16px; letter-spacing:-.01em; }
+  .keystone-top .s { font-size:13.5px; color:var(--text-soft); }
+  .keystone-body { padding:20px 24px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; }
+  .keystone-body h4 { margin:0 0 5px; font-size:13px; font-family:var(--mono); font-weight:600; color:var(--text); letter-spacing:-.01em; }
+  .keystone-body p { margin:0; font-size:13px; color:var(--text-soft); line-height:1.5; }
+
+  /* store map */
+  .map { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+  .store { border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden; display:flex; flex-direction:column; }
+  .store-head { padding:12px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-soft); }
+  .store-head .name { font-family:var(--mono); font-weight:600; font-size:13px; word-break:break-all; }
+  .badge { font-family:var(--mono); font-size:10.5px; font-weight:500; letter-spacing:.03em;
+    padding:3px 9px; border-radius:999px; margin-left:auto; white-space:nowrap; border:1px solid transparent; }
+  .badge.ledger { color:var(--accent); background:var(--accent-wash); border-color:color-mix(in srgb,var(--accent) 34%,transparent); }
+  .badge.rewrite { color:var(--blue); background:var(--blue-wash); border-color:color-mix(in srgb,var(--blue) 34%,transparent); }
+  .badge.derived { color:var(--green); background:var(--green-wash); border-color:color-mix(in srgb,var(--green) 34%,transparent); }
+  .badge.warn { color:var(--yellow); background:var(--yellow-wash); border-color:color-mix(in srgb,var(--yellow) 34%,transparent); }
+  .store-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .store-body p { margin:0; font-size:13px; color:var(--text-soft); line-height:1.5; }
+  .kv { display:grid; grid-template-columns:78px 1fr; gap:4px 10px; font-size:12.5px; }
+  .kv dt { font-family:var(--mono); font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; padding-top:2px; }
+  .kv dd { margin:0; color:var(--text-soft); font-size:12.5px; line-height:1.45; }
+  .kv dd code { font-family:var(--mono); font-size:11.5px; color:var(--text); }
+  .group-title { grid-column:1/-1; font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); margin:14px 0 -2px; padding-top:14px; border-top:1px dashed var(--border); }
+  .group-title:first-child { margin-top:0; padding-top:0; border-top:none; }
+
+  /* flow */
+  .flow { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .frow { display:grid; grid-template-columns:44px 1fr auto; align-items:stretch; border-bottom:1px solid var(--border-soft); }
+  .frow:last-child { border-bottom:none; }
+  .fnum { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent);
+    background:var(--surface-3); display:flex; align-items:center; justify-content:center; border-right:1px solid var(--border); }
+  .fbody { padding:12px 16px; min-width:0; }
+  .fbody .ft { font-weight:600; font-size:14px; margin:0 0 3px; letter-spacing:-.01em; }
+  .fbody .ft code { font-family:var(--mono); font-weight:500; font-size:12.5px; color:var(--accent); background:none; padding:0; }
+  .fbody p { margin:0; font-size:13px; color:var(--text-soft); line-height:1.5; }
+  .fside { padding:12px 14px; display:flex; flex-direction:column; align-items:flex-end; gap:5px; justify-content:center;
+    border-left:1px solid var(--border-soft); min-width:150px; font-family:var(--mono); font-size:11px; color:var(--muted); text-align:right; }
+  .fside b { color:var(--text); font-weight:600; font-size:12px; }
+  .pill { display:inline-block; font-family:var(--mono); font-size:10.5px; padding:2px 8px; border-radius:999px; font-weight:500; }
+  .pill.sync { color:var(--accent); background:var(--accent-wash); }
+  .pill.nosync { color:var(--muted); background:var(--surface-3); }
+  .pill.atomic { color:var(--blue); background:var(--blue-wash); }
+  .pill.bg { color:var(--green); background:var(--green-wash); }
+  .pill.grow { color:var(--yellow); background:var(--yellow-wash); }
+  @media (max-width:720px) { .frow { grid-template-columns:36px 1fr; } .fside { grid-column:2; border-left:none; border-top:1px dashed var(--border-soft); align-items:flex-start; text-align:left; flex-direction:row; flex-wrap:wrap; } }
+
+  /* figure */
+  figure { margin:0; border:1px solid var(--border); border-radius:14px; background:var(--surface); padding:18px 18px 12px; }
+  figure + figure { margin-top:16px; }
+  figcaption { font-size:12.5px; color:var(--muted); margin-top:10px; line-height:1.5; }
+  figcaption b { color:var(--text-soft); font-weight:500; }
+  .fig-title { font-weight:600; font-size:14px; margin:0 0 2px; letter-spacing:-.01em; }
+  .fig-sub { font-size:12.5px; color:var(--muted); margin:0 0 12px; }
+  .bars { display:grid; grid-template-columns:minmax(150px,220px) 1fr 70px; gap:8px 12px; align-items:center; font-size:12.5px; }
+  .bars .lbl { font-family:var(--mono); font-size:12px; color:var(--text); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bars .track { height:14px; background:var(--surface-3); border-radius:4px; overflow:hidden; position:relative; }
+  .bars .fill { height:100%; background:var(--c1); border-radius:0 4px 4px 0; }
+  .bars .val { font-family:var(--mono); font-size:12px; color:var(--text-soft); }
+  @media (max-width:560px) { .bars { grid-template-columns:110px 1fr 58px; } }
+  svg text { font-family:var(--sans); }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; color:var(--text-soft); margin:6px 0 0; }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .legend i { width:16px; height:2px; display:inline-block; }
+
+  /* tables */
+  .tbl-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:12px; }
+  table { border-collapse:collapse; width:100%; min-width:720px; font-size:13px; }
+  th,td { text-align:left; padding:10px 13px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+  thead th { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; background:var(--surface-3); position:sticky; top:0; }
+  tbody tr:last-child td { border-bottom:none; }
+  td .c { font-family:var(--mono); font-size:12px; color:var(--text); font-weight:500; }
+  td { color:var(--text-soft); }
+  td.num { font-family:var(--mono); font-size:12px; text-align:right; white-space:nowrap; }
+  th.num { text-align:right; }
+  .chip { display:inline-block; font-family:var(--mono); font-size:10.5px; padding:2px 8px; border-radius:999px; font-weight:500; white-space:nowrap; }
+  .chip.ok { color:var(--green); background:var(--green-wash); }
+  .chip.grow { color:var(--yellow); background:var(--yellow-wash); }
+  .chip.hot { color:var(--red); background:var(--red-wash); }
+  .chip.neutral { color:var(--muted); background:var(--surface-3); }
+
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .col { border:1px solid var(--border); border-radius:14px; padding:18px; background:var(--surface); }
+  .col.a { border-top:3px solid var(--green); }
+  .col.b { border-top:3px solid var(--yellow); }
+  .col h3 { display:flex; align-items:center; gap:9px; }
+  .col .cap { font-size:12.5px; color:var(--muted); margin:0 0 14px; font-family:var(--mono); }
+  .col ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:11px; }
+  .col li { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; font-size:13.5px; color:var(--text-soft); line-height:1.45; }
+  .col li .mk { width:6px; height:6px; border-radius:50%; margin-top:7px; }
+  .col.a .mk { background:var(--green); }
+  .col.b .mk { background:var(--yellow); }
+  .col li b { color:var(--text); font-weight:600; }
+  @media (max-width:720px) { .split { grid-template-columns:1fr; } }
+
+  .levers { display:flex; flex-direction:column; gap:12px; }
+  .lever { border:1px solid var(--border); border-radius:14px; background:var(--surface); padding:16px 18px; display:grid; grid-template-columns:auto 1fr; gap:14px; }
+  .lever .rank { font-family:var(--mono); font-weight:600; font-size:13px; color:var(--accent); border:1px solid var(--accent); border-radius:8px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; background:var(--surface-2); }
+  .lever h3 { margin-bottom:4px; }
+  .lever p { margin:0; font-size:13.5px; color:var(--text-soft); line-height:1.5; }
+  .lever p + p { margin-top:6px; }
+  .lever .sig { font-family:var(--mono); font-size:11px; color:var(--green); margin-top:8px; }
+  .lever .sig.warn { color:var(--yellow); }
+
+  .note { display:flex; gap:13px; align-items:flex-start; border:1px solid var(--border);
+    border-left:3px solid var(--yellow); border-radius:12px; padding:15px 17px; background:var(--surface); margin-top:20px; }
+  .note .lbl { font-family:var(--mono); font-size:11px; font-weight:600; color:var(--yellow); text-transform:uppercase;
+    letter-spacing:.06em; white-space:nowrap; padding-top:2px; }
+  .note p { margin:0; font-size:13.5px; color:var(--text-soft); line-height:1.55; }
+  .note b { color:var(--text); font-weight:600; }
+
+
+  /* as-is / to-be structures */
+  .struct { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:820px) { .struct { grid-template-columns:1fr; } }
+  .sbox { border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden; }
+  .sbox.asis { border-top:3px solid var(--yellow); }
+  .sbox.tobe { border-top:3px solid var(--green); }
+  .sbox-head { padding:12px 16px; border-bottom:1px solid var(--border-soft); display:flex; align-items:baseline; gap:10px; }
+  .sbox-head h3 { margin:0; }
+  .sbox-head span { font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .layer { padding:10px 16px; border-bottom:1px dashed var(--border-soft); display:grid; grid-template-columns:1fr auto; gap:6px 14px; align-items:start; }
+  .layer:last-child { border-bottom:none; }
+  .layer .ln { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text); }
+  .layer .ld { font-size:12.5px; color:var(--text-soft); line-height:1.45; grid-column:1; }
+  .layer .lc { font-family:var(--mono); font-size:11px; text-align:right; white-space:nowrap; grid-row:1 / span 2; align-self:center; }
+  .lc.bad { color:var(--yellow); } .lc.good { color:var(--green); } .lc.same { color:var(--muted); }
+  .tl { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .tstep { border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:12px 13px; position:relative; }
+  .tstep .tn { font-family:var(--mono); font-size:10.5px; color:var(--accent); letter-spacing:.1em; text-transform:uppercase; margin-bottom:5px; }
+  .tstep .tt { font-weight:600; font-size:13px; line-height:1.3; margin-bottom:5px; }
+  .tstep p { margin:0; font-size:12px; color:var(--text-soft); line-height:1.45; }
+  .tstep .cost { margin-top:8px; font-family:var(--mono); font-size:11px; }
+  .cost.bad { color:var(--yellow); } .cost.good { color:var(--green); } .cost.same { color:var(--muted); }
+  .stair { display:grid; grid-template-columns:repeat(4,1fr); gap:0; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  @media (max-width:820px) { .stair { grid-template-columns:1fr 1fr; } }
+  .stair > div { padding:14px 16px; border-right:1px solid var(--border-soft); background:var(--surface); }
+  .stair > div:last-child { border-right:none; }
+  .stair .sh { font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
+  .stair .sv { font-family:var(--mono); font-weight:600; font-size:20px; letter-spacing:-.02em; margin-bottom:8px; }
+  .stair ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
+  .stair li { font-size:12.5px; color:var(--text-soft); line-height:1.4; }
+  .stair li b { color:var(--text); font-weight:600; }
+  .stair .warnrow { color:var(--yellow); }
+
+  footer { padding:34px 0 60px; color:var(--muted); font-size:13px; }
+  footer .wrap { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; }
+  footer b { color:var(--text-soft); font-weight:500; }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <p class="eyebrow">Write Paths &amp; Growth · v3.5.1</p>
+    <h1>What vak writes, why, and how it holds up as history grows</h1>
+    <p class="lede">Every turn leaves a trail on disk: the session ledger, a ring of workspace checkpoints, five small evidence ledgers, a search index, and a handful of atomically rewritten config files. This set answers three questions from the source alone — <b>how much is written per turn and for what</b>, <b>which reads scale with history and which stay flat</b>, and <b>where the growth levers are that change no public signature</b>. Figures marked <i>measured</i> come from the real data home on this machine; everything else is read straight out of the crates.</p>
+    <div class="meta-row">
+      <span class="tag"><span class="swatch sw-ledger"></span>Append-only ledger</span>
+      <span class="tag"><span class="swatch sw-rewrite"></span>Atomic rewrite (tmp + rename)</span>
+      <span class="tag"><span class="swatch sw-derived"></span>Derived — safe to delete</span>
+      <span class="tag"><span class="swatch sw-warn"></span>Grows without a bound today</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- MEASURED HEADLINE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Measured · one real home, 60 sessions, 1 386 turns</p>
+      <h2>Per turn: about 13 ledger entries, 13 fsyncs, 66 KB — and 72% of the bytes are one audit record</h2>
+      <p>All 60 ledgers under <code class="p">agents/vak/sessions/</code> were parsed by entry <code class="p">kind</code> (18 187 entries, 92 MB). A turn is counted by its <code class="p">intent</code> entry (1 386 of them); user-role messages number 3 132 because tool results travel as user-role entries. The shape is stable: one prompt, one intent, one goal update, one capability binding, about 2.3 assistant messages and receipts, and about three activities.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="n">13.1</div><div class="l">ledger entries <b>per turn</b><br>each one a <code class="p">sync_data()</code></div></div>
+      <div class="stat"><div class="n">66 KB</div><div class="l">ledger bytes <b>per turn</b><br>mean over 1 386 turns</div></div>
+      <div class="stat"><div class="n">48 KB</div><div class="l"><b>turn_capabilities_bound</b><br>per entry, one per turn</div></div>
+      <div class="stat"><div class="n">134 MB</div><div class="l">checkpoints — the <b>largest</b> artifact<br>41 files, max 19.8 MB each</div></div>
+      <div class="stat"><div class="n">&lt;300 KB</div><div class="l">all five side ledgers <b>together</b><br>routing · cost · activity · intent · security</div></div>
+    </div>
+
+    <figure>
+      <p class="fig-title">Where the ledger bytes go</p>
+      <p class="fig-sub">Share of 92 MB across 18 187 entries, by entry kind · measured</p>
+      <div class="bars">
+        <div class="lbl">turn_capabilities_bound</div><div class="track"><div class="fill" style="width:72.3%"></div></div><div class="val">72.3%</div>
+        <div class="lbl">message</div><div class="track"><div class="fill" style="width:17.3%"></div></div><div class="val">17.3%</div>
+        <div class="lbl">activity</div><div class="track"><div class="fill" style="width:3.2%"></div></div><div class="val">3.2%</div>
+        <div class="lbl">intent</div><div class="track"><div class="fill" style="width:3.0%"></div></div><div class="val">3.0%</div>
+        <div class="lbl">header</div><div class="track"><div class="fill" style="width:1.8%"></div></div><div class="val">1.8%</div>
+        <div class="lbl">receipt</div><div class="track"><div class="fill" style="width:1.7%"></div></div><div class="val">1.7%</div>
+        <div class="lbl">goal_update</div><div class="track"><div class="fill" style="width:.5%"></div></div><div class="val">0.5%</div>
+        <div class="lbl">turn_card · presentation · compaction</div><div class="track"><div class="fill" style="width:.2%"></div></div><div class="val">&lt;0.2%</div>
+      </div>
+      <figcaption><b>Reading it:</b> the conversation itself (user + assistant messages, tool results included) is 16 MB. The capability binding — system prompt, every tool schema, the deferred-tool index — is written in full on every turn at ~48 KB and accounts for 67 MB. It is audit-only: <code class="p">derive_messages()</code> skips it, and its only reader is the server's presentation projection. Tool results ride inside <code class="p">user</code> messages (1 563 blocks, 11.7 MB), which is why user messages average 3.7 KB and assistant messages 1.3 KB.</figcaption>
+    </figure>
+
+    <figure>
+      <p class="fig-title">Where the disk goes</p>
+      <p class="fig-sub">One agent home, 256 MB total · measured with <code class="p">du</code></p>
+      <div class="bars">
+        <div class="lbl">checkpoints/</div><div class="track"><div class="fill" style="width:100%"></div></div><div class="val">134 MB</div>
+        <div class="lbl">sessions/ (60 ledgers)</div><div class="track"><div class="fill" style="width:67%"></div></div><div class="val">90 MB</div>
+        <div class="lbl">store.db + wal (cache)</div><div class="track"><div class="fill" style="width:8.5%"></div></div><div class="val">11.4 MB</div>
+        <div class="lbl">feeds.duckdb</div><div class="track"><div class="fill" style="width:.4%"></div></div><div class="val">0.5 MB</div>
+        <div class="lbl">presentations.json</div><div class="track"><div class="fill" style="width:.11%"></div></div><div class="val">152 KB</div>
+        <div class="lbl">cost-log.jsonl</div><div class="track"><div class="fill" style="width:.1%"></div></div><div class="val">136 KB</div>
+        <div class="lbl">routing · activity · intent · security</div><div class="track"><div class="fill" style="width:.06%"></div></div><div class="val">84 KB</div>
+      </div>
+      <figcaption><b>Checkpoints outweigh the ledgers they protect.</b> A checkpoint is a full-content, base64-in-JSON snapshot of the workspace (≤ 8 MB per file, ≤ 64 MB total) taken at the start of any turn expected to have an effect; only the last 20 per session are kept, and nothing prunes the directories of sessions that have ended. The five evidence ledgers together are smaller than one checkpoint's rounding error.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- WRITE MAP -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The write map</p>
+      <h2>Every durable artifact, who writes it, and how</h2>
+      <p>The authoritative list is <code class="k">vak_core::state::REGISTRY</code> — a test fails the build when a workspace run produces a file nobody declared. Each card below states the trigger, the write discipline, and the read pattern actually found in the code, because the read pattern is what decides whether the store stays fast as it grows.</p>
+    </div>
+
+    <div class="map">
+      <div class="group-title">Per-session · under <code class="p">sessions/&lt;project-hash&gt;/</code> (or <code class="p">agents/&lt;id&gt;/sessions/</code>)</div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">&lt;session&gt;.jsonl</span><span class="badge ledger">ledger</span></div>
+        <div class="store-body">
+          <p>The one rich original. Hash-chained (<code class="p">prev_hash</code>), parent-pointer tree, never rewritten. Everything the model saw is reconstructable from it.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>SessionLog::append</code> — vak-session</dd>
+            <dt>trigger</dt><dd>every message, intent, receipt, activity, presentation, turn card, work event, compaction</dd>
+            <dt>discipline</dt><dd>one <code>writeln!</code> + <code>sync_data()</code> per entry; exclusive <code>try_lock</code> for the handle's lifetime</dd>
+            <dt>read</dt><dd>full parse on open into <code>Vec&lt;Entry&gt;</code>; then in-memory, but several scans are O(entries) per request</dd>
+            <dt>bound</dt><dd>none on disk; in memory via compaction packets and <code>MAX_LIVE_SESSIONS = 128</code></dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">checkpoints/&lt;session&gt;/NNNN.json</span><span class="badge rewrite">atomic file</span></div>
+        <div class="store-body">
+          <p>Full workspace snapshot before a turn that may have an effect. Rewind restores content and deletes only files that were observed.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>checkpoints::store</code> — vak-core</dd>
+            <dt>trigger</dt><dd>first turn of a session, and any turn where <code>expects_effect</code></dd>
+            <dt>discipline</dt><dd>tmp + <code>rename</code>; no fsync; prunes to 20 newest per session</dd>
+            <dt>read</dt><dd>only on rewind / delta summary</dd>
+            <dt>bound</dt><dd>8 MB per file, 64 MB per snapshot, 20 per session; <b>no dedupe between snapshots, no GC across sessions</b></dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">sandbox/executions/&lt;session&gt;.jsonl</span><span class="badge warn">unbounded</span></div>
+        <div class="store-body">
+          <p>Every <code class="p">SandboxEvent</code> the bash tool emits — start, each 8 KB stdout/stderr chunk, a telemetry row every 500 ms, artifacts, finish.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>append_session_sandbox_event</code> — vak-server</dd>
+            <dt>discipline</dt><dd>open + append + close per event; no fsync</dd>
+            <dt>read</dt><dd>whole file per <code>/sandbox/executions</code> request</dd>
+            <dt>bound</dt><dd>none — a long-running command writes 2 rows/s for its whole life</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="group-title">Per-home evidence ledgers · beside the sessions</div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">routing-evidence.jsonl</span><span class="badge ledger">ledger</span></div>
+        <div class="store-body">
+          <p>One row per provider attempt: <code class="p">success / failure / unknown</code> and latency. Feeds the route ladder's ordering function.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>EvidenceLedger::record_receipts</code> after every run</dd>
+            <dt>discipline</dt><dd>append, no fsync</dd>
+            <dt>read</dt><dd><b>full scan on every turn</b> — <code>plan_route_ladder</code> → <code>snapshot()</code>; TTL of 30 days applied at read time only</dd>
+            <dt>bound</dt><dd>none on disk</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">cost-log.jsonl</span><span class="badge ledger">ledger · compacts</span></div>
+        <div class="store-body">
+          <p>Estimated USD per settled dispatch, keyed by session and model. Budget caps are enforced from in-memory counters, not from re-reading this file.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>FinOpsLedger::append</code> via <code>CoreSpendGate</code></dd>
+            <dt>discipline</dt><dd>one <code>metadata()</code> stat per append; when &gt; 5 MB, rewrites keeping 90 days (tmp + rename)</dd>
+            <dt>read</dt><dd>day baseline loaded <b>once per day</b> into <code>DayBudget</code>; digests and the admin chart stream it</dd>
+            <dt>bound</dt><dd>5 MB · 90 days</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">activity-log.jsonl</span><span class="badge warn">unbounded</span></div>
+        <div class="store-body">
+          <p>Duration and success of every hook run, tool call, and dispatch — the operational twin of the cost log.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>ActivityLedger::append</code> from three closures in the run path</dd>
+            <dt>discipline</dt><dd>append, no fsync, <b>no compaction</b> (the FinOps ledger beside it has one)</dd>
+            <dt>read</dt><dd><code>all_rows()</code> — whole file — for digests</dd>
+            <dt>bound</dt><dd>none</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">intent-evidence.jsonl</span><span class="badge ledger">ledger</span></div>
+        <div class="store-body">
+          <p>Did the reading hold? One row per turn from <code class="p">MisreadLedger::record</code>, plus one when a sliced capability was later asked for.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>best-effort append, no fsync</dd>
+            <dt>read</dt><dd>full scan, 30-day TTL at read time; not on the turn path</dd>
+            <dt>bound</dt><dd>none on disk</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">commitments.jsonl</span><span class="badge ledger">ledger · locked</span></div>
+        <div class="store-body">
+          <p>Commitment lifecycle events. Legality is checked at the write boundary under a <code class="p">create_new</code> lock file.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>CommitmentLedger::append</code> — vak-commit</dd>
+            <dt>discipline</dt><dd>lock → <code>get()</code> → append; lock broken after 2 s</dd>
+            <dt>read</dt><dd><b>every append replays the whole file</b> to project one commitment; <code>open()</code> replays it again for the scheduler</dd>
+            <dt>bound</dt><dd>none</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">security-events.jsonl · inbox.jsonl</span><span class="badge ledger">ledger</span></div>
+        <div class="store-body">
+          <p>Denials and capability faults (39 call sites); every gateway push and its ack tombstone.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>append, no fsync; acks are new lines, never edits</dd>
+            <dt>read</dt><dd>inbox reads the trailing <code>MAX_SCAN = 10 000</code> lines only</dd>
+            <dt>bound</dt><dd>reads bounded; files are not</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">operations/ · jobs/ · flow-runs/</span><span class="badge ledger">ledger</span></div>
+        <div class="store-body">
+          <p>Incident events and action receipts (≤ 1 update per incident per minute); one JSON file per delivery job; flow run records.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>append for events; per-job file create/rewrite under an in-process mutex</dd>
+            <dt>read</dt><dd>outbox <code>pending()</code> reads and parses <b>every job file</b> in the directory</dd>
+            <dt>bound</dt><dd>delivered jobs are never removed</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="group-title">Memory and knowledge · human-editable</div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">memory/&lt;hash&gt;/MEMORY.md · memory/user/USER.md</span><span class="badge ledger">append + amend</span></div>
+        <div class="store-body">
+          <p>Plain markdown the <code class="p">remember</code> tool appends to and humans edit; forget/amend rewrite atomically with <code class="p">sync_all</code>.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>append + <code>sync_data</code>; rewrite = tmp + <code>sync_all</code> + rename</dd>
+            <dt>read</dt><dd>whole file per turn that projects memory</dd>
+            <dt>bound</dt><dd>never age-pruned by design; only abandoned write artifacts are cleaned (24 h)</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">entities/…/ENTITIES.jsonl</span><span class="badge rewrite">atomic rewrite</span></div>
+        <div class="store-body">
+          <p>Typed entity graph per workspace and globally.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>whole-file rewrite via tmp + rename on each change</dd>
+            <dt>read</dt><dd>whole file</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="group-title">Derived · rebuilt from the ledgers, safe to delete</div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">cache/store.db (SQLite FTS5)</span><span class="badge derived">derived</span></div>
+        <div class="store-body">
+          <p>Structured + full-text index over every ledger. <code class="p">rebuild()</code> drops and re-imports from JSONL at any time.</p>
+          <dl class="kv">
+            <dt>writer</dt><dd><code>Store::import_session</code> — spawned after each run finishes and on session create/attach</dd>
+            <dt>discipline</dt><dd>WAL, <code>synchronous=NORMAL</code>; <b>re-reads the whole JSONL</b>, one <code>SELECT</code> per line to skip known ids, autocommit per insert</dd>
+            <dt>read</dt><dd>indexed queries — flat</dd>
+            <dt>bound</dt><dd>≈ 12% of ledger bytes (11.4 MB over 92 MB, measured)</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">recall cache (in-process)</span><span class="badge derived">derived</span></div>
+        <div class="store-body">
+          <p>Per-ledger message cache keyed by path, invalidated on mtime/length change.</p>
+          <dl class="kv">
+            <dt>bound</dt><dd>trailing <code>MAX_SCAN_LINES = 4000</code> per ledger; <code>MAX_CACHED_LEDGERS = 128</code></dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">feeds.duckdb</span><span class="badge derived">sidecar</span></div>
+        <div class="store-body">
+          <p>Written by the Python feed pipeline, not by Rust. Bounded by <code class="p">max_items_per_feed = 500</code> and a 90-day dedup window in <code class="p">feeds.toml</code>.</p>
+        </div>
+      </div>
+
+      <div class="group-title">Config · additive-only across updates</div>
+
+      <div class="store">
+        <div class="store-head"><span class="name">config.toml · tasks.json · workspaces.json · gateway/*.json · credentials.enc · …</span><span class="badge rewrite">atomic rewrite</span></div>
+        <div class="store-body">
+          <p>Settings, schedules, bindings, allowlist, trust markers, presentation prefs. Written on operator action, never per turn.</p>
+          <dl class="kv">
+            <dt>discipline</dt><dd>tmp + rename; <code>tasks.json</code> also <code>sync_all</code>s the file and directory</dd>
+            <dt>read</dt><dd>fingerprinted — <code>effective_route()</code> re-reads only when the config files' fingerprint changes</dd>
+            <dt>growth</dt><dd>size follows configuration, not usage</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ONE TURN -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">One turn, every write</p>
+      <h2>The write sequence of a single ordinary turn</h2>
+      <p>Traced through <code class="k">Core::run</code> and the agent loop, in the order the code performs them. The right column says whether the write forces a disk barrier, and what it measured at per turn. Writes marked <i>conditional</i> happen only when the turn takes that path.</p>
+    </div>
+
+    <div class="flow">
+      <div class="frow"><div class="fnum">1</div><div class="fbody"><p class="ft">Workspace checkpoint <code>checkpoints::capture → store</code></p><p>Walk the workspace honouring <code class="p">.gitignore</code>, skip <code class="p">.git target node_modules .vak dist</code> and secrets, snapshot file contents. Taken on the session's first turn and any turn that <code class="p">expects_effect</code> — an execution act, the General tier, or a reading below accept confidence.</p></div><div class="fside"><span class="pill atomic">tmp + rename</span><b>3.3 MB mean · 19.8 MB max</b><span>conditional</span></div></div>
+      <div class="frow"><div class="fnum">2</div><div class="fbody"><p class="ft">Goal update <code>append_goal_update</code></p><p>Relationship between this request and the active goal. Audit-only.</p></div><div class="fside"><span class="pill sync">fsync</span><b>0.3 KB</b></div></div>
+      <div class="frow"><div class="fnum">3</div><div class="fbody"><p class="ft">Intent evidence row <code>MisreadLedger::record</code></p><p>Which act and stakes were read, so a later contradiction can be scored against it.</p></div><div class="fside"><span class="pill nosync">append</span><b>~0.14 KB</b><span>intent-evidence.jsonl</span></div></div>
+      <div class="frow"><div class="fnum">4</div><div class="fbody"><p class="ft">Intent entry <code>append_intent</code></p><p>The resolved reading and the exact note the engagement contributes. Model-visible, so it is logged before dispatch (invariant 1).</p></div><div class="fside"><span class="pill sync">fsync</span><b>2.0 KB</b></div></div>
+      <div class="frow"><div class="fnum">5</div><div class="fbody"><p class="ft">Capability binding <code>append_turn_capabilities</code></p><p>Epoch, selected and excluded capability ids, the full system prefix, every core tool schema, the deferred-tool index and domain labels. Makes the provider request reconstructable after live capabilities move. Written whole on every turn even when nothing changed since the previous one.</p></div><div class="fside"><span class="pill sync">fsync</span><b>48 KB · 72% of all bytes</b></div></div>
+      <div class="frow"><div class="fnum">6</div><div class="fbody"><p class="ft">User message <code>append_message</code></p><p>The prompt, with its request id for idempotent retries — <code class="p">has_request_admission</code> scans the whole in-memory ledger to answer that.</p></div><div class="fside"><span class="pill sync">fsync</span><b>3.7 KB mean</b><span>incl. later tool results</span></div></div>
+      <div class="frow"><div class="fnum">7</div><div class="fbody"><p class="ft">Dispatch → assistant message(s) <code>append_message</code></p><p>Each provider response becomes an assistant entry; tool calls it makes become <code class="p">Activity(ToolCall)</code> entries and, on return, tool-result blocks inside a new user-role entry. Each activity-log closure also appends a row for the dispatch, every hook, and every tool.</p></div><div class="fside"><span class="pill sync">fsync ×n</span><b>1.3 KB / message · 2.3 per turn</b><span>+ ~0.16 KB / activity-log row</span></div></div>
+      <div class="frow"><div class="fnum">8</div><div class="fbody"><p class="ft">Receipts <code>append_receipt</code></p><p>One <code class="p">WorkReceipt</code> per unit of provider work, with every attempt and its settlement. Never model-visible.</p></div><div class="fside"><span class="pill sync">fsync</span><b>0.5 KB · 2.3 per turn</b></div></div>
+      <div class="frow"><div class="fnum">9</div><div class="fbody"><p class="ft">Cost row <code>CoreSpendGate → FinOpsLedger::append</code></p><p>Estimated USD from the receipt's usage. In-memory run and day counters are updated first, so caps hold even if the file write fails.</p></div><div class="fside"><span class="pill nosync">append</span><b>~0.36 KB</b><span>cost-log.jsonl</span></div></div>
+      <div class="frow"><div class="fnum">10</div><div class="fbody"><p class="ft">Routing evidence <code>EvidenceLedger::record_receipts</code></p><p>One row per attempt leg, attributed to the leg that actually served.</p></div><div class="fside"><span class="pill nosync">append</span><b>~0.13 KB × attempts</b><span>routing-evidence.jsonl</span></div></div>
+      <div class="frow"><div class="fnum">11</div><div class="fbody"><p class="ft">Presentation + turn card <code>append_presentation · append_turn_card</code></p><p>The validated presentation and the turn's closing card — what a follow-up turn sees instead of the raw history.</p></div><div class="fside"><span class="pill sync">fsync ×2</span><b>0.8 KB + 1.4 KB</b><span>conditional</span></div></div>
+      <div class="frow"><div class="fnum">12</div><div class="fbody"><p class="ft">Incremental compaction <code>append_incremental_compaction</code></p><p>Only when the working-set plan needs a packet no <code class="p">Compaction</code> entry covers: summarise the cards (never raw history), append one entry, re-plan. Measured: 1 in 18 187 entries.</p></div><div class="fside"><span class="pill sync">fsync</span><b>1.1 KB</b><span>rare</span></div></div>
+      <div class="frow"><div class="fnum">13</div><div class="fbody"><p class="ft">Search index <code>index_session_later → import_session</code></p><p>After <code class="p">RunFinished</code>, a spawned task reads the whole JSONL again, checks every entry id against <code class="p">entries</code>, and inserts the new ones into <code class="p">entries</code> + <code class="p">entries_fts</code>.</p></div><div class="fside"><span class="pill bg">background</span><b>O(ledger) reads</b><span>store.db · WAL</span></div></div>
+      <div class="frow"><div class="fnum">14</div><div class="fbody"><p class="ft">Sandbox events <code>append_session_sandbox_event</code></p><p>For every bash execution: start, each output chunk, telemetry every 500 ms, finish — written as they stream to the Workbench.</p></div><div class="fside"><span class="pill grow">unbounded</span><b>2 rows / s while running</b><span>conditional</span></div></div>
+    </div>
+
+    <div class="note">
+      <span class="lbl">Barrier count</span>
+      <p><b>About thirteen <code class="p">sync_data()</code> calls per turn, measured</b> — one per ledger entry; a turn with no tool calls is closer to six, one with several is past twenty. Nothing else on the turn path fsyncs: the side ledgers rely on the page cache, and the checkpoint relies on <code class="p">rename</code> atomicity without a data barrier. The ledger is the only artifact whose tail must survive power loss, and it is the only one that pays for it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- READ SCALING -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">How reads scale</p>
+      <h2>Which per-turn reads grow with history — and which were designed not to</h2>
+      <p>Write volume is small. What decides latency as the home ages is <b>what each turn has to read back</b>. Below, every read that sits on or near the turn path, classified by what it scales with. <span class="chip ok">flat</span> is bounded by a constant, <span class="chip grow">session</span> grows with the current session's length, <span class="chip hot">home</span> grows with the whole home's history.</p>
+    </div>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Read on the turn path</th><th>Where</th><th>Scales with</th><th>What bounds it today</th><th>Class</th></tr></thead>
+        <tbody>
+          <tr><td><span class="c">SessionLog::open</span> full parse + hash verify</td><td>vak-session <code class="p">log.rs</code></td><td>entries in this session</td><td>Once per attach; handle then held in memory (128 live handles max)</td><td><span class="chip grow">session</span></td></tr>
+          <tr><td><span class="c">has_request_admission</span> linear scan</td><td>vak-session</td><td>entries in this session</td><td>Nothing — every request scans <code class="p">entries</code> for its <code class="p">request_id</code></td><td><span class="chip grow">session</span></td></tr>
+          <tr><td><span class="c">TurnIndex::from_log</span> (34 call sites)</td><td>vak-session <code class="p">turns.rs</code></td><td>entries in this session</td><td>Rebuilt from the entry vector per request; in-memory, no I/O</td><td><span class="chip grow">session</span></td></tr>
+          <tr><td><span class="c">derive_with_plan</span> working set</td><td>vak-context + vak-session</td><td>turns kept at Full/Card/Packet fidelity</td><td>Measured capacity budget; compaction packets collapse old turns to cards</td><td><span class="chip ok">flat</span></td></tr>
+          <tr><td><span class="c">EvidenceLedger::snapshot</span></td><td>vak-core <code class="p">routing.rs</code></td><td><b>all rows ever written</b> to the home</td><td>30-day TTL is applied while scanning; file never shrinks</td><td><span class="chip hot">home</span></td></tr>
+          <tr><td><span class="c">CommitmentLedger::get / open</span></td><td>vak-commit</td><td>all commitment events in the home</td><td>Nothing — full replay per append and per scheduler pass</td><td><span class="chip hot">home</span></td></tr>
+          <tr><td><span class="c">DayBudget</span> baseline</td><td>vak-core <code class="p">finops.rs</code></td><td>cost rows for today</td><td>Streamed once per calendar day, then counters in memory; file compacts at 5 MB</td><td><span class="chip ok">flat</span></td></tr>
+          <tr><td><span class="c">effective_route</span> config reload</td><td>vak-core</td><td>—</td><td>Fingerprint of config files; re-read only on change</td><td><span class="chip ok">flat</span></td></tr>
+          <tr><td>Memory projection <span class="c">MEMORY.md · USER.md</span></td><td>vak-core <code class="p">memory.rs</code></td><td>notes the person has kept</td><td>Human-curated; never auto-pruned</td><td><span class="chip ok">flat*</span></td></tr>
+          <tr><td><span class="c">recall</span> over past ledgers</td><td>vak-session <code class="p">index.rs</code></td><td>—</td><td>Trailing 4 000 lines per ledger, 128 ledgers cached, mtime-invalidated</td><td><span class="chip ok">flat</span></td></tr>
+          <tr><td><span class="c">Store::import_session</span> (background)</td><td>vak-store</td><td>entries in this session</td><td>Whole JSONL re-read + one <code class="p">SELECT</code> per line, after every run</td><td><span class="chip grow">session</span></td></tr>
+          <tr><td><span class="c">Outbox::pending</span></td><td>vak-delivery</td><td>all delivery jobs ever enqueued</td><td>Nothing — <code class="p">read_dir</code> + parse every record</td><td><span class="chip hot">home</span></td></tr>
+          <tr><td><span class="c">inbox::list</span></td><td>vak-core</td><td>—</td><td>Trailing <code class="p">MAX_SCAN = 10 000</code> lines</td><td><span class="chip ok">flat</span></td></tr>
+          <tr><td><span class="c">CorePool</span> · <span class="c">sessions</span> map</td><td>vak-server</td><td>—</td><td>8 cores, 1 800 s idle; 128 live session handles, LRU-evicted when unreferenced</td><td><span class="chip ok">flat</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure style="margin-top:22px;">
+      <p class="fig-title">Per-turn read work as a home ages</p>
+      <p class="fig-sub">Shape only — two classes of read, relative cost against turns accumulated in the home</p>
+      <svg viewBox="0 0 720 260" width="100%" role="img" aria-labelledby="growth-t growth-d">
+        <title id="growth-t">Per-turn read work versus accumulated turns</title>
+        <desc id="growth-d">A flat line for reads bounded by constants — DayBudget, recall cache, working-set plan, config fingerprint — and a rising line for reads that scan the whole home, chiefly routing-evidence snapshot and commitment replay.</desc>
+        <g stroke="var(--c-grid)" stroke-width="1">
+          <line x1="60" y1="30" x2="60" y2="215"/>
+          <line x1="60" y1="215" x2="690" y2="215"/>
+          <line x1="60" y1="150" x2="690" y2="150" stroke-dasharray="2 4"/>
+          <line x1="60" y1="90" x2="690" y2="90" stroke-dasharray="2 4"/>
+          <line x1="60" y1="30" x2="690" y2="30" stroke-dasharray="2 4"/>
+        </g>
+        <g fill="var(--muted)" font-size="11">
+          <text x="60" y="234" text-anchor="middle">0</text>
+          <text x="217" y="234" text-anchor="middle">10 k</text>
+          <text x="375" y="234" text-anchor="middle">20 k</text>
+          <text x="532" y="234" text-anchor="middle">30 k</text>
+          <text x="690" y="234" text-anchor="middle">40 k turns</text>
+          <text x="52" y="219" text-anchor="end">0</text>
+          <text x="52" y="34" text-anchor="end">↑ read work</text>
+        </g>
+        <!-- rising: home-scan class -->
+        <path d="M60,205 L690,45" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="690" cy="45" r="4" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+        <text x="690" y="108" font-size="12" fill="var(--text)" font-weight="500" text-anchor="end">home-scan reads</text>
+        <text x="690" y="122" font-size="11" fill="var(--muted)" text-anchor="end">routing-evidence · commitments · outbox</text>
+        <!-- flat: bounded class -->
+        <path d="M60,196 C200,194 400,193 690,192" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="690" cy="192" r="4" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+        <text x="440" y="178" font-size="12" fill="var(--text)" font-weight="500">bounded reads</text>
+        <text x="440" y="208" font-size="11" fill="var(--muted)">day budget · recall · working set · config</text>
+        <!-- session line note -->
+        <text x="66" y="52" font-size="11" fill="var(--muted)">Session-scoped reads (open, admission scan, TurnIndex) reset to zero at every new session and</text>
+        <text x="66" y="66" font-size="11" fill="var(--muted)">are held in memory after open — they grow within a conversation, not across the home.</text>
+      </svg>
+      <div class="legend"><span><i style="background:var(--c1)"></i>scans the whole home each turn</span><span><i style="background:var(--c2)"></i>bounded by a constant or a fingerprint</span></div>
+      <figcaption><b>Why the rising line is still shallow in practice:</b> routing-evidence rows are ~130 bytes and about 2.3 per turn, so 40 000 turns is roughly 12 MB parsed per turn — measurable, not yet painful. It becomes painful earlier for the commitment ledger, which is replayed on <em>every append</em> under a lock, and for any home shared by many agents. The line's slope is the reason to fix these; the intercept is why nobody has noticed.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- PROJECTION -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Projection · from measured per-turn constants</p>
+      <h2>What one home looks like at 1 000, 10 000 and 100 000 turns</h2>
+      <p>Straight multiplication of the measured per-turn numbers, with the bounds the code enforces applied. This is a model, not telemetry: it assumes today's mix (about 2.3 provider attempts and 1.1 tool calls per turn) and today's 48 KB capability record.</p>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Artifact</th><th>Per-turn constant</th><th class="num">1 k turns</th><th class="num">10 k turns</th><th class="num">100 k turns</th><th>Bound applied</th></tr></thead>
+        <tbody>
+          <tr><td><span class="c">sessions/*.jsonl</span></td><td>66 KB</td><td class="num">66 MB</td><td class="num">660 MB</td><td class="num">6.6 GB</td><td>none — of which ~4.8 GB is capability bindings</td></tr>
+          <tr><td>&nbsp;&nbsp;↳ without repeated bindings</td><td>18 KB</td><td class="num">18 MB</td><td class="num">180 MB</td><td class="num">1.8 GB</td><td>if a binding were written once per epoch</td></tr>
+          <tr><td><span class="c">store.db</span> (cache)</td><td>≈ 12% of ledger</td><td class="num">8 MB</td><td class="num">80 MB</td><td class="num">800 MB</td><td>rebuildable; FTS indexes text only</td></tr>
+          <tr><td><span class="c">checkpoints/</span></td><td>0–64 MB per effect turn</td><td class="num" colspan="3">20 × workspace size × open sessions — independent of turn count</td><td>ring of 20 per session; no cross-session GC</td></tr>
+          <tr><td><span class="c">routing-evidence.jsonl</span></td><td>~0.13 KB × 2.3 attempts</td><td class="num">0.3 MB</td><td class="num">3 MB</td><td class="num">30 MB</td><td>none on disk; scanned every turn</td></tr>
+          <tr><td><span class="c">activity-log.jsonl</span></td><td>~0.16 KB × 3</td><td class="num">0.5 MB</td><td class="num">5 MB</td><td class="num">48 MB</td><td>none</td></tr>
+          <tr><td><span class="c">cost-log.jsonl</span></td><td>~0.36 KB</td><td class="num">0.4 MB</td><td class="num">3.6 MB</td><td class="num">≤ 5 MB</td><td>compacts at 5 MB, keeps 90 days</td></tr>
+          <tr><td><span class="c">intent-evidence.jsonl</span></td><td>~0.14 KB</td><td class="num">0.1 MB</td><td class="num">1.4 MB</td><td class="num">14 MB</td><td>none on disk; not on the turn path</td></tr>
+          <tr><td><span class="c">sandbox/executions/</span></td><td>2 rows/s of command time</td><td class="num" colspan="3">proportional to seconds of bash, not turns</td><td>none</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="lbl">Speed, not space</span>
+      <p>Disk is not the constraint — 6.6 GB for 100 000 turns is small on any machine vak runs on. <b>The constraints are the per-turn barrier count (fixed, ~6–20 fsyncs regardless of history), the per-request O(session) scans that are cheap only because sessions are short, and the two O(home) scans that sit on the turn path.</b> Keep those three flat and the system's speed does not depend on its age.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- AS-IS / TO-BE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">As messages grow · as-is</p>
+      <h2>What happens today at each scale — inside one conversation, and across all of them</h2>
+      <p>Two independent axes grow. <b>S</b>, the length of one conversation, drives the live handle's memory, the open time, and every per-request scan. <b>N</b>, the number of sessions in the home, drives launch, because the session list is built by opening every file. Turn count across the home drives the side ledgers. The staircase uses the measured constants (66 KB and 13 entries per turn; ~5 KB per entry; ~401 entries parsed per file when listing).</p>
+    </div>
+
+    <div class="stair">
+      <div>
+        <div class="sh">One conversation · S = 100 turns</div>
+        <div class="sv">6.6 MB</div>
+        <ul>
+          <li><b>RAM for the handle:</b> ~20–35 MB — every entry is held as a deserialised <code class="p">Entry</code>; tool schemas become <code class="p">serde_json::Value</code> trees, several times their text size</li>
+          <li><b>Open:</b> SHA-256 + parse of 1 300 lines — under 100 ms</li>
+          <li><b>Per request:</b> 1 300-entry scans for admission and <code class="p">TurnIndex</code> — negligible</li>
+          <li><b>Model context:</b> flat — packets and cards, not history</li>
+        </ul>
+      </div>
+      <div>
+        <div class="sh">S = 1 000 turns</div>
+        <div class="sv">66 MB</div>
+        <ul>
+          <li><b>RAM:</b> ~200–350 MB for this one handle, resident for as long as it is live</li>
+          <li><b>Open / resume:</b> ~0.5–1 s of hashing and parsing before the first turn can run</li>
+          <li><b>Hydrate:</b> the client receives the whole derived transcript (~12 MB of messages) in one response</li>
+          <li class="warnrow"><b>Felt:</b> a pause on resume, a heavy tab, more GC churn per request</li>
+        </ul>
+      </div>
+      <div>
+        <div class="sh">S = 10 000 turns</div>
+        <div class="sv">660 MB</div>
+        <ul>
+          <li><b>RAM:</b> multi-GB for one session — the handle cannot be evicted while a client is attached</li>
+          <li><b>Open:</b> ~10 s; the client's transcript request is ~120 MB</li>
+          <li class="warnrow"><b>Felt:</b> resume feels hung; the browser tab is at risk; 13 000 linear scans per request</li>
+          <li><b>Not felt:</b> the model — context stays bounded regardless</li>
+        </ul>
+      </div>
+      <div>
+        <div class="sh">Across the home · N sessions</div>
+        <div class="sv">N × 2 MB parsed</div>
+        <ul>
+          <li><b>Every <code class="p">GET /sessions</code>:</b> opens all N files and parses ≤ 401 entries each — 60 files ≈ 120 MB parsed; 1 000 files ≈ 2 GB</li>
+          <li><b>Called:</b> on client mount, after every create/delete, when a session id is not in the list</li>
+          <li><b>Checkpoints:</b> up to 20 × workspace per session, never collected — already 134 MB here for 17 sessions</li>
+          <li class="warnrow"><b>Felt:</b> launch and sidebar refresh slow down linearly with the number of sessions ever created</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="sec-head" style="margin-top:34px;">
+      <p class="sec-kicker">Launch and first turn · as-is</p>
+      <h2>What a launch actually does, step by step</h2>
+    </div>
+    <div class="tl">
+      <div class="tstep"><div class="tn">1 · process</div><div class="tt">Server starts</div><p>Opens <code class="p">store.db</code> (WAL, no rebuild), loads config, tasks, gateway state.</p><div class="cost same">flat</div></div>
+      <div class="tstep"><div class="tn">2 · client mount</div><div class="tt"><code class="p">GET /sessions</code></div><p>Walks <code class="p">sessions/</code> and every <code class="p">agents/*/sessions/</code>; parses up to 401 entries per file for title and header.</p><div class="cost bad">O(N × 401 entries)</div></div>
+      <div class="tstep"><div class="tn">3 · hydrate</div><div class="tt"><code class="p">SessionLog::open</code></div><p>Reads the whole ledger, SHA-256s every line to verify the chain, deserialises every entry into RAM.</p><div class="cost bad">O(S) time + RAM</div></div>
+      <div class="tstep"><div class="tn">4 · hydrate</div><div class="tt"><code class="p">derive_transcript</code></div><p>Full transcript to the client in one JSON body; the client renders it.</p><div class="cost bad">O(S) payload</div></div>
+      <div class="tstep"><div class="tn">5 · first turn</div><div class="tt">Checkpoint capture</div><p>Walks the workspace, snapshots content ≤ 64 MB.</p><div class="cost same">O(workspace)</div></div>
+      <div class="tstep"><div class="tn">6 · first turn</div><div class="tt">Route ladder</div><p><code class="p">EvidenceLedger::snapshot</code> parses the whole routing-evidence file.</p><div class="cost bad">O(home turns)</div></div>
+      <div class="tstep"><div class="tn">7 · first turn</div><div class="tt">Commitments</div><p><code class="p">CommitmentLedger::open</code> replays every event in the home.</p><div class="cost bad">O(home events)</div></div>
+      <div class="tstep"><div class="tn">8 · first turn</div><div class="tt">Bind + write</div><p>48 KB capability entry, intent, goal update — 3 fsyncs before the model is even called.</p><div class="cost same">fixed</div></div>
+    </div>
+
+    <div class="sec-head" style="margin-top:44px;">
+      <p class="sec-kicker">As-is → to-be · same files, same signatures</p>
+      <h2>The structure that stays fast — what changes underneath each existing function</h2>
+      <p>Nothing moves, nothing is renamed, no entry type is removed. Each row is one function whose body changes; the right-hand column is the cost class after the change.</p>
+    </div>
+    <div class="struct">
+      <div class="sbox asis">
+        <div class="sbox-head"><h3>As-is</h3><span>cost per operation</span></div>
+        <div class="layer"><div class="ln">sessions/&lt;id&gt;.jsonl</div><div class="ld">13 entries / 66 KB per turn; 48 KB of it a repeated capability binding. Whole ledger resident per live handle.</div><div class="lc bad">66 KB · O(S) RAM</div></div>
+        <div class="layer"><div class="ln">GET /sessions</div><div class="ld">Open every file, parse ≤ 401 entries each.</div><div class="lc bad">O(N × 401)</div></div>
+        <div class="layer"><div class="ln">SessionLog::open</div><div class="ld">Hash + parse every line, hold every entry.</div><div class="lc bad">O(S)</div></div>
+        <div class="layer"><div class="ln">has_request_admission · TurnIndex::from_log</div><div class="ld">Linear scans of the in-memory vector per request; index rebuilt at 34 sites.</div><div class="lc bad">O(S) per request</div></div>
+        <div class="layer"><div class="ln">EvidenceLedger::snapshot</div><div class="ld">Full file parse every turn; TTL only at read time.</div><div class="lc bad">O(home) per turn</div></div>
+        <div class="layer"><div class="ln">CommitmentLedger::append / open</div><div class="ld">Full replay per append under lock, and per scheduler pass.</div><div class="lc bad">O(home) per append</div></div>
+        <div class="layer"><div class="ln">Store::import_session</div><div class="ld">Re-read whole JSONL after each run; SELECT per line; commit per insert.</div><div class="lc bad">O(S) per run</div></div>
+        <div class="layer"><div class="ln">checkpoints/</div><div class="ld">Full content each snapshot; 20 per session; no GC after a session ends.</div><div class="lc bad">20 × workspace × N</div></div>
+        <div class="layer"><div class="ln">activity-log · intent-evidence · security · sandbox · outbox</div><div class="ld">Append forever; sandbox at 2 rows/s during commands; outbox parses every job.</div><div class="lc bad">unbounded</div></div>
+        <div class="layer"><div class="ln">cost-log · inbox · recall · config · CorePool · live handles</div><div class="ld">Already bounded by constants or fingerprints.</div><div class="lc same">flat</div></div>
+      </div>
+      <div class="sbox tobe">
+        <div class="sbox-head"><h3>To-be</h3><span>cost per operation</span></div>
+        <div class="layer"><div class="ln">sessions/&lt;id&gt;.jsonl</div><div class="ld">Binding written once per epoch, later turns carry <code class="p">body_digest</code> (additive field). Same entry kinds, same chain.</div><div class="lc good">18 KB · RAM ÷ 3–4</div></div>
+        <div class="layer"><div class="ln">GET /sessions</div><div class="ld">Served from <code class="p">store.db</code> — it already indexes header, timestamp and first user message per session; file scan only as fallback when the store is absent.</div><div class="lc good">one indexed query</div></div>
+        <div class="layer"><div class="ln">SessionLog::open</div><div class="ld">Unchanged contract; 3–4× fewer bytes to hash and parse because bindings are no longer repeated.</div><div class="lc good">O(S), ÷ 3–4</div></div>
+        <div class="layer"><div class="ln">has_request_admission · TurnIndex::from_log</div><div class="ld">Private <code class="p">request_ids</code> set maintained in <code class="p">append</code>; <code class="p">TurnIndex</code> cached and invalidated by <code class="p">entries.len()</code>.</div><div class="lc good">O(1) · O(new entries)</div></div>
+        <div class="layer"><div class="ln">EvidenceLedger::snapshot</div><div class="ld"><code class="p">compact_if_large</code> on append (cost-log pattern); snapshot cached in <code class="p">CoreInner</code> by (mtime, len).</div><div class="lc good">one stat per turn</div></div>
+        <div class="layer"><div class="ln">CommitmentLedger::append / open</div><div class="ld">Per-process projection cache invalidated by file length; same lock, same closure check.</div><div class="lc good">O(new events)</div></div>
+        <div class="layer"><div class="ln">Store::import_session</div><div class="ld">Byte offset per session in <code class="p">meta</code>; seek, no per-line SELECT, one transaction per import.</div><div class="lc good">O(new entries)</div></div>
+        <div class="layer"><div class="ln">checkpoints/</div><div class="ld">Content stored once per hash, later snapshots reference it; directories of idle, closed sessions collected after a retention window.</div><div class="lc good">≈ 1 × workspace + deltas</div></div>
+        <div class="layer"><div class="ln">activity-log · intent-evidence · security · sandbox · outbox</div><div class="ld">Stat-then-compact guard on each; per-execution cap on the sandbox log; delivered jobs swept after a window.</div><div class="lc good">bounded</div></div>
+        <div class="layer"><div class="ln">cost-log · inbox · recall · config · CorePool · live handles</div><div class="ld">Unchanged.</div><div class="lc same">flat</div></div>
+      </div>
+    </div>
+
+    <div class="sec-head" style="margin-top:34px;">
+      <p class="sec-kicker">Launch and first turn · to-be</p>
+      <h2>The same launch after the levers</h2>
+    </div>
+    <div class="tl">
+      <div class="tstep"><div class="tn">1 · process</div><div class="tt">Server starts</div><p>Unchanged.</p><div class="cost same">flat</div></div>
+      <div class="tstep"><div class="tn">2 · client mount</div><div class="tt"><code class="p">GET /sessions</code></div><p>One query against <code class="p">store.db</code>; no ledger file is opened.</p><div class="cost good">flat</div></div>
+      <div class="tstep"><div class="tn">3 · hydrate</div><div class="tt"><code class="p">SessionLog::open</code></div><p>Same verification, a quarter of the bytes.</p><div class="cost good">O(S) ÷ 3–4</div></div>
+      <div class="tstep"><div class="tn">4 · hydrate</div><div class="tt"><code class="p">derive_transcript</code></div><p>Unchanged in this set — the transcript is what the person asked to see.</p><div class="cost same">O(S) payload</div></div>
+      <div class="tstep"><div class="tn">5 · first turn</div><div class="tt">Checkpoint capture</div><p>Walk unchanged; only changed content is written.</p><div class="cost good">O(changed files)</div></div>
+      <div class="tstep"><div class="tn">6 · first turn</div><div class="tt">Route ladder</div><p>Cached snapshot; one <code class="p">stat</code>.</p><div class="cost good">flat</div></div>
+      <div class="tstep"><div class="tn">7 · first turn</div><div class="tt">Commitments</div><p>Cached projection; replay only new events.</p><div class="cost good">flat</div></div>
+      <div class="tstep"><div class="tn">8 · first turn</div><div class="tt">Bind + write</div><p>Binding by digest: ~0.3 KB instead of 48 KB. Same three fsyncs.</p><div class="cost good">fixed, 48 KB lighter</div></div>
+    </div>
+
+    <div class="tbl-scroll" style="margin-top:30px;">
+      <table>
+        <thead><tr><th>Scale point</th><th>As-is</th><th>To-be</th><th>What the person notices</th></tr></thead>
+        <tbody>
+          <tr><td>1 000-turn conversation, resume</td><td>66 MB read + hashed; ~200–350 MB RAM; ~0.5–1 s</td><td>~18 MB; ~60–100 MB RAM; ~0.2 s</td><td>Resume stops being a visible pause</td></tr>
+          <tr><td>10 000-turn conversation, resume</td><td>660 MB; multi-GB RAM; ~10 s</td><td>~180 MB; ~1 GB RAM; ~3 s</td><td>Survivable rather than hung; still the case for starting a new session</td></tr>
+          <tr><td>Launch with 1 000 sessions in the home</td><td>~2 GB parsed for the sidebar, every refresh</td><td>One indexed query</td><td>Launch time no longer depends on history</td></tr>
+          <tr><td>Every turn, 40 000 turns of home history</td><td>~12 MB routing-evidence parse + full commitment replay</td><td>Two <code class="p">stat</code> calls</td><td>Turn latency stops drifting upward with age</td></tr>
+          <tr><td>Disk after 100 000 turns</td><td>6.6 GB ledgers + 0.8 GB index + uncollected checkpoints</td><td>1.8 GB + 0.2 GB + ~1 workspace copy</td><td>Backups and <code class="p">vak doctor</code> stay quick</td></tr>
+          <tr><td>Durability per turn</td><td>13 <code class="p">sync_data()</code></td><td>13 <code class="p">sync_data()</code></td><td>Nothing — the ledger promise is unchanged</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="lbl">What does not change at any scale</span>
+      <p><b>What the model sees.</b> The working set is sized by measured capacity and compaction packets, so a 10 000-turn session and a 10-turn session send the same order of tokens. Growth is entirely a host-side problem — RAM, launch, and two ledger scans — and every fix above is host-side too. The one long-conversation cost this set leaves alone is the full transcript sent on hydrate; paging it is a client contract change, not an internal one.</p>
+    </div>
+  </div>
+</section>
+
+<!-- BUILT FOR GROWTH vs OPEN -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Balance sheet</p>
+      <h2>What already absorbs growth, and what does not yet</h2>
+    </div>
+    <div class="split">
+      <div class="col a">
+        <h3>Designed to stay flat</h3>
+        <p class="cap">found in the code, with the constant that enforces it</p>
+        <ul>
+          <li><span class="mk"></span><span><b>Compaction packets</b> — the working set is sized by measured capacity, not by ledger length; old turns ride along as cards or one packet.</span></li>
+          <li><span class="mk"></span><span><b>Cost ledger self-compacts</b> at 5 MB, keeping 90 days; budget alerts at 1 MB / 2 000 rows; the day baseline is read once per day.</span></li>
+          <li><span class="mk"></span><span><b>Checkpoint ring</b> — 20 per session, 8 MB per file, 64 MB per snapshot; ignored dirs and secrets never enter it.</span></li>
+          <li><span class="mk"></span><span><b>Live-handle cap</b> — <code class="p">MAX_LIVE_SESSIONS = 128</code> with conservative LRU eviction; <code class="p">CorePool</code> 8 cores / 30 min idle; evicted sessions re-open from disk.</span></li>
+          <li><span class="mk"></span><span><b>Bounded scans</b> — recall reads the trailing 4 000 lines; inbox the trailing 10 000; both tolerate torn lines.</span></li>
+          <li><span class="mk"></span><span><b>Config is fingerprinted</b> — no per-turn re-parse unless a file changed.</span></li>
+          <li><span class="mk"></span><span><b>Index is derived</b> — WAL + <code class="p">synchronous=NORMAL</code>, droppable and rebuildable; the ledger never depends on it.</span></li>
+          <li><span class="mk"></span><span><b>Right barrier</b> — <code class="p">sync_data</code> not <code class="p">sync_all</code> on the ledger; atomic tmp + rename for every config file.</span></li>
+        </ul>
+      </div>
+      <div class="col b">
+        <h3>Grows with history today</h3>
+        <p class="cap">ordered by how soon it would be felt</p>
+        <ul>
+          <li><span class="mk"></span><span><b>Capability binding written whole every turn</b> — 48 KB, 72% of ledger bytes, and every one of them parsed again on <code class="p">SessionLog::open</code> and re-indexed by the store.</span></li>
+          <li><span class="mk"></span><span><b>routing-evidence scanned every turn</b> with no on-disk compaction — TTL only at read time.</span></li>
+          <li><span class="mk"></span><span><b>Commitment ledger replayed on every append</b> under a lock file, and again by the scheduler.</span></li>
+          <li><span class="mk"></span><span><b>Store import re-reads the whole session</b> after every run and probes every id with a <code class="p">SELECT</code>, each insert its own commit.</span></li>
+          <li><span class="mk"></span><span><b>Checkpoints have no cross-session GC</b> and no dedupe between snapshots — 17 finished sessions here still hold 134 MB.</span></li>
+          <li><span class="mk"></span><span><b>activity-log, intent-evidence, security-events, sandbox executions</b> append forever; the sandbox file grows at 2 rows/s during any command.</span></li>
+          <li><span class="mk"></span><span><b>Outbox never forgets delivered jobs</b>; <code class="p">pending()</code> parses all of them.</span></li>
+          <li><span class="mk"></span><span><b>Session-scoped linear scans</b> (<code class="p">has_request_admission</code>, <code class="p">TurnIndex::from_log</code>) — fine while a session is hundreds of entries, not thousands.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- LEVERS -->
+<section style="border-bottom:none;">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Growth levers · no signature changes</p>
+      <h2>Where speed is protected as the system grows — each behind an existing function</h2>
+      <p>Every lever below is an implementation change inside a function whose public signature stays exactly as it is: <code class="k">SessionLog::append</code>, <code class="k">EvidenceLedger::snapshot</code>, <code class="k">Store::import_session</code>, <code class="k">CommitmentLedger::append</code>, <code class="k">checkpoints::store</code>. Callers, entry types, and on-disk readers of older files are unaffected. None of these is implemented by this document; they are the map.</p>
+    </div>
+    <div class="levers">
+      <div class="lever"><div class="rank">1</div><div>
+        <h3>Write the capability binding once per epoch, not once per turn</h3>
+        <p><code class="p">TurnCapabilitiesBound</code> carries the same system prompt and tool schemas turn after turn until <code class="p">cap_set.epoch</code> changes. Inside <code class="p">Core::run</code>, compare the digest of the body to the last one written in this session; when equal, write the entry with the ids, epoch and a <code class="p">body_digest</code> and omit the schemas. Readers (<code class="p">projection.rs</code>) resolve a digest to the last full body in the same ledger. Removes ~48 KB and ~72% of the bytes from every turn; the reconstructability guarantee holds because the full body is still in the same append-only file.</p>
+        <p class="sig">signature-neutral · additive serde field with <code>#[serde(default)]</code>; older ledgers parse unchanged</p>
+      </div></div>
+      <div class="lever"><div class="rank">2</div><div>
+        <h3>Compact routing-evidence on append and cache its snapshot</h3>
+        <p>Give <code class="p">EvidenceLedger::append</code> the same <code class="p">compact_if_large</code> the cost ledger already has (stat per call, rewrite past the TTL when over a threshold). Then hold the last <code class="p">EvidenceSnapshot</code> in <code class="p">CoreInner</code> keyed by the file's (mtime, len) — the pattern <code class="p">route_fingerprint</code> already uses for config. The per-turn read becomes one <code class="p">stat</code>.</p>
+        <p class="sig">signature-neutral · <code>snapshot()</code> and <code>append()</code> unchanged</p>
+      </div></div>
+      <div class="lever"><div class="rank">3</div><div>
+        <h3>Tail-import the search index inside one transaction</h3>
+        <p>Record the byte offset reached per session file in the <code class="p">meta</code> table; <code class="p">import_file</code> seeks there instead of <code class="p">read_to_string</code> and skips the per-line <code class="p">SELECT</code>. Wrap the loop in a single transaction so a 30-entry run is one WAL commit rather than sixty.</p>
+        <p class="sig">signature-neutral · <code>import_session</code> / <code>rebuild</code> unchanged; the index stays rebuildable</p>
+      </div></div>
+      <div class="lever"><div class="rank">4</div><div>
+        <h3>Project commitments incrementally</h3>
+        <p><code class="p">CommitmentLedger::append</code> replays every event to project one commitment. Keep a per-process projection cache invalidated by file length, or scan only lines whose <code class="p">commitment_id</code> matches before deserialising the rest. The lock-file protocol and the closure check stay as they are.</p>
+        <p class="sig">signature-neutral</p>
+      </div></div>
+      <div class="lever"><div class="rank">5</div><div>
+        <h3>Deduplicate checkpoints and collect the ones nobody can rewind to</h3>
+        <p>In <code class="p">checkpoints::capture</code>, hash each file and store content only when it differs from the previous sequence's; a later snapshot references the earlier blob. In <code class="p">store</code>, or on <code class="p">Core</code> start, remove checkpoint directories of sessions with no live handle and no ledger activity for a retention window. The 134 MB measured here would collapse to roughly one workspace copy plus deltas.</p>
+        <p class="sig warn">format change inside the checkpoint file, not an API change — <code>capture</code>, <code>store</code>, <code>restore</code> keep their signatures; the JSON gains a reference form</p>
+      </div></div>
+      <div class="lever"><div class="rank">6</div><div>
+        <h3>Give every append-only sidecar a size bound</h3>
+        <p><code class="p">ActivityLedger</code>, <code class="p">MisreadLedger</code>, security events and the sandbox execution log each need the one-stat-then-rewrite guard the cost ledger has, and the outbox needs a sweep that removes <code class="p">Delivered</code> records older than a window. The sandbox log additionally wants a per-execution cap so a long-running command cannot write 7 000 telemetry rows an hour.</p>
+        <p class="sig">signature-neutral · same pattern as <code>FinOpsLedger::compact_if_large</code></p>
+      </div></div>
+      <div class="lever"><div class="rank">7</div><div>
+        <h3>Index the in-memory ledger for the two scans every request performs</h3>
+        <p><code class="p">SessionLog</code> already keeps <code class="p">by_id</code>; a <code class="p">request_ids: HashSet</code> maintained in <code class="p">append</code> turns <code class="p">has_request_admission</code> from O(entries) to O(1), and a cached <code class="p">TurnIndex</code> invalidated by <code class="p">entries.len()</code> stops rebuilding it at 34 call sites. Both are private fields.</p>
+        <p class="sig">signature-neutral</p>
+      </div></div>
+    </div>
+
+    <div class="note">
+      <span class="lbl">Deliberately not a lever</span>
+      <p><b>Batching the per-entry <code class="p">sync_data()</code>.</b> Six barriers a turn is the cost of "the ledger tail survives power loss," and the comment in <code class="p">append</code> records that the alternative was tried and lost data. Group commit within a turn would change what is promised, not just how fast it runs — so it is a product decision, not an optimisation, and it is left out of this set.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>vak 3.5.1</b></span>
+    <span>· Companion to the runtime topology and concurrency model</span>
+    <span>· Derived from vak-session (log · types · turns · index), vak-store, vak-core (state · finops · routing · misread · checkpoints · inbox · memory · lib), vak-commit, vak-delivery/outbox, vak-server (lib · projection · operations)</span>
+    <span>· Measured figures: one local data home, 2026-09-21</span>
+  </div>
+</footer>
+
+</body>
+</html>

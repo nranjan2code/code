@@ -973,15 +973,30 @@ impl OutcomeSpec {
     /// conservative signal only affects outcome assessment; it grants no tool.
     pub fn saved_file_target(&self) -> Option<String> {
         let request = self.objective.to_ascii_lowercase();
-        let asks_to_write = ["create ", "write ", "save ", "generate ", "make ", "build ", "export "]
-            .iter()
-            .any(|verb| request.contains(verb));
-        if !asks_to_write { return None; }
+        let asks_to_write = [
+            "create ",
+            "write ",
+            "save ",
+            "generate ",
+            "make ",
+            "build ",
+            "export ",
+        ]
+        .iter()
+        .any(|verb| request.contains(verb));
+        if !asks_to_write {
+            return None;
+        }
         request.split_whitespace().find_map(|word| {
-            let token = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' && c != '/');
-            let is_file = [".html", ".htm", ".md", ".txt", ".json", ".csv", ".pdf", ".docx", ".pptx", ".xlsx", ".svg", ".png", ".js", ".ts", ".tsx", ".rs", ".py", ".css", ".sql"]
-                .iter()
-                .any(|extension| token.ends_with(extension) && token.len() > extension.len());
+            let token = word.trim_matches(|c: char| {
+                !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' && c != '/'
+            });
+            let is_file = [
+                ".html", ".htm", ".md", ".txt", ".json", ".csv", ".pdf", ".docx", ".pptx", ".xlsx",
+                ".svg", ".png", ".js", ".ts", ".tsx", ".rs", ".py", ".css", ".sql",
+            ]
+            .iter()
+            .any(|extension| token.ends_with(extension) && token.len() > extension.len());
             is_file.then(|| token.to_string())
         })
     }
