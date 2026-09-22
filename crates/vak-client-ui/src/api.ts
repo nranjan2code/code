@@ -1319,7 +1319,7 @@ export function getLaunch(id: string, candidateId?: string): Promise<{
     port: number | null;
     running: boolean;
     available: boolean;
-    availability: "ready" | "needs_setup" | "port_in_use";
+    availability: "ready" | "needs_setup" | "needs_preparation" | "port_in_use";
     unavailable_reason?: string;
   }[];
   error?: string;

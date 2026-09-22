@@ -226,6 +226,12 @@ export default function ArtifactCanvas() {
           if (startedServerName && startedServerName !== artifact.serverName) {
             cleanupServer();
           }
+          const readiness = await api.getLaunch(sid, artifact.candidateId);
+          const configured = readiness.servers.find((server) => server.name === artifact.serverName);
+          if (!configured) throw new Error(`Dev server "${artifact.serverName}" is unavailable for this saved version.`);
+          if (!configured.available && !configured.running) {
+            throw new Error(configured.unavailable_reason ?? "Preview environment is not ready.");
+          }
           const res = await api.startLaunch(sid, artifact.serverName, artifact.candidateId);
           if (res.error && !res.error.toLowerCase().includes("already running")) {
             throw new Error(res.error);

@@ -17588,6 +17588,24 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
     servers
 }
 
+fn javascript_dependencies_missing(cwd: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(cwd.join("package.json")) else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let declared = ["dependencies", "devDependencies", "peerDependencies"]
+        .into_iter()
+        .any(|key| {
+            package
+                .get(key)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|values| !values.is_empty())
+        });
+    declared && !cwd.join("node_modules").is_dir()
+}
+
 async fn get_launch(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -17624,10 +17642,14 @@ async fn get_launch(
             let key = proc_key(&id, scope.candidate_id.as_deref(), &s.name);
             let running = procs.contains_key(&key);
             let executable_available = vak_tools::bash::executable_available(&s.cmd, &launch_root);
+            let preparation_required = matches!(s.cmd.as_str(), "npm" | "pnpm" | "yarn" | "bun")
+                && javascript_dependencies_missing(&launch_root);
             let port_available = running || s.port.is_none_or(port_is_available);
-            let available = executable_available && port_available;
+            let available = executable_available && !preparation_required && port_available;
             let availability = if !executable_available {
                 "needs_setup"
+            } else if preparation_required {
+                "needs_preparation"
             } else if !port_available {
                 "port_in_use"
             } else {
@@ -17638,6 +17660,8 @@ async fn get_launch(
                     "{} is not available in the preview environment",
                     s.cmd
                 ))
+            } else if preparation_required {
+                Some("project dependencies have not been prepared for this saved version".into())
             } else if !port_available {
                 s.port.map(|port| format!("port {port} is already in use"))
             } else {
@@ -17785,6 +17809,18 @@ async fn start_launch(
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": format!("{} is not available in the preview environment", cfg.cmd)
+            })),
+        )
+            .into_response();
+    }
+    if matches!(cfg.cmd.as_str(), "npm" | "pnpm" | "yarn" | "bun")
+        && javascript_dependencies_missing(&launch_root)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "project dependencies have not been prepared for this saved version",
+                "availability": "needs_preparation"
             })),
         )
             .into_response();
@@ -19668,7 +19704,8 @@ mod sandbox_promotion_tests {
         let dir = tempfile::tempdir().unwrap();
         let pkg = serde_json::json!({
             "packageManager": "yarn@4.9.2",
-            "scripts": { "dev": "vite" }
+            "scripts": { "dev": "vite" },
+            "devDependencies": { "vite": "^7.0.0" }
         });
         std::fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
 
@@ -19676,6 +19713,9 @@ mod sandbox_promotion_tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].cmd, "yarn");
         assert_eq!(found[0].args, vec!["run", "dev"]);
+        assert!(javascript_dependencies_missing(dir.path()));
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        assert!(!javascript_dependencies_missing(dir.path()));
     }
 
     #[test]
