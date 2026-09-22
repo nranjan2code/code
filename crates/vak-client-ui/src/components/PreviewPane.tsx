@@ -11,6 +11,8 @@ interface ServerCfg {
   args: string[];
   port: number | null;
   running: boolean;
+  available: boolean;
+  unavailable_reason?: string;
 }
 
 export default function PreviewPane() {
@@ -334,6 +336,9 @@ export default function PreviewPane() {
                   <span class="dot" classList={{ run: s.running }} />
                   <span class="prev-name">{s.name}</span>
                   <code class="prev-cmd">{[s.cmd, ...s.args].join(" ")}</code>
+                  <Show when={!s.available}>
+                    <span class="hint" title={s.unavailable_reason}>needs setup</span>
+                  </Show>
                   <Show when={s.port}>
                     <span class="badge">:{s.port}</span>
                   </Show>
@@ -342,6 +347,8 @@ export default function PreviewPane() {
                     fallback={
                       <button
                         class="btn primary sm"
+                        disabled={!s.available}
+                        title={s.available ? "Start preview" : s.unavailable_reason}
                         onClick={() => void startServer(s.name)}
                       >
                         start

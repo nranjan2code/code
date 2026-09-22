@@ -373,6 +373,65 @@ pub(crate) fn is_allowed_env_var(key: &str) -> bool {
     ALLOWED_ENV_VARS.contains(&key) || key.starts_with("LC_") || key.starts_with("XDG_")
 }
 
+fn execution_path() -> std::ffi::OsString {
+    let mut path = std::env::var_os("PATH").unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    for candidate in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/opt/local/bin",
+    ] {
+        let candidate = std::path::Path::new(candidate);
+        if candidate.is_dir() {
+            let mut repaired = candidate.as_os_str().to_os_string();
+            repaired.push(":");
+            repaired.push(&path);
+            path = repaired;
+        }
+    }
+    path
+}
+
+/// Resolve a configured executable against the exact PATH a scrubbed command
+/// receives. This is readiness evidence only; dispatch must still handle a
+/// race where the executable disappears after the probe.
+pub fn executable_available(program: &str, cwd: &std::path::Path) -> bool {
+    let is_executable = |path: &std::path::Path| {
+        if !path.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            path.metadata()
+                .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    };
+    let configured = std::path::Path::new(program);
+    if configured.components().count() > 1 {
+        return is_executable(&cwd.join(configured));
+    }
+    std::env::split_paths(&execution_path()).any(|directory| {
+        if is_executable(&directory.join(program)) {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            return ["exe", "cmd", "bat", "com"]
+                .iter()
+                .any(|extension| is_executable(&directory.join(format!("{program}.{extension}"))));
+        }
+        #[cfg(not(windows))]
+        false
+    })
+}
+
 /// Apply the same minimal non-secret environment used for brokered commands.
 /// Host-owned execution surfaces such as a managed preview process must call
 /// this before spawning; credentials are injected only through their scoped
@@ -396,23 +455,7 @@ pub fn scrub_environment(cmd: &mut tokio::process::Command) {
     // This is deliberately a PATH repair, not a Python/Node/etc. special case.
     #[cfg(target_os = "macos")]
     {
-        let mut path = std::env::var_os("PATH").unwrap_or_default();
-        for candidate in [
-            "/opt/homebrew/bin",
-            "/opt/homebrew/sbin",
-            "/usr/local/bin",
-            "/usr/local/sbin",
-            "/opt/local/bin",
-        ] {
-            let candidate = std::path::Path::new(candidate);
-            if candidate.is_dir() {
-                let mut repaired = candidate.as_os_str().to_os_string();
-                repaired.push(":");
-                repaired.push(&path);
-                path = repaired;
-            }
-        }
-        cmd.env("PATH", path);
+        cmd.env("PATH", execution_path());
     }
 }
 
@@ -775,12 +818,29 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::{is_allowed_env_var, scrub_environment};
+    use super::{executable_available, is_allowed_env_var, scrub_environment};
     use std::sync::Mutex;
 
     /// Serialises std::env mutation across every env-scrubbing test in the
     /// process. `set_var` is process-global and `cargo test` runs in parallel.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn executable_readiness_checks_relative_files_and_execute_permission() {
+        let workspace = tempfile::tempdir().unwrap();
+        let executable = workspace.path().join("preview-tool");
+        std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable, permissions).unwrap();
+        }
+
+        assert!(executable_available("./preview-tool", workspace.path()));
+        assert!(!executable_available("./missing-tool", workspace.path()));
+    }
 
     #[test]
     fn is_allowed_env_var_rejects_common_secret_names() {

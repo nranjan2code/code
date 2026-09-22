@@ -17597,6 +17597,7 @@ async fn get_launch(
         .map(|mut s| {
             let key = proc_key(&id, &s.name);
             let running = procs.contains_key(&key);
+            let available = vak_tools::bash::executable_available(&s.cmd, &handle.cwd);
             if running && s.port.is_none() {
                 s.port = None;
             }
@@ -17606,6 +17607,8 @@ async fn get_launch(
                 "args": s.args,
                 "port": s.port,
                 "running": running,
+                "available": available,
+                "unavailable_reason": (!available).then(|| format!("{} is not available in the preview environment", s.cmd)),
             })
         })
         .collect();
@@ -17665,6 +17668,15 @@ async fn start_launch(
         )
             .into_response();
     };
+    if !vak_tools::bash::executable_available(&cfg.cmd, &handle.cwd) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("{} is not available in the preview environment", cfg.cmd)
+            })),
+        )
+            .into_response();
+    }
 
     let key = proc_key(&id, &cfg.name);
     {

@@ -1312,7 +1312,15 @@ export function retryTaskDelivery(id: string): Promise<{ replayed: number; faile
 }
 
 export function getLaunch(id: string): Promise<{
-  servers: { name: string; cmd: string; args: string[]; port: number | null; running: boolean }[];
+  servers: {
+    name: string;
+    cmd: string;
+    args: string[];
+    port: number | null;
+    running: boolean;
+    available: boolean;
+    unavailable_reason?: string;
+  }[];
   error?: string;
 }> {
   return req(`/sessions/${id}/launch`);
