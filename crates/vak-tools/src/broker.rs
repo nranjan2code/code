@@ -38,6 +38,7 @@ struct PersistentWorkerRequest {
     version: u8,
     command: String,
     args: Vec<String>,
+    environment: Vec<(String, String)>,
 }
 
 pub async fn spawn_persistent_worker(
@@ -45,6 +46,7 @@ pub async fn spawn_persistent_worker(
     cwd: &Path,
     command: &str,
     args: &[String],
+    environment: &[(String, String)],
     sandbox: Option<&dyn crate::sandbox::Sandbox>,
 ) -> Result<tokio::process::Child, String> {
     if !worker_exe.is_file() {
@@ -62,6 +64,7 @@ pub async fn spawn_persistent_worker(
         version: PROTOCOL_VERSION,
         command: command.to_string(),
         args: args.to_vec(),
+        environment: environment.to_vec(),
     };
     let effective = match sandbox {
         Some(value) if value.target() == SandboxTarget::WorkerProcess => {
@@ -132,6 +135,7 @@ pub async fn persistent_worker_main() -> i32 {
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
     crate::bash::scrub_environment(&mut command);
+    command.envs(request.environment);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {

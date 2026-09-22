@@ -41,6 +41,7 @@ export default function ArtifactCanvas() {
   const [displayType, setDisplayType] = createSignal<ArtifactDisplayType>("html");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [preparationRequired, setPreparationRequired] = createSignal(false);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const [rawText, setRawText] = createSignal("");
   const [copied, setCopied] = createSignal(false);
@@ -72,6 +73,7 @@ export default function ArtifactCanvas() {
     setCommentLineEnd("");
     setCandidateComments([]);
     setCandidateVersion(null);
+    setPreparationRequired(false);
     if (artifact?.candidateId && artifact.sessionId) {
       let disposed = false;
       void Promise.allSettled([
@@ -230,6 +232,7 @@ export default function ArtifactCanvas() {
           const configured = readiness.servers.find((server) => server.name === artifact.serverName);
           if (!configured) throw new Error(`Dev server "${artifact.serverName}" is unavailable for this saved version.`);
           if (!configured.available && !configured.running) {
+            setPreparationRequired(configured.availability === "needs_preparation");
             throw new Error(configured.unavailable_reason ?? "Preview environment is not ready.");
           }
           const res = await api.startLaunch(sid, artifact.serverName, artifact.candidateId);
@@ -394,6 +397,23 @@ export default function ArtifactCanvas() {
     setReloadKey((k) => k + 1);
     const artifact = canvasArtifact();
     if (artifact) void loadContent(artifact);
+  };
+
+  const preparePreview = async () => {
+    const artifact = canvasArtifact();
+    const sessionId = artifact?.sessionId ?? activeId();
+    if (!artifact?.candidateId || !artifact.serverName || !sessionId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await api.prepareLaunch(sessionId, artifact.serverName, artifact.candidateId);
+      setPreparationRequired(false);
+      await loadContent(artifact);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleClose = () => {
@@ -675,6 +695,11 @@ export default function ArtifactCanvas() {
             <div class="artifact-canvas-error">
               <Icon name="warning" size={16} />
               <span>{error()}</span>
+              <Show when={preparationRequired()}>
+                <button type="button" class="artifact-canvas-btn" onClick={() => void preparePreview()}>
+                  Prepare dependencies
+                </button>
+              </Show>
               <button
                 type="button"
                 class="artifact-canvas-btn"

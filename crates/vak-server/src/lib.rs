@@ -720,6 +720,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/tasks/{id}/run-now", post(run_task_now))
         .route("/tasks/{id}/retry-delivery", post(retry_task_delivery))
         .route("/sessions/{id}/launch", get(get_launch))
+        .route("/sessions/{id}/launch/prepare", post(prepare_launch))
         .route("/sessions/{id}/launch/start", post(start_launch))
         .route("/sessions/{id}/launch/stop", post(stop_launch))
         .route("/sessions/{id}/launch/logs", get(launch_logs))
@@ -17703,10 +17704,30 @@ fn launch_root(
     let Some(candidate_id) = candidate_id else {
         return Ok(workspace.to_path_buf());
     };
-    let records = vak_sandbox::load_records(&sandbox_records_path(state))
-        .map_err(|error| error.to_string())?;
-    let saved = records
-        .iter()
+    let saved = saved_launch_candidate(state, session_id, candidate_id)?;
+    let expected = sandbox_candidates_root(state).join(candidate_id);
+    if saved.candidate.source_root != expected {
+        return Err("saved draft root is invalid".into());
+    }
+    verify_launch_tree(&saved.candidate, &expected)?;
+    let prepared = sandbox_previews_root(state).join(candidate_id);
+    if std::fs::read_to_string(prepared.join(".vak-candidate-digest"))
+        .is_ok_and(|digest| digest == saved.candidate_digest)
+    {
+        verify_launch_tree(&saved.candidate, &prepared)?;
+        return Ok(prepared);
+    }
+    Ok(expected)
+}
+
+fn saved_launch_candidate(
+    state: &AppState,
+    session_id: &str,
+    candidate_id: &str,
+) -> Result<vak_sandbox::CandidateRecord, String> {
+    vak_sandbox::load_records(&sandbox_records_path(state))
+        .map_err(|error| error.to_string())?
+        .into_iter()
         .rev()
         .find_map(|record| match record {
             vak_sandbox::DurableRecord::Candidate(saved)
@@ -17717,18 +17738,19 @@ fn launch_root(
             }
             _ => None,
         })
-        .ok_or_else(|| "saved draft is unavailable".to_string())?;
-    let expected = sandbox_candidates_root(state).join(candidate_id);
-    if saved.candidate.source_root != expected {
-        return Err("saved draft root is invalid".into());
-    }
-    for file in saved
-        .candidate
+        .ok_or_else(|| "saved draft is unavailable".to_string())
+}
+
+fn verify_launch_tree(
+    candidate: &vak_sandbox::CandidateManifest,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    for file in candidate
         .files
         .iter()
         .filter(|file| file.operation == vak_sandbox::CandidateOperation::Upsert)
     {
-        let path = confined_path(&expected, &file.path)
+        let path = confined_path(root, &file.path)
             .ok_or_else(|| format!("saved draft path is invalid: {}", file.path))?;
         let bytes = std::fs::read(path)
             .map_err(|_| format!("saved draft file is unavailable: {}", file.path))?;
@@ -17736,7 +17758,11 @@ fn launch_root(
             return Err(format!("saved draft changed after review: {}", file.path));
         }
     }
-    Ok(expected)
+    Ok(())
+}
+
+fn sandbox_previews_root(state: &AppState) -> std::path::PathBuf {
+    state.core.sessions_home().join("sandbox").join("previews")
 }
 
 async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
@@ -17762,6 +17788,208 @@ struct LaunchNameBody {
     name: String,
     #[serde(default)]
     candidate_id: Option<String>,
+}
+
+fn dependency_install_command(
+    root: &std::path::Path,
+) -> Result<(&'static str, Vec<String>), String> {
+    let bytes = std::fs::read(root.join("package.json"))
+        .map_err(|_| "package.json is unavailable".to_string())?;
+    let package = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| format!("package.json is invalid: {error}"))?;
+    let manager = javascript_package_manager(&package, |name| root.join(name).is_file());
+    let args = match manager {
+        "pnpm" => vec!["install", "--frozen-lockfile", "--ignore-scripts"],
+        "yarn" => vec!["install", "--immutable", "--mode=skip-build"],
+        "bun" => vec!["install", "--frozen-lockfile", "--ignore-scripts"],
+        _ if root.join("package-lock.json").is_file() => {
+            vec!["ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+        }
+        _ => vec!["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+    };
+    Ok((manager, args.into_iter().map(str::to_string).collect()))
+}
+
+async fn read_capped_output(
+    mut stream: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let Ok(read) = stream.read(&mut buffer).await else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(captured.len());
+        captured.extend_from_slice(&buffer[..read.min(remaining)]);
+    }
+    captured
+}
+
+async fn prepare_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchNameBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(candidate_id) = body.candidate_id.as_deref() else {
+        return (StatusCode::BAD_REQUEST, "saved draft id is required").into_response();
+    };
+    let saved = match saved_launch_candidate(&state, &id, candidate_id) {
+        Ok(saved) => saved,
+        Err(error) => return (StatusCode::NOT_FOUND, error).into_response(),
+    };
+    let frozen = sandbox_candidates_root(&state).join(candidate_id);
+    if saved.candidate.source_root != frozen
+        || verify_launch_tree(&saved.candidate, &frozen).is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            "saved draft failed integrity verification",
+        )
+            .into_response();
+    }
+    let prepared = sandbox_previews_root(&state).join(candidate_id);
+    let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+    if let Err(error) = std::fs::create_dir_all(&prepared) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    if saved.candidate.files.iter().any(|file| {
+        matches!(
+            file.path.as_str(),
+            ".npmrc" | ".yarnrc" | ".yarnrc.yml" | "bunfig.toml"
+        )
+    }) {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (
+            StatusCode::BAD_REQUEST,
+            "package manager credential/config files cannot enter a prepared preview",
+        )
+            .into_response();
+    }
+    for file in saved
+        .candidate
+        .files
+        .iter()
+        .filter(|file| file.operation == vak_sandbox::CandidateOperation::Upsert)
+    {
+        let Some(source) = confined_path(&frozen, &file.path) else {
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (StatusCode::CONFLICT, "saved draft path is invalid").into_response();
+        };
+        let target = prepared.join(&file.path);
+        if let Some(parent) = target.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+        if let Err(error) = std::fs::copy(source, target) {
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    }
+    let (command, args) = match dependency_install_command(&prepared) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (StatusCode::BAD_REQUEST, error).into_response();
+        }
+    };
+    if !vak_tools::bash::executable_available(command, &prepared) {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (
+            StatusCode::CONFLICT,
+            format!("{command} is not available in the preview environment"),
+        )
+            .into_response();
+    }
+    let runtime_home = prepared.join(".vak-runtime-home");
+    let _ = std::fs::create_dir_all(&runtime_home);
+    let environment = vec![
+        (
+            "HOME".to_string(),
+            runtime_home.to_string_lossy().into_owned(),
+        ),
+        (
+            "XDG_CACHE_HOME".to_string(),
+            runtime_home.join("cache").to_string_lossy().into_owned(),
+        ),
+        (
+            "npm_config_cache".to_string(),
+            runtime_home.join("npm").to_string_lossy().into_owned(),
+        ),
+    ];
+    let child = vak_tools::broker::spawn_persistent_worker(
+        &state.core.tool_worker_exe(),
+        &prepared,
+        command,
+        &args,
+        &environment,
+        state.core.agent_sandbox().as_deref(),
+    )
+    .await;
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
+        }
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .map(|stream| tokio::spawn(read_capped_output(stream, 65_536)));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|stream| tokio::spawn(read_capped_output(stream, 65_536)));
+    let status = tokio::time::timeout(std::time::Duration::from_secs(300), child.wait()).await;
+    let status = match status {
+        Ok(Ok(status)) => status,
+        _ => {
+            vak_tools::bash::kill_process_group(&child.id());
+            let _ = child.wait().await;
+            let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
+                "dependency preparation timed out",
+            )
+                .into_response();
+        }
+    };
+    let stdout = match stdout {
+        Some(task) => task.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let stderr = match stderr {
+        Some(task) => task.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let evidence = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    if !status.success() || verify_launch_tree(&saved.candidate, &prepared).is_err() {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": "dependency preparation failed", "evidence": evidence }))).into_response();
+    }
+    if let Err(error) = std::fs::write(
+        prepared.join(".vak-candidate-digest"),
+        &saved.candidate_digest,
+    ) {
+        let _ = vak_sandbox::remove_frozen_candidate(&prepared);
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    Json(
+        serde_json::json!({ "prepared": true, "candidate_id": candidate_id, "evidence": evidence }),
+    )
+    .into_response()
 }
 
 async fn start_launch(
@@ -17857,6 +18085,7 @@ async fn start_launch(
         &launch_root,
         &cfg.cmd,
         &cfg.args,
+        &[],
         state.core.agent_sandbox().as_deref(),
     )
     .await
@@ -19209,6 +19438,23 @@ mod sandbox_promotion_tests {
         assert_eq!(launch[0].name, "static");
         assert!(launch_root(&state, "another-session", Some(&candidate_id), dir.path()).is_err());
 
+        let prepared = sandbox_previews_root(&state).join(&candidate_id);
+        std::fs::create_dir_all(&prepared).unwrap();
+        std::fs::copy(
+            root.join("invitation.html"),
+            prepared.join("invitation.html"),
+        )
+        .unwrap();
+        std::fs::write(
+            prepared.join(".vak-candidate-digest"),
+            &candidate.candidate_digest,
+        )
+        .unwrap();
+        assert_eq!(
+            launch_root(&state, "session-1", Some(&candidate_id), dir.path()).unwrap(),
+            prepared
+        );
+
         state
             .sessions
             .lock()
@@ -19716,6 +19962,23 @@ mod sandbox_promotion_tests {
         assert!(javascript_dependencies_missing(dir.path()));
         std::fs::create_dir(dir.path().join("node_modules")).unwrap();
         assert!(!javascript_dependencies_missing(dir.path()));
+    }
+
+    #[test]
+    fn dependency_preparation_uses_fixed_lockfile_aware_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"dev":"vite"},"dependencies":{"vite":"^7"}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+        let (command, args) = dependency_install_command(dir.path()).unwrap();
+        assert_eq!(command, "npm");
+        assert_eq!(
+            args,
+            vec!["ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+        );
     }
 
     #[test]

@@ -1332,6 +1332,10 @@ export function startLaunch(id: string, name: string, candidateId?: string): Pro
   return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
 }
 
+export function prepareLaunch(id: string, name: string, candidateId: string): Promise<{ prepared: boolean; evidence?: string }> {
+  return req(`/sessions/${id}/launch/prepare`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
+}
+
 export function stopLaunch(id: string, name: string, candidateId?: string): Promise<unknown> {
   return req(`/sessions/${id}/launch/stop`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
 }
