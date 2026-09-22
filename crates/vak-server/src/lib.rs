@@ -10653,6 +10653,26 @@ struct SandboxCandidateBody {
     destination: String,
 }
 
+fn javascript_package_manager(
+    package: &serde_json::Value,
+    has_effective_file: impl Fn(&str) -> bool,
+) -> &'static str {
+    let declared = package
+        .get("packageManager")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| value.split_once('@').map(|(manager, _)| manager));
+    match declared {
+        Some("pnpm") => "pnpm",
+        Some("yarn") => "yarn",
+        Some("bun") => "bun",
+        Some("npm") => "npm",
+        _ if has_effective_file("pnpm-lock.yaml") => "pnpm",
+        _ if has_effective_file("yarn.lock") => "yarn",
+        _ if has_effective_file("bun.lock") || has_effective_file("bun.lockb") => "bun",
+        _ => "npm",
+    }
+}
+
 fn planned_workspace_checks(
     candidate: &vak_sandbox::CandidateManifest,
 ) -> Vec<vak_sandbox::WorkspaceCheckPlan> {
@@ -10680,20 +10700,7 @@ fn planned_workspace_checks(
         && let Ok(bytes) = std::fs::read(package_path)
         && let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes)
     {
-        let declared_manager = package
-            .get("packageManager")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|value| value.split_once('@').map(|(manager, _)| manager));
-        let package_manager = match declared_manager {
-            Some("pnpm") => "pnpm",
-            Some("yarn") => "yarn",
-            Some("bun") => "bun",
-            Some("npm") => "npm",
-            _ if has("pnpm-lock.yaml") => "pnpm",
-            _ if has("yarn.lock") => "yarn",
-            _ if has("bun.lock") || has("bun.lockb") => "bun",
-            _ => "npm",
-        };
+        let package_manager = javascript_package_manager(&package, has);
         let script_command = |name: &str| format!("{package_manager} run {name}");
         let has_script = |name: &str| {
             package
@@ -17450,15 +17457,7 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
         };
 
         if !script_name.is_empty() {
-            let pkg_manager = if cwd.join("pnpm-lock.yaml").exists() {
-                ("pnpm", vec!["run".into(), dev_cmd.into()])
-            } else if cwd.join("bun.lockb").exists() || cwd.join("bun.lock").exists() {
-                ("bun", vec!["run".into(), dev_cmd.into()])
-            } else if cwd.join("yarn.lock").exists() {
-                ("yarn", vec![dev_cmd.into()])
-            } else {
-                ("npm", vec!["run".into(), dev_cmd.into()])
-            };
+            let package_manager = javascript_package_manager(&v, |name| cwd.join(name).is_file());
 
             let raw_lower = raw.to_ascii_lowercase();
             let port = if raw_lower.contains("vite") {
@@ -17471,8 +17470,8 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
 
             servers.push(LaunchConfig {
                 name: script_name.into(),
-                cmd: pkg_manager.0.into(),
-                args: pkg_manager.1,
+                cmd: package_manager.into(),
+                args: vec!["run".into(), dev_cmd.into()],
                 port,
             });
         }
@@ -19444,6 +19443,21 @@ mod sandbox_promotion_tests {
         assert_eq!(found[0].cmd, "npm");
         assert_eq!(found[0].args, vec!["run", "dev"]);
         assert_eq!(found[0].port, Some(5173));
+    }
+
+    #[test]
+    fn detect_launch_uses_the_declared_package_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "packageManager": "yarn@4.9.2",
+            "scripts": { "dev": "vite" }
+        });
+        std::fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let found = detect_launch(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].cmd, "yarn");
+        assert_eq!(found[0].args, vec!["run", "dev"]);
     }
 
     #[test]
