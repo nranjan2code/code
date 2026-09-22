@@ -17562,7 +17562,21 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
     }
 
     // 5. Static HTML fallback
-    if servers.is_empty() && cwd.join("index.html").exists() {
+    let has_top_level_html = cwd.join("index.html").is_file()
+        || std::fs::read_dir(cwd).is_ok_and(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                entry.path().is_file()
+                    && entry
+                        .path()
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|extension| {
+                            extension.eq_ignore_ascii_case("html")
+                                || extension.eq_ignore_ascii_case("htm")
+                        })
+            })
+        });
+    if servers.is_empty() && has_top_level_html {
         servers.push(LaunchConfig {
             name: "static".into(),
             cmd: "python3".into(),
@@ -17577,16 +17591,21 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
 async fn get_launch(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(scope): axum::extract::Query<LaunchScope>,
 ) -> Json<serde_json::Value> {
-    let Some(handle) = state.get(&id) else {
+    let Some(workspace) = sandbox_session_workspace(&state, &id) else {
         return Json(serde_json::json!({ "error": "unknown session" }));
     };
-    let mut servers = match parse_launch_toml(&handle.cwd) {
+    let launch_root = match launch_root(&state, &id, scope.candidate_id.as_deref(), &workspace) {
+        Ok(root) => root,
+        Err(error) => return Json(serde_json::json!({ "error": error })),
+    };
+    let mut servers = match parse_launch_toml(&launch_root) {
         Ok(s) => s,
         Err(e) => return Json(serde_json::json!({ "error": e })),
     };
     if servers.is_empty() {
-        servers = detect_launch(&handle.cwd);
+        servers = detect_launch(&launch_root);
     }
     let mut procs = state
         .procs
@@ -17602,9 +17621,9 @@ async fn get_launch(
     let list: Vec<serde_json::Value> = servers
         .into_iter()
         .map(|mut s| {
-            let key = proc_key(&id, &s.name);
+            let key = proc_key(&id, scope.candidate_id.as_deref(), &s.name);
             let running = procs.contains_key(&key);
-            let executable_available = vak_tools::bash::executable_available(&s.cmd, &handle.cwd);
+            let executable_available = vak_tools::bash::executable_available(&s.cmd, &launch_root);
             let port_available = running || s.port.is_none_or(port_is_available);
             let available = executable_available && port_available;
             let availability = if !executable_available {
@@ -17642,8 +17661,58 @@ async fn get_launch(
     Json(serde_json::json!({ "servers": list }))
 }
 
-fn proc_key(session: &str, name: &str) -> String {
-    format!("{session}::{name}")
+fn proc_key(session: &str, candidate_id: Option<&str>, name: &str) -> String {
+    format!("{session}::{}::{name}", candidate_id.unwrap_or("workspace"))
+}
+
+#[derive(Default, serde::Deserialize)]
+struct LaunchScope {
+    candidate_id: Option<String>,
+}
+
+fn launch_root(
+    state: &AppState,
+    session_id: &str,
+    candidate_id: Option<&str>,
+    workspace: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let Some(candidate_id) = candidate_id else {
+        return Ok(workspace.to_path_buf());
+    };
+    let records = vak_sandbox::load_records(&sandbox_records_path(state))
+        .map_err(|error| error.to_string())?;
+    let saved = records
+        .iter()
+        .rev()
+        .find_map(|record| match record {
+            vak_sandbox::DurableRecord::Candidate(saved)
+                if saved.session_id == session_id
+                    && saved.candidate.candidate_id == candidate_id =>
+            {
+                Some(saved)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| "saved draft is unavailable".to_string())?;
+    let expected = sandbox_candidates_root(state).join(candidate_id);
+    if saved.candidate.source_root != expected {
+        return Err("saved draft root is invalid".into());
+    }
+    for file in saved
+        .candidate
+        .files
+        .iter()
+        .filter(|file| file.operation == vak_sandbox::CandidateOperation::Upsert)
+    {
+        let path = confined_path(&expected, &file.path)
+            .ok_or_else(|| format!("saved draft path is invalid: {}", file.path))?;
+        let bytes = std::fs::read(path)
+            .map_err(|_| format!("saved draft file is unavailable: {}", file.path))?;
+        if vak_sandbox::digest(&bytes) != file.candidate_hash {
+            return Err(format!("saved draft changed after review: {}", file.path));
+        }
+    }
+    Ok(expected)
 }
 
 async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
@@ -17667,6 +17736,8 @@ fn port_is_available(port: u16) -> bool {
 #[derive(serde::Deserialize)]
 struct LaunchNameBody {
     name: String,
+    #[serde(default)]
+    candidate_id: Option<String>,
 }
 
 async fn start_launch(
@@ -17676,10 +17747,20 @@ async fn start_launch(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    let Some(handle) = state.get(&id) else {
+    let Some(workspace) = sandbox_session_workspace(&state, &id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mut servers = match parse_launch_toml(&handle.cwd) {
+    let launch_root = match launch_root(&state, &id, body.candidate_id.as_deref(), &workspace) {
+        Ok(root) => root,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    let mut servers = match parse_launch_toml(&launch_root) {
         Ok(s) => s,
         Err(e) => {
             return (
@@ -17690,7 +17771,7 @@ async fn start_launch(
         }
     };
     if servers.is_empty() {
-        servers = detect_launch(&handle.cwd);
+        servers = detect_launch(&launch_root);
     }
     let Some(cfg) = servers.iter().find(|s| s.name == body.name) else {
         return (
@@ -17699,7 +17780,7 @@ async fn start_launch(
         )
             .into_response();
     };
-    if !vak_tools::bash::executable_available(&cfg.cmd, &handle.cwd) {
+    if !vak_tools::bash::executable_available(&cfg.cmd, &launch_root) {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
@@ -17720,7 +17801,7 @@ async fn start_launch(
             .into_response();
     }
 
-    let key = proc_key(&id, &cfg.name);
+    let key = proc_key(&id, body.candidate_id.as_deref(), &cfg.name);
     {
         let procs = state
             .procs
@@ -17738,7 +17819,7 @@ async fn start_launch(
     let mut command = tokio::process::Command::new(&cfg.cmd);
     command
         .args(&cfg.args)
-        .current_dir(&handle.cwd)
+        .current_dir(&launch_root)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -17888,7 +17969,7 @@ async fn stop_launch(
         .procs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&proc_key(&id, &body.name));
+        .remove(&proc_key(&id, body.candidate_id.as_deref(), &body.name));
     match removed {
         Some(mut p) => {
             vak_tools::bash::kill_process_group(&p.child.id());
@@ -17909,7 +17990,7 @@ async fn launch_logs(
         .procs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match procs.get(&proc_key(&id, &q.name)) {
+    match procs.get(&proc_key(&id, q.candidate_id.as_deref(), &q.name)) {
         Some(p) => {
             let lines: Vec<String> = p
                 .logs
@@ -19071,6 +19152,45 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(!dir.path().join("unreviewed.txt").exists());
         assert!(!dir.path().join("result.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn candidate_launch_root_is_session_bound_and_hash_verified() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("invitation.html"), "<h1>Saved</h1>")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let candidate_id = candidate.candidate.candidate_id;
+
+        let root = launch_root(&state, "session-1", Some(&candidate_id), dir.path()).unwrap();
+        assert_eq!(root, sandbox_candidates_root(&state).join(&candidate_id));
+        let launch = detect_launch(&root);
+        assert_eq!(launch.len(), 1);
+        assert_eq!(launch[0].name, "static");
+        assert!(launch_root(&state, "another-session", Some(&candidate_id), dir.path()).is_err());
+
+        state
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove("session-1");
+        let response = get_launch(
+            State(state),
+            Path("session-1".into()),
+            axum::extract::Query(LaunchScope {
+                candidate_id: Some(candidate_id),
+            }),
+        )
+        .await;
+        assert_eq!(response.0["servers"][0]["name"], "static");
     }
 
     #[tokio::test]

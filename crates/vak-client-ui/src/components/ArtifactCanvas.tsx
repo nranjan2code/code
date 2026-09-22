@@ -145,7 +145,7 @@ export default function ArtifactCanvas() {
   const cleanupServer = () => {
     if (startedServerName) {
       const sid = canvasArtifact()?.sessionId ?? activeId();
-      if (sid) void api.stopLaunch(sid, startedServerName);
+      if (sid) void api.stopLaunch(sid, startedServerName, canvasArtifact()?.candidateId);
       startedServerName = null;
     }
   };
@@ -213,7 +213,6 @@ export default function ArtifactCanvas() {
 
     try {
       if (artifact.candidateId && !artifact.sessionId) throw new Error("Saved draft has no owning conversation.");
-      if (artifact.candidateId && (artifact.serverName || artifact.serverUrl)) throw new Error("Live server previews are not tied to saved draft versions yet.");
       const readText = () => artifact.candidateId && artifact.sessionId
         ? api.readSandboxCandidateFile(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
         : api.readFile(artifact.artifactPath);
@@ -227,13 +226,13 @@ export default function ArtifactCanvas() {
           if (startedServerName && startedServerName !== artifact.serverName) {
             cleanupServer();
           }
-          const res = await api.startLaunch(sid, artifact.serverName);
+          const res = await api.startLaunch(sid, artifact.serverName, artifact.candidateId);
           if (res.error && !res.error.toLowerCase().includes("already running")) {
             throw new Error(res.error);
           }
           if (generation !== request) return;
           startedServerName = artifact.serverName;
-          const launchState = await api.getLaunch(sid);
+          const launchState = await api.getLaunch(sid, artifact.candidateId);
           if (generation !== request) return;
           const srv = launchState.servers.find((s) => s.name === artifact.serverName);
           if (srv?.port) {
@@ -468,7 +467,11 @@ export default function ArtifactCanvas() {
     const base = port ? `http://127.0.0.1:${port}` : (canvasArtifact()?.serverUrl ?? "");
     if (!base) return undefined;
     const separator = base.includes("?") ? "&" : "?";
-    return `${base}${separator}_k=${reloadKey()}`;
+    const artifact = canvasArtifact();
+    const candidatePath = artifact?.candidateId && artifact.artifactPath
+      ? `/${artifact.artifactPath.split("/").map(encodeURIComponent).join("/")}`
+      : "";
+    return `${base}${candidatePath}${separator}_k=${reloadKey()}`;
   };
   const sourceLines = () => rawText().split("\n");
   const selectedLine = (line: number) => {

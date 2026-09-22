@@ -726,6 +726,7 @@ export default function WorkbenchPanel() {
                       resultId: version.result_id,
                       executionId: version.execution_id,
                       candidateId: version.candidate.candidate_id,
+                      serverName: path().toLowerCase().endsWith(".html") ? "static" : undefined,
                     });
                   }}>Open saved version in Canvas</button></Show>
                 }</Show>

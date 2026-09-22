@@ -1311,7 +1311,7 @@ export function retryTaskDelivery(id: string): Promise<{ replayed: number; faile
   return req(`/tasks/${encodeURIComponent(id)}/retry-delivery`, { method: "POST", body: "{}" });
 }
 
-export function getLaunch(id: string): Promise<{
+export function getLaunch(id: string, candidateId?: string): Promise<{
   servers: {
     name: string;
     cmd: string;
@@ -1324,15 +1324,16 @@ export function getLaunch(id: string): Promise<{
   }[];
   error?: string;
 }> {
-  return req(`/sessions/${id}/launch`);
+  const query = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : "";
+  return req(`/sessions/${id}/launch${query}`);
 }
 
-export function startLaunch(id: string, name: string): Promise<{ started: boolean; listening: boolean; error?: string }> {
-  return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name }) });
+export function startLaunch(id: string, name: string, candidateId?: string): Promise<{ started: boolean; listening: boolean; error?: string }> {
+  return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
 }
 
-export function stopLaunch(id: string, name: string): Promise<unknown> {
-  return req(`/sessions/${id}/launch/stop`, { method: "POST", body: JSON.stringify({ name }) });
+export function stopLaunch(id: string, name: string, candidateId?: string): Promise<unknown> {
+  return req(`/sessions/${id}/launch/stop`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
 }
 
 export function launchLogs(id: string, name: string): Promise<{ lines: string[] }> {
