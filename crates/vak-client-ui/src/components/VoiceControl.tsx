@@ -39,6 +39,46 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   // guards prevent stale audio from starting a new playback session.
   let playbackGeneration = 0;
   let voiceGeneration = 0;
+  let audioSpeechActive = false;
+  let audioSpeechMs = 0;
+  let audioSilenceMs = 0;
+  const AUDIO_SAMPLE_RATE = 16_000;
+  const SPEECH_THRESHOLD = 0.018;
+  const MIN_SPEECH_MS = 240;
+  const END_SILENCE_MS = 650;
+  function streamDetectedSpeech(pcm: Int16Array) {
+    if (!socket || !pcm.length) return;
+    let energy = 0;
+    for (const sample of pcm) {
+      const normalized = sample / 32768;
+      energy += normalized * normalized;
+    }
+    const frameMs = (pcm.length / AUDIO_SAMPLE_RATE) * 1_000;
+    const hasVoice = Math.sqrt(energy / pcm.length) >= SPEECH_THRESHOLD;
+    if (hasVoice && !audioSpeechActive) {
+      utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      socket.sendControl({ type: "speech_started", utterance_id: utterance });
+      audioSpeechActive = true;
+      audioSpeechMs = 0;
+      audioSilenceMs = 0;
+      setStatus("Listening");
+    }
+    if (!audioSpeechActive) return;
+    socket.sendAudio(pcm);
+    if (hasVoice) {
+      audioSpeechMs += frameMs;
+      audioSilenceMs = 0;
+      return;
+    }
+    audioSilenceMs += frameMs;
+    if (audioSpeechMs >= MIN_SPEECH_MS && audioSilenceMs >= END_SILENCE_MS) {
+      socket.sendControl({ type: "speech_stopped", utterance_id: utterance });
+      audioSpeechActive = false;
+      audioSpeechMs = 0;
+      audioSilenceMs = 0;
+      setStatus("Processing");
+    }
+  }
   function stopVoice() {
     voiceGeneration += 1;
     playbackGeneration += 1;
@@ -51,6 +91,9 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     playbackStartedAt = 0;
     playbackCurrentDurationMs = 0;
     playbackCompletedMs = 0;
+    audioSpeechActive = false;
+    audioSpeechMs = 0;
+    audioSilenceMs = 0;
     setTranscript("");
     setVoiceError(false);
     setPaused(false);
@@ -117,19 +160,19 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       });
       await socket.connect();
       if (generation !== voiceGeneration || !socket) return;
-      utterance = `voice-${Date.now()}`;
-      socket.sendControl({ type: "speech_started", utterance_id: utterance });
       const Recognition = (globalThis as any).SpeechRecognition ?? (globalThis as any).webkitSpeechRecognition;
       setStatus("Allow microphone");
       const startedCapture = await startMicrophone((pcm) => {
         if (generation !== voiceGeneration || Recognition) return;
-        try { socket?.sendAudio(pcm); } catch (error) { setStatus((error as Error).message); }
+        try { streamDetectedSpeech(pcm); } catch (error) { failVoice((error as Error).message); }
       });
       if (generation !== voiceGeneration) { startedCapture.stop(); return; }
       capture = startedCapture;
       setActive(true);
       setConnecting(false);
       if (Recognition) {
+        utterance = `voice-${Date.now()}`;
+        socket.sendControl({ type: "speech_started", utterance_id: utterance });
         recognition = new Recognition();
         recognition!.interimResults = true;
         recognition!.continuous = true;
@@ -152,7 +195,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
         recognition!.onerror = () => failVoice("Live transcription became unavailable. You can keep working by typing.");
         recognition!.onend = () => { if (active()) { try { recognition?.start(); } catch { /* browser may reject restart */ } } };
         recognition!.start();
-      } else setStatus("Listening (audio only)");
+      } else setStatus("Listening");
     } catch (error) { failVoice((error as Error).message); }
   }
   function failVoice(message: string) {
