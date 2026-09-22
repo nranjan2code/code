@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -299,6 +300,35 @@ impl TargetVerifier for PdfSignatureVerifier {
 
 pub struct OpenXmlPackageVerifier;
 
+fn verify_xml_root(reader: impl BufRead, part: &str, expected_root: &[u8]) -> Result<(), String> {
+    let mut reader = quick_xml::Reader::from_reader(reader);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(quick_xml::events::Event::Start(element))
+            | Ok(quick_xml::events::Event::Empty(element)) => {
+                let name = element.local_name();
+                return if name.as_ref() == expected_root {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Open XML part {part} has root {}, expected {}",
+                        String::from_utf8_lossy(name.as_ref()),
+                        String::from_utf8_lossy(expected_root)
+                    ))
+                };
+            }
+            Ok(quick_xml::events::Event::Eof) => {
+                return Err(format!("Open XML part {part} has no root element"));
+            }
+            Ok(_) => {}
+            Err(error) => return Err(format!("Open XML part {part} is invalid: {error}")),
+        }
+        buffer.clear();
+    }
+}
+
 impl TargetVerifier for OpenXmlPackageVerifier {
     fn id(&self) -> &'static str {
         "format.openxml"
@@ -316,20 +346,25 @@ impl TargetVerifier for OpenXmlPackageVerifier {
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|error| format!("Open XML package could not be opened: {error}"))?;
         let lower = path.to_string_lossy().to_ascii_lowercase();
-        let required = if lower.ends_with(".docx") {
-            "word/document.xml"
+        let (required, required_root): (&str, &[u8]) = if lower.ends_with(".docx") {
+            ("word/document.xml", b"document")
         } else if lower.ends_with(".xlsx") {
-            "xl/workbook.xml"
+            ("xl/workbook.xml", b"workbook")
         } else {
-            "ppt/presentation.xml"
+            ("ppt/presentation.xml", b"presentation")
         };
-        for part in ["[Content_Types].xml", "_rels/.rels", required] {
-            archive
+        for (part, root) in [
+            ("[Content_Types].xml", b"Types".as_slice()),
+            ("_rels/.rels", b"Relationships".as_slice()),
+            (required, required_root),
+        ] {
+            let entry = archive
                 .by_name(part)
                 .map_err(|error| format!("Open XML package is missing {part}: {error}"))?;
+            verify_xml_root(BufReader::new(entry), part, root)?;
         }
         Ok(format!(
-            "Open XML package opened with {} parts and contains {required}",
+            "Open XML package opened with {} parts and parsed the required {required} structure",
             archive.len()
         ))
     }
@@ -1517,7 +1552,7 @@ mod tests {
     }
 
     #[test]
-    fn openxml_verifier_requires_the_package_root_and_document_part() {
+    fn openxml_verifier_parses_package_roots_and_document_part() {
         use std::io::Write;
 
         let target = tempfile::tempdir().unwrap();
@@ -1525,9 +1560,26 @@ mod tests {
         let file = fs::File::create(&valid_path).unwrap();
         let mut archive = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default();
-        for part in ["[Content_Types].xml", "_rels/.rels", "word/document.xml"] {
+        for (part, xml) in [
+            ("[Content_Types].xml", "<Types/>"),
+            ("_rels/.rels", "<Relationships/>"),
+            ("word/document.xml", "<w:document xmlns:w=\"urn:test\"/>"),
+        ] {
             archive.start_file(part, options).unwrap();
-            archive.write_all(b"<xml/>").unwrap();
+            archive.write_all(xml.as_bytes()).unwrap();
+        }
+        archive.finish().unwrap();
+
+        let wrong_root_path = target.path().join("wrong-root.docx");
+        let file = fs::File::create(&wrong_root_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        for (part, xml) in [
+            ("[Content_Types].xml", "<Types/>"),
+            ("_rels/.rels", "<Relationships/>"),
+            ("word/document.xml", "<workbook/>"),
+        ] {
+            archive.start_file(part, options).unwrap();
+            archive.write_all(xml.as_bytes()).unwrap();
         }
         archive.finish().unwrap();
 
@@ -1535,6 +1587,7 @@ mod tests {
         fs::write(&invalid_path, b"not a package").unwrap();
         let verifier = OpenXmlPackageVerifier;
         assert!(verifier.verify(&valid_path).is_ok());
+        assert!(verifier.verify(&wrong_root_path).is_err());
         assert!(verifier.verify(&invalid_path).is_err());
     }
 
