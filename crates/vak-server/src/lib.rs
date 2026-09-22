@@ -17681,13 +17681,17 @@ async fn start_launch(
         }
     }
 
-    let child = tokio::process::Command::new(&cfg.cmd)
+    let mut command = tokio::process::Command::new(&cfg.cmd);
+    command
         .args(&cfg.args)
         .current_dir(&handle.cwd)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn();
+        .kill_on_drop(true);
+    vak_tools::bash::scrub_environment(&mut command);
+    vak_tools::bash::isolate_process_group(&mut command);
+    let child = command.spawn();
 
     let mut child = match child {
         Ok(c) => c,
@@ -17791,7 +17795,9 @@ async fn stop_launch(
         .remove(&proc_key(&id, &body.name));
     match removed {
         Some(mut p) => {
+            vak_tools::bash::kill_process_group(&p.child.id());
             let _ = p.child.kill().await;
+            let _ = p.child.wait().await;
             StatusCode::OK
         }
         None => StatusCode::NOT_FOUND,

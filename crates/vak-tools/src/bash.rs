@@ -373,7 +373,11 @@ pub(crate) fn is_allowed_env_var(key: &str) -> bool {
     ALLOWED_ENV_VARS.contains(&key) || key.starts_with("LC_") || key.starts_with("XDG_")
 }
 
-pub(crate) fn scrub_environment(cmd: &mut tokio::process::Command) {
+/// Apply the same minimal non-secret environment used for brokered commands.
+/// Host-owned execution surfaces such as a managed preview process must call
+/// this before spawning; credentials are injected only through their scoped
+/// owner and never inherited from the server process.
+pub fn scrub_environment(cmd: &mut tokio::process::Command) {
     let inherited: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
         .filter_map(|(key, value)| {
             let key = key.into_string().ok()?;
