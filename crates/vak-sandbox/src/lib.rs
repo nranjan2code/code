@@ -244,37 +244,56 @@ impl TargetVerifier for JsonSyntaxVerifier {
     }
 }
 
-pub struct FileSignatureVerifier;
+pub struct ImageDecodeVerifier;
 
-impl TargetVerifier for FileSignatureVerifier {
+impl TargetVerifier for ImageDecodeVerifier {
     fn id(&self) -> &'static str {
-        "format.signature"
+        "format.image-decode"
     }
 
     fn supports(&self, path: &str) -> bool {
         let path = path.to_ascii_lowercase();
-        [".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"]
+        [".png", ".jpg", ".jpeg", ".gif", ".webp"]
             .iter()
             .any(|extension| path.ends_with(extension))
     }
 
     fn verify(&self, path: &Path) -> Result<String, String> {
+        let format = image::ImageFormat::from_path(path)
+            .map_err(|error| format!("image extension is unsupported: {error}"))?;
+        let mut reader = image::ImageReader::open(path)
+            .map_err(|error| format!("image could not be opened: {error}"))?;
+        reader.set_format(format);
+        let decoded = reader
+            .decode()
+            .map_err(|error| format!("image decode failed: {error}"))?;
+        let width = decoded.width();
+        let height = decoded.height();
+        if width == 0 || height == 0 {
+            return Err("decoded image has zero width or height".into());
+        }
+        Ok(format!(
+            "decoded {width}×{height} image from the applied workspace"
+        ))
+    }
+}
+
+pub struct PdfSignatureVerifier;
+
+impl TargetVerifier for PdfSignatureVerifier {
+    fn id(&self) -> &'static str {
+        "format.pdf-signature"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        path.to_ascii_lowercase().ends_with(".pdf")
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        let lower = path.to_string_lossy().to_ascii_lowercase();
-        let valid = if lower.ends_with(".png") {
-            bytes.starts_with(b"\x89PNG\r\n\x1a\n")
-        } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-            bytes.starts_with(&[0xff, 0xd8, 0xff])
-        } else if lower.ends_with(".gif") {
-            bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
-        } else if lower.ends_with(".webp") {
-            bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP")
-        } else {
-            bytes.starts_with(b"%PDF-")
-        };
-        valid
-            .then(|| "file signature matched the applied format".into())
-            .ok_or_else(|| "file signature does not match its extension".into())
+        (bytes.starts_with(b"%PDF-") && bytes.windows(5).any(|window| window == b"%%EOF"))
+            .then(|| "PDF header and end marker matched the applied format".into())
+            .ok_or_else(|| "PDF header or end marker is missing".into())
     }
 }
 
@@ -403,7 +422,8 @@ impl TargetVerifier for SvgStructureVerifier {
 pub fn default_target_verifiers() -> TargetVerifierRegistry {
     let mut registry = TargetVerifierRegistry::default();
     registry.register(JsonSyntaxVerifier);
-    registry.register(FileSignatureVerifier);
+    registry.register(ImageDecodeVerifier);
+    registry.register(PdfSignatureVerifier);
     registry.register(OpenXmlPackageVerifier);
     registry.register(DelimitedDataVerifier);
     registry.register(SvgStructureVerifier);
@@ -1516,6 +1536,32 @@ mod tests {
         let verifier = OpenXmlPackageVerifier;
         assert!(verifier.verify(&valid_path).is_ok());
         assert!(verifier.verify(&invalid_path).is_err());
+    }
+
+    #[test]
+    fn image_verifier_decodes_pixels_instead_of_trusting_the_header() {
+        let target = tempfile::tempdir().unwrap();
+        let valid_path = target.path().join("preview.png");
+        let corrupt_path = target.path().join("corrupt.png");
+        let image = image::RgbImage::from_pixel(3, 2, image::Rgb([12, 34, 56]));
+        image.save(&valid_path).unwrap();
+        fs::write(&corrupt_path, b"\x89PNG\r\n\x1a\ncorrupt body").unwrap();
+
+        let evidence = ImageDecodeVerifier.verify(&valid_path).unwrap();
+        assert!(evidence.contains("3×2"));
+        assert!(ImageDecodeVerifier.verify(&corrupt_path).is_err());
+    }
+
+    #[test]
+    fn pdf_signature_verifier_requires_an_end_marker() {
+        let target = tempfile::tempdir().unwrap();
+        let complete = target.path().join("complete.pdf");
+        let truncated = target.path().join("truncated.pdf");
+        fs::write(&complete, b"%PDF-1.7\nbody\n%%EOF\n").unwrap();
+        fs::write(&truncated, b"%PDF-1.7\nbody\n").unwrap();
+
+        assert!(PdfSignatureVerifier.verify(&complete).is_ok());
+        assert!(PdfSignatureVerifier.verify(&truncated).is_err());
     }
 
     #[test]
