@@ -279,11 +279,11 @@ impl TargetVerifier for ImageDecodeVerifier {
     }
 }
 
-pub struct PdfSignatureVerifier;
+pub struct PdfStructureVerifier;
 
-impl TargetVerifier for PdfSignatureVerifier {
+impl TargetVerifier for PdfStructureVerifier {
     fn id(&self) -> &'static str {
-        "format.pdf-signature"
+        "format.pdf-structure"
     }
 
     fn supports(&self, path: &str) -> bool {
@@ -291,10 +291,24 @@ impl TargetVerifier for PdfSignatureVerifier {
     }
 
     fn verify(&self, path: &Path) -> Result<String, String> {
-        let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        (bytes.starts_with(b"%PDF-") && bytes.windows(5).any(|window| window == b"%%EOF"))
-            .then(|| "PDF header and end marker matched the applied format".into())
-            .ok_or_else(|| "PDF header or end marker is missing".into())
+        const MAX_DECOMPRESSED_STREAM_BYTES: usize = 64 * 1024 * 1024;
+        let document = lopdf::Document::load_with_options(
+            path,
+            lopdf::LoadOptions::with_max_decompressed_size(MAX_DECOMPRESSED_STREAM_BYTES),
+        )
+        .map_err(|error| format!("PDF structure could not be parsed: {error}"))?;
+        document
+            .catalog()
+            .map_err(|error| format!("PDF catalog is invalid: {error}"))?;
+        let pages = document.get_pages();
+        if pages.is_empty() {
+            return Err("PDF has no pages".into());
+        }
+        Ok(format!(
+            "parsed PDF {} with {} page(s) from the applied workspace",
+            document.version,
+            pages.len()
+        ))
     }
 }
 
@@ -458,7 +472,7 @@ pub fn default_target_verifiers() -> TargetVerifierRegistry {
     let mut registry = TargetVerifierRegistry::default();
     registry.register(JsonSyntaxVerifier);
     registry.register(ImageDecodeVerifier);
-    registry.register(PdfSignatureVerifier);
+    registry.register(PdfStructureVerifier);
     registry.register(OpenXmlPackageVerifier);
     registry.register(DelimitedDataVerifier);
     registry.register(SvgStructureVerifier);
@@ -1487,6 +1501,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use lopdf::dictionary;
 
     fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
         let control = tempfile::tempdir()?;
@@ -1606,15 +1621,36 @@ mod tests {
     }
 
     #[test]
-    fn pdf_signature_verifier_requires_an_end_marker() {
+    fn pdf_structure_verifier_requires_a_parseable_page_tree() {
         let target = tempfile::tempdir().unwrap();
         let complete = target.path().join("complete.pdf");
         let truncated = target.path().join("truncated.pdf");
-        fs::write(&complete, b"%PDF-1.7\nbody\n%%EOF\n").unwrap();
-        fs::write(&truncated, b"%PDF-1.7\nbody\n").unwrap();
+        let mut document = lopdf::Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let page_id = document.add_object(lopdf::dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 300.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&complete).unwrap();
+        fs::write(&truncated, b"%PDF-1.7\nnot a document\n%%EOF\n").unwrap();
 
-        assert!(PdfSignatureVerifier.verify(&complete).is_ok());
-        assert!(PdfSignatureVerifier.verify(&truncated).is_err());
+        let evidence = PdfStructureVerifier.verify(&complete).unwrap();
+        assert!(evidence.contains("1 page(s)"));
+        assert!(PdfStructureVerifier.verify(&truncated).is_err());
     }
 
     #[test]
