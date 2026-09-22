@@ -3278,6 +3278,10 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
             rate_limit::rate_limit_layer,
         ))
         .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            enforce_participant_audience,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             AuthPolicy {
                 token: token.clone(),
                 home: state.core.sessions_home(),
@@ -3332,6 +3336,46 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
         });
     }
     (app, token)
+}
+
+fn participant_matches_conversation_audience(
+    participant: &coworking::VerifiedPrincipal,
+    conversation_id: &str,
+    observed_audience: Option<&str>,
+) -> bool {
+    participant.conversation_id == conversation_id
+        && observed_audience == Some(participant.audience_id.as_str())
+}
+
+/// Recheck the live conversation audience after bearer authentication and
+/// before any scoped handler runs. The route whitelist limits *where* a
+/// participant may go; this boundary also proves the durable grant still
+/// names the audience owned by that conversation.
+async fn enforce_participant_audience(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(AuthenticatedPrincipal::Participant(participant)) =
+        req.extensions().get::<AuthenticatedPrincipal>()
+    {
+        let conversation_id = req
+            .uri()
+            .path()
+            .trim_matches('/')
+            .split('/')
+            .nth(1)
+            .unwrap_or_default();
+        let audience = conversation_audience(&state, conversation_id);
+        if !participant_matches_conversation_audience(
+            participant,
+            conversation_id,
+            audience.as_deref(),
+        ) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    next.run(req).await
 }
 
 /// Initialize the distributed event bus from config and attach it to the
@@ -19397,6 +19441,26 @@ mod sandbox_promotion_tests {
     #[test]
     fn participant_read_scope_is_exact_and_fail_closed() {
         let principal = participant(&["read"]);
+        assert!(participant_matches_conversation_audience(
+            &principal,
+            "session-1",
+            Some("conversation:session-1")
+        ));
+        assert!(!participant_matches_conversation_audience(
+            &principal,
+            "session-1",
+            Some("conversation:other")
+        ));
+        assert!(!participant_matches_conversation_audience(
+            &principal,
+            "session-1",
+            None
+        ));
+        assert!(!participant_matches_conversation_audience(
+            &principal,
+            "session-2",
+            Some("conversation:session-1")
+        ));
         for path in [
             "/sessions/session-1/transcript",
             "/sessions/session-1/transcript.md",
@@ -19515,6 +19579,10 @@ mod sandbox_promotion_tests {
         use tower::ServiceExt;
 
         let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().to_path_buf());
+        seed_bound_result(&core, "session-1", "execution-1");
+        let state = AppState::new(core);
         let token = "participant-secret";
         let grant = coworking::AudienceGrant {
             grant_id: "grant-http".into(),
@@ -19528,6 +19596,21 @@ mod sandbox_promotion_tests {
             expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
         };
         coworking::invite(&coworking::store_path(dir.path()), grant).unwrap();
+        coworking::invite(
+            &coworking::store_path(dir.path()),
+            coworking::AudienceGrant {
+                grant_id: "grant-wrong-audience".into(),
+                principal_id: "person-wrong-audience".into(),
+                display_name: "Ravi".into(),
+                conversation_id: "session-1".into(),
+                audience_id: "conversation:someone-else".into(),
+                capabilities: vec!["read".into()],
+                token_hash: coworking::token_hash("participant-wrong-audience"),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            },
+        )
+        .unwrap();
         let app = Router::new()
             .route(
                 "/sessions/{id}/transcript",
@@ -19537,6 +19620,11 @@ mod sandbox_promotion_tests {
                 "/sessions/{id}/run",
                 post(|| async { StatusCode::NO_CONTENT }),
             )
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                enforce_participant_audience,
+            ))
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
                     token: "operator-secret".into(),
@@ -19563,6 +19651,18 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .status(),
             StatusCode::OK
+        );
+        let wrong_audience = axum::http::Request::builder()
+            .uri("/sessions/session-1/transcript")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer participant-wrong-audience",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(wrong_audience).await.unwrap().status(),
+            StatusCode::FORBIDDEN
         );
         assert_eq!(
             app.clone()
