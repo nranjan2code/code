@@ -76,7 +76,7 @@ function AssistantMessage(props: { children: JSX.Element; text?: string; session
   return (
     <div class="semantic-assistant">
       <div class="assistant-turn-head">
-        <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} size={26} class="assistant-avatar-mark" />
+        <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} motion={agentForSession(props.sessionId ?? activeId()).animation} size={26} class="assistant-avatar-mark" />
         <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
       </div>
       <div class="assistant-turn-body">

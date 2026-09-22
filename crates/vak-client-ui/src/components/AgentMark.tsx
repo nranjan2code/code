@@ -7,6 +7,7 @@ export default function AgentMark(props: {
   character?: string;
   size?: number;
   state?: CharacterState;
+  motion?: "subtle" | "expressive" | "off";
   interactive?: boolean;
   class?: string;
 }) {
@@ -36,7 +37,7 @@ export default function AgentMark(props: {
   });
 
   return <span ref={mark}
-    class={`agent-mark companion ${id()} state-${state()} ${visible() ? "is-visible" : ""} ${atlasFailed() ? "atlas-failed" : ""} ${props.interactive ? "interactive" : ""} ${props.class ?? ""}`}
+    class={`agent-mark companion ${id()} state-${state()} motion-${props.motion ?? "subtle"} ${visible() ? "is-visible" : ""} ${atlasFailed() ? "atlas-failed" : ""} ${props.interactive ? "interactive" : ""} ${props.class ?? ""}`}
     style={{ width: `${props.size ?? 26}px`, height: `${props.size ?? 26}px`, "--companion-hue": `${companion().hue}` }}
     data-character-state={state()}
     onPointerDown={acknowledge}

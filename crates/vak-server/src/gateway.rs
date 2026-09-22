@@ -3655,6 +3655,8 @@ mod tests {
             name: "Researcher".into(),
             character: "vak".into(),
             personality: "curious".into(),
+            animation: "subtle".into(),
+            voice: "default".into(),
             behaviour: "thorough".into(),
             responsibilities: "deep research".into(),
             instructions: String::new(),

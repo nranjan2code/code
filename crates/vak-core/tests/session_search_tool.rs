@@ -77,6 +77,8 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
             name: "Vak".into(),
             character: "vak".into(),
             personality: String::new(),
+            animation: "subtle".into(),
+            voice: "default".into(),
             behaviour: String::new(),
             responsibilities: String::new(),
             instructions: String::new(),

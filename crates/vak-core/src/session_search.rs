@@ -409,6 +409,8 @@ mod tests {
                     name: agent.into(),
                     character: "vak".into(),
                     personality: String::new(),
+                    animation: "subtle".into(),
+                    voice: "default".into(),
                     behaviour: String::new(),
                     responsibilities: String::new(),
                     instructions: String::new(),

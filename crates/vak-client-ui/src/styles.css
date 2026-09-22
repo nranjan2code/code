@@ -4244,6 +4244,8 @@ body.is-resizing .split-divider {
   .agent-mark.pip .agent-mark-atlas, .agent-mark.beni .agent-mark-atlas { animation-delay: -2.7s; }
 }
 html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; }
+.agent-mark.motion-off .agent-mark-atlas { animation: none !important; }
+.agent-mark.motion-expressive .agent-mark-atlas { animation-duration: 65%; }
 @keyframes companion-idle { 0%, 91%, 95%, 100% { background-position: 0 0; } 92%, 94% { background-position: 33.3333% 0; } }
 @keyframes companion-work { 0%, 58%, 100% { background-position: 0 100%; } 60%, 84% { background-position: 100% 0; } }
 @keyframes companion-wait { 0%, 88%, 100% { background-position: 33.3333% 100%; } 90%, 96% { background-position: 33.3333% 0; } }

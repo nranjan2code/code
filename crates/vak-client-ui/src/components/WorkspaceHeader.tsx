@@ -145,7 +145,7 @@ export default function WorkspaceHeader() {
               title="Switch Agent Specialist"
             >
               <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                <AgentMark character={titleGlyph()} size={20} state={characterState()} interactive />
+                <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={20} state={characterState()} interactive />
                 <span>{title()}</span>
                 <span style="font-size: 11px; opacity: 0.6;">▾</span>
               </h1>

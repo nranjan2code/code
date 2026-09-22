@@ -608,7 +608,7 @@ export default function Composer(props: { cwd: string }) {
                 </select>
               </div>
             </details>
-            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
+            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
             <input
               ref={fileInput}
               type="file"

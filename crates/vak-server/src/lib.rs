@@ -1831,6 +1831,25 @@ async fn voice_speak(
             } else {
                 None
             }
+        })
+        .or_else(|| {
+            body.session_id.as_deref().and_then(|session_id| {
+                read_historical_header(&state, session_id, None)
+                    .and_then(|header| header.agent)
+                    .map(|agent| {
+                        let style = match agent.voice.as_str() {
+                            "calm" => "Speak calmly, warmly, and at an unhurried pace.",
+                            "bright" => "Speak with clear, friendly energy.",
+                            "quiet" => "Speak gently, evenly, and without theatrical emphasis.",
+                            _ => "Speak naturally and clearly.",
+                        };
+                        if agent.personality.trim().is_empty() {
+                            style.to_string()
+                        } else {
+                            format!("{style} {}", agent.personality)
+                        }
+                    })
+            })
         });
 
     if !voice_settings.enabled {
@@ -7303,6 +7322,8 @@ async fn coworking_me(
         "id": agent.id,
         "name": agent.name,
         "character": agent.character,
+        "animation": agent.animation,
+        "voice": agent.voice,
         "revision": agent.revision,
     });
     match principal {

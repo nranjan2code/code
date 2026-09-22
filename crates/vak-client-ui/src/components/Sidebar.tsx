@@ -63,7 +63,7 @@ export default function Sidebar() {
           <div class="sb-agent-skeleton" aria-hidden="true"><span /><span /></div>
         }>
           <For each={shown()}>{(profile) =>
-            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><AgentMark character={profile.character} size={22} state={agentIsRunning(profile.id) ? "working" : "idle"} /><span>{profile.name}</span></button>
+            <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === profile.id}} aria-current={activeAgentId() === profile.id ? "page" : undefined} title={profile.name} disabled={agentOpening()} onClick={() => void openAgentChat(profile.id)}><AgentMark character={profile.character} motion={profile.animation} size={22} state={agentIsRunning(profile.id) ? "working" : "idle"} /><span>{profile.name}</span></button>
           }</For>
         </Show>
         <Show when={query() && loaded() && !shown().length}><p class="sb-empty">No matching agents.</p></Show>

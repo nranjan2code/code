@@ -90,6 +90,8 @@ impl AgentDefinition {
             name: self.name.clone(),
             character: self.character.clone(),
             personality: self.personality.clone(),
+            animation: self.animation.clone(),
+            voice: self.voice.clone(),
             behaviour: self.behaviour.clone(),
             responsibilities: self.responsibilities.clone(),
             instructions: self.instructions.clone(),

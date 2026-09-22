@@ -1168,7 +1168,7 @@ export function mergePr(
  * path parses JSON, mirroring req()'s error-shape handling. */
 export async function speak(
   text: string,
-  opts?: { voiceName?: string; persona?: string },
+  opts?: { voiceName?: string; persona?: string; sessionId?: string },
 ): Promise<Blob> {
   const voice_override =
     opts?.voiceName || opts?.persona
@@ -1177,7 +1177,7 @@ export async function speak(
   const res = await authFetch("/voice/speak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_override }),
+    body: JSON.stringify({ text, voice_override, session_id: opts?.sessionId }),
   });
   if (!res.ok) {
     const text = await res.text();

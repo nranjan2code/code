@@ -67,13 +67,13 @@ export function setCoworkingPresence(sessionId: string, participants: CoworkingP
   setCoworkingPresenceBySession(sessionId, participants);
 }
 export const [activeId, setActiveId] = createSignal<string | null>(null);
-export type AgentSummary = { id: string; name: string; revision?: number; character?: string };
+export type AgentSummary = { id: string; name: string; revision?: number; character?: string; animation?: "subtle" | "expressive" | "off"; voice?: string };
 export const [activeAgent, setActiveAgent] = createSignal<AgentSummary | null>(null);
-export function agentForSession(id: string | null) {
+export function agentForSession(id: string | null): AgentSummary {
   const found = sessions().find((session) => session.session_id === id)?.agent;
   if (found) return found;
   if (id && id === activeId() && activeAgent()) return activeAgent()!;
-  return {id: "vak", name: "Vak", revision: 1, character: "vak"};
+  return {id: "vak", name: "Vak", revision: 1, character: "vak", animation: "subtle", voice: "default"};
 }
 export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);
@@ -838,6 +838,7 @@ export async function speak(text: string): Promise<void> {
     const blob = await api.speak(text, {
       voiceName: uiPreferences.voiceName,
       persona: uiPreferences.voicePersona,
+      sessionId: activeId() ?? undefined,
     });
     const url = URL.createObjectURL(blob);
     if (voiceObjectUrl) URL.revokeObjectURL(voiceObjectUrl);

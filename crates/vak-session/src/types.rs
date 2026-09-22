@@ -214,12 +214,24 @@ pub struct AgentIdentity {
     pub name: String,
     pub character: String,
     pub personality: String,
+    #[serde(default = "default_agent_animation")]
+    pub animation: String,
+    #[serde(default = "default_agent_voice")]
+    pub voice: String,
     pub behaviour: String,
     #[serde(default)]
     pub responsibilities: String,
     /// User-authored instructions added to vak's universal foundation.
     #[serde(default)]
     pub instructions: String,
+}
+
+fn default_agent_animation() -> String {
+    "subtle".into()
+}
+
+fn default_agent_voice() -> String {
+    "default".into()
 }
 
 impl SessionHeader {
@@ -912,5 +924,20 @@ mod agent_identity_tests {
             "behaviour": "careful"
         });
         assert!(serde_json::from_value::<super::AgentIdentity>(value).is_err());
+    }
+
+    #[test]
+    fn movement_and_voice_have_stable_defaults_for_existing_ledgers() {
+        let value = serde_json::json!({
+            "id": "researcher",
+            "revision": 1,
+            "name": "Researcher",
+            "character": "moss",
+            "personality": "curious",
+            "behaviour": "careful"
+        });
+        let identity = serde_json::from_value::<super::AgentIdentity>(value).unwrap();
+        assert_eq!(identity.animation, "subtle");
+        assert_eq!(identity.voice, "default");
     }
 }

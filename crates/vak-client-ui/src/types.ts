@@ -278,7 +278,7 @@ export type AgentEvent =
   | { Sandbox: SandboxEvent };
 
 export interface SessionSummary {
-  agent?: { id: string; name: string; revision: number; character?: string } | null;
+  agent?: { id: string; name: string; revision: number; character?: string; animation?: "subtle" | "expressive" | "off"; voice?: string } | null;
   session_id: string;
   cwd?: string;
   created_at?: string | null;

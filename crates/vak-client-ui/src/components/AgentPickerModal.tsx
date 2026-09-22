@@ -308,7 +308,7 @@ export default function AgentPickerModal() {
                       onClick={() => void handleSelectAgent(agent.id)}
                     >
                       <div style="display: flex; align-items: center; gap: 12px;">
-                        <AgentMark character={agent.character} size={36} />
+                        <AgentMark character={agent.character} motion={agent.animation} size={36} />
                         <div>
                           <div style="display: flex; align-items: center; gap: 6px;">
                             <strong style="font-size: 14px;">{agent.name}</strong>
@@ -451,7 +451,7 @@ export default function AgentPickerModal() {
                 <div class="agent-companion-picker">
                   <For each={AGENT_CHARACTER_IDS}>{(character) =>
                     <button type="button" class="agent-companion-choice" classList={{ active: editCharacter() === character }} aria-label={`Choose ${AGENT_CHARACTERS[character].name}, ${AGENT_CHARACTERS[character].kind}`} aria-pressed={editCharacter() === character} onClick={() => { setEditCharacter(character); playCharacterCue(character); }}>
-                      <AgentMark character={character} size={52} state={editCharacter() === character ? "listening" : "idle"} interactive />
+                      <AgentMark character={character} motion={editAnimation()} size={52} state={editCharacter() === character ? "listening" : "idle"} interactive />
                       <strong>{AGENT_CHARACTERS[character].name}</strong><small>{AGENT_CHARACTERS[character].kind}</small>
                     </button>
                   }</For>
