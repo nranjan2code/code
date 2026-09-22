@@ -10776,7 +10776,7 @@ async fn export_sandbox_candidate(
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
-                    let _ = std::fs::remove_dir_all(&frozen_root);
+                    let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({"error": error.to_string()})),
@@ -10801,7 +10801,7 @@ async fn export_sandbox_candidate(
             match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
                 Ok(()) => Json(record).into_response(),
                 Err(error) => {
-                    let _ = std::fs::remove_dir_all(&frozen_root);
+                    let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({ "error": error.to_string() })),
@@ -11465,12 +11465,14 @@ async fn dispatch_candidate_revision(
                                         true
                                     }
                                     Err(error) => {
+                                        let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                                         detail = Some(error.to_string());
                                         false
                                     }
                                 }
                             }
                             Err(error) => {
+                                let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                                 detail = Some(error.to_string());
                                 false
                             }

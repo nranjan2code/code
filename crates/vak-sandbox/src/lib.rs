@@ -753,13 +753,19 @@ fn protect_frozen_tree(root: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn remove_frozen_tree(root: &Path) {
+pub fn remove_frozen_candidate(root: &Path) -> Result<(), Error> {
+    if !root.exists() {
+        return Ok(());
+    }
     let mut entries: Vec<PathBuf> = WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().to_path_buf())
-        .collect();
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path().to_path_buf())
+                .map_err(|error| Error::Io(std::io::Error::other(error.to_string())))
+        })
+        .collect::<Result<_, _>>()?;
     entries.sort_by_key(|path| path.components().count());
     for path in entries {
         let Ok(metadata) = fs::symlink_metadata(&path) else {
@@ -776,9 +782,10 @@ fn remove_frozen_tree(root: &Path) {
         }
         #[cfg(not(unix))]
         permissions.set_readonly(false);
-        let _ = fs::set_permissions(path, permissions);
+        fs::set_permissions(path, permissions)?;
     }
-    let _ = fs::remove_dir_all(root);
+    fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 /// Capture the reviewed bytes under a new, server-owned directory. The
@@ -816,7 +823,7 @@ pub fn freeze_candidate(
         protect_frozen_tree(frozen_root)
     })();
     if let Err(error) = copy {
-        remove_frozen_tree(frozen_root);
+        let _ = remove_frozen_candidate(frozen_root);
         return Err(error);
     }
     manifest.source_root = frozen_root.to_path_buf();
@@ -878,7 +885,7 @@ pub fn freeze_revision_candidate(
         Ok(())
     })();
     if let Err(error) = result {
-        remove_frozen_tree(frozen_root);
+        let _ = remove_frozen_candidate(frozen_root);
         return Err(error);
     }
     Ok(revision)
@@ -1603,6 +1610,22 @@ mod tests {
             fs::read_to_string(target.path().join("result.txt")).unwrap(),
             "reviewed"
         );
+    }
+
+    #[test]
+    fn server_owned_cleanup_removes_a_protected_candidate_tree() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::create_dir(source.path().join("nested")).unwrap();
+        fs::write(source.path().join("nested/result.txt"), "reviewed").unwrap();
+        let frozen = store.path().join("candidate-cleanup");
+        freeze_candidate("candidate-cleanup", source.path(), target.path(), &frozen).unwrap();
+
+        assert!(fs::write(frozen.join("nested/extra.txt"), "unreviewed").is_err());
+        remove_frozen_candidate(&frozen).unwrap();
+        assert!(!frozen.exists());
+        remove_frozen_candidate(&frozen).unwrap();
     }
 
     #[test]

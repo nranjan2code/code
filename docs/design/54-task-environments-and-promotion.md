@@ -187,7 +187,9 @@ other platforms use their native read-only permission. Files cannot be edited
 and directories cannot receive unreviewed additions through ordinary process
 access. Acceptance and revision seeding still rehash every selected file, so a
 privileged permission change cannot bypass the reviewed-byte check. Server-owned
-cleanup explicitly unlocks the tree before removal.
+cleanup explicitly unlocks the tree before removal. Export digest failures,
+candidate-ledger failures and revision-ledger failures all use that cleanup
+boundary, so a failed review cannot strand a protected candidate directory.
 
 Candidate manifests represent deletion explicitly. A revised task copy that
 omits a path with an existing imported workspace baseline freezes a `Delete`
