@@ -16,6 +16,8 @@ import {
 import { openAgentChat, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import * as api from "../api";
 import AgentMark from "./AgentMark";
+import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
+import { playCharacterCue } from "../characterSound";
 import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
@@ -24,11 +26,20 @@ type LifecycleFilter = "active" | "all" | "paused" | "archived";
 
 export default function AgentPickerModal() {
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
+  const [userAgents, setUserAgents] = createSignal<api.Agent[]>([]);
+  const [workspaceAgents, setWorkspaceAgents] = createSignal<api.Agent[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [switching, setSwitching] = createSignal(false);
   const [error, setError] = createSignal("");
   const [lifecycleFilter, setLifecycleFilter] = createSignal<LifecycleFilter>("active");
   const [lifecycleBusy, setLifecycleBusy] = createSignal<string | null>(null);
+  const [editing, setEditing] = createSignal<api.Agent | null>(null);
+  const [editName, setEditName] = createSignal("");
+  const [editCharacter, setEditCharacter] = createSignal<AgentCharacter>("mira");
+  const [editPersonality, setEditPersonality] = createSignal("");
+  const [editAnimation, setEditAnimation] = createSignal<api.Agent["animation"]>("subtle");
+  const [editVoice, setEditVoice] = createSignal("default");
+  const [editBusy, setEditBusy] = createSignal(false);
 
   const [searchQuery, setSearchQuery] = createSignal("");
 
@@ -87,9 +98,7 @@ export default function AgentPickerModal() {
     setLifecycleBusy(agent.id);
     setError("");
     try {
-      const next = agents().map((a) => (a.id === agent.id ? { ...a, lifecycle } : a));
-      await api.saveAgents(next, "user");
-      setAgents(next);
+      await saveAgent({ ...agent, lifecycle, revision: agent.revision + 1 });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update agent.");
     } finally {
@@ -101,12 +110,59 @@ export default function AgentPickerModal() {
     setLoading(true);
     setError("");
     try {
-      const agentsRes = await api.listAgents();
-      setAgents(agentsRes.agents);
+      const [shared, workspace] = await Promise.all([api.listAgents("user"), api.listAgents("workspace")]);
+      setUserAgents(shared.agents);
+      setWorkspaceAgents(workspace.agents);
+      const effective = new Map(shared.agents.map((agent) => [agent.id, agent]));
+      workspace.agents.forEach((agent) => effective.set(agent.id, agent));
+      setAgents([...effective.values()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveAgent = async (agent: api.Agent) => {
+    const workspaceOwned = workspaceAgents().some((candidate) => candidate.id === agent.id);
+    const scope = workspaceOwned ? "workspace" : "user";
+    const layer = workspaceOwned ? workspaceAgents() : userAgents();
+    const next = layer.map((candidate) => candidate.id === agent.id ? agent : candidate);
+    await api.saveAgents(next, scope);
+    if (workspaceOwned) setWorkspaceAgents(next); else setUserAgents(next);
+    setAgents((current) => current.map((candidate) => candidate.id === agent.id ? agent : candidate));
+  };
+
+  const beginEdit = (agent: api.Agent) => {
+    setEditing(agent);
+    setEditName(agent.name);
+    setEditCharacter(agent.character in AGENT_CHARACTERS ? agent.character : "vak");
+    setEditPersonality(agent.personality);
+    setEditAnimation(["subtle", "expressive", "off"].includes(agent.animation) ? agent.animation : "subtle");
+    setEditVoice(["default", "calm", "bright", "quiet"].includes(agent.voice) ? agent.voice : "default");
+    setError("");
+  };
+
+  const saveIdentity = async () => {
+    const agent = editing();
+    if (!agent || !editName().trim()) return;
+    setEditBusy(true);
+    setError("");
+    try {
+      await saveAgent({
+        ...agent,
+        revision: agent.revision + 1,
+        name: editName().trim(),
+        character: editCharacter(),
+        personality: editPersonality().trim(),
+        animation: editAnimation(),
+        voice: editVoice(),
+      });
+      setEditing(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update Agent identity.");
+    } finally {
+      setEditBusy(false);
     }
   };
 
@@ -283,6 +339,15 @@ export default function AgentPickerModal() {
 
                       <div style="display: flex; align-items: center; gap: 6px;">
                         <Show when={agent.id !== "vak"}>
+                          <button
+                            type="button"
+                            class="icon-button subtle has-tooltip"
+                            data-tooltip="Edit identity"
+                            aria-label={`Edit ${agent.name}`}
+                            onClick={(e) => { e.stopPropagation(); beginEdit(agent); }}
+                          >
+                            <Icon name="palette" size={14} />
+                          </button>
                           <Show when={agent.lifecycle === "active" || !agent.lifecycle}>
                             <button
                               type="button"
@@ -373,6 +438,35 @@ export default function AgentPickerModal() {
             </div>
           </Show>
         </div>
+        <Show when={editing()} keyed>{(agent) =>
+          <div class="modal-back" onClick={(event) => { event.stopPropagation(); setEditing(null); }}>
+            <div class="modal agent-identity-editor" role="dialog" aria-modal="true" aria-labelledby="agent-identity-title" onClick={(event) => event.stopPropagation()} use:trapFocus>
+              <div class="agent-identity-editor-head">
+                <div><h3 id="agent-identity-title">Agent identity</h3><p>Changes apply to new conversations. Existing conversations keep their recorded identity.</p></div>
+                <button type="button" class="icon-button subtle" aria-label="Close identity editor" onClick={() => setEditing(null)}><Icon name="close" size={14} /></button>
+              </div>
+              <label class="agent-identity-field"><span>Name</span><input value={editName()} maxlength={120} onInput={(event) => setEditName(event.currentTarget.value)} /></label>
+              <fieldset class="agent-identity-characters">
+                <legend>Character</legend>
+                <div class="agent-companion-picker">
+                  <For each={AGENT_CHARACTER_IDS}>{(character) =>
+                    <button type="button" class="agent-companion-choice" classList={{ active: editCharacter() === character }} aria-label={`Choose ${AGENT_CHARACTERS[character].name}, ${AGENT_CHARACTERS[character].kind}`} aria-pressed={editCharacter() === character} onClick={() => { setEditCharacter(character); playCharacterCue(character); }}>
+                      <AgentMark character={character} size={52} state={editCharacter() === character ? "listening" : "idle"} interactive />
+                      <strong>{AGENT_CHARACTERS[character].name}</strong><small>{AGENT_CHARACTERS[character].kind}</small>
+                    </button>
+                  }</For>
+                </div>
+              </fieldset>
+              <label class="agent-identity-field"><span>Personality</span><textarea rows={3} maxlength={4000} value={editPersonality()} placeholder={AGENT_CHARACTERS[editCharacter()].personality} onInput={(event) => setEditPersonality(event.currentTarget.value)} /></label>
+              <div class="agent-identity-options">
+                <label class="agent-identity-field"><span>Movement</span><select value={editAnimation()} onChange={(event) => setEditAnimation(event.currentTarget.value as api.Agent["animation"])}><option value="subtle">Subtle</option><option value="expressive">Expressive</option><option value="off">Still</option></select></label>
+                <label class="agent-identity-field"><span>Voice style</span><select value={editVoice()} onChange={(event) => setEditVoice(event.currentTarget.value)}><option value="default">Default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label>
+              </div>
+              <p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p>
+              <div class="agent-identity-actions"><button type="button" class="button subtle" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="button primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></div>
+            </div>
+          </div>
+        }</Show>
       </div>
     </Show>
   );

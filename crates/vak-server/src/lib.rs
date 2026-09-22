@@ -3513,6 +3513,7 @@ fn auth_exempt_path(path: &str) -> bool {
         || path == "/app/manifest.webmanifest"
         || path == "/app/sw.js"
         || path.starts_with("/app/assets/")
+        || path.starts_with("/app/characters/")
         // The login exchange itself, and the probe that decides whether to
         // show it. `/auth/session` answers `{authenticated:false}` rather
         // than 401 so an unauthenticated client can tell "no session" from

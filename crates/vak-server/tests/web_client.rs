@@ -80,6 +80,26 @@ async fn the_client_shell_loads_without_a_session_but_data_does_not() {
     assert_eq!(sessions.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
 
+/// Character portraits are part of the shell, like hashed CSS and JS. They
+/// must be available before authentication or Agent pickers render empty
+/// silhouettes while the loopback/session exchange is still settling.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn packaged_character_assets_load_with_the_unauthenticated_shell() {
+    let (addr, _token) = spawn().await;
+    let response = reqwest::get(format!("http://{addr}/app/characters/mira-atlas.png"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .unwrap(),
+        "image/png"
+    );
+    assert!(!response.bytes().await.unwrap().is_empty());
+}
+
 /// `/auth/session` must distinguish "no session yet" from "unreachable",
 /// and on loopback it must hand over the session rather than ask for it.
 ///

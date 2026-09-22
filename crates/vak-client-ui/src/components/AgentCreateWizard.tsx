@@ -61,7 +61,9 @@ export default function AgentCreateWizard() {
     if (agentCreateOpen()) {
       reset();
       void api.listAgentTemplates().then((r) => setTemplates(r.templates)).catch(() => setTemplates([]));
-      void api.listAgents().then((r) => setAgents(r.agents)).catch(() => setAgents([]));
+      // This wizard writes the Shared layer, so seed the replacement from
+      // that exact layer rather than copying workspace overrides into it.
+      void api.listAgents("user").then((r) => setAgents(r.agents)).catch(() => setAgents([]));
     }
   });
 
