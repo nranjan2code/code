@@ -2096,6 +2096,56 @@ mod tests {
     }
 
     #[test]
+    fn desktop_renderer_vocabulary_matches_the_delivery_registry() {
+        // The delivery registry is the admission boundary and the desktop
+        // registry is the rendering boundary. A type present on only one side
+        // either gets rejected before delivery or reaches the client without a
+        // renderer. Keep this check close to the authoritative server list so
+        // `cargo test -p vak-delivery` catches either direction of drift.
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../vak-client-ui/src/components/PresentationRenderer.tsx"
+        ));
+        let registry = source
+            .split("const STRUCTURED_RENDERERS:")
+            .nth(1)
+            .and_then(|tail| tail.split("export const structuredRendererTypes").next())
+            .unwrap_or_default();
+        assert!(
+            !registry.is_empty(),
+            "could not locate STRUCTURED_RENDERERS in PresentationRenderer.tsx"
+        );
+
+        let mut rendered: Vec<String> = registry
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim_start();
+                let rest = line.strip_prefix('"')?;
+                let (semantic_type, rest) = rest.split_once('"')?;
+                rest.trim_start()
+                    .starts_with(':')
+                    .then(|| semantic_type.to_owned())
+            })
+            .collect();
+        rendered.sort();
+        rendered.dedup();
+
+        let accepted = built_in_semantic_types();
+        let server_only: Vec<_> = accepted
+            .iter()
+            .filter(|semantic_type| !rendered.contains(semantic_type))
+            .collect();
+        let client_only: Vec<_> = rendered
+            .iter()
+            .filter(|semantic_type| !accepted.contains(semantic_type))
+            .collect();
+        assert!(
+            server_only.is_empty() && client_only.is_empty(),
+            "presentation vocabulary drift: server-only={server_only:?}, client-only={client_only:?}"
+        );
+    }
+
+    #[test]
     fn registry_rejects_ambiguous_semantic_type_ownership() {
         let mut registry = built_in_skill_registry();
         let result = registry.register(PresentationSkillManifest {

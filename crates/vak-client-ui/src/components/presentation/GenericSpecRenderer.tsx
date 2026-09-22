@@ -904,21 +904,23 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
           <For each={filteredTests()}>
             {(t) => {
               const status = str(t, "status");
+              const passed = status === "passed";
+              const failed = status === "failed";
               const duration = num(t, "duration_ms");
               const detail = str(t, "traceback") ?? str(t, "message");
               return (
-                <div class="test-item-card" classList={{ "fail-card": status === "failed" }}>
+                <div class="test-item-card" classList={{ "fail-card": failed }}>
                   <div style={{ width: "100%" }}>
                     <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
                       <div>
                         <span
                           style={{
-                            color: status === "failed" ? "var(--rose-bright)" : "var(--emerald-bright)",
+                            color: failed ? "var(--rose-bright)" : passed ? "var(--emerald-bright)" : "var(--text-muted)",
                             "font-weight": "bold",
                             "margin-right": "6px",
                           }}
                         >
-                          {status === "failed" ? "✕" : "✓"}
+                          {failed ? "✕" : passed ? "✓" : "•"}
                         </span>
                         <strong style={{ color: "var(--text-main)" }}>{str(t, "name")}</strong>
                       </div>

@@ -6,6 +6,7 @@ import { StructuredView, structuredRendererTypes } from "../src/components/Prese
 import * as store from "../src/store";
 import { artifactPreviewHtml } from "../src/artifactPreview";
 import { assistantParts } from "../src/structured";
+import { TYPE_CATEGORY } from "../src/harness/fixtures";
 import "../src/styles.css";
 
 const sid = "render-fixture";
@@ -98,6 +99,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   await tick();
   const rendererSlots = Array.from(document.querySelectorAll<HTMLElement>("[data-renderer]"));
   check(rendererSlots.length === structuredRendererTypes.length, `All ${structuredRendererTypes.length} registered presentation types are exercised`);
+  check(structuredRendererTypes.every((semanticType) => (TYPE_CATEGORY[semanticType]?.length ?? 0) > 0), "Every registered presentation has branch-specific harness fixtures");
   check(rendererSlots.every((slot) => Boolean(slot.textContent?.trim()) || Boolean(slot.querySelector("img,video,audio,iframe,svg"))), "Every registered presentation produces visible content");
   check(rendererSlots.every((slot) => !slot.textContent?.includes("Presentation unavailable") && !slot.textContent?.includes("Rich presentation unavailable")), "Registered presentations never fall back to an unavailable card");
   check(rendererSlots.every((slot) => !slot.textContent?.includes("semantic_type") && !slot.textContent?.includes('"schema_version"')), "Registered presentations hide transport fields");

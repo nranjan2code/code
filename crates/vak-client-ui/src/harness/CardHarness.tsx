@@ -1,7 +1,7 @@
-// Dev-only harness: exercises every registered card (semantic_type)
-// renderer, across every real code branch its builder takes, against
-// simulated LLM/tool output — no live vak-server, LLM provider, or web
-// search required. Runs the REAL rendering pipeline
+// Dev-only visual harness: exercises every registered card (semantic_type)
+// renderer, across every real code branch its builder takes, against fixture
+// output — no live vak-server, LLM provider, tool, or web search is involved.
+// Runs the production client rendering path
 // (assistantParts -> parseVakFence -> StructuredView -> STRUCTURED_RENDERERS)
 // so a regression here is a regression a real chat turn would also hit.
 import { createMemo, ErrorBoundary, For, Show, createSignal } from "solid-js";
@@ -74,7 +74,7 @@ function TextFixtureCell(props: { name: string; text: string; note: string }) {
         <code>{props.name}</code>
       </div>
       <p class="harness-note">{props.note}</p>
-      <Show when={isBlank()}>
+      <Show when={isBlank() && props.text.trim() !== ""}>
         <div class="harness-error">Produced ZERO parts from non-empty input — this is the "total silence" regression.</div>
       </Show>
       <For each={parts()}>
@@ -196,9 +196,10 @@ export default function CardHarness() {
       <header class="harness-header">
         <h1>Card Render Harness</h1>
         <p>
-          Simulates LLM/tool output as raw <code>vak</code> fences and runs it through the real chat-render pipeline
+          Exercises fixture output as raw <code>vak</code> fences through the production client rendering path
           (<code>assistantParts</code> → <code>parseVakFence</code> → <code>StructuredView</code>). No live backend, LLM
-          provider, or web search call is made. Every fixture below targets a genuinely distinct branch inside the
+          provider, tool, or web search call is made; this is visual renderer coverage, not an end-to-end pipeline test.
+          Every fixture below targets a genuinely distinct branch inside the
           renderer's own <code>build*Spec</code> functions (columns/rows vs. pros/cons vs. left/right for tables;
           object vs. tuple chart points; string vs. object recipe steps; etc.) — not one payload reused everywhere.
           {" "}{types.length} registered semantic types → {totalCards()} total permutation cards below.

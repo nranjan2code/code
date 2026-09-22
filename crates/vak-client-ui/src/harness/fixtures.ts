@@ -193,16 +193,16 @@ export const TYPE_CATEGORY: Record<string, Category[]> = {
   action: ["universal_card"], transaction: ["universal_card"], alert: ["universal_card"], conversation: ["universal_card"],
   progress_dashboard: ["universal_card"], simulation: ["universal_card"],
   // research
-  "research.synthesis": ["research"], research_brief: ["research"], research: ["research"], news: ["research"],
+  "research.synthesis": ["research"], research_brief: ["research"], news: ["research"],
   // diff
-  "coding.diff": ["diff"], diff: ["diff"],
+  "coding.diff": ["diff"],
   // test matrix
-  "test.report": ["test_matrix"], test: ["test_matrix"], "ci.test_matrix": ["test_matrix"], test_matrix: ["test_matrix"],
+  "test.report": ["test_matrix"],
   // terminal
-  "terminal.view": ["terminal"], terminal: ["terminal"], "terminal.session": ["terminal"],
+  "terminal.view": ["terminal"],
   // table
   "coding.benchmark": ["table"], "coding.dependencies": ["table"], "coding.search": ["table", "research"],
-  "data.grid": ["table"], table: ["table"], dataframe: ["table"], dataset: ["table"], comparison: ["table"],
+  "data.grid": ["table"], table: ["table"], dataframe: ["table"], comparison: ["table"],
   comparison_table: ["table"], pros_cons: ["table"], inventory: ["table"], scorecard: ["table"], decision_matrix: ["table"],
   criteria_matrix: ["table"], tradeoff_analysis: ["table"], budget: ["table"], finance_summary: ["table"], invoice_summary: ["table"],
   travel_options: ["table", "timeline"],
@@ -210,7 +210,7 @@ export const TYPE_CATEGORY: Record<string, Category[]> = {
   "recipe.card": ["recipe"], recipe: ["recipe"], "lifestyle.recipe": ["recipe"], "lifestyle.culinary_recipe": ["recipe"],
   recipe_summary: ["recipe"], meal_plan: ["recipe", "timeline"],
   // ui preview
-  "ui.preview": ["ui_preview"], preview: ["ui_preview"],
+  "ui.preview": ["ui_preview"],
   // timeline (large group)
   "coding.deployment": ["timeline"], "coding.incident": ["timeline"], "coding.architecture": ["timeline"], "coding.release": ["timeline"],
   "plan.timeline": ["timeline"], timeline: ["timeline"], itinerary: ["timeline"], checklist: ["timeline"], schedule: ["timeline"],

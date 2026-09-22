@@ -928,19 +928,12 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
   "research.synthesis": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
   "research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
-  "research": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
   "news": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
 
   // 2. Code, Tests & Terminal (coding.diff, test.report, terminal.view, etc.)
   "coding.diff": ({ data }) => <GenericSpecRenderer node={buildDiffSpec(data)} />,
-  "diff": ({ data }) => <GenericSpecRenderer node={buildDiffSpec(data)} />,
   "test.report": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
-  "test": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
-  "ci.test_matrix": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
-  "test_matrix": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
   "terminal.view": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
-  "terminal": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
-  "terminal.session": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
 
   // 3. Coding Specific Flows
   "coding.benchmark": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Benchmark Results")} />,
@@ -955,7 +948,6 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "data.grid": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Data Grid")} />,
   "table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
   "dataframe": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
-  "dataset": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Dataset")} />,
   "comparison": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison")} />,
   "comparison_table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison Table")} />,
   "pros_cons": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Pros & Cons")} />,
@@ -980,7 +972,6 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
 
   // 7. Interactive Previews
   "ui.preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
-  "preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
 
   // 8. Timelines, Plans, Checklists, Schedules & Notes
   "plan.timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Plan Timeline", "Plan")} />,
