@@ -17588,16 +17588,42 @@ async fn get_launch(
     if servers.is_empty() {
         servers = detect_launch(&handle.cwd);
     }
-    let procs = state
+    let mut procs = state
         .procs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    procs.retain(|_, process| match process.child.try_wait() {
+        Ok(Some(_)) => {
+            vak_tools::bash::kill_process_group(&process.child.id());
+            false
+        }
+        Ok(None) | Err(_) => true,
+    });
     let list: Vec<serde_json::Value> = servers
         .into_iter()
         .map(|mut s| {
             let key = proc_key(&id, &s.name);
             let running = procs.contains_key(&key);
-            let available = vak_tools::bash::executable_available(&s.cmd, &handle.cwd);
+            let executable_available = vak_tools::bash::executable_available(&s.cmd, &handle.cwd);
+            let port_available = running || s.port.is_none_or(port_is_available);
+            let available = executable_available && port_available;
+            let availability = if !executable_available {
+                "needs_setup"
+            } else if !port_available {
+                "port_in_use"
+            } else {
+                "ready"
+            };
+            let unavailable_reason = if !executable_available {
+                Some(format!(
+                    "{} is not available in the preview environment",
+                    s.cmd
+                ))
+            } else if !port_available {
+                s.port.map(|port| format!("port {port} is already in use"))
+            } else {
+                None
+            };
             if running && s.port.is_none() {
                 s.port = None;
             }
@@ -17608,7 +17634,8 @@ async fn get_launch(
                 "port": s.port,
                 "running": running,
                 "available": available,
-                "unavailable_reason": (!available).then(|| format!("{} is not available in the preview environment", s.cmd)),
+                "availability": availability,
+                "unavailable_reason": unavailable_reason,
             })
         })
         .collect();
@@ -17631,6 +17658,10 @@ async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
     false
+}
+
+fn port_is_available(port: u16) -> bool {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok()
 }
 
 #[derive(serde::Deserialize)]
@@ -17673,6 +17704,17 @@ async fn start_launch(
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": format!("{} is not available in the preview environment", cfg.cmd)
+            })),
+        )
+            .into_response();
+    }
+    if let Some(port) = cfg.port
+        && !port_is_available(port)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("port {port} is already in use")
             })),
         )
             .into_response();
@@ -17778,15 +17820,57 @@ async fn start_launch(
         .procs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(key, ManagedProc { child, logs });
+        .insert(
+            key.clone(),
+            ManagedProc {
+                child,
+                logs: logs.clone(),
+            },
+        );
 
     // Give the server a moment to bind its port so the preview iframe works
     // immediately after start.
     let listening = match cfg.port {
         Some(p) => wait_for_port(p, std::time::Duration::from_secs(15)).await,
-        None => false,
+        None => {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            false
+        }
     };
-    let _ = logs;
+    let exited = {
+        let mut procs = state
+            .procs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let finished = procs
+            .get_mut(&key)
+            .and_then(|process| process.child.try_wait().ok().flatten());
+        if finished.is_some() {
+            procs.remove(&key);
+        }
+        finished
+    };
+    if let Some(status) = exited {
+        let output = logs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .rev()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": format!("preview process exited before becoming ready ({status})"),
+                "lines": output,
+            })),
+        )
+            .into_response();
+    }
 
     (
         StatusCode::OK,
@@ -19597,6 +19681,15 @@ mod sandbox_promotion_tests {
         assert_eq!(found[0].cmd, "python3");
         assert_eq!(found[0].args, vec!["-m", "http.server", "8080"]);
         assert_eq!(found[0].port, Some(8080));
+    }
+
+    #[test]
+    fn preview_port_probe_reports_owned_listener_as_unavailable() {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!port_is_available(port));
+        drop(listener);
+        assert!(port_is_available(port));
     }
 
     fn participant(capabilities: &[&str]) -> coworking::VerifiedPrincipal {

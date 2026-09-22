@@ -12,6 +12,7 @@ interface ServerCfg {
   port: number | null;
   running: boolean;
   available: boolean;
+  availability: "ready" | "needs_setup" | "port_in_use";
   unavailable_reason?: string;
 }
 
@@ -337,7 +338,9 @@ export default function PreviewPane() {
                   <span class="prev-name">{s.name}</span>
                   <code class="prev-cmd">{[s.cmd, ...s.args].join(" ")}</code>
                   <Show when={!s.available}>
-                    <span class="hint" title={s.unavailable_reason}>needs setup</span>
+                    <span class="hint" title={s.unavailable_reason}>
+                      {s.availability === "port_in_use" ? "port in use" : "needs setup"}
+                    </span>
                   </Show>
                   <Show when={s.port}>
                     <span class="badge">:{s.port}</span>
