@@ -583,11 +583,17 @@ fn enrich_provenance(core: &Core, mut content: DeliveryContent) -> DeliveryConte
         return content;
     };
     if let Some(agent) = core.agent_identity() {
-        answer.metadata.insert("agent_id".into(), agent.id.clone());
-        answer
-            .document
-            .metadata
-            .insert("agent_id".into(), agent.id.clone());
+        for (key, value) in [
+            ("agent_id", agent.id.clone()),
+            ("agent_name", agent.name.clone()),
+            ("agent_revision", agent.revision.to_string()),
+            ("agent_character", agent.character.clone()),
+            ("agent_animation", agent.animation.clone()),
+            ("agent_voice", agent.voice.clone()),
+        ] {
+            answer.metadata.insert(key.into(), value.clone());
+            answer.document.metadata.insert(key.into(), value);
+        }
     }
     if let Some(context) = core.conversation_context() {
         for (key, value) in [
@@ -1146,6 +1152,26 @@ mod tests {
         assert_eq!(
             answer.metadata.get("agent_id").map(String::as_str),
             Some("support")
+        );
+        assert_eq!(
+            answer.metadata.get("agent_name").map(String::as_str),
+            Some("Support")
+        );
+        assert_eq!(
+            answer.metadata.get("agent_character").map(String::as_str),
+            Some("vak")
+        );
+        assert_eq!(
+            answer.metadata.get("agent_revision").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            answer
+                .document
+                .metadata
+                .get("agent_voice")
+                .map(String::as_str),
+            Some("default")
         );
         assert_eq!(
             answer.metadata.get("audience_id").map(String::as_str),
