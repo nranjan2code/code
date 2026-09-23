@@ -27,6 +27,10 @@ pub enum Control {
         #[serde(rename = "final")]
         final_: bool,
     },
+    TurnCompleted {
+        utterance_id: String,
+        text: String,
+    },
     SpeechStarted {
         utterance_id: String,
     },
@@ -109,6 +113,14 @@ mod tests {
         assert_eq!(
             Frame::decode_control(&Frame::encode_control(&receipt).unwrap()).unwrap(),
             receipt
+        );
+        let completion = Control::TurnCompleted {
+            utterance_id: "u1".into(),
+            text: "Here is the answer".into(),
+        };
+        assert_eq!(
+            Frame::decode_control(&Frame::encode_control(&completion).unwrap()).unwrap(),
+            completion
         );
     }
     #[test]

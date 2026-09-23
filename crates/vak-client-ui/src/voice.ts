@@ -100,10 +100,8 @@ export class VoiceConversationController {
 export interface VoiceSocketCallbacks {
   onReady(sampleRateHz: number, channels: number): void;
   onTranscript(revision: TranscriptRevision): void;
-  onPlayback(frame: ArrayBuffer, utteranceId: string, interrupted: boolean): void;
+  onTurnCompleted?(utteranceId: string, text: string): void;
   onError(message: string): void;
-  /** Provider attribution and settlement for the synthesized turn. */
-  onReceipt?(utteranceId: string, receipt: Record<string, unknown>): void;
 }
 
 /** Canonical browser/Tauri transport for a governed voice session. */
@@ -149,7 +147,7 @@ export class VoiceSessionSocket {
       };
       socket.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-          this.callbacks.onPlayback(event.data, "", false);
+          this.callbacks.onError("unexpected audio frame from voice session");
           return;
         }
         try {
@@ -168,8 +166,10 @@ export class VoiceSessionSocket {
             this.callbacks.onTranscript({ utteranceId: String(control.utterance_id), text: String(control.text), final: Boolean(control.final) });
             return;
           }
-          if (control.t === "playback") this.callbacks.onPlayback(new ArrayBuffer(0), String(control.utterance_id ?? ""), Boolean(control.interrupted));
-          if (control.t === "receipt" && this.callbacks.onReceipt) this.callbacks.onReceipt(String(control.utterance_id ?? ""), (control.receipt ?? {}) as Record<string, unknown>);
+          if (control.t === "turn_completed") {
+            this.callbacks.onTurnCompleted?.(String(control.utterance_id ?? ""), String(control.text ?? ""));
+            return;
+          }
         } catch { this.callbacks.onError("invalid voice server frame"); }
       };
     });

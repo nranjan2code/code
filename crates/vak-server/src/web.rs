@@ -585,6 +585,18 @@ mod tests {
         assert!(try_admit_voice(&active, 1));
     }
 
+    #[test]
+    fn completed_voice_turn_keeps_its_utterance_and_bounds_speech() {
+        let reply = "spoken ".repeat(12_000);
+        let frame = completed_voice_turn("utterance-9", &reply, 2_000).unwrap();
+        let decoded = vak_voice::protocol::Frame::decode_control(&frame).unwrap();
+        let vak_voice::protocol::Control::TurnCompleted { utterance_id, text } = decoded else {
+            panic!("expected completed turn");
+        };
+        assert_eq!(utterance_id, "utterance-9");
+        assert_eq!(text.chars().count(), 2_000);
+    }
+
     /// The picker must not be walkable out of its roots one "up" at a time.
     #[test]
     fn paths_outside_the_roots_are_refused() {
@@ -850,6 +862,8 @@ async fn drive_voice(
     let mut received_bytes: usize = 0;
     let mut utterance_audio: Vec<u8> = Vec::new();
     let mut committed_utterances = std::collections::HashSet::new();
+    let (completed_tx, mut completed_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(String, String)>();
     let Ok(ready) =
         vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::Ready {
             protocol_version: Some(vak_voice::protocol::VOICE_PROTOCOL_VERSION),
@@ -868,7 +882,21 @@ async fn drive_voice(
     {
         return;
     }
-    while let Some(Ok(message)) = futures::StreamExt::next(&mut socket).await {
+    loop {
+        let message = tokio::select! {
+            inbound = futures::StreamExt::next(&mut socket) => match inbound {
+                Some(Ok(message)) => message,
+                _ => break,
+            },
+            Some((utterance_id, reply)) = completed_rx.recv() => {
+                if let Ok(frame) = completed_voice_turn(&utterance_id, &reply, persisted.max_text_chars) {
+                    if socket.send(Message::Text(String::from_utf8_lossy(&frame).into_owned().into())).await.is_err() {
+                        break;
+                    }
+                }
+                continue;
+            }
+        };
         if lifecycle.expired() {
             let _ = socket.close().await;
             break;
@@ -949,6 +977,11 @@ async fn drive_voice(
                                 let Some(key) = vak_config::get_var("OPENAI_API_KEY")
                                     .filter(|k| !k.trim().is_empty())
                                 else {
+                                    send_voice_error(
+                                        &mut socket,
+                                        "OpenAI voice transcription needs a configured key",
+                                    )
+                                    .await;
                                     continue;
                                 };
                                 let Some(model) = persisted
@@ -957,6 +990,11 @@ async fn drive_voice(
                                     .or_else(|| persisted.model.clone())
                                     .filter(|m| !m.trim().is_empty())
                                 else {
+                                    send_voice_error(
+                                        &mut socket,
+                                        "Voice transcription needs a configured model",
+                                    )
+                                    .await;
                                     continue;
                                 };
                                 let cfg = vak_llm::openai::OpenAiConfig {
@@ -983,6 +1021,11 @@ async fn drive_voice(
                                     .or_else(|| persisted.model.clone())
                                     .filter(|m| !m.trim().is_empty())
                                 else {
+                                    send_voice_error(
+                                        &mut socket,
+                                        "Voice transcription needs a configured model",
+                                    )
+                                    .await;
                                     continue;
                                 };
                                 let cfg = vak_llm::google_live::GoogleLiveConfig::new(key, &model);
@@ -994,7 +1037,19 @@ async fn drive_voice(
                                 )
                                 .await
                             } else {
+                                send_voice_error(
+                                    &mut socket,
+                                    "Voice transcription needs a configured provider and key",
+                                )
+                                .await;
                                 continue;
+                            };
+                            let transcription_error = match &result {
+                                Ok(value) if value.trim().is_empty() => {
+                                    Some("No speech was recognized".to_string())
+                                }
+                                Err(error) => Some(format!("Voice transcription failed: {error}")),
+                                _ => None,
                             };
                             if let Ok(text) = result
                                 && !text.trim().is_empty()
@@ -1018,13 +1073,21 @@ async fn drive_voice(
                                         );
                                     }
                                     let prompt = crate::gateway::compose_voice_prompt(&text);
+                                    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
                                     crate::gateway::start_turn_chain_with_gateway(
                                         gateway.clone(),
                                         &handle.core,
                                         handle.clone(),
                                         prompt,
-                                        None,
+                                        Some(reply_tx),
                                     );
+                                    let completed = completed_tx.clone();
+                                    let spoken_id = utterance_id.clone();
+                                    tokio::spawn(async move {
+                                        if let Ok(reply) = reply_rx.await {
+                                            let _ = completed.send((spoken_id, reply));
+                                        }
+                                    });
                                 }
                                 let _ = lifecycle.commit_transcript(&utterance_id, &text);
                                 let _ = socket
@@ -1032,6 +1095,9 @@ async fn drive_voice(
                                         String::from_utf8_lossy(&frame).into_owned().into(),
                                     ))
                                     .await;
+                            }
+                            if let Some(message) = transcription_error {
+                                send_voice_error(&mut socket, &message).await;
                             }
                         }
                         utterance_audio.clear();
@@ -1067,13 +1133,21 @@ async fn drive_voice(
                         // presentation-only and must never dispatch work.
                         if final_ && let Some(handle) = ledger.as_ref() {
                             let prompt = crate::gateway::compose_voice_prompt(&text);
+                            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
                             crate::gateway::start_turn_chain_with_gateway(
                                 gateway.clone(),
                                 &handle.core,
                                 handle.clone(),
                                 prompt,
-                                None,
+                                Some(reply_tx),
                             );
+                            let completed = completed_tx.clone();
+                            let spoken_id = utterance_id.clone();
+                            tokio::spawn(async move {
+                                if let Ok(reply) = reply_rx.await {
+                                    let _ = completed.send((spoken_id, reply));
+                                }
+                            });
                         }
                         if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
                             &vak_voice::protocol::Control::Transcript {
@@ -1087,70 +1161,6 @@ async fn drive_voice(
                                     String::from_utf8_lossy(&frame).into_owned().into(),
                                 ))
                                 .await;
-                        }
-                        if final_ && persisted.provider.as_deref() == Some("local") {
-                            use vak_voice::{LocalSpeaker, SpeakFormat, SpeakSpec, Speaker};
-                            if let Ok(mut stream) = LocalSpeaker
-                                .speak(
-                                    SpeakSpec {
-                                        text: text.clone(),
-                                        model: persisted
-                                            .synthesis_model
-                                            .clone()
-                                            .or_else(|| persisted.model.clone()),
-                                        voice: None,
-                                        format: SpeakFormat::Pcm16,
-                                    },
-                                    tokio_util::sync::CancellationToken::new(),
-                                )
-                                .await
-                                && let Some(Ok(chunk)) = stream.next().await
-                            {
-                                let _ = socket.send(Message::Binary(chunk.data.into())).await;
-                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
-                                    &vak_voice::protocol::Control::Playback {
-                                        utterance_id: utterance_id.clone(),
-                                        emitted_ms: u64::from(chunk.duration_ms),
-                                        interrupted: false,
-                                    },
-                                ) {
-                                    let _ = socket
-                                        .send(Message::Text(
-                                            String::from_utf8_lossy(&frame).into_owned().into(),
-                                        ))
-                                        .await;
-                                }
-                                let mut receipt = vak_llm::WorkReceipt::new(
-                                    vak_llm::WorkPurpose::VoiceSynthesis,
-                                    "local",
-                                    persisted
-                                        .synthesis_model
-                                        .as_deref()
-                                        .or(persisted.model.as_deref())
-                                        .unwrap_or("offline"),
-                                );
-                                receipt.record(
-                                    vak_llm::AttemptReason::Initial,
-                                    vak_llm::FailureDomain::Unknown,
-                                    vak_llm::Settlement::Ok,
-                                    0,
-                                    None,
-                                    None,
-                                );
-                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
-                                    &vak_voice::protocol::Control::Receipt {
-                                        utterance_id: utterance_id.clone(),
-                                        receipt: serde_json::to_value(receipt)
-                                            .unwrap_or(serde_json::Value::Null),
-                                    },
-                                ) {
-                                    let _ = socket
-                                        .send(Message::Text(
-                                            String::from_utf8_lossy(&frame).into_owned().into(),
-                                        ))
-                                        .await;
-                                }
-                            }
                         }
                     }
                     Ok(vak_voice::protocol::Control::Playback {
@@ -1217,6 +1227,33 @@ async fn drive_voice(
             Message::Close(_) => break,
             _ => {}
         }
+    }
+}
+
+fn completed_voice_turn(
+    utterance_id: &str,
+    reply: &str,
+    max_text_chars: usize,
+) -> Result<Vec<u8>, vak_voice::VoiceError> {
+    let text: String = reply.chars().take(max_text_chars.min(8_000)).collect();
+    vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::TurnCompleted {
+        utterance_id: utterance_id.to_string(),
+        text,
+    })
+}
+
+async fn send_voice_error(socket: &mut WebSocket, message: &str) {
+    if let Ok(frame) =
+        vak_voice::protocol::Frame::encode_control(&vak_voice::protocol::Control::Error {
+            message: message.to_string(),
+            remedy: Some("Check Voice settings or use the text composer".into()),
+        })
+    {
+        let _ = socket
+            .send(Message::Text(
+                String::from_utf8_lossy(&frame).into_owned().into(),
+            ))
+            .await;
     }
 }
 
