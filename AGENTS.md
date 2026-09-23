@@ -77,7 +77,9 @@ Read before changing behaviour in these areas:
   (by 61), `62-universal-delegation-experience.md` and
   `62-universal-delegation-prototype.md` (by 64),
   `63-agent-first-conversations.md` (by 64).
-- **Proposals, not behaviour** — `56-personal-multi-machine-system.md`.
+- **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
+  `72-openxml-documents.md` (Office documents: current-state review and the
+  implementation ledger for read/edit/create/review/collaborate/headless).
 
 ### What is authoritative
 
