@@ -3892,6 +3892,14 @@ mod tests {
             );
             if !matches!(compiled, vak_presentation::CompiledPresentation::Rich(_)) {
                 failures.push(format!("{} ({semantic_type}): {compiled:?}", seed.spec.id));
+            } else if vak_delivery::adaptive_presentation_markdown(&compiled)
+                .trim()
+                .is_empty()
+            {
+                failures.push(format!(
+                    "{} ({semantic_type}): empty text delivery",
+                    seed.spec.id
+                ));
             }
         }
         assert!(
@@ -3945,20 +3953,37 @@ mod tests {
             skills: vak_delivery::built_in_skill_registry(),
             recipes: vak_delivery::built_in_recipes(),
         };
-        let timeline = super::snapshot_with_planner_and_library("metric-grid", &log, &planner, &library);
-        let card = timeline.items.iter().find(|item| item.kind == OutputKind::Card).expect("card");
+        let timeline =
+            super::snapshot_with_planner_and_library("metric-grid", &log, &planner, &library);
+        let card = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Card)
+            .expect("card");
         let OutputContent::Adaptive { tree, .. } = &card.content else {
             panic!("selected pack should produce adaptive content");
         };
         assert_eq!(tree.spec_id, "seed.metric");
-        assert_eq!(tree.root.props.get("condition"), Some(&serde_json::json!("Sunny")));
-        assert_eq!(tree.root.props.get("temperature"), Some(&serde_json::json!("35.2°C")));
-        assert_eq!(tree.root.props.get("humidity"), Some(&serde_json::json!("31%")));
+        assert_eq!(
+            tree.root.props.get("condition"),
+            Some(&serde_json::json!("Sunny"))
+        );
+        assert_eq!(
+            tree.root.props.get("temperature"),
+            Some(&serde_json::json!("35.2°C"))
+        );
+        assert_eq!(
+            tree.root.props.get("humidity"),
+            Some(&serde_json::json!("31%"))
+        );
         let lowered = vak_delivery::adaptive_presentation_markdown(
             &vak_presentation::CompiledPresentation::Rich(tree.clone()),
         );
         for reading in ["Sunny", "35.2°C", "31%"] {
-            assert!(lowered.contains(reading), "constrained delivery lost {reading}: {lowered}");
+            assert!(
+                lowered.contains(reading),
+                "constrained delivery lost {reading}: {lowered}"
+            );
         }
     }
 
