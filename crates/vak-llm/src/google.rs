@@ -213,6 +213,19 @@ fn sanitize_schema(val: &Value) -> Value {
                 ) {
                     continue;
                 }
+                if k == "type" {
+                    if let Value::Array(types) = v {
+                        let variants: Vec<_> = types
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(|kind| serde_json::json!({"type": kind}))
+                            .collect();
+                        if !variants.is_empty() {
+                            cleaned.insert("anyOf".into(), Value::Array(variants));
+                        }
+                        continue;
+                    }
+                }
                 cleaned.insert(k.clone(), sanitize_schema(v));
             }
             Value::Object(cleaned)
@@ -479,6 +492,20 @@ mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::types::Role;
+
+    #[test]
+    fn provider_tool_schema_represents_json_type_unions_with_any_of() {
+        let input = serde_json::json!({
+            "type": "object",
+            "properties": {"value": {"type": ["string", "number"]}}
+        });
+        let output = sanitize_schema(&input);
+        assert_eq!(
+            output["properties"]["value"]["anyOf"],
+            serde_json::json!([{"type": "string"}, {"type": "number"}])
+        );
+        assert!(output["properties"]["value"].get("type").is_none());
+    }
 
     #[test]
     fn thought_signature_round_trips_into_the_request_body() {

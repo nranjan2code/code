@@ -1029,13 +1029,22 @@ async fn drive_voice(
                                     continue;
                                 };
                                 let cfg = vak_llm::google_live::GoogleLiveConfig::new(key, &model);
-                                vak_llm::google_live::transcribe(
-                                    &cfg,
+                                let audio = match vak_voice::audio::wrap_wav(
                                     &utterance_audio,
-                                    "audio/pcm",
-                                    &cancel,
-                                )
-                                .await
+                                    vak_voice::audio::PcmSpec {
+                                        sample_rate_hz: 16_000,
+                                        channels: 1,
+                                    },
+                                ) {
+                                    Ok(audio) => audio,
+                                    Err(error) => {
+                                        send_voice_error(&mut socket, &error.to_string()).await;
+                                        utterance_audio.clear();
+                                        continue;
+                                    }
+                                };
+                                vak_llm::google_live::transcribe(&cfg, &audio, "audio/wav", &cancel)
+                                    .await
                             } else {
                                 send_voice_error(
                                     &mut socket,

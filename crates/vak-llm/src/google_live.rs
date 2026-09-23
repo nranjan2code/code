@@ -357,6 +357,19 @@ async fn speak_inner(
                     });
                 }
             }
+            Some(Ok(Message::Binary(bytes))) => {
+                let v: Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| LlmError::Parse(format!("bad setup response: {e}")))?;
+                if v.get("setupComplete").is_some() {
+                    break;
+                }
+                if let Some(err) = v.get("error") {
+                    return Err(LlmError::Api {
+                        status: 0,
+                        message: err.to_string(),
+                    });
+                }
+            }
             Some(Ok(Message::Close(frame))) => {
                 let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
                 return Err(LlmError::Network(format!(
@@ -435,6 +448,40 @@ async fn speak_inner(
                     .unwrap_or(false)
                 {
                     break;
+                }
+            }
+            Some(Ok(Message::Binary(bytes))) => {
+                let v: Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| LlmError::Parse(format!("bad server message: {e}")))?;
+                if let Some(err) = v.get("error") {
+                    return Err(LlmError::Api {
+                        status: 0,
+                        message: err.to_string(),
+                    });
+                }
+                if let Some(sc) = v.get("serverContent") {
+                    if let Some(parts) = sc.pointer("/modelTurn/parts").and_then(|p| p.as_array()) {
+                        for part in parts {
+                            if let Some(data) =
+                                part.pointer("/inlineData/data").and_then(|d| d.as_str())
+                            {
+                                use base64::Engine as _;
+                                let bytes = base64::engine::general_purpose::STANDARD
+                                    .decode(data)
+                                    .map_err(|e| {
+                                        LlmError::Parse(format!("bad base64 audio chunk: {e}"))
+                                    })?;
+                                pcm.extend_from_slice(&bytes);
+                            }
+                        }
+                    }
+                    if sc
+                        .get("turnComplete")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
                 }
             }
             Some(Ok(Message::Close(_))) => break,

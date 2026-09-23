@@ -23,16 +23,6 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   let playbackStartedAt = 0;
   let playbackCurrentDurationMs = 0;
   let playbackCompletedMs = 0;
-  let recognition: {
-    start(): void;
-    stop(): void;
-    interimResults: boolean;
-    continuous: boolean;
-    onresult: ((event: any) => void) | null;
-    onerror: ((event: any) => void) | null;
-    onend: (() => void) | null;
-    onspeechstart: (() => void) | null;
-  } | undefined;
   let utterance = `voice-${Date.now()}`;
   let playbackUtterance = "";
   // In-flight decode promises may resolve after stop/interrupt. Generation
@@ -45,7 +35,6 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   let latestSpokenUtterance = "";
   let answerGeneration = 0;
   let voiceSessionId = "";
-  let recognitionSpeechActive = false;
   const AUDIO_SAMPLE_RATE = 16_000;
   const SPEECH_THRESHOLD = 0.018;
   const MIN_SPEECH_MS = 240;
@@ -64,7 +53,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       if (playbackSource) stopPlayback(true);
       else playbackGeneration += 1;
       utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      socket.sendControl({ type: "speech_started", utterance_id: utterance });
+      socket.sendControl({ t: "speech_started", utterance_id: utterance });
       audioSpeechActive = true;
       audioSpeechMs = 0;
       audioSilenceMs = 0;
@@ -79,7 +68,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     }
     audioSilenceMs += frameMs;
     if (audioSpeechMs >= MIN_SPEECH_MS && audioSilenceMs >= END_SILENCE_MS) {
-      socket.sendControl({ type: "speech_stopped", utterance_id: utterance });
+      socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
       audioSpeechActive = false;
       audioSpeechMs = 0;
       audioSilenceMs = 0;
@@ -91,8 +80,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     playbackGeneration += 1;
     setActive(false);
     capture?.stop(); capture = undefined;
-    recognition?.stop(); recognition = undefined;
-    if (socket) { try { socket.sendControl({ type: "speech_stopped", utterance_id: utterance }); } catch { /* already closed */ } socket.close(); socket = undefined; }
+    if (socket) { try { socket.sendControl({ t: "speech_stopped", utterance_id: utterance }); } catch { /* already closed */ } socket.close(); socket = undefined; }
     playbackSource?.stop(); playbackSource = undefined;
     playbackUtterance = "";
     playbackStartedAt = 0;
@@ -103,7 +91,6 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     audioSilenceMs = 0;
     answerGeneration += 1;
     voiceSessionId = "";
-    recognitionSpeechActive = false;
     setTranscript("");
     setVoiceError(false);
     setPaused(false);
@@ -149,53 +136,23 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
         onTurnCompleted: (utteranceId, reply) => {
           if (generation !== voiceGeneration || !utteranceId || utteranceId === latestSpokenUtterance) return;
           latestSpokenUtterance = utteranceId;
-          if (audioSpeechActive || recognitionSpeechActive) return;
+          if (audioSpeechActive) return;
           void speakAnswer(reply);
         },
         onError: (message) => { failVoice(message); },
       });
       await socket.connect();
       if (generation !== voiceGeneration || !socket) return;
-      const Recognition = (globalThis as any).SpeechRecognition ?? (globalThis as any).webkitSpeechRecognition;
       setStatus("Allow microphone");
       const startedCapture = await startMicrophone((pcm) => {
-        if (generation !== voiceGeneration || Recognition) return;
+        if (generation !== voiceGeneration) return;
         try { streamDetectedSpeech(pcm); } catch (error) { failVoice((error as Error).message); }
       });
       if (generation !== voiceGeneration) { startedCapture.stop(); return; }
       capture = startedCapture;
       setActive(true);
       setConnecting(false);
-      if (Recognition) {
-        utterance = `voice-${Date.now()}`;
-        socket.sendControl({ type: "speech_started", utterance_id: utterance });
-        recognition = new Recognition();
-        recognition!.interimResults = true;
-        recognition!.continuous = true;
-        recognition!.onresult = (event) => {
-          const result = event.results[event.results.length - 1];
-          const text = String(result?.[0]?.transcript ?? "").trim();
-          if (text) {
-            setTranscript(text);
-            if (result.isFinal) {
-              recognitionSpeechActive = false;
-              socket?.sendControl({ type: "transcript", utterance_id: utterance, text, final: true });
-              utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-              socket?.sendControl({ type: "speech_started", utterance_id: utterance });
-            }
-          }
-        };
-        recognition!.onspeechstart = () => {
-          recognitionSpeechActive = true;
-          answerGeneration += 1;
-          if (playbackSource) stopPlayback(true);
-          else playbackGeneration += 1;
-          setStatus("Listening");
-        };
-        recognition!.onerror = () => failVoice("Live transcription became unavailable. You can keep working by typing.");
-        recognition!.onend = () => { if (active()) { try { recognition?.start(); } catch { /* browser may reject restart */ } } };
-        recognition!.start();
-      } else setStatus("Listening");
+      setStatus("Listening");
     } catch (error) { failVoice((error as Error).message); }
   }
   async function speakAnswer(text: string) {
@@ -249,10 +206,8 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     answerGeneration += 1;
     setActive(false);
     voiceSessionId = "";
-    recognitionSpeechActive = false;
     socket?.close(); socket = undefined;
     capture?.stop(); capture = undefined;
-    recognition?.stop(); recognition = undefined;
     playbackGeneration += 1;
     playbackSource?.stop(); playbackSource = undefined;
     setConnecting(false); setVoiceError(true); setStatus("Voice unavailable");
@@ -267,7 +222,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     playbackSource?.stop(); playbackSource = undefined;
     setPaused(false);
     if (reportInterruption && playbackUtterance) {
-      try { socket?.sendControl({ type: "playback", utterance_id: playbackUtterance, emitted_ms: emittedMs, interrupted: true }); } catch { /* closed transport */ }
+      try { socket?.sendControl({ t: "playback", utterance_id: playbackUtterance, emitted_ms: emittedMs, interrupted: true }); } catch { /* closed transport */ }
     }
     playbackUtterance = "";
     playbackStartedAt = 0;
@@ -320,7 +275,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     return "idle";
   };
   return <span class="voice-control" data-state={state()} role="group" aria-label="Voice conversation controls">
-    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() ? "Connecting…" : visibleStatus()}</span></button>
+    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() && status() === "Voice" ? "Connecting…" : visibleStatus()}</span></button>
     {transcript() && <span class="voice-transcript" aria-live="polite">{transcript()}</span>}
     {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
     {voiceError() && <button class="composer-context voice-fallback" onClick={() => window.dispatchEvent(new CustomEvent("vak:focus-composer"))}>Type instead</button>}

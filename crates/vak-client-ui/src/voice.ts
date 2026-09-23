@@ -104,6 +104,10 @@ export interface VoiceSocketCallbacks {
   onError(message: string): void;
 }
 
+type VoiceClientControl =
+  | { t: "speech_started" | "speech_stopped"; utterance_id: string }
+  | { t: "playback"; utterance_id: string; emitted_ms: number; interrupted: boolean };
+
 /** Canonical browser/Tauri transport for a governed voice session. */
 export class VoiceSessionSocket {
   private socket: WebSocket | null = null;
@@ -152,7 +156,7 @@ export class VoiceSessionSocket {
         }
         try {
           const control = JSON.parse(String(event.data)) as Record<string, unknown>;
-          if (control.type === "error") { this.callbacks.onError(String(control.message ?? "voice session error")); return; }
+          if (control.t === "error" || control.type === "error") { this.callbacks.onError(String(control.message ?? "voice session error")); return; }
           if (control.t === "ready") {
             const version = control.protocol_version;
             if (version !== undefined && version !== 1) {
@@ -183,7 +187,7 @@ export class VoiceSessionSocket {
     this.socket.send(bytes);
   }
 
-  sendControl(control: Record<string, unknown>): void {
+  sendControl(control: VoiceClientControl): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("voice session is not connected");
     this.socket.send(JSON.stringify(control));
   }

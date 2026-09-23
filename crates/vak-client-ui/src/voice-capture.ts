@@ -24,8 +24,17 @@ export async function startMicrophone(onFrame: (pcm16: Int16Array) => void): Pro
   let context: AudioContext;
   try { context = new AudioContext({ sampleRate: 16_000 }); }
   catch (error) { stream.getTracks().forEach((track) => track.stop()); throw new Error(`Microphone audio is unavailable: ${error instanceof Error ? error.message : String(error)}`); }
-  const source = context.createMediaStreamSource(stream);
-  const processor = context.createScriptProcessor(320, 1, 1);
+  let source: MediaStreamAudioSourceNode;
+  let processor: ScriptProcessorNode;
+  try {
+    source = context.createMediaStreamSource(stream);
+    // Web Audio requires zero or a power of two between 256 and 16384.
+    processor = context.createScriptProcessor(512, 1, 1);
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    void context.close();
+    throw new Error(`Microphone audio is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer.getChannelData(0);
     const pcm = new Int16Array(input.length);
