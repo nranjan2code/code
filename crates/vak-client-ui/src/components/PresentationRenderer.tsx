@@ -1220,13 +1220,6 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
   const blocks = createMemo(() => {
     const out: JSX.Element[] = [];
     let lead: Array<{ item: OutputItem; node: JSX.Element }> = [];
-    let earlier: JSX.Element[] = [];
-    const flushEarlier = () => {
-      if (earlier.length === 0) return;
-      const drafts = earlier;
-      out.push(<details class="primary-result-earlier"><summary>{drafts.length} earlier {drafts.length === 1 ? "draft" : "drafts"} in this turn</summary>{drafts}</details>);
-      earlier = [];
-    };
     const flush = () => {
       if (lead.length === 0) return;
       const material = lead;
@@ -1251,8 +1244,31 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       return !a || !b || a === b;
     };
     const entries = visible();
+    // The Agent may emit a card, revise its draft answer, and then write the
+    // final answer. Keep the latest card of each semantic type with it.
+    let finalAnswerIndex = -1;
+    for (let i = 0; i < entries.length; i += 1) {
+      const item = entries[i].item;
+      if (item.role === "assistant" && (
+        item.content.type === "document" ||
+        (item.content.type === "outcome" && Boolean(item.content.document))
+      )) finalAnswerIndex = i;
+    }
+    const finalCards = new Map<string, { item: OutputItem; node: JSX.Element }>();
+    for (let i = 0; i < finalAnswerIndex; i += 1) {
+      const entry = entries[i];
+      const content = entry.item.content;
+      if (content.type !== "structured" && content.type !== "adaptive") continue;
+      const key = content.type === "structured" ? content.output.semantic_type : `adaptive:${entry.item.id}`;
+      finalCards.set(key, entry);
+    }
+    const carriedCards = [...finalCards.values()];
     for (let index = 0; index < entries.length; index += 1) {
       const { item, node } = entries[index];
+      if (index < finalAnswerIndex && (item.content.type === "structured" || item.content.type === "adaptive")) continue;
+      if (grouping && index < finalAnswerIndex && item.role === "assistant" && (
+        item.content.type === "document" || (item.content.type === "outcome" && Boolean(item.content.document))
+      )) continue;
       const cardLike =
         item.role !== "user" &&
         (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
@@ -1269,7 +1285,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
             : undefined;
       if (grouping && answer) {
         if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
-        const material = [...lead];
+        const material = index === finalAnswerIndex ? [...carriedCards, ...lead] : [...lead];
         // Structured material can arrive on either side of the answer in
         // the ledger. Keep adjacent cards with their result in both cases.
         while (index + 1 < entries.length) {
@@ -1289,31 +1305,27 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               aria-label="Agent result"
             >
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-              <div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>
               <Show when={material.length > 0}>
                 <div class="primary-result-material" aria-label="Result material">
                   {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
                 </div>
               </Show>
+              <Show when={material.some((entry) => entry.item.content.type === "structured" || entry.item.content.type === "adaptive")}
+                fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
+                <details class="primary-result-note"><summary>Agent note</summary><div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div></details>
+              </Show>
               <ResultEvidence item={item} />
               <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />
             </article>
           </AssistantMessage>;
-        const laterAnswer = entries.slice(index + 1).some((entry) => entry.item.role === "assistant" && (
-          entry.item.content.type === "document" ||
-          (entry.item.content.type === "outcome" && Boolean(entry.item.content.document))
-        ));
-        if (laterAnswer) earlier.push(result);
-        else { flushEarlier(); out.push(result); }
+        out.push(result);
         lead = [];
         continue;
       }
       flush();
-      flushEarlier();
       out.push(node);
     }
     flush();
-    flushEarlier();
     return out;
   });
   return (

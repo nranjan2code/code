@@ -3000,9 +3000,9 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   border-radius: 18px;
   background: color-mix(in srgb, var(--surface) 94%, var(--accent-wash));
 }
-.primary-result-earlier { width: min(760px, 100%); margin: 8px 0 12px; }
-.primary-result-earlier > summary { width: fit-content; padding: 5px 2px; color: var(--muted); font-size: 11px; cursor: pointer; }
-.primary-result-earlier[open] > summary { margin-bottom: 8px; }
+.primary-result-note { margin-top: 10px; }
+.primary-result-note > summary { width: fit-content; padding: 5px 2px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.primary-result-note[open] > summary { margin-bottom: 8px; }
 .primary-result-caution { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--border-soft); background: color-mix(in srgb, var(--yellow) 9%, var(--surface)); color: var(--text); font-size: 12px; line-height: 1.4; }
 .primary-result-answer { padding: 17px 18px 15px; }
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }

@@ -199,4 +199,10 @@ The deep feasibility conclusion is **yes, conditional on the wiring above**. The
 
 ## Completion bar
 
+### Real everyday presentation check (2026-09-23)
+
+Three real Agent turns on the isolated dev server exercised a Saturday-morning timeline, a rainy-day outing comparison, and a vegetarian breakfast recipe. The model called the built-in card tools and the projection produced `plan.timeline`, `table` plus `research.synthesis`, and `recipe.card` respectively. The timeline turn exposed a delivery flaw: two intermediate answer drafts and two timeline revisions were shown alongside a final prose answer. The everyday conversation now shows only the final answer, carries the latest card of each semantic type to that result, and presents the card first. The model's final narration is available as a collapsed Agent note when a card is present. This was verified after rebuilding and restarting the real dev server at port 8918 on the original timeline session; one timeline card appears and no earlier-drafts disclosure appears.
+
+The underlying output contract still needs a semantic decision about whether narration adds information beyond a card. The current UI keeps the complete narration accessible rather than claiming to identify redundant text. These turns validate built-in card emission and rendering, not selection of the 75 declarative seed recipes: no adaptive tree was selected for these three outputs. Exercise at least one active declarative definition through real output before calling those packs end-to-end verified.
+
 This work is complete only when the running desktop and web UI can demonstrate the four journeys with real data and runtime evidence, the same Agent conversation and draft can safely include an invited human, and technical capability remains reachable without dominating everyday use. Update this ledger with tested evidence and screenshots of the **running implementation** as each screen lands. A build passing or a generated mockup alone does not close a checkbox for a screen.
