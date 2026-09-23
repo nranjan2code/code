@@ -254,7 +254,7 @@ fn diff(cwd: PathBuf, trusted: bool) -> i32 {
         Ok(c) => c,
         Err(code) => return code,
     };
-    let (seed, _, _) = prompts::seed(vak_core::APP_VERSION);
+    let seed = prompts::seed(vak_core::APP_VERSION).content;
     let layers = core.prompt_layers(seed.clone());
     let mut changed = false;
     for block in PromptBlock::ALL {

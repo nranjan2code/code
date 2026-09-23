@@ -13869,7 +13869,7 @@ async fn put_agents(
 
 fn prompt_effective_payload(core: &vak_core::Core) -> serde_json::Value {
     let resolution = core.resolve_prompt(&core.capability_descriptors());
-    let (seed_content, _, _) = vak_core::prompts::seed(vak_core::APP_VERSION);
+    let seed_content = vak_core::prompts::seed(vak_core::APP_VERSION).content;
     let seed_blocks = serde_json::json!({
         "identity": seed_content.identity,
         "operating-rules": seed_content.operating_rules,

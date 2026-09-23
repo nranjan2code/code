@@ -949,6 +949,12 @@ impl Surface {
     /// reply is read and what that costs the model, because that is the part
     /// that changes how it should answer — a phone-sized chat bubble and a
     /// terminal beside a diff viewer want different replies.
+    /// Whether files the agent writes are shown to the reader automatically
+    /// (the desktop and web clients' preview pane).
+    pub fn previews_files(&self) -> bool {
+        matches!(self, Surface::Desktop | Surface::Web)
+    }
+
     fn prompt_section(&self) -> String {
         let body = match self {
             Surface::Unknown => "unknown. Nothing has told you where this reply \
@@ -983,7 +989,9 @@ file you are talking about."
             ),
             Surface::Background => "background run. Nobody is reading this live \
 and there is no one to ask a follow-up question. Finish what you can decide \
-on your own, and leave the outcome where the next reader will find it."
+on your own, and leave the outcome where the next reader will find it. When a \
+step needs someone's confirmation, do not take it: stop there and leave the \
+question in your result."
                 .to_string(),
             Surface::Worker => "worker. Your reply is read by the agent \
 that spawned you, not by a person. Answer it completely and in full — state \
@@ -991,7 +999,14 @@ what you found, what you changed, and what you could not resolve — rather \
 than briefly, since it cannot ask you a follow-up question."
                 .to_string(),
         };
-        format!("\nSurface: {body}\n")
+        let preview = if self.previews_files() {
+            " Files you write in the workspace or `.vak/scratch/` appear in the \
+user's preview automatically, so do not start an HTTP server just to preview \
+a static file."
+        } else {
+            ""
+        };
+        format!("\nSurface: {body}{preview}\n")
     }
 }
 
@@ -3098,7 +3113,7 @@ impl Core {
         // is the single place any surface waits for the registry, so the
         // packet handed to this function is already as resolved as it is
         // going to get. Rendering is pure: same packet in, same prompt out.
-        let (seed, capability_contract, sandbox_contract) = prompts::seed(APP_VERSION);
+        let seed = prompts::seed(APP_VERSION);
         // Advertise only what the composed policy will actually run. A
         // server listed here that dispatch refuses is the exact mismatch
         // this reconciliation exists to remove, so blocked servers move out
@@ -3140,6 +3155,9 @@ impl Core {
         let has_bash = capabilities
             .iter()
             .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash");
+        let has_cards = capabilities
+            .iter()
+            .any(|c| c.kind == CapabilityKind::Tool && presentation_tools::is_card_tool(&c.name));
         let epistemic_stance = match stance {
             Some(s) => format!(
                 "\nEpistemic stance: {}\n- {}",
@@ -3148,19 +3166,21 @@ impl Core {
             ),
             None => String::new(),
         };
+        // Each code-owned contract appears only where it is true: cards where
+        // card tools are admitted, the sandbox where `bash` is.
         let runtime = prompts::RuntimeSections {
-            capability_contract,
+            capability_contract: seed.capability_contract,
+            presentation_contract: if has_cards {
+                seed.presentation_contract
+            } else {
+                String::new()
+            },
             sandbox_contract: if has_bash {
-                sandbox_contract
+                seed.sandbox_contract
             } else {
                 String::new()
             },
             surface: self.surface.prompt_section(),
-            runtime: if has_bash {
-                vak_tools::bash::runtime_capability_summary()
-            } else {
-                String::new()
-            },
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,
@@ -3173,7 +3193,7 @@ impl Core {
                 chrono::Local::now().offset()
             ),
         };
-        let resolution = prompts::resolve(&self.prompt_layers(seed), &runtime);
+        let resolution = prompts::resolve(&self.prompt_layers(seed.content), &runtime);
         let temporal = runtime.temporal;
         (resolution, temporal, epistemic_stance)
     }
@@ -3288,10 +3308,10 @@ impl Core {
             if !found_on_disk && kind == "agents" {
                 let builtin_text = match name.as_str() {
                     "analyst" => Some(
-                        "You are the Data Analyst specialist. Focus on quantitative rigor, tabular transformations with data_query, mathematical accuracy, and living dataframe output.",
+                        "You are the Data Analyst specialist. Compute figures with your tools rather than estimating them, show the data behind every number, state assumptions and uncertainty, and present results as tables or charts where they read best.",
                     ),
                     "operator" => Some(
-                        "You are the Operations & Strategy specialist. Focus on trade-off evaluations, milestone scheduling, risk mitigation, and comparison decision matrices.",
+                        "You are the Operations specialist. Inspect the current state before changing it, act in small reversible steps, confirm each effect before the next, and report exactly what changed and what did not.",
                     ),
                     "researcher" => Some(
                         "You are the Research Analyst specialist. Focus on empirical verification, numbered citations [1], [2] linked to sources, counter-evidence, and epistemic uncertainty.",
@@ -7493,7 +7513,7 @@ mod capability_contract_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod channel_mcp_network_tests {
-    use super::Core;
+    use super::{Core, Surface};
     use std::collections::BTreeMap;
 
     fn core_with_servers(dir: &std::path::Path, servers: &[(&str, bool)]) -> Core {
@@ -7670,7 +7690,7 @@ mod channel_mcp_network_tests {
             .unwrap();
         }
 
-        let (seed, _, _) = crate::prompts::seed(crate::APP_VERSION);
+        let seed = crate::prompts::seed(crate::APP_VERSION).content;
         assert!(
             core.prompt_layers(seed)
                 .iter()
@@ -7678,6 +7698,43 @@ mod channel_mcp_network_tests {
             "a note must not create a workspace prompt layer"
         );
         assert!(!core.system_prompt().contains("attacker@example.com"));
+    }
+
+    /// Each code-owned section says only what is true on the surface it is
+    /// sent to: only the desktop and web clients preview files, and a
+    /// background run has no one to confirm.
+    #[test]
+    fn the_prompt_says_only_what_is_true_on_its_surface() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
+        let cards = "`emit_*_card` tool";
+        let preview = "appear in the user's preview automatically";
+
+        let desktop = prompt(Surface::Desktop);
+        assert!(desktop.contains(cards));
+        assert!(desktop.contains(preview));
+
+        let chat = prompt(Surface::Chat {
+            channel: "telegram".into(),
+        });
+        assert!(chat.contains(cards), "a chat receives a card's text form");
+        assert!(!chat.contains(preview), "nothing previews on a phone chat");
+
+        let worker = prompt(Surface::Worker);
+        assert!(worker.contains(cards), "a worker may build or fix cards");
+        assert!(!worker.contains(preview));
+
+        let background = prompt(Surface::Background);
+        assert!(background.contains("do not take it: stop there"));
+        for text in [&desktop, &chat, &worker, &background] {
+            assert!(!text.contains("Sandbox runtime:"));
+            assert!(
+                text.contains("\n\nSurface:"),
+                "the surface line stands apart"
+            );
+        }
     }
 
     #[test]
@@ -7724,7 +7781,11 @@ mod channel_mcp_network_tests {
         // The sandbox contract must be a separate block, not inlined in
         // the capability contract, so it can be conditionally omitted
         // for turns that lack bash.
-        let (_, contract, sandbox) = crate::prompts::seed(crate::APP_VERSION);
+        let crate::prompts::Seed {
+            capability_contract: contract,
+            sandbox_contract: sandbox,
+            ..
+        } = crate::prompts::seed(crate::APP_VERSION);
         assert!(
             !contract.contains("execution sandbox"),
             "sandbox text must live in sandbox_contract, not capability_contract"

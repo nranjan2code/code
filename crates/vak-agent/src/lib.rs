@@ -640,6 +640,42 @@ fn load_discovered(
 }
 
 #[cfg(test)]
+mod grounding_tests {
+    use super::{admits_no_data, uses_evidence};
+
+    const RESULT: &str = "Weather for Paris: 18°C, light rain. Source: https://wttr.in/Paris";
+
+    #[test]
+    fn a_cited_prose_answer_is_grounded() {
+        assert!(uses_evidence(
+            "It is 18°C and raining in Paris (wttr.in).",
+            RESULT
+        ));
+        assert!(uses_evidence("Per wttr.in, light rain today.", RESULT));
+    }
+
+    #[test]
+    fn an_answer_from_memory_is_not() {
+        assert!(!uses_evidence(
+            "Paris is usually mild this time of year.",
+            RESULT
+        ));
+    }
+
+    #[test]
+    fn evidence_with_nothing_checkable_never_nags() {
+        assert!(uses_evidence("anything", "the service said hello"));
+    }
+
+    #[test]
+    fn an_honest_no_is_recognised_by_the_one_shared_list() {
+        assert!(admits_no_data("I couldn't find current figures for that."));
+        assert!(admits_no_data("I have no live data for this."));
+        assert!(!admits_no_data("It is 18°C."));
+    }
+}
+
+#[cfg(test)]
 mod tool_loading_tests {
     use super::{load_discovered, tools_for_leg};
     use vak_llm::ToolDefinition;
@@ -1885,11 +1921,12 @@ impl Agent {
                 // the horizon itself is optimistic (§1, §6).
                 self.record_capacity_instruction_failure(response.usage.input_tokens)
                     .await;
-                let directive_quote = first_sentence_fallback(&prompt_owned);
+                // Never quotes the directive back: an echo after a tool result
+                // reads as the user asking again (docs/design/68 §6).
                 let _ = self.session.lock().await.append_message(MessageRecord::control(
                     vak_intent::control::ControlKind::SteeringDrift,
                     format!(
-                        "[steering-drift]: {drift_reason}. The directive you should be serving right now is: \"{directive_quote}\". Refocus your next step on it."
+                        "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
                     ),
                 ));
                 if calls.is_empty() {
@@ -1950,18 +1987,7 @@ impl Agent {
                 // the gap; the model may decline by saying it has no live
                 // data, which the grounding phrases below already accept.
                 if wants_live_data && !retrieval_succeeded_this_run {
-                    let text = response.text_content();
-                    let lower = text.to_ascii_lowercase();
-                    let admits_no_data = [
-                        "don't have",
-                        "do not have",
-                        "no access to",
-                        "couldn't find",
-                        "could not find",
-                        "no live data",
-                    ]
-                    .iter()
-                    .any(|phrase| lower.contains(phrase));
+                    let admits_no_data = admits_no_data(&response.text_content());
                     if !admits_no_data && freshness_repair_attempted {
                         // Repaired once already and still nothing retrieved
                         // (a thinking-only end, or the same figure again):
@@ -1985,44 +2011,32 @@ impl Agent {
                         continue;
                     }
                 }
-                // Grounding enforcement: the previous turn ran one or more
-                // retrieval-shaped tool calls, but this final answer neither
-                // emitted a structured (cited) card nor admitted it has no
-                // data. Give the model exactly one bounded repair turn
-                // instead of letting an ungrounded answer reach the user —
-                // this is the runtime-enforcement half of the fix; the
-                // system prompt's own wording is the other half, since a
-                // small/local model can't be trusted to self-police this
-                // from prompt text alone.
+                // Grounding enforcement: the immediately preceding step ran a
+                // retrieval and this final answer shows no sign of using what
+                // it returned. One bounded redo. "Uses" is judged from the
+                // result itself — a source, host or figure it contained — so
+                // a cited prose answer passes; a card emitted with the
+                // retrieval clears the check where it is recorded.
                 if !grounding_repair_attempted
                     && let Some(tool_names) = pending_grounding_check.take()
                     && !tool_names.is_empty()
                 {
                     let text = response.text_content();
-                    let admits_no_data = {
-                        let lower = text.to_ascii_lowercase();
-                        [
-                            "don't have",
-                            "do not have",
-                            "no access to",
-                            "couldn't find",
-                            "could not find",
-                        ]
-                        .iter()
-                        .any(|phrase| lower.contains(phrase))
-                    };
-                    if !text.contains("\"semantic_type\"") && !admits_no_data {
+                    let grounded = text.contains("\"semantic_type\"")
+                        || admits_no_data(&text)
+                        || last_evidence_snippet
+                            .as_deref()
+                            .is_none_or(|evidence| uses_evidence(&text, evidence));
+                    if !grounded {
                         grounding_repair_attempted = true;
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let tool_list = tool_names.join(", ");
                         let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
-                                "[grounding-check]: Your last answer didn't cite the results from {tool_list}, which you just called. \
-                                 Either synthesize those results into a structured card that cites them (e.g. a \
-                                 `research.synthesis` vak-fence with real sources/URLs from the tool output), or, if the \
-                                 results genuinely don't answer the question, say so explicitly instead of writing a vague \
-                                 unsourced summary. Please redo your answer now."
+                                "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
+                                 Answer from those results and name the sources you used, or, if they do not \
+                                 answer the question, say so plainly instead of answering from memory."
                             )));
                         turn += 1;
                         continue;
@@ -2531,6 +2545,11 @@ impl Agent {
                 })
                 .collect();
             cards_emitted_this_run |= !emitted_card_types.is_empty();
+            if !emitted_card_types.is_empty() {
+                // A card emitted alongside the retrieval is the grounded
+                // answer; its payload was validated when it was recorded.
+                pending_grounding_check = None;
+            }
             pending_duplicate_card_check = if emitted_card_types.is_empty() {
                 None
             } else {
@@ -5331,6 +5350,67 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
         obj.insert("command".into(), cmd);
     }
     call
+}
+
+/// Whether an answer honestly says it has no data. The one list the
+/// freshness and grounding checks share (a judgement, listed in
+/// docs/design/30-output-engineering.md).
+fn admits_no_data(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "don't have",
+        "do not have",
+        "no access to",
+        "couldn't find",
+        "could not find",
+        "unable to find",
+        "no live data",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
+}
+
+/// Whether `answer` visibly draws on `evidence`: it repeats a host or a
+/// figure the retrieval returned. Evidence with nothing so checkable says
+/// nothing either way, so it counts as used — the check exists to catch an
+/// answer written from memory beside a retrieval, not to demand a format.
+fn uses_evidence(answer: &str, evidence: &str) -> bool {
+    let answer = answer.to_lowercase();
+    let mut markers = evidence
+        .split(|c: char| c.is_whitespace() || "()[]{}<>\"'`,;|".contains(c))
+        .map(|token| {
+            token
+                .trim_matches(|c: char| ".:!?".contains(c))
+                .to_lowercase()
+        })
+        .filter_map(|token| {
+            let host = token
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(&token)
+                .split('/')
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches("www.")
+                .to_string();
+            let is_host = host.contains('.')
+                && host.rsplit('.').next().is_some_and(|tld| {
+                    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
+                });
+            let is_figure = token.chars().filter(char::is_ascii_digit).count() >= 2;
+            if is_host {
+                Some(host)
+            } else if is_figure {
+                Some(token)
+            } else {
+                None
+            }
+        })
+        .peekable();
+    if markers.peek().is_none() {
+        return true;
+    }
+    markers.any(|marker| answer.contains(&marker))
 }
 
 fn normalize_mcp_call(

@@ -105,6 +105,20 @@ fn an_intent_note_reaches_the_model_through_the_tail_not_the_projection() {
     assert!(intent.starts_with("<intent>"));
 }
 
+/// A long note in a non-Latin script reaches the tail whole. The tail used
+/// to be cut at a byte offset, which panics inside a multi-byte character
+/// and silently drops the rest (AGENTS.md invariants 3 and 36).
+#[test]
+fn a_long_non_ascii_intent_note_reaches_the_tail_whole() {
+    let dir = tempdir().unwrap();
+    let mut log = open(dir.path());
+    let note = "कृपया हर भाग का उत्तर दें। ".repeat(300);
+    assert!(note.len() > 8_000, "longer than any old cut");
+    log.append_intent(record(Some(&note))).unwrap();
+    let intent = log.tail_sections(None).intent.expect("intent tail section");
+    assert!(intent.contains(note.trim_end()));
+}
+
 /// `ContextProfile::Working` / `Full`: the workspace delta the host recorded
 /// for this turn reaches the model through the tail, from the ledger bytes,
 /// and only when the turn's reading asked for it.

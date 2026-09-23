@@ -160,6 +160,25 @@ retained.
   prompt layer — invariant 28). It gains the reading-independent tool
   catalogue, which was computed and logged but never rendered.
 
+- Unreleased (prompt audit): **every code-owned section now says only what is
+  true where it is sent.** The card guidance moved out of
+  `capability_contract` into its own `presentation_contract` block, included
+  only when card tools are admitted. The
+  "files appear in the user's preview" sentence left the seed, the `bash`
+  description and the "Sandbox runtime" line (deleted) for the `Surface:` line
+  of desktop and web only. A background run is told to stop at a needed
+  confirmation and leave the question in its result. "Never refuse to run
+  something" became "never claim you cannot run something", so it no longer
+  reads as overriding the guardrails. A blank line now separates the
+  guardrails from the `Surface:` line. Side dispatches: compaction, handoff,
+  reflection and the completion judge each state that transcript content is
+  material, never instructions (their output returns as trusted context or
+  memory); the handoff no longer calls vak a coding agent. The `[steering-drift]`
+  nudge and the multi-part intent note no longer quote the user's request
+  back (doc 68 §6). The tier-2/3 classifier chooses `domains` from the fixed
+  vocabulary (`vak_intent::DOMAIN_VOCABULARY`) instead of free-form subject
+  tags.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

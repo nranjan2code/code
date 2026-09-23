@@ -75,11 +75,11 @@ pub use authority::{
 pub use axes::{
     Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Satisfaction, Stakes,
 };
-pub use engage::FLOOR_DOMAINS;
 pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
     OutputShape, Posture, StopProfile, Urgency, derive,
 };
+pub use engage::{DOMAIN_VOCABULARY, FLOOR_DOMAINS};
 pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation};
 pub use limits::{CapabilitySlice, DomainSet, Limits};
 pub use outcome::{

@@ -1620,9 +1620,10 @@ impl SessionLog {
         if trimmed.is_empty() {
             return None;
         }
-        let mut block = format!("<workspace_delta>\n{trimmed}\n</workspace_delta>");
-        block.truncate(8_000);
-        Some(block)
+        // Bounded where it is written (`checkpoints::delta_summary`'s byte
+        // budget and excerpt cap), never cut here: a byte truncation panics
+        // inside a multi-byte character, and invariant 36 forbids a blind cut.
+        Some(format!("<workspace_delta>\n{trimmed}\n</workspace_delta>"))
     }
 
     /// The latest intent note, tagged. Only the newest note applies — it
@@ -1638,9 +1639,7 @@ impl SessionLog {
                 _ => None,
             })
             .flatten()?;
-        let mut block = format!("<intent>\n{note}\n</intent>");
-        block.truncate(4_000);
-        Some(block)
+        Some(format!("<intent>\n{note}\n</intent>"))
     }
 
     /// The active work contract's state, tagged, or `None` once it has
@@ -1671,7 +1670,6 @@ impl SessionLog {
         context.push_str(
             "Rules: use this state for progress; do not claim completion before verification.\n</work_contract>",
         );
-        context.truncate(4_000);
         Some(context)
     }
 

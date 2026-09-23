@@ -210,7 +210,7 @@ impl vak_tools::Tool for DataQueryTool {
     fn description(&self) -> &str {
         "Query and analyze structured data (CSV, JSON arrays, or Markdown tables) in memory. \
          Supports column projection (select), row filtering (filter), grouping & aggregation \
-         (count, sum, avg, min, max), sorting, and row limits. Produces verified outputs."
+         (count, sum, avg, min, max), sorting, and row limits."
     }
 
     fn schema(&self) -> Value {

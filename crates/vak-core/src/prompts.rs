@@ -308,6 +308,8 @@ pub struct RuntimeSections {
     /// The tool/skill/MCP boundary. Not advice — a factual description of
     /// this turn's callable interface.
     pub capability_contract: String,
+    /// How results become cards. Empty when no card tool is admitted.
+    pub presentation_contract: String,
     /// Sandbox-specific contract (bash, .vak/scratch/, live preview).
     /// Only populated when `bash` is in the admitted tools; empty otherwise
     /// so channel bots that lack execution get a cleaner, shorter prompt.
@@ -324,8 +326,6 @@ pub struct RuntimeSections {
     /// can name the gap instead of discovering it one denied call at a
     /// time; never a grant.
     pub standing: String,
-    /// Live, code-owned inventory of the sandbox runtime.
-    pub runtime: String,
     /// Per-turn epistemic cognitive stance and guidelines derived from intent.
     pub epistemic_stance: String,
     /// Per-turn clock context; calendar reasoning must not rely on stale history.
@@ -535,6 +535,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     for section in [
         identity.trim(),
         runtime.capability_contract.trim(),
+        runtime.presentation_contract.trim(),
         runtime.sandbox_contract.trim(),
     ] {
         if !section.is_empty() {
@@ -574,9 +575,11 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     }
 
     let mut text = text;
+    // A blank line before the generated sections, so the `Surface:` line
+    // never reads as the tail of the last guardrail.
+    text.push('\n');
     for section in [
         &surface,
-        &runtime.runtime,
         &runtime.skills,
         &runtime.mcp,
         &runtime.tool_index,
@@ -715,39 +718,47 @@ pub fn render_guardrails(rules: &[String]) -> String {
 
 // ---------------------------------------------------------------- seed ---
 
-/// The shipped prompt, split on its `<!-- block: ... -->` markers.
+/// The shipped prompt, split on its `<!-- block: ... -->` markers: the
+/// user-editable blocks as a [`LayerContent`], plus the code-owned contracts,
+/// each included only where it is true (see `Core::resolve_prompt_with_stance_parts`).
 ///
-/// One file rather than four so the default prompt stays reviewable as a
+/// One file rather than several so the default prompt stays reviewable as a
 /// whole — doc 07 treats prompt churn as a reviewable event, which is much
 /// harder across scattered fragments.
-pub fn seed(version: &str) -> (LayerContent, String, String) {
+#[derive(Debug, Clone, Default)]
+pub struct Seed {
+    pub content: LayerContent,
+    /// The callable interface. Always included.
+    pub capability_contract: String,
+    /// How to present results as cards. Only when card tools are admitted.
+    pub presentation_contract: String,
+    /// The execution sandbox. Only when `bash` is admitted.
+    pub sandbox_contract: String,
+}
+
+pub fn seed(version: &str) -> Seed {
     parse_seed(&crate::DEFAULT_SYSTEM_PROMPT.replace("{{version}}", version))
 }
 
-fn parse_seed(text: &str) -> (LayerContent, String, String) {
-    let mut content = LayerContent::default();
-    let mut capability_contract = String::new();
-    let mut sandbox_contract = String::new();
+fn parse_seed(text: &str) -> Seed {
+    let mut seed = Seed::default();
     let mut current: Option<String> = None;
     let mut buffer = String::new();
 
-    let flush = |name: &Option<String>,
-                 buffer: &mut String,
-                 content: &mut LayerContent,
-                 contract: &mut String,
-                 sandbox: &mut String| {
+    let flush = |name: &Option<String>, buffer: &mut String, seed: &mut Seed| {
         let Some(name) = name else {
             buffer.clear();
             return;
         };
         let body = buffer.trim().to_string();
         buffer.clear();
-        match name.as_str() {
-            "identity" => content.identity = Some(body),
-            "operating_rules" | "operating-rules" => content.operating_rules = Some(body),
-            "guardrails" => content.guardrails = parse_guardrails(&body),
-            "capability_contract" | "capability-contract" => *contract = body,
-            "sandbox_contract" | "sandbox-contract" => *sandbox = body,
+        match name.replace('-', "_").as_str() {
+            "identity" => seed.content.identity = Some(body),
+            "operating_rules" => seed.content.operating_rules = Some(body),
+            "guardrails" => seed.content.guardrails = parse_guardrails(&body),
+            "capability_contract" => seed.capability_contract = body,
+            "presentation_contract" => seed.presentation_contract = body,
+            "sandbox_contract" => seed.sandbox_contract = body,
             _ => {}
         }
     };
@@ -758,27 +769,15 @@ fn parse_seed(text: &str) -> (LayerContent, String, String) {
             .strip_prefix("<!-- block:")
             .and_then(|r| r.strip_suffix("-->"))
         {
-            flush(
-                &current,
-                &mut buffer,
-                &mut content,
-                &mut capability_contract,
-                &mut sandbox_contract,
-            );
+            flush(&current, &mut buffer, &mut seed);
             current = Some(rest.trim().to_string());
             continue;
         }
         buffer.push_str(line);
         buffer.push('\n');
     }
-    flush(
-        &current,
-        &mut buffer,
-        &mut content,
-        &mut capability_contract,
-        &mut sandbox_contract,
-    );
-    (content, capability_contract, sandbox_contract)
+    flush(&current, &mut buffer, &mut seed);
+    seed
 }
 
 // --------------------------------------------------------------- store ---
@@ -858,11 +857,9 @@ mod tests {
     use super::*;
 
     fn seed_content() -> LayerContent {
-        seed("test").0
+        seed("test").content
     }
 
-    /// Every worked ```vak example in `system-prompt.md`, as
-    /// `(semantic_type, payload)`.
     /// The seed obeys the budget AGENTS.md sets for it. Measured with the
     /// same chars-per-token estimate `vak-context` uses before a model's own
     /// profile exists, so the gate needs no tokenizer.
@@ -880,15 +877,23 @@ mod tests {
     /// schemas, not by payload examples in every prompt.
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
-        let contract = seed("test").1;
-        assert!(contract.contains("emit_*_card"));
-        assert!(!contract.contains("```vak"));
-        assert!(!contract.contains("\"semantic_type\""));
+        let seed = seed("test");
+        assert!(seed.presentation_contract.contains("emit_*_card"));
+        assert!(!seed.capability_contract.contains("emit_*_card"));
+        for block in [&seed.capability_contract, &seed.presentation_contract] {
+            assert!(!block.contains("```vak"));
+            assert!(!block.contains("\"semantic_type\""));
+        }
     }
 
     #[test]
     fn seed_splits_into_blocks_and_contract() {
-        let (content, contract, sandbox) = seed("9.9.9");
+        let Seed {
+            content,
+            capability_contract: contract,
+            sandbox_contract: sandbox,
+            ..
+        } = seed("9.9.9");
         assert!(
             content.identity.as_deref().unwrap().contains("You are vak"),
             "identity block missing"

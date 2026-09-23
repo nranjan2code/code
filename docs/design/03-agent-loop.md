@@ -89,17 +89,28 @@ Five bounded, system-authored checks run inside the loop, each with its own
   thinking-only completion). One redo, unless a card was already emitted
   this run — a card-only turn is a complete answer.
 - **`[steering-drift]`**: a step's tool call serves a different domain than
-  the reading, or its text restates a prior turn's answer verbatim. Three
-  consecutive events end the turn via `degraded_drift_outcome()`, the same
-  shape as the tool-repair exhaustion below.
+  the reading, or its text restates a prior turn's answer verbatim. The nudge
+  points at the user's latest message and never quotes it — an echo reads as
+  the user asking again. Three consecutive events end the turn via
+  `degraded_drift_outcome()`, the same shape as the tool-repair exhaustion
+  below.
 - **Identical-card repeat breaker**: an `emit_*_card` call identical to one
   already shown this run is acknowledged as a no-op (not an error). After
   three consecutive all-repeat batches, `card_repeat_outcome()` closes the
   turn on that card as its answer instead of spending the turn budget on
   acknowledgements.
-- The pre-existing `[grounding-check]`, `[fence-check]`, `[duplicate-card-check]`
-  and `[presentation-check]` nudges are unchanged; all nine `ControlKind`
-  variants are enumerated in `vak-intent/src/control.rs`.
+- **`[grounding-check]`**: the step right after a retrieval gave an answer
+  that shows no sign of using it. "Uses" is judged from the result, not the
+  answer's format: the answer repeats a host or a figure the retrieval
+  returned, or says plainly that it found nothing (`admits_no_data`, the one
+  phrase list the freshness check shares). A card emitted alongside the
+  retrieval clears the check, and a result with nothing checkable in it never
+  triggers one. It used to pass only answers containing a `vak` fence, which
+  sent correct cited prose back for a redo.
+- The `[fence-check]`, `[duplicate-card-check]` and `[presentation-check]`
+  nudges are unchanged, except that a presentation check loads the card tool
+  it names for the redo; all `ControlKind` variants are enumerated in
+  `vak-intent/src/control.rs`.
 
 Every one of these was found by replaying a real failing session against a
 live local model (`gemma4:e2b-mlx`) six times per fix and reading the

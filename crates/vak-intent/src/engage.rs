@@ -534,6 +534,24 @@ fn act_domains(act: Act) -> &'static [&'static str] {
 /// task, so this floor is what makes slicing safe to attempt at all.
 pub const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
 
+/// Every domain a capability can declare it serves — the shared vocabulary
+/// readings are matched against (`vak_core::capability::Domain` mirrors it,
+/// and a test there keeps the two equal). A tier-2/3 classifier is told to
+/// choose from exactly these, because a free-form subject tag ("weather")
+/// matches no capability and would key behaviour on a topic.
+pub const DOMAIN_VOCABULARY: &[&str] = &[
+    "live-data",
+    "web",
+    "filesystem",
+    "code-exec",
+    "memory",
+    "messaging",
+    "documents",
+    "orchestration",
+    "vcs",
+    "observability",
+];
+
 // ----------------------------------------------------------- derivation ---
 
 /// Turn a reading plus the authority in force into an engagement.

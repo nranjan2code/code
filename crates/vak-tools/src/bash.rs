@@ -12,13 +12,6 @@ const MAX_SCAN_ENTRIES: usize = 50_000;
 
 pub struct BashTool;
 
-/// The command inventory is runtime-dependent and belongs in execution output,
-/// not in a prompt assembled in the parent process. Advertising a host PATH
-/// here was incorrect for containerized/seatbelt workers.
-pub fn runtime_capability_summary() -> String {
-    "\nSandbox runtime: use universal `bash` execution. Command availability is verified by the execution result; do not claim a command succeeded without its receipt.\n".to_string()
-}
-
 #[async_trait]
 impl Tool for BashTool {
     fn name(&self) -> &str {
@@ -30,7 +23,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`). Use this for anything and everything: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. HTML/SVG/image files written to `.vak/scratch/` are automatically previewed live in the Workbench — do not start blocking foreground HTTP servers for static file preview. Real-time stdout/stderr streams to the Workbench panel."
+        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`): run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. A command that never exits is killed at its timeout."
     }
 
     fn schema(&self) -> Value {

@@ -170,6 +170,31 @@ impl Serves {
 mod tests {
     use super::*;
 
+    /// The kernel tells a classifier to choose domains from its vocabulary;
+    /// that list and this enum must name the same domains.
+    #[test]
+    fn the_kernel_vocabulary_is_exactly_the_known_domains() {
+        let known: Vec<&str> = [
+            Domain::LiveData,
+            Domain::Web,
+            Domain::Filesystem,
+            Domain::CodeExec,
+            Domain::Memory,
+            Domain::Messaging,
+            Domain::Documents,
+            Domain::Orchestration,
+            Domain::Vcs,
+            Domain::Observability,
+        ]
+        .iter()
+        .map(|d| d.as_str())
+        .collect();
+        assert_eq!(known, vak_intent::DOMAIN_VOCABULARY);
+        for name in vak_intent::DOMAIN_VOCABULARY {
+            assert!(!matches!(Domain::parse(name), Domain::Custom(_)), "{name}");
+        }
+    }
+
     #[test]
     fn unknown_domains_survive_instead_of_being_dropped() {
         let parsed = Domain::parse("procurement");
