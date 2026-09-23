@@ -1782,7 +1782,7 @@ export function buildMetricSpec(data: unknown): AdaptiveRenderNode {
     };
   }
   const title = (typeof record.title === "string" && record.title) || (typeof record.label === "string" && record.label) || (typeof record.location === "string" && record.location) || "";
-  const entries = Object.entries(record).filter(([k]) => k !== "title" && k !== "label" && k !== "semantic_type" && !(k === "location" && title === record.location));
+  const entries = Object.entries(record).filter(([k]) => k !== "title" && k !== "semantic_type" && !(k === "label" && title === record.label) && !(k === "location" && title === record.location));
   if (entries.length > 0) {
     return {
       primitive: "metric_grid",

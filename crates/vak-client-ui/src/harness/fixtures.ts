@@ -161,6 +161,7 @@ const metricFixtures: Fixture[] = [
   { label: "single label/value/unit", payload: { label: "Uptime", value: 99.9, unit: "%" } },
   { label: "metric_grid: multiple key/value entries, no single value", payload: { location: "Data Center A", cpu: 42, memory: "68%", disk: "12%" } },
   { label: "metric_grid: label is a heading, not an empty metric", payload: { label: "Today in Noida", condition: "Sunny", temperature: "35.2°C", humidity: "31%" } },
+  { label: "metric_grid: explicit title keeps a separate label value", payload: { title: "Service health", label: "Primary region", uptime: "99.9%" } },
   { label: "empty {} — must show '—' placeholder, not blank", payload: {} },
 ];
 
