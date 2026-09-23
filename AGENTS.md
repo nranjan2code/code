@@ -802,9 +802,13 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      no upstream deadline exists otherwise, WAV wrapping,
                      WorkPurpose::VoiceSynthesis receipts (docs/design/
                      38-voice-personality.md)
-crates/vak-voice     provider-neutral voice contracts, audio framing and
-                     resampling, VAD, streaming protocol, session lifecycle,
-                     discovery registry, and transcription validation
+crates/vak-voice     the voice vocabulary: the closed `VoiceProvider` set and
+                     its catalogue, the direction-typed `/voice/session`
+                     protocol (a client can never author a transcript),
+                     server-side speech evidence measured against each
+                     utterance's own quiet floor, WAV framing, and the
+                     offline engine executables. The HTTP/socket surface is
+                     crates/vak-server/src/voice.rs
                      (docs/design/49-live-voice.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                      receipt, presentation and turn-card entries (audit-only,

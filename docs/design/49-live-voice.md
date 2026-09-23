@@ -7,43 +7,95 @@ a provider abstraction that treats Gemini Live, OpenAI Realtime, and a
 fully local stack (whisper.cpp + Piper/Kokoro) as peers, across desktop,
 web, and Telegram.
 
-Status: shipped foundation with known extensions. The governed voice WebSocket,
-bounded transcription and synthesis endpoints, Gemini and OpenAI-compatible
-batch adapters, local executable transcription, channel voice I/O for
-Telegram/Discord/Slack, append-only session activities, capability discovery,
-admin/settings surfaces, and live operations capacity reporting are shipped.
-Realtime listener adapters, local TTS, richer delivery receipts, and full
-browser/Tauri end-to-end coverage remain extensions.
+Status: shipped foundation, redesigned 2026-09-23; realtime streaming and a
+physical-microphone acceptance run remain open. The **Shipped contract**
+section directly below is authoritative. The Architecture, Transport and
+Phasing sections after it are the original proposal, kept for its reasoning;
+where they disagree with the shipped contract (streaming `Listener` traits, a
+`VoiceRegistry`, a silence-emitting `LocalSpeaker`, `{"t":"barge"}` frames, a
+`[voice.local]` table, a shared `model` key), they describe something that was
+never built or has been removed.
 
-The current implementation includes the `vak-voice` crate (PCM/WAV
-primitives, VAD, framing, lifecycle, interruption accounting, and provider
-descriptors), a loopback-origin-checked `/voice/session` WebSocket with a
-persisted per-session audio budget, live admin/settings configuration, and a
-browser/Tauri transport and microphone capability seam. These pieces are
-deliberately provider-neutral: model and voice identifiers remain discovered
-from configured integrations rather than hard-coded. The sections below mix shipped behavior and target contract; each subsection labels gaps explicitly. Telegram currently forwards bounded audio to the gateway and converts synthesized WAV to Telegram-compatible Ogg/Opus for native voice delivery; Telegram, Discord, and Slack channel transcription route through the governed batch endpoint.
+## Shipped contract
 
-The `local` route now also has a complete bounded synthesis path: a finalized
-local transcript is passed to `vak-voice::LocalSpeaker` and returned as PCM
-over the voice WebSocket (or as a WAV response from `/voice/speak`). Provider
-and model route values are persisted through the authenticated admin config
-surface and shown in health/doctor output. Channel media delivery and
-Additional realtime provider adapters and a local TTS executable contract
-remain future work; the existing local transcription executable contract is
-documented in the configuration and health surfaces.
+**One provider vocabulary.** `vak_voice::VoiceProvider`
+(`crates/vak-voice/src/provider.rs`) is the closed set `gemini`, `openai`,
+`local`, parsed in exactly one place. Every route resolves through it, so the
+socket, `/voice/transcribe`, `/voice/speak`, `/voice/providers`, `/config`
+and doctor cannot disagree about names. An unset provider is a configuration
+gap reported as such, never an implicit vendor. Hosted routes require explicit
+`transcription_model` / `synthesis_model` pins from the operator's discovered
+catalogue (invariant 9); there is no shared `model` fallback and no realtime
+model, because no realtime adapter exists.
+
+**One server surface.** `crates/vak-server/src/voice.rs` holds every voice
+route. Transcription has a single implementation used by the channel
+bridges' batch route and the socket alike. Every paid call — batch
+transcription, synthesis, each socket utterance — draws on one
+per-process `RequestWindow` sized by `voice.max_requests_per_minute`.
+`/voice/speak` records a `WorkReceipt` with real latency for every provider,
+success or failure.
+
+**The socket protocol** (`crates/vak-voice/src/protocol.rs`, version 1).
+Binary frames are 16 kHz mono 16-bit PCM. Client and server controls are
+separate types: a client sends only `speech_started`, `speech_stopped` and
+`playback`; the server sends `ready` (with a required `protocol_version`),
+`transcript`, `discarded` (`insufficient_speech`, `empty_transcript`,
+`rate_limited`), `turn_completed` and `error`. A transcript is therefore
+something only the server's governed route can produce — a client frame
+claiming to be one fails to decode and closes the session. At most one
+utterance is open; ids are never reused; audio outside an open utterance is
+dropped; stopping voice mid-sentence sends no `speech_stopped`, so the
+partial audio is discarded rather than submitted. A final transcript is
+appended to the session ledger and started as an ordinary governed turn;
+its answer returns as `turn_completed` with the same utterance id, and the
+client's `playback` frame for that id is appended as a `voice_playback`
+activity recording what was actually emitted.
+
+**Speech evidence, measured by the server.** A fixed loudness threshold
+cannot tell a person from a room: in a noisy room every frame clears it,
+which is how the 2026-09-23 open-mic run dispatched unrelated turns.
+`vak_voice::vad::SpeechEvidence` (`crates/vak-voice/src/vad.rs`) measures
+each closed utterance against its own quiet floor (the 20th-percentile frame
+level); a frame is voiced only when it stands 2.5× (about 8 dB) above that
+floor and above an absolute minimum, and an utterance needs 240 ms of voiced
+audio before it may cost a provider call. Flat noise of any loudness is
+discarded with `insufficient_speech`. The browser detector
+(`crates/vak-client-ui/src/voice-activity.ts`) applies the same constants
+live for endpointing — calibrating its floor from the quietest moment of the
+first 300 ms, adapting it while idle, learning the room's level from any
+utterance that turned out to be noise, capping an utterance at 30 s, and
+doubling the level and duration an onset needs while an answer is playing so
+the answer's own echo does not interrupt it. A test pins the shared
+constants. The client shapes latency only; the server decides.
+
+**Local engines.** `VAK_LOCAL_TRANSCRIBER` names an executable that reads
+encoded audio (WAV from the socket) on stdin and prints the transcript;
+`VAK_LOCAL_TTS` names one invoked with the requested encoding (`wav`,
+`pcm16`, `ogg_opus`, `mp3`) as its only argument, reading text on stdin and
+writing that encoding. Both run with an empty environment and are resolved
+through `vak_config::get_var`; an unconfigured engine fails closed.
+
+**Doctor** reports voice as a failure with a remedy when it is enabled but
+has no valid provider, no credential for it, or no model pin.
+
+**Evidence.** `crates/vak-server/tests/voice_session.rs` drives a real
+WebSocket upgrade against the real router with a scripted transcriber and
+model: flat noise is discarded without reaching the transcriber, speech
+becomes one Agent turn whose answer returns on the socket, playback is in
+the ledger, a forged client transcript is refused and never logged, and a
+cross-origin upgrade is refused.
+
+**Open.** A human-heard, physical-microphone round trip in a quiet room;
+per-bot/per-chat voice routes (`VoiceConfig.provider` and its model pins are
+stored but not yet applied to dispatch — only `voice_name` and `persona`
+are); realtime streaming adapters; retiring the separate one-shot narration
+path in the client once spoken conversation covers it.
 
 Credential handling is intentionally outside the voice protocol: provider
 keys are resolved through vak's existing secret lookup chain and are never
 included in control frames, session transcripts, provider descriptors, or
-health/admin responses. Live provider checks must inject credentials only for
-the duration of the process that performs the check.
-
-Completion gate for the shipped foundation: deterministic tests exercise
-bounded provider transcription/synthesis, cancellation, secret isolation,
-channel session propagation, native Telegram format conversion, and
-append-only transcript/playback activities. Realtime listener streaming and
-offline TTS require additional integration coverage before they are called
-complete.
+health/admin responses.
 
 Related: 38-voice-personality (the narration path this replaces and the
 `VoiceConfig` inheritance tier it keeps), 41-capability-registry (the
@@ -460,9 +512,8 @@ discovered partway through it.
 
 ### 8. Config
 
-The `[voice]` section and `VoiceSettings`/`VoiceResolved` are shipped alongside
-the per-bot/per-chat `VoiceConfig`. The following contract is the implemented
-shape, retained here as a reference:
+The `[voice]` section (`VoiceSettings`) is shipped alongside the
+per-bot/per-chat `VoiceConfig`. Its implemented shape follows
 `ServerSettings`/`WebSettings`/`ServerResolved`
 (`crates/vak-config/src/lib.rs`) field-for-field in style —
 `WebSettings::terminal` is the closest analogue to `[voice] enabled` in
@@ -470,16 +521,15 @@ both shape and risk.
 
 ```toml
 [voice]
-enabled          = false
-provider         = "gemini-live"   # configured provider identifier
-model            = ""              # "" = discovered default; never hardcoded
-voice_name       = ""              # empty = provider default
-max_concurrent   = 2               # a paid per-minute API on an authenticated endpoint
-max_session_secs = 900             # the LIVE_SESSION_TIMEOUT lesson, generalized
-
-[voice.local]
-stt_base_url = "http://127.0.0.1:8080/v1"   # whisper.cpp --server
-tts_base_url = "http://127.0.0.1:59125"     # piper / kokoro
+enabled                 = false
+provider                = "openai"      # gemini | openai | local
+transcription_model     = "…"           # from the key's discovered catalogue
+synthesis_model         = "…"           # from the key's discovered catalogue
+max_concurrent          = 2             # a paid per-minute API on an authenticated endpoint
+max_session_secs        = 900           # the LIVE_SESSION_TIMEOUT lesson, generalized
+max_audio_bytes         = 16777216      # inbound audio per socket session
+max_requests_per_minute = 60            # every paid voice call, shared
+max_text_chars          = 100000        # synthesis input per request
 ```
 
 `[voice]` is privileged and is reset in `load_with_trust` next to the

@@ -1,149 +1,143 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import * as api from "../api";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
-import { VoiceSessionSocket } from "../voice";
+import { SpeechDetector } from "../voice-activity";
+import { VoiceSessionSocket, type DiscardReason } from "../voice";
 import { setNotice, setPendingSettingsPage, setPendingSettingsSection, setSettingsOpen } from "../store";
 import { spokenReplyText } from "../structured";
 import AgentMark, { type CharacterState } from "./AgentMark";
 
-/** Governed voice capture control for the composer. It only streams PCM after
- * an explicit user gesture and keeps interim speech local to the visible UI. */
+const SAMPLE_RATE_HZ = 16_000;
+const RECORDING_CHUNK_SAMPLES = 512;
+
+function newUtteranceId(): string {
+  return `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Governed voice capture control for the composer. Audio leaves the device
+ * only after an explicit press, only while speech is detected, and only over
+ * the voice session socket, which alone turns it into an Agent turn. */
 export default function VoiceControl(props: { sessionId?: string; character?: string; motion?: "subtle" | "expressive" | "off"; running?: boolean; ensureSession(): Promise<string | null>; onFinal(text: string): void }) {
   const [active, setActive] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
   const [status, setStatus] = createSignal<string>("Voice");
   const [paused, setPaused] = createSignal(false);
+  const [playing, setPlaying] = createSignal(false);
   const [devices, setDevices] = createSignal<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = createSignal("");
   const [transcript, setTranscript] = createSignal("");
   const [voiceError, setVoiceError] = createSignal(false);
   let socket: VoiceSessionSocket | undefined;
   let capture: MicrophoneCapture | undefined;
+  let detector = new SpeechDetector();
+  let voiceSessionId = "";
+  /** The utterance currently streaming to the server. */
+  let openUtterance = "";
+  /** The utterance whose turn owns the input until its answer is ready. */
+  let awaitingUtterance = "";
+  let lastAnsweredUtterance = "";
+  // Stale-async guards: a promise that resolves after stop, interruption or
+  // a newer answer must not start audio or change state.
+  let voiceGeneration = 0;
+  let answerGeneration = 0;
   let playbackContext: AudioContext | undefined;
   let playbackSource: AudioBufferSourceNode | undefined;
-  let playbackStartedAt = 0;
-  let playbackCurrentDurationMs = 0;
-  let playbackCompletedMs = 0;
-  let utterance = `voice-${Date.now()}`;
   let playbackUtterance = "";
-  // In-flight decode promises may resolve after stop/interrupt. Generation
-  // guards prevent stale audio from starting a new playback session.
-  let playbackGeneration = 0;
-  let voiceGeneration = 0;
-  let audioSpeechActive = false;
-  let audioSpeechMs = 0;
-  let audioSilenceMs = 0;
-  let candidateFrames: Int16Array[] = [];
-  let candidateSpeechMs = 0;
-  let candidateSilenceMs = 0;
-  let awaitingUtteranceId = "";
-  let latestSpokenUtterance = "";
-  let answerGeneration = 0;
-  let voiceSessionId = "";
-  const AUDIO_SAMPLE_RATE = 16_000;
-  const SPEECH_THRESHOLD = 0.018;
-  const MIN_SPEECH_MS = 240;
-  // Natural pauses inside one request should not become separate Agent turns.
-  const END_SILENCE_MS = 1_500;
-  function streamDetectedSpeech(pcm: Int16Array) {
-    if (!socket || !pcm.length) return;
-    // One captured request owns the input until its answer is ready. Room
-    // noise during provider work must not become a competing Agent turn.
-    // Capture resumes for spoken interruption while the answer is playing.
-    if (awaitingUtteranceId && !audioSpeechActive && !playbackSource) return;
-    let energy = 0;
-    for (const sample of pcm) {
-      const normalized = sample / 32768;
-      energy += normalized * normalized;
-    }
-    const frameMs = (pcm.length / AUDIO_SAMPLE_RATE) * 1_000;
-    const hasVoice = Math.sqrt(energy / pcm.length) >= SPEECH_THRESHOLD;
-    if (!audioSpeechActive) {
-      if (hasVoice) {
-        candidateFrames.push(pcm);
-        candidateSpeechMs += frameMs;
-        candidateSilenceMs = 0;
-      } else if (candidateFrames.length) {
-        candidateFrames.push(pcm);
-        candidateSilenceMs += frameMs;
-        if (candidateSilenceMs >= 160) {
-          candidateFrames = [];
-          candidateSpeechMs = 0;
-          candidateSilenceMs = 0;
-        }
-      }
-      // Ignore short noise bursts; retain the candidate audio when speech starts.
-      if (candidateSpeechMs < MIN_SPEECH_MS) return;
-      answerGeneration += 1;
-      if (playbackSource) stopPlayback(true);
-      else playbackGeneration += 1;
-      utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      socket.sendControl({ t: "speech_started", utterance_id: utterance });
-      audioSpeechActive = true;
-      audioSpeechMs = candidateSpeechMs;
-      audioSilenceMs = 0;
-      for (const frame of candidateFrames) socket.sendAudio(frame);
-      candidateFrames = [];
-      candidateSpeechMs = 0;
-      candidateSilenceMs = 0;
-      setStatus("Listening");
-      return;
-    }
-    socket.sendAudio(pcm);
-    if (hasVoice) {
-      audioSpeechMs += frameMs;
-      audioSilenceMs = 0;
-      return;
-    }
-    audioSilenceMs += frameMs;
-    if (audioSpeechMs >= MIN_SPEECH_MS && audioSilenceMs >= END_SILENCE_MS) {
-      socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
-      awaitingUtteranceId = utterance;
-      audioSpeechActive = false;
-      audioSpeechMs = 0;
-      audioSilenceMs = 0;
-      setStatus("Processing");
+  let playbackStartedAt = 0;
+  let playbackDurationMs = 0;
+
+  const idleStatus = () => capture ? "Listening" : "Done";
+
+  function onMicrophoneChunk(pcm: Int16Array) {
+    if (!socket) return;
+    // One request owns the input until its answer is ready, so room sound
+    // during provider work cannot become a competing turn. Input reopens for
+    // spoken interruption while the answer plays.
+    if (awaitingUtterance && !openUtterance && !playbackSource) return;
+    const event = detector.push(pcm, Boolean(playbackSource));
+    switch (event.kind) {
+      case "idle": return;
+      case "started":
+        answerGeneration += 1;
+        if (playbackSource) stopPlayback(true);
+        awaitingUtterance = "";
+        openUtterance = newUtteranceId();
+        socket.sendControl({ t: "speech_started", utterance_id: openUtterance });
+        for (const lead of event.lead) socket.sendAudio(lead);
+        setTranscript("");
+        setStatus("Listening");
+        return;
+      case "continuing":
+        socket.sendAudio(pcm);
+        return;
+      case "stopped":
+        socket.sendAudio(pcm);
+        socket.sendControl({ t: "speech_stopped", utterance_id: openUtterance });
+        awaitingUtterance = openUtterance;
+        openUtterance = "";
+        setStatus("Processing");
     }
   }
-  function stopVoice() {
-    voiceGeneration += 1;
-    if (playbackSource) stopPlayback(true);
-    playbackGeneration += 1;
-    setActive(false);
+
+  function resetState() {
     capture?.stop(); capture = undefined;
     socket?.close(); socket = undefined;
-    playbackSource = undefined;
+    playbackSource?.stop(); playbackSource = undefined;
+    detector = new SpeechDetector();
+    voiceSessionId = "";
+    openUtterance = "";
+    awaitingUtterance = "";
     playbackUtterance = "";
     playbackStartedAt = 0;
-    playbackCurrentDurationMs = 0;
-    playbackCompletedMs = 0;
-    audioSpeechActive = false;
-    audioSpeechMs = 0;
-    audioSilenceMs = 0;
-    candidateFrames = [];
-    candidateSpeechMs = 0;
-    candidateSilenceMs = 0;
-    awaitingUtteranceId = "";
+    playbackDurationMs = 0;
+    setPlaying(false);
+    setPaused(false);
+    setActive(false);
+    setConnecting(false);
+  }
+
+  /** Stopping never submits an unfinished utterance: capture closes without
+   * a `speech_stopped` frame, so the server discards the partial audio. */
+  function stopVoice() {
+    voiceGeneration += 1;
     answerGeneration += 1;
-    voiceSessionId = "";
+    if (playbackSource) stopPlayback(true);
+    resetState();
     setTranscript("");
     setVoiceError(false);
-    setPaused(false);
-    setConnecting(false); setStatus("Voice");
+    setStatus("Voice");
   }
+
+  function failVoice(message: string) {
+    voiceGeneration += 1;
+    answerGeneration += 1;
+    resetState();
+    setVoiceError(true);
+    setStatus("Voice unavailable");
+    setNotice({ kind: "error", text: message });
+  }
+
   createEffect(() => {
     if (active() && props.sessionId && props.sessionId !== voiceSessionId) stopVoice();
   });
   onCleanup(() => { stopVoice(); void playbackContext?.close(); });
+
+  function onDiscarded(utteranceId: string, reason: DiscardReason) {
+    if (utteranceId !== awaitingUtterance) return;
+    awaitingUtterance = "";
+    if (reason === "rate_limited") setNotice({ kind: "error", text: "Voice is paused: this minute's voice request budget is spent. Try again shortly or type instead." });
+    setStatus(capture ? "Listening" : "No speech heard");
+  }
+
   async function toggle(recording?: File) {
     if (connecting()) return;
     if (active()) { stopVoice(); return; }
-    // Unlock output while this call still has the user's click gesture. The
-    // provider reply arrives much later, when browsers may reject autoplay.
+    // Unlock output while this call still holds the user's gesture; the
+    // answer arrives much later, when browsers may refuse to start audio.
     try {
       playbackContext ??= new AudioContext();
-      void playbackContext.resume().catch(() => { /* retry with a visible error when audio arrives */ });
-    } catch { /* capture/setup will still report its own failure */ }
+      void playbackContext.resume().catch(() => { /* surfaced when an answer is played */ });
+    } catch { /* capture reports its own failure */ }
     setConnecting(true);
     setVoiceError(false);
     setTranscript("");
@@ -165,185 +159,158 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       voiceSessionId = sessionId;
       socket = new VoiceSessionSocket({
         sessionId,
-        onReady: () => setStatus(active() ? "Listening" : "Allow microphone"),
-        onTranscript: (event) => {
+        onReady: () => { if (generation === voiceGeneration) setStatus(active() ? "Listening" : "Allow microphone"); },
+        onTranscript: (utteranceId, text) => {
           if (generation !== voiceGeneration) return;
-          setTranscript(event.text);
-          if (!event.final && !event.text.trim()) {
-            if (event.utteranceId === awaitingUtteranceId) {
-              awaitingUtteranceId = "";
-              if (!audioSpeechActive) setStatus(capture ? "Listening" : "No speech heard");
-            }
-            return;
-          }
-          if (event.final) {
-            if (event.utteranceId === awaitingUtteranceId) setStatus("Processing");
-            props.onFinal(event.text);
-          }
+          setTranscript(text);
+          if (utteranceId === awaitingUtterance) setStatus("Processing");
+          props.onFinal(text);
         },
+        onDiscarded: (utteranceId, reason) => { if (generation === voiceGeneration) onDiscarded(utteranceId, reason); },
         onTurnCompleted: (utteranceId, reply) => {
-          if (generation !== voiceGeneration || !utteranceId || utteranceId === latestSpokenUtterance) return;
-          latestSpokenUtterance = utteranceId;
-          if (awaitingUtteranceId && utteranceId !== awaitingUtteranceId) return;
-          if (audioSpeechActive) return;
-          void speakAnswer(reply);
+          if (generation !== voiceGeneration || utteranceId === lastAnsweredUtterance) return;
+          lastAnsweredUtterance = utteranceId;
+          // A newer utterance superseded this one; its answer stays as text.
+          if (utteranceId !== awaitingUtterance || openUtterance) return;
+          void speakAnswer(utteranceId, reply);
         },
-        onError: (message) => { failVoice(message); },
+        onError: (message) => { if (generation === voiceGeneration) failVoice(message); },
       });
       await socket.connect();
       if (generation !== voiceGeneration || !socket) return;
-      if (recording) {
-        setStatus("Preparing recording");
-        const source = await playbackContext!.decodeAudioData(await recording.arrayBuffer());
-        if (generation !== voiceGeneration) return;
-        const sampleCount = Math.ceil(source.duration * AUDIO_SAMPLE_RATE);
-        if (sampleCount * 2 > (config.voice?.max_audio_bytes ?? 16 * 1024 * 1024)) throw new Error("Recording exceeds the voice audio budget");
-        const offline = new OfflineAudioContext(1, sampleCount, AUDIO_SAMPLE_RATE);
-        const input = offline.createBufferSource();
-        input.buffer = source;
-        input.connect(offline.destination);
-        input.start();
-        const rendered = await offline.startRendering();
-        if (generation !== voiceGeneration) return;
-        setActive(true);
-        setConnecting(false);
-        setStatus("Processing");
-        utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        socket.sendControl({ t: "speech_started", utterance_id: utterance });
-        const samples = rendered.getChannelData(0);
-        for (let offset = 0; offset < samples.length; offset += 512) {
-          const frame = samples.subarray(offset, offset + 512);
-          const pcm = new Int16Array(frame.length);
-          for (let index = 0; index < frame.length; index += 1) pcm[index] = Math.max(-1, Math.min(1, frame[index])) * 32767;
-          socket.sendAudio(pcm);
-        }
-        socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
-        awaitingUtteranceId = utterance;
-      } else {
+      if (recording) await sendRecording(recording, config.voice?.max_audio_bytes ?? 16 * 1024 * 1024, generation);
+      else {
         setStatus("Allow microphone");
-        const startedCapture = await startMicrophone((pcm) => {
+        const started = await startMicrophone((pcm) => {
           if (generation !== voiceGeneration) return;
-          try { streamDetectedSpeech(pcm); } catch (error) { failVoice((error as Error).message); }
+          try { onMicrophoneChunk(pcm); } catch (error) { failVoice((error as Error).message); }
         });
-        if (generation !== voiceGeneration) { startedCapture.stop(); return; }
-        capture = startedCapture;
+        if (generation !== voiceGeneration) { started.stop(); return; }
+        capture = started;
         setActive(true);
         setConnecting(false);
         setStatus("Listening");
       }
-    } catch (error) { failVoice((error as Error).message); }
+    } catch (error) { if (generation === voiceGeneration) failVoice((error as Error).message); }
   }
-  async function speakAnswer(text: string) {
-    const answer = spokenReplyText(text);
-    if (!answer || !active()) {
-      awaitingUtteranceId = "";
-      if (active()) setStatus(capture ? "Listening" : "Done");
-      return;
+
+  /** A recording is one utterance: decoded and resampled to the socket's
+   * PCM, then judged by the same server evidence gate as live speech. */
+  async function sendRecording(recording: File, maxAudioBytes: number, generation: number) {
+    setStatus("Preparing recording");
+    const source = await playbackContext!.decodeAudioData(await recording.arrayBuffer());
+    if (generation !== voiceGeneration || !socket) return;
+    const sampleCount = Math.ceil(source.duration * SAMPLE_RATE_HZ);
+    if (sampleCount * 2 > maxAudioBytes) throw new Error("Recording exceeds the voice audio budget");
+    const offline = new OfflineAudioContext(1, sampleCount, SAMPLE_RATE_HZ);
+    const input = offline.createBufferSource();
+    input.buffer = source;
+    input.connect(offline.destination);
+    input.start();
+    const samples = (await offline.startRendering()).getChannelData(0);
+    if (generation !== voiceGeneration || !socket) return;
+    setActive(true);
+    setConnecting(false);
+    setStatus("Processing");
+    const utteranceId = newUtteranceId();
+    socket.sendControl({ t: "speech_started", utterance_id: utteranceId });
+    for (let offset = 0; offset < samples.length; offset += RECORDING_CHUNK_SAMPLES) {
+      const frame = samples.subarray(offset, offset + RECORDING_CHUNK_SAMPLES);
+      const pcm = new Int16Array(frame.length);
+      for (let index = 0; index < frame.length; index += 1) pcm[index] = Math.max(-1, Math.min(1, frame[index])) * 32767;
+      socket.sendAudio(pcm);
     }
-    if (answer.startsWith("error:")) {
-      awaitingUtteranceId = "";
-      setStatus(capture ? "Listening" : "Done");
-      setNotice({ kind: "error", text: answer });
+    socket.sendControl({ t: "speech_stopped", utterance_id: utteranceId });
+    awaitingUtterance = utteranceId;
+  }
+
+  async function speakAnswer(utteranceId: string, text: string) {
+    const answer = spokenReplyText(text);
+    if (!answer || answer.startsWith("error:")) {
+      awaitingUtterance = "";
+      setStatus(idleStatus());
+      if (answer) setNotice({ kind: "error", text: answer });
       return;
     }
     const generation = ++answerGeneration;
     try {
       setStatus("Preparing voice");
       const blob = await api.speak(answer, { sessionId: voiceSessionId });
-      if (!active() || generation !== answerGeneration) return;
       const bytes = await blob.arrayBuffer();
       if (!active() || generation !== answerGeneration) return;
       if (!bytes.byteLength) throw new Error("Voice provider returned no audio");
-      onAnswerAudio(bytes, blob.type);
+      const buffer = await decodeAnswer(bytes, blob.type);
+      if (!active() || generation !== answerGeneration) return;
+      await playbackContext!.resume();
+      if (playbackContext!.state !== "running") throw new Error("Audio output is blocked. Press Voice again to allow playback.");
+      if (!active() || generation !== answerGeneration) return;
+      startPlayback(utteranceId, buffer);
     } catch (error) {
       if (generation !== answerGeneration) return;
-      awaitingUtteranceId = "";
-      setStatus(capture ? "Listening" : "Done");
+      awaitingUtterance = "";
+      setStatus(idleStatus());
       setNotice({ kind: "error", text: `The answer is ready as text, but voice playback failed: ${(error as Error).message}` });
     }
   }
-  function onAnswerAudio(bytes: ArrayBuffer, mime: string) {
-    playbackUtterance = `answer-${Date.now()}`;
-    playbackCompletedMs = 0;
-    const generation = playbackGeneration;
+
+  function decodeAnswer(bytes: ArrayBuffer, mime: string): Promise<AudioBuffer> {
     playbackContext ??= new AudioContext();
-    const isRawPcm = mime === "audio/pcm" || mime === "audio/L16";
-    const decode = isRawPcm
-      ? Promise.resolve((() => {
-          const samples = new Int16Array(bytes);
-          const buffer = playbackContext!.createBuffer(1, samples.length, AUDIO_SAMPLE_RATE);
-          const channel = buffer.getChannelData(0);
-          for (let index = 0; index < samples.length; index += 1) channel[index] = samples[index] / 32768;
-          return buffer;
-        })())
-      : playbackContext.decodeAudioData(bytes.slice(0));
-    void decode.then(async (buffer) => {
-      if (generation !== playbackGeneration || !active()) return;
-      await playbackContext!.resume();
-      if (playbackContext!.state !== "running") throw new Error("Audio output is blocked. Press Voice again to allow playback.");
-      if (generation !== playbackGeneration || !active()) return;
-      startPlaybackBuffer(buffer, generation);
-    }).catch((error) => {
-      if (generation === playbackGeneration) setNotice({ kind: "error", text: `The answer is ready as text, but voice playback could not start: ${(error as Error).message}` });
-      awaitingUtteranceId = "";
-      if (active()) setStatus(capture ? "Listening" : "Done");
-    });
+    if (mime !== "audio/pcm") return playbackContext.decodeAudioData(bytes);
+    const samples = new Int16Array(bytes);
+    const buffer = playbackContext.createBuffer(1, samples.length, SAMPLE_RATE_HZ);
+    const channel = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index += 1) channel[index] = samples[index] / 32768;
+    return Promise.resolve(buffer);
   }
-  function failVoice(message: string) {
-    voiceGeneration += 1;
-    answerGeneration += 1;
-    setActive(false);
-    voiceSessionId = "";
-    socket?.close(); socket = undefined;
-    capture?.stop(); capture = undefined;
-    playbackGeneration += 1;
-    playbackSource?.stop(); playbackSource = undefined;
-    setConnecting(false); setVoiceError(true); setStatus("Voice unavailable");
-    setNotice({ kind: "error", text: message });
-  }
-  function stopPlayback(reportInterruption: boolean) {
-    const currentElapsedMs = playbackContext && playbackStartedAt
-      ? Math.min(playbackCurrentDurationMs, Math.max(0, (playbackContext.currentTime - playbackStartedAt) * 1000))
-      : 0;
-    const emittedMs = Math.round(playbackCompletedMs + currentElapsedMs);
-    playbackGeneration += 1;
-    playbackSource?.stop(); playbackSource = undefined;
-    setPaused(false);
-    if (reportInterruption && playbackUtterance) {
-      try { socket?.sendControl({ t: "playback", utterance_id: playbackUtterance, emitted_ms: emittedMs, interrupted: true }); } catch { /* closed transport */ }
-    }
-    playbackUtterance = "";
-    playbackStartedAt = 0;
-    playbackCurrentDurationMs = 0;
-    playbackCompletedMs = 0;
-    awaitingUtteranceId = "";
-    if (active()) setStatus(capture ? "Listening" : "Done");
-  }
-  function startPlaybackBuffer(buffer: AudioBuffer, generation: number) {
-    if (!playbackContext || generation !== playbackGeneration || !active()) return;
-    const source = playbackContext.createBufferSource();
+
+  function startPlayback(utteranceId: string, buffer: AudioBuffer) {
+    const context = playbackContext!;
+    const source = context.createBufferSource();
     source.buffer = buffer;
-    source.connect(playbackContext.destination);
+    source.connect(context.destination);
     playbackSource = source;
-    playbackStartedAt = playbackContext.currentTime;
-    playbackCurrentDurationMs = buffer.duration * 1000;
+    playbackUtterance = utteranceId;
+    playbackStartedAt = context.currentTime;
+    playbackDurationMs = buffer.duration * 1_000;
     source.onended = () => {
-      if (generation !== playbackGeneration || playbackSource !== source) return;
-      playbackCompletedMs += playbackCurrentDurationMs;
-      playbackStartedAt = 0;
-      playbackCurrentDurationMs = 0;
-      playbackSource = undefined;
-      if (playbackUtterance) {
-        try { socket?.sendControl({ t: "playback", utterance_id: playbackUtterance, emitted_ms: Math.round(playbackCompletedMs), interrupted: false }); } catch { /* closed transport */ }
-      }
-      playbackUtterance = "";
-      playbackCompletedMs = 0;
-      awaitingUtteranceId = "";
-      if (active()) setStatus(capture ? "Listening" : "Done");
+      if (playbackSource !== source) return;
+      reportPlayback(Math.round(playbackDurationMs), false);
+      finishPlayback();
     };
     source.start();
+    setPlaying(true);
     setStatus("Speaking");
   }
+
+  function finishPlayback() {
+    playbackSource = undefined;
+    playbackUtterance = "";
+    playbackStartedAt = 0;
+    playbackDurationMs = 0;
+    awaitingUtterance = "";
+    setPlaying(false);
+    setPaused(false);
+    if (active()) setStatus(idleStatus());
+  }
+
+  /** The append-only `voice_playback` receipt records what was actually
+   * emitted for this utterance's answer, never what was requested. */
+  function reportPlayback(emittedMs: number, interrupted: boolean) {
+    if (!playbackUtterance) return;
+    try { socket?.sendControl({ t: "playback", utterance_id: playbackUtterance, emitted_ms: emittedMs, interrupted }); } catch { /* transport already closed */ }
+  }
+
+  function stopPlayback(interrupted: boolean) {
+    const source = playbackSource;
+    if (!source) return;
+    const elapsedMs = playbackContext && playbackStartedAt ? (playbackContext.currentTime - playbackStartedAt) * 1_000 : 0;
+    reportPlayback(Math.round(Math.min(playbackDurationMs, Math.max(0, elapsedMs))), interrupted);
+    playbackSource = undefined;
+    source.stop();
+    if (paused()) void playbackContext?.resume();
+    finishPlayback();
+  }
+
   async function refreshDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     const all = await navigator.mediaDevices.enumerateDevices();
@@ -353,15 +320,16 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     setDeviceId(id);
     const ctx = playbackContext;
     const sink = (ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> })?.setSinkId;
-    if (sink) { try { await sink.call(ctx, id); } catch { setStatus("Output device unavailable"); } }
+    if (sink) { try { await sink.call(ctx, id); } catch { setNotice({ kind: "error", text: "That audio output device is unavailable." }); } }
   }
   function togglePause() {
-    if (!playbackContext) return;
+    if (!playbackContext || !playbackSource) return;
     if (paused()) { void playbackContext.resume(); setPaused(false); setStatus("Speaking"); }
     else { void playbackContext.suspend(); setPaused(true); setStatus("Paused"); }
   }
+
   const visibleStatus = () => active() && props.running && status() === "Listening" ? "Processing" : status();
-  const state = () => connecting() ? "connecting" : paused() ? "paused" : status().toLowerCase().startsWith("speaking") ? "speaking" : visibleStatus() === "Processing" ? "processing" : active() ? "listening" : "idle";
+  const state = () => connecting() ? "connecting" : paused() ? "paused" : status() === "Speaking" ? "speaking" : visibleStatus() === "Processing" || status() === "Preparing voice" ? "processing" : active() ? "listening" : "idle";
   const characterState = (): CharacterState => {
     if (state() === "listening") return "listening";
     if (state() === "processing" || state() === "connecting") return "thinking";
@@ -373,7 +341,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() && status() === "Voice" ? "Connecting…" : visibleStatus()}</span></button>
     {!active() && !connecting() && <label class="composer-context voice-recording-entry">Use recording<input type="file" accept="audio/*" aria-label="Use an audio recording" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void toggle(file); }} /></label>}
     {transcript() && <span class="voice-transcript" aria-live="polite">{transcript()}</span>}
-    {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
+    {active() && <><button class="composer-context" disabled={!playing()} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playing()} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
     {voiceError() && <button class="composer-context voice-fallback" onClick={() => window.dispatchEvent(new CustomEvent("vak:focus-composer"))}>Type instead</button>}
   </span>;
 }

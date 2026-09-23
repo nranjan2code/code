@@ -487,31 +487,30 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         },
     });
     checks.push(capability_reach_check(core));
-    let voice = &core.config().voice;
+    let voice = core.effective_voice();
     checks.push(HealthCheck {
         label: "voice configuration".into(),
-        detail: if voice.max_session_secs == 0
-            || voice.max_concurrent == 0
-            || voice.max_audio_bytes == 0
-        {
-            Err("voice limits must be greater than zero".into())
-        } else {
-            Ok(if voice.enabled {
-                "enabled".into()
+        detail: voice_check(&voice),
+    });
+    for (label, var) in [
+        ("local transcriber", vak_voice::TRANSCRIBER_VAR),
+        ("local TTS backend", vak_voice::TTS_VAR),
+    ] {
+        let engine = vak_voice::engine_readiness(
+            vak_config::get_var(var)
+                .map(std::path::PathBuf::from)
+                .as_deref(),
+        );
+        checks.push(HealthCheck {
+            label: label.into(),
+            // Optional: only a configured engine that cannot run is a failure.
+            detail: if engine.ready || !engine.configured {
+                Ok(engine.detail)
             } else {
-                "disabled".into()
-            })
-        },
-    });
-    let local_tts = vak_voice::local_tts_readiness();
-    checks.push(HealthCheck {
-        label: "local TTS backend".into(),
-        detail: if local_tts.ready || !local_tts.configured {
-            Ok(local_tts.detail.clone())
-        } else {
-            Err(local_tts.detail.clone())
-        },
-    });
+                Err(engine.detail)
+            },
+        });
+    }
     checks.push(capability_health_check(core));
     checks.push(gateway_channels_check(
         &core.shared_data_home(),
@@ -539,10 +538,11 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             core.config().run_retry_attempts,
         ),
         format!(
-            "voice: {} · provider {} · model {} · {}s/session · {} concurrent · {} MiB inbound budget",
+            "voice: {} · provider {} · transcription {} · synthesis {} · {}s/session · {} concurrent · {} MiB inbound budget",
             if voice.enabled { "on" } else { "off" },
-            voice.provider.as_deref().unwrap_or("default"),
-            voice.model.as_deref().unwrap_or("default"),
+            voice.provider.as_deref().unwrap_or("unset"),
+            voice.transcription_model.as_deref().unwrap_or("unset"),
+            voice.synthesis_model.as_deref().unwrap_or("unset"),
             voice.max_session_secs,
             voice.max_concurrent,
             voice.max_audio_bytes / (1024 * 1024),
@@ -615,6 +615,51 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         ladder,
         failures,
     }
+}
+
+/// Whether the effective voice route could serve a request right now:
+/// valid limits, a known provider, its credential, and its model pins.
+fn voice_check(voice: &vak_config::VoiceSettings) -> Result<String, String> {
+    voice.validate()?;
+    if !voice.enabled {
+        return Ok("disabled".into());
+    }
+    let provider = vak_voice::VoiceProvider::resolve(voice.provider.as_deref())?;
+    if provider == vak_voice::VoiceProvider::Local {
+        return if vak_config::get_var(vak_voice::TRANSCRIBER_VAR).is_some() {
+            Ok("enabled · local".into())
+        } else {
+            Err(format!(
+                "enabled with the local provider, but {} is not set",
+                vak_voice::TRANSCRIBER_VAR
+            ))
+        };
+    }
+    let has_credential = provider
+        .credential_vars()
+        .iter()
+        .any(|name| vak_config::get_var(name).is_some_and(|value| !value.trim().is_empty()));
+    if !has_credential {
+        return Err(format!(
+            "enabled with {provider}, but no credential ({}) is configured; add the key in Settings",
+            provider.credential_vars().join(" or ")
+        ));
+    }
+    let missing: Vec<_> = [
+        ("transcription", &voice.transcription_model),
+        ("synthesis", &voice.synthesis_model),
+    ]
+    .into_iter()
+    .filter(|(_, model)| model.as_deref().is_none_or(|m| m.trim().is_empty()))
+    .map(|(operation, _)| operation)
+    .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "enabled with {provider}, but no {} model is chosen; pick one in Voice settings",
+            missing.join(" or ")
+        ));
+    }
+    Ok(format!("enabled · {provider}"))
 }
 
 #[cfg(test)]
@@ -766,6 +811,7 @@ mod tests {
                 "config warnings",
                 "capability reach",
                 "voice configuration",
+                "local transcriber",
                 "local TTS backend",
                 "capability health",
                 "gateway channels",
@@ -839,6 +885,27 @@ mod tests {
                 .iter()
                 .any(|fact| fact.starts_with("voice: off"))
         );
+    }
+
+    #[test]
+    fn enabled_voice_without_a_route_is_a_failure_with_a_remedy() {
+        let mut voice = vak_config::VoiceSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(
+            voice_check(&voice)
+                .unwrap_err()
+                .contains("Choose a voice provider")
+        );
+        voice.provider = Some("google".into());
+        assert!(
+            voice_check(&voice)
+                .unwrap_err()
+                .contains("unknown voice provider")
+        );
+        voice.max_concurrent = 0;
+        assert!(voice_check(&voice).is_err());
     }
 
     #[test]

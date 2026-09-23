@@ -1,10 +1,7 @@
 use super::VoiceError;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AudioBlob {
-    pub mime: String,
-    pub data: Vec<u8>,
-}
+/// The socket's only audio shape: mono 16-bit little-endian PCM at 16 kHz.
+pub const SOCKET_SAMPLE_RATE_HZ: u32 = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PcmSpec {
@@ -12,40 +9,11 @@ pub struct PcmSpec {
     pub channels: u16,
 }
 
-pub fn i16_to_f32(input: &[i16]) -> Vec<f32> {
-    input.iter().map(|v| *v as f32 / 32768.0).collect()
-}
-pub fn f32_to_i16(input: &[f32]) -> Vec<i16> {
-    input
-        .iter()
-        .map(|v| (v.clamp(-1.0, 1.0) * 32767.0).round() as i16)
-        .collect()
-}
-
-/// Linear resampling for speech frames. Provider adapters may replace this
-/// with a higher quality implementation, but the deterministic primitive is
-/// sufficient for transport normalization and offline operation.
-pub fn resample_linear(input: &[i16], from_hz: u32, to_hz: u32) -> Result<Vec<i16>, VoiceError> {
-    if from_hz == 0 || to_hz == 0 {
-        return Err(VoiceError::InvalidRequest(
-            "sample rate must be positive".into(),
-        ));
-    }
-    if input.is_empty() || from_hz == to_hz {
-        return Ok(input.to_vec());
-    }
-    let len = ((input.len() as u64 * to_hz as u64) / from_hz as u64).max(1) as usize;
-    let scale = from_hz as f64 / to_hz as f64;
-    Ok((0..len)
-        .map(|i| {
-            let pos = i as f64 * scale;
-            let left = pos.floor() as usize;
-            let right = (left + 1).min(input.len() - 1);
-            let frac = pos - left as f64;
-            (input[left.min(input.len() - 1)] as f64 * (1.0 - frac) + input[right] as f64 * frac)
-                .round() as i16
-        })
-        .collect())
+impl PcmSpec {
+    pub const SOCKET: Self = Self {
+        sample_rate_hz: SOCKET_SAMPLE_RATE_HZ,
+        channels: 1,
+    };
 }
 
 pub fn wrap_wav(pcm: &[u8], spec: PcmSpec) -> Result<Vec<u8>, VoiceError> {
@@ -79,23 +47,9 @@ mod tests {
     use super::*;
     #[test]
     fn wav_header_is_canonical() {
-        let wav = wrap_wav(
-            &[0, 0, 255, 127],
-            PcmSpec {
-                sample_rate_hz: 16_000,
-                channels: 1,
-            },
-        )
-        .unwrap();
+        let wav = wrap_wav(&[0, 0, 255, 127], PcmSpec::SOCKET).unwrap();
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
         assert_eq!(&wav[40..44], &[4, 0, 0, 0]);
-    }
-
-    #[test]
-    fn resampling_preserves_endpoints() {
-        let out = resample_linear(&[0, 1000, 0], 16_000, 8_000).unwrap();
-        assert_eq!(out.first(), Some(&0));
-        assert_eq!(out.last(), Some(&0));
     }
 }

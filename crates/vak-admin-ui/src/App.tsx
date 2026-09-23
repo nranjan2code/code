@@ -30,7 +30,7 @@ import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, ConfigLayer, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
-  PermissionMode, ProviderSummary, VoiceProviderSummary,
+  PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   ActiveWorker, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
@@ -3267,8 +3267,6 @@ function VoiceConfigEditor(props: {
   setTranscriptionModel: (v: string) => void;
   synthesisModel: string;
   setSynthesisModel: (v: string) => void;
-  realtimeModel: string;
-  setRealtimeModel: (v: string) => void;
   persona: string;
   setPersona: (v: string) => void;
   /// What this pin belongs to, for the toggle's label — "bot" or "chat".
@@ -3276,9 +3274,6 @@ function VoiceConfigEditor(props: {
 }) {
   const [previewing, setPreviewing] = createSignal(false);
   const [voiceProviders] = createResource(() => api.voiceProviders());
-  const discoveredVoices = createMemo(() =>
-    (voiceProviders()?.providers ?? []).flatMap((provider: VoiceProviderSummary) => provider.voices),
-  );
   let audioEl: HTMLAudioElement | undefined;
 
   const preview = async () => {
@@ -3290,7 +3285,6 @@ function VoiceConfigEditor(props: {
           voice_name: props.voiceName || null,
           transcription_model: props.transcriptionModel || null,
           synthesis_model: props.synthesisModel || null,
-          realtime_model: props.realtimeModel || null,
           persona: props.persona || null,
         },
       });
@@ -3326,18 +3320,13 @@ function VoiceConfigEditor(props: {
             <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider"><option value="">Inherit voice provider</option><For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For></select>
           </Show>
           <input
-            list="vak-discovered-voices"
             value={props.voiceName}
             onInput={(e) => props.setVoiceName(e.currentTarget.value)}
-            placeholder="Provider default or discovered voice id"
+            placeholder="Voice id (provider default if empty)"
             aria-label="Voice identifier"
           />
-          <datalist id="vak-discovered-voices">
-            <For each={discoveredVoices()}>{(v) => <option value={v} />}</For>
-          </datalist>
           <input value={props.transcriptionModel} onInput={(e) => props.setTranscriptionModel(e.currentTarget.value)} placeholder="Transcription model (inherit if empty)" aria-label="Transcription model" />
           <input value={props.synthesisModel} onInput={(e) => props.setSynthesisModel(e.currentTarget.value)} placeholder="Synthesis model (inherit if empty)" aria-label="Synthesis model" />
-          <input value={props.realtimeModel} onInput={(e) => props.setRealtimeModel(e.currentTarget.value)} placeholder="Realtime model (inherit if empty)" aria-label="Realtime model" />
           <button disabled={previewing()} onClick={() => void preview()}>
             {previewing() ? "Playing…" : "Preview"}
           </button>
@@ -3543,7 +3532,6 @@ function ChannelAccessEditor(props: {
   const [voicePersona, setVoicePersona] = createSignal(props.entry.voice?.persona ?? "");
   const [transcriptionModel, setTranscriptionModel] = createSignal(props.entry.voice?.transcription_model ?? "");
   const [synthesisModel, setSynthesisModel] = createSignal(props.entry.voice?.synthesis_model ?? "");
-  const [realtimeModel, setRealtimeModel] = createSignal(props.entry.voice?.realtime_model ?? "");
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -3568,7 +3556,7 @@ function ChannelAccessEditor(props: {
         policy: policy(),
         bot_id: botId() || null,
         inherit_bot_policy: inheritBot(),
-        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
+        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null } : null,
       });
       await props.refresh();
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
@@ -3630,8 +3618,6 @@ function ChannelAccessEditor(props: {
         setTranscriptionModel={setTranscriptionModel}
         synthesisModel={synthesisModel()}
         setSynthesisModel={setSynthesisModel}
-        realtimeModel={realtimeModel()}
-        setRealtimeModel={setRealtimeModel}
         persona={voicePersona()}
         setPersona={setVoicePersona}
         subject="chat"
@@ -3866,7 +3852,6 @@ function BotAccessEditor(props: {
   const [voicePersona, setVoicePersona] = createSignal(props.bot.voice?.persona ?? "");
   const [transcriptionModel, setTranscriptionModel] = createSignal(props.bot.voice?.transcription_model ?? "");
   const [synthesisModel, setSynthesisModel] = createSignal(props.bot.voice?.synthesis_model ?? "");
-  const [realtimeModel, setRealtimeModel] = createSignal(props.bot.voice?.realtime_model ?? "");
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -3888,7 +3873,7 @@ function BotAccessEditor(props: {
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : null,
         permission_mode: pinPerm() ? perm() : null,
         policy: policy(),
-        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null, realtime_model: realtimeModel() || null } : null,
+        voice: pinVoice() ? { provider: voiceProvider() || null, voice_name: voiceName() || null, persona: voicePersona() || null, transcription_model: transcriptionModel() || null, synthesis_model: synthesisModel() || null } : null,
       });
       await props.refresh();
       pushToast("info", `${props.bot.label} updated — chats bound to it pick this up on their next message`);
@@ -3957,8 +3942,6 @@ function BotAccessEditor(props: {
         setTranscriptionModel={setTranscriptionModel}
         synthesisModel={synthesisModel()}
         setSynthesisModel={setSynthesisModel}
-        realtimeModel={realtimeModel()}
-        setRealtimeModel={setRealtimeModel}
         persona={voicePersona()}
         setPersona={setVoicePersona}
         subject="bot"
@@ -6396,7 +6379,7 @@ function Settings() {
                   <div class="voice-grid-2x2">
                     <div class="form-row">
                       <label for="voice-provider">Provider</label>
-                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="Configured default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice provider saved")} />
+                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="gemini, openai or local (inherit if empty)" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice provider saved")} />
                     </div>
                     <div class="form-row">
                       <label for="voice-transcription-model">Transcription Model</label>
@@ -6405,10 +6388,6 @@ function Settings() {
                     <div class="form-row">
                       <label for="voice-synthesis-model">Synthesis Model</label>
                       <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />
-                    </div>
-                    <div class="form-row">
-                      <label for="voice-realtime-model">Realtime Streaming Model</label>
-                      <input id="voice-realtime-model" value={voice().realtime_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_realtime_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Realtime model saved")} />
                     </div>
                   </div>
                 </>}

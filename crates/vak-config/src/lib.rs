@@ -108,12 +108,6 @@ pub struct Profile {
 #[serde(default)]
 pub struct FileConfig {
     pub provider: Option<String>,
-    /// Operation-specific model pins. `model` remains the shared legacy
-    /// fallback; these fields let transcription, synthesis, and realtime
-    /// routes be configured independently without embedding provider ids.
-    pub transcription_model: Option<String>,
-    pub synthesis_model: Option<String>,
-    pub realtime_model: Option<String>,
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
     pub max_turns: Option<usize>,
@@ -194,19 +188,19 @@ pub struct FileConfig {
 #[serde(default)]
 pub struct VoiceSettings {
     pub enabled: bool,
-    /// Provider route is optional: absent means resolve the configured
-    /// provider default, preserving inheritance across config layers.
+    /// `gemini`, `openai` or `local` (`vak_voice::VoiceProvider`). Unset
+    /// inherits from a wider layer; unset everywhere is a configuration gap
+    /// the voice routes report, never an implicit vendor.
     pub provider: Option<String>,
-    pub model: Option<String>,
-    /// Legacy shared model field. New callers should use the operation-specific
-    /// pins below; when they are absent this value is used for compatibility.
+    /// Hosted speech-to-text model, from the operator's discovered catalogue.
     pub transcription_model: Option<String>,
+    /// Hosted text-to-speech model, from the operator's discovered catalogue.
     pub synthesis_model: Option<String>,
-    pub realtime_model: Option<String>,
     pub max_session_secs: u64,
     pub max_concurrent: usize,
     pub max_audio_bytes: u64,
-    /// Maximum batch voice requests per rolling minute per server process.
+    /// Paid voice requests per rolling minute per server process, shared by
+    /// transcription, synthesis and socket utterances.
     pub max_requests_per_minute: usize,
     /// Maximum synthesis input characters per request.
     pub max_text_chars: usize,
@@ -219,8 +213,6 @@ impl Default for VoiceSettings {
             provider: None,
             transcription_model: None,
             synthesis_model: None,
-            realtime_model: None,
-            model: None,
             max_session_secs: 900,
             max_concurrent: 2,
             max_audio_bytes: 16 * 1024 * 1024,
@@ -239,14 +231,6 @@ impl VoiceSettings {
                 self.transcription_model.as_deref(),
             ),
             ("voice.synthesis_model", self.synthesis_model.as_deref()),
-            ("voice.realtime_model", self.realtime_model.as_deref()),
-            ("voice.model", self.model.as_deref()),
-            (
-                "voice.transcription_model",
-                self.transcription_model.as_deref(),
-            ),
-            ("voice.synthesis_model", self.synthesis_model.as_deref()),
-            ("voice.realtime_model", self.realtime_model.as_deref()),
         ] {
             if let Some(value) = value
                 && (value.trim().is_empty() || value.chars().count() > 256)
@@ -272,18 +256,6 @@ impl VoiceSettings {
             return Err("voice.max_text_chars must be between 1 and 10000000".into());
         }
         Ok(())
-    }
-
-    pub fn transcription_model(&self) -> Option<&str> {
-        self.transcription_model
-            .as_deref()
-            .or(self.model.as_deref())
-    }
-    pub fn synthesis_model(&self) -> Option<&str> {
-        self.synthesis_model.as_deref().or(self.model.as_deref())
-    }
-    pub fn realtime_model(&self) -> Option<&str> {
-        self.realtime_model.as_deref().or(self.model.as_deref())
     }
 }
 
@@ -1122,9 +1094,6 @@ pub struct VoiceConfig {
     /// Provider model override for synthesis at this scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis_model: Option<String>,
-    /// Provider model override for realtime sessions at this scope.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub realtime_model: Option<String>,
     /// **Deprecated** (docs/design/45-prompt-layers.md): the bot/chat
     /// `identity` prompt block is the persona now, so a bot's spoken and
     /// written selves cannot drift apart. Still read as a fallback when no
@@ -1155,10 +1124,6 @@ impl VoiceConfig {
                 .synthesis_model
                 .clone()
                 .or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
-            realtime_model: child
-                .realtime_model
-                .clone()
-                .or_else(|| parent.and_then(|v| v.realtime_model.clone())),
             persona: child
                 .persona
                 .clone()
@@ -2860,46 +2825,34 @@ pub fn persist_project_finops_caps(
     persist_finops_caps_at(project_path(cwd), max_run_usd, max_day_usd)
 }
 
-/// Persist voice runtime policy at the selected configuration layer.
-pub fn persist_voice_settings_at(
-    path: PathBuf,
-    enabled: Option<bool>,
-    max_session_secs: Option<u64>,
-    max_concurrent: Option<usize>,
-    max_audio_bytes: Option<u64>,
-    provider: Option<Option<String>>,
-    model: Option<Option<String>>,
-) -> Result<(), ConfigError> {
-    persist_voice_settings_at_with_models(
-        path,
-        enabled,
-        max_session_secs,
-        max_concurrent,
-        max_audio_bytes,
-        provider,
-        model,
-        None,
-        None,
-        None,
-    )
+/// A partial update to `[voice]`. `None` leaves a key untouched; for the
+/// optional route keys `Some(None)` removes the key so it inherits again.
+#[derive(Debug, Clone, Default)]
+pub struct VoicePatch {
+    pub enabled: Option<bool>,
+    pub max_session_secs: Option<u64>,
+    pub max_concurrent: Option<usize>,
+    pub max_audio_bytes: Option<u64>,
+    pub provider: Option<Option<String>>,
+    pub transcription_model: Option<Option<String>>,
+    pub synthesis_model: Option<Option<String>>,
 }
 
-/// Persist voice settings including operation-specific model pins.
-// The explicit arguments preserve the existing atomic config API and keep the
-// three operation-specific model pins visibly separate at every call site.
-#[allow(clippy::too_many_arguments)]
-pub fn persist_voice_settings_at_with_models(
-    path: PathBuf,
-    enabled: Option<bool>,
-    max_session_secs: Option<u64>,
-    max_concurrent: Option<usize>,
-    max_audio_bytes: Option<u64>,
-    provider: Option<Option<String>>,
-    model: Option<Option<String>>,
-    transcription_model: Option<Option<String>>,
-    synthesis_model: Option<Option<String>>,
-    realtime_model: Option<Option<String>>,
-) -> Result<(), ConfigError> {
+impl VoicePatch {
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none()
+            && self.max_session_secs.is_none()
+            && self.max_concurrent.is_none()
+            && self.max_audio_bytes.is_none()
+            && self.provider.is_none()
+            && self.transcription_model.is_none()
+            && self.synthesis_model.is_none()
+    }
+}
+
+/// Atomically apply `patch` to the `[voice]` table of the config file at
+/// `path`, preserving every key the patch does not name.
+pub fn persist_voice_settings_at(path: PathBuf, patch: &VoicePatch) -> Result<(), ConfigError> {
     let mut root = if path.is_file() {
         let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
             path: path.clone(),
@@ -2924,43 +2877,31 @@ pub fn persist_voice_settings_at_with_models(
             path: path.clone(),
             source: std::io::Error::other("voice must be a TOML table"),
         })?;
-    if let Some(v) = enabled {
+    if let Some(v) = patch.enabled {
         voice.insert("enabled".into(), toml::Value::Boolean(v));
     }
-    if let Some(v) = max_session_secs {
-        voice.insert("max_session_secs".into(), toml::Value::Integer(v as i64));
-    }
-    if let Some(v) = max_concurrent {
-        voice.insert("max_concurrent".into(), toml::Value::Integer(v as i64));
-    }
-    if let Some(v) = max_audio_bytes {
-        voice.insert("max_audio_bytes".into(), toml::Value::Integer(v as i64));
-    }
-    if let Some(v) = provider {
-        if let Some(v) = v {
-            voice.insert("provider".into(), toml::Value::String(v));
-        } else {
-            voice.remove("provider");
-        }
-    }
-    if let Some(v) = model {
-        if let Some(v) = v {
-            voice.insert("model".into(), toml::Value::String(v));
-        } else {
-            voice.remove("model");
+    for (key, value) in [
+        ("max_session_secs", patch.max_session_secs),
+        ("max_concurrent", patch.max_concurrent.map(|v| v as u64)),
+        ("max_audio_bytes", patch.max_audio_bytes),
+    ] {
+        if let Some(v) = value {
+            voice.insert(key.into(), toml::Value::Integer(v as i64));
         }
     }
     for (key, value) in [
-        ("transcription_model", transcription_model),
-        ("synthesis_model", synthesis_model),
-        ("realtime_model", realtime_model),
+        ("provider", &patch.provider),
+        ("transcription_model", &patch.transcription_model),
+        ("synthesis_model", &patch.synthesis_model),
     ] {
-        if let Some(v) = value {
-            if let Some(v) = v {
-                voice.insert(key.into(), toml::Value::String(v));
-            } else {
+        match value {
+            Some(Some(v)) => {
+                voice.insert(key.into(), toml::Value::String(v.clone()));
+            }
+            Some(None) => {
                 voice.remove(key);
             }
+            None => {}
         }
     }
     let text = toml::to_string_pretty(&root).map_err(|e| ConfigError::Write {
@@ -2979,39 +2920,6 @@ pub fn persist_voice_settings_at_with_models(
         source,
     })?;
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
-}
-
-pub fn persist_project_voice_settings(
-    cwd: &Path,
-    e: Option<bool>,
-    s: Option<u64>,
-    c: Option<usize>,
-    b: Option<u64>,
-    provider: Option<Option<String>>,
-    model: Option<Option<String>>,
-) -> Result<(), ConfigError> {
-    persist_voice_settings_at(project_path(cwd), e, s, c, b, provider, model)
-}
-pub fn persist_global_voice_settings(
-    e: Option<bool>,
-    s: Option<u64>,
-    c: Option<usize>,
-    b: Option<u64>,
-    provider: Option<Option<String>>,
-    model: Option<Option<String>>,
-) -> Result<(), ConfigError> {
-    persist_voice_settings_at(
-        global_path().ok_or_else(|| ConfigError::Write {
-            path: PathBuf::from("<user-config>"),
-            source: std::io::Error::other("user home unavailable"),
-        })?,
-        e,
-        s,
-        c,
-        b,
-        provider,
-        model,
-    )
 }
 
 /// Persist the user-level `[finops]` defaults, inherited by project
@@ -4698,15 +4606,15 @@ mod tests {
         let decoded: VoiceSettings = toml::from_str(&encoded).expect("voice settings deserialize");
         assert_eq!(decoded, settings);
         let routed = VoiceSettings {
-            provider: Some("local".into()),
-            model: Some("offline-v1".into()),
+            provider: Some("openai".into()),
+            transcription_model: Some("stt-v1".into()),
             ..settings
         };
         let encoded = toml::to_string(&routed).expect("routed voice settings serialize");
         let decoded: VoiceSettings =
             toml::from_str(&encoded).expect("routed voice settings deserialize");
-        assert_eq!(decoded.provider.as_deref(), Some("local"));
-        assert_eq!(decoded.model.as_deref(), Some("offline-v1"));
+        assert_eq!(decoded.provider.as_deref(), Some("openai"));
+        assert_eq!(decoded.transcription_model.as_deref(), Some("stt-v1"));
         assert!(decoded.validate().is_ok());
     }
 
@@ -4762,10 +4670,39 @@ mod tests {
         };
         assert!(settings.validate().is_err());
         settings = VoiceSettings {
-            model: Some("x".repeat(257)),
+            synthesis_model: Some("x".repeat(257)),
             ..VoiceSettings::default()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn voice_patch_sets_clears_and_preserves_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[voice]\nprovider = \"gemini\"\nsynthesis_model = \"tts-a\"\nfuture_key = 7\n",
+        )
+        .unwrap();
+        persist_voice_settings_at(
+            path.clone(),
+            &VoicePatch {
+                enabled: Some(true),
+                transcription_model: Some(Some("stt-a".into())),
+                synthesis_model: Some(None),
+                ..VoicePatch::default()
+            },
+        )
+        .unwrap();
+        let value: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let voice = value["voice"].as_table().unwrap();
+        assert_eq!(voice["enabled"].as_bool(), Some(true));
+        assert_eq!(voice["provider"].as_str(), Some("gemini"));
+        assert_eq!(voice["transcription_model"].as_str(), Some("stt-a"));
+        assert!(!voice.contains_key("synthesis_model"));
+        assert_eq!(voice["future_key"].as_integer(), Some(7));
+        assert!(VoicePatch::default().is_empty());
     }
     use super::*;
 

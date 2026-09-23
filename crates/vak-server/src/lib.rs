@@ -95,6 +95,7 @@ mod rate_limit;
 mod service_control;
 mod site;
 pub mod surfaces;
+mod voice;
 mod web;
 
 #[cfg(test)]
@@ -248,8 +249,8 @@ pub struct AppState {
     /// Number of live voice websocket sessions. Admission is checked against
     /// the effective configuration at connection time and released on exit.
     pub(crate) voice_active: Arc<std::sync::atomic::AtomicUsize>,
-    /// Rolling admission window for batch voice endpoints.
-    pub(crate) voice_requests: Arc<Mutex<(Instant, usize)>>,
+    /// Per-minute budget shared by every paid voice request.
+    pub(crate) voice_requests: Arc<voice::RequestWindow>,
 }
 
 #[derive(Clone)]
@@ -297,7 +298,7 @@ impl AppState {
             auth_token,
             active_core: Arc::new(Mutex::new(None)),
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            voice_requests: Arc::new(Mutex::new((Instant::now(), 0))),
+            voice_requests: Arc::new(voice::RequestWindow::new()),
         }
     }
 
@@ -943,9 +944,9 @@ fn router_with_state(state: AppState) -> Router {
         // never register a service; this is the one action that does.
         .route("/ops/services/activate", post(activate_services))
         .route("/finops", get(finops_status).patch(patch_finops))
-        .route("/voice/speak", post(voice_speak))
-        .route("/voice/transcribe", post(voice_transcribe))
-        .route("/voice/providers", get(list_voice_providers))
+        .route("/voice/speak", post(voice::voice_speak))
+        .route("/voice/transcribe", post(voice::voice_transcribe))
+        .route("/voice/providers", get(voice::voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))
         .route("/memory/consolidate", post(consolidate_memory_route))
@@ -1001,7 +1002,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/workspaces/forget", post(web::forget_workspace))
         .route("/fs/dirs", get(web::list_dirs))
         .route("/pty", get(web::pty_socket))
-        .route("/voice/session", get(web::voice_socket))
+        .route("/voice/session", get(voice::voice_socket))
         .route("/version", get(web::version))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
@@ -1604,557 +1605,6 @@ async fn replay_operations_outbox(
 /// to show a real shape, short enough that a fixed-length zero-filled
 /// series is cheap to compute on every request.
 const FINOPS_TREND_DAYS: u32 = 14;
-
-/// Default voice used when nothing in the bot/chat inheritance chain (nor
-/// the request's own `voice_override`) names one — keeps `/voice/speak`
-/// usable out of the box without any admin configuration.
-
-#[derive(serde::Deserialize)]
-struct VoiceSpeakBody {
-    text: String,
-    #[serde(default)]
-    format: Option<String>,
-    #[serde(default)]
-    bot_id: Option<String>,
-    #[serde(default)]
-    chat_key: Option<String>,
-    #[serde(default)]
-    voice_override: Option<vak_config::VoiceConfig>,
-    /// Optional append-only ledger to attribute this synthesis to. Bridges
-    /// may populate it after gateway admission; callers without a session
-    /// remain fully supported.
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct VoiceTranscribeBody {
-    audio_base64: String,
-    #[serde(default = "default_voice_mime")]
-    mime: String,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-fn default_voice_mime() -> String {
-    "audio/ogg".into()
-}
-
-fn admit_voice_request(state: &AppState, limit: usize) -> bool {
-    let mut window = state
-        .voice_requests
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if window.0.elapsed() >= std::time::Duration::from_secs(60) {
-        *window = (Instant::now(), 0);
-    }
-    if window.1 >= limit {
-        false
-    } else {
-        window.1 += 1;
-        true
-    }
-}
-
-/// `POST /voice/transcribe`: bounded batch transcription endpoint used by
-/// channel bridges. Credentials and provider routing remain server-owned.
-async fn voice_transcribe(
-    State(state): State<AppState>,
-    Json(body): Json<VoiceTranscribeBody>,
-) -> axum::response::Response {
-    use base64::Engine as _;
-    let voice_settings = state.core.effective_voice();
-    let audio_limit = voice_settings.max_audio_bytes.min(16 * 1024 * 1024);
-    let audio = match base64::engine::general_purpose::STANDARD.decode(body.audio_base64.trim()) {
-        Ok(bytes) if !bytes.is_empty() && (bytes.len() as u64) <= audio_limit => bytes,
-        Ok(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("audio must be 1 byte to {} bytes", audio_limit)})),
-            )
-                .into_response();
-        }
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error":"audio_base64 is invalid"})),
-            )
-                .into_response();
-        }
-    };
-    if !voice_settings.enabled {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error":"voice is disabled"})),
-        )
-            .into_response();
-    }
-    // Admit only a valid, enabled request. Malformed or disabled requests must
-    // not consume the caller's rolling voice quota.
-    if !admit_voice_request(&state, voice_settings.max_requests_per_minute) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({"error":"voice request rate limit exceeded"})),
-        )
-            .into_response();
-    }
-    let provider = voice_settings
-        .provider
-        .as_deref()
-        .unwrap_or("google")
-        .trim()
-        .to_ascii_lowercase();
-    if !matches!(
-        provider.as_str(),
-        "google" | "gemini" | "google-live" | "gemini-live" | "openai"
-    ) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": format!("voice provider '{provider}' has no transcription adapter installed")})),
-        ).into_response();
-    }
-    let key = if provider == "openai" {
-        vak_config::get_var("OPENAI_API_KEY")
-    } else {
-        vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
-    };
-    let Some(api_key) = key else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error":"no credential configured for the selected voice provider"})),
-        )
-            .into_response();
-    };
-    let model = voice_settings
-        .transcription_model
-        .or(voice_settings.model)
-        .unwrap_or_default();
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let result = if provider == "openai" {
-        let config = vak_llm::openai::OpenAiConfig {
-            api_key,
-            base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
-            cache_key: false,
-            openrouter: false,
-        };
-        vak_llm::openai::transcribe(&config, &audio, &body.mime, &model, &cancel).await
-    } else {
-        let config = vak_llm::google_live::GoogleLiveConfig::new(api_key, &model);
-        vak_llm::google_live::transcribe(&config, &audio, &body.mime, &cancel).await
-    };
-    match result {
-        Ok(text) if text.trim().is_empty() => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({"error": "No speech was recognized"})),
-        )
-            .into_response(),
-        Ok(text) => {
-            if let Some(session_id) = body
-                .session_id
-                .as_deref()
-                .filter(|id| !id.trim().is_empty())
-                && let Ok(mut session) = state.core.open_session(session_id).await
-            {
-                let _ = session.append_voice_transcript(
-                    uuid::Uuid::now_v7().to_string(),
-                    text.clone(),
-                    true,
-                );
-            }
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({"text": text, "provider":provider, "model": model})),
-            )
-                .into_response()
-        }
-        Err(error) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"error": error.to_string()})),
-        )
-            .into_response(),
-    }
-}
-
-/// `POST /voice/speak`: synthesize `text` through the Gemini Live API using
-/// the resolved voice/persona (explicit `voice_override` > the named
-/// chat's/bot's resolved voice > a sensible built-in default), and return
-/// raw WAV bytes. Guarded by the same `require_bearer` middleware every
-/// other route on this router already sits behind.
-async fn voice_speak(
-    State(state): State<AppState>,
-    Json(body): Json<VoiceSpeakBody>,
-) -> axum::response::Response {
-    if body.text.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "text must not be empty" })),
-        )
-            .into_response();
-    }
-    let voice_settings = state.core.effective_voice();
-    if body.text.chars().count() > voice_settings.max_text_chars {
-        return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error": format!("text exceeds voice.max_text_chars ({})", voice_settings.max_text_chars)}))).into_response();
-    }
-    if !admit_voice_request(&state, voice_settings.max_requests_per_minute) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({"error":"voice request rate limit exceeded"})),
-        )
-            .into_response();
-    }
-
-    // Resolution order: explicit override > resolved chat/bot voice > a
-    // provider-defined default. The chat lookup mirrors `core_for_entry`'s own
-    // bot/chat fold (`GatewayState::resolve_voice`), and a bare `bot_id`
-    // with no `chat_key` falls back to that bot's own tier directly.
-    let resolved = body.voice_override.clone().or_else(|| {
-        if let Some(chat_key) = body.chat_key.as_deref() {
-            state.gateway.resolve_voice(chat_key)
-        } else if let Some(bot_id) = body.bot_id.as_deref() {
-            state.gateway.bot_get(bot_id).and_then(|b| b.voice)
-        } else {
-            None
-        }
-    });
-    let voice_name = resolved
-        .as_ref()
-        .and_then(|v| v.voice_name.clone())
-        .filter(|v| !v.trim().is_empty());
-    // The persona now comes from the bot/chat `identity` prompt block; the
-    // legacy `VoiceConfig.persona` is the fallback inside `resolve_persona`
-    // (docs/design/45-prompt-layers.md). An explicit `voice_override` from
-    // the caller — what the admin console's Preview button sends — still
-    // wins, since it is the operator auditioning a value directly.
-    let persona = body
-        .voice_override
-        .as_ref()
-        .and_then(|v| v.persona.clone())
-        .filter(|p| !p.trim().is_empty())
-        .or_else(|| {
-            if let Some(chat_key) = body.chat_key.as_deref() {
-                state.gateway.resolve_persona(chat_key)
-            } else if let Some(bot_id) = body.bot_id.as_deref() {
-                state.gateway.resolve_bot_persona(bot_id)
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            body.session_id.as_deref().and_then(|session_id| {
-                read_historical_header(&state, session_id, None)
-                    .and_then(|header| header.agent)
-                    .map(|agent| {
-                        let style = match agent.voice.as_str() {
-                            "calm" => "Speak calmly, warmly, and at an unhurried pace.",
-                            "bright" => "Speak with clear, friendly energy.",
-                            "quiet" => "Speak gently, evenly, and without theatrical emphasis.",
-                            _ => "Speak naturally and clearly.",
-                        };
-                        if agent.personality.trim().is_empty() {
-                            style.to_string()
-                        } else {
-                            format!("{style} {}", agent.personality)
-                        }
-                    })
-            })
-        });
-
-    if !voice_settings.enabled {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "voice is disabled" })),
-        )
-            .into_response();
-    }
-    let provider = voice_settings
-        .provider
-        .as_deref()
-        .unwrap_or("google")
-        .trim()
-        .to_ascii_lowercase();
-    if provider == "local" {
-        use vak_voice::{LocalTtsSpeaker, SpeakFormat, SpeakSpec, Speaker};
-        let format = match body.format.as_deref().unwrap_or("wav") {
-            "pcm" | "pcm16" => SpeakFormat::Pcm16,
-            "wav" => SpeakFormat::Wav,
-            "opus" | "ogg_opus" => SpeakFormat::OggOpus,
-            "mp3" => SpeakFormat::Mp3,
-            value => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("unsupported local speech format '{value}'")}))).into_response(),
-        };
-        let speaker = LocalTtsSpeaker::from_env();
-        let mut stream = match speaker
-            .speak(
-                SpeakSpec {
-                    text: body.text.clone(),
-                    model: voice_settings
-                        .synthesis_model
-                        .clone()
-                        .or_else(|| voice_settings.model.clone()),
-                    voice: voice_name.clone(),
-                    format,
-                },
-                CancellationToken::new(),
-            )
-            .await
-        {
-            Ok(stream) => stream,
-            Err(error) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": error.to_string() })),
-                )
-                    .into_response();
-            }
-        };
-        let mut pcm = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => pcm.extend_from_slice(&chunk.data),
-                Err(error) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({ "error": error.to_string() })),
-                    )
-                        .into_response();
-                }
-            }
-        }
-        // The configured executable receives the requested format contract and
-        // returns that encoded representation. Preserve it byte-for-byte here;
-        // wrapping every response as WAV would corrupt PCM, Opus, and MP3.
-        let audio = pcm;
-        let mut receipt = vak_llm::WorkReceipt::new(
-            vak_llm::WorkPurpose::VoiceSynthesis,
-            "local",
-            voice_settings
-                .synthesis_model
-                .as_deref()
-                .or(voice_settings.model.as_deref())
-                .unwrap_or("offline"),
-        );
-        receipt.record(
-            vak_llm::AttemptReason::Initial,
-            vak_llm::FailureDomain::Unknown,
-            vak_llm::Settlement::Ok,
-            0,
-            None,
-            None,
-        );
-        let receipt_json = serde_json::to_string(&receipt).unwrap_or_else(|_| "{}".into());
-        let content_type = match format {
-            SpeakFormat::Pcm16 => "audio/pcm",
-            SpeakFormat::Wav => "audio/wav",
-            SpeakFormat::OggOpus => "audio/ogg",
-            SpeakFormat::Mp3 => "audio/mpeg",
-        };
-        return (
-            [
-                (axum::http::header::CONTENT_TYPE, content_type),
-                (
-                    axum::http::header::HeaderName::from_static("x-vak-work-receipt"),
-                    receipt_json.as_str(),
-                ),
-            ],
-            audio,
-        )
-            .into_response();
-    }
-    if provider == "openai" {
-        let Some(api_key) =
-            vak_config::get_var("OPENAI_API_KEY").filter(|key| !key.trim().is_empty())
-        else {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({"error":"no OPENAI_API_KEY configured for voice synthesis"}),
-                ),
-            )
-                .into_response();
-        };
-        let Some(model) = voice_settings
-            .synthesis_model
-            .clone()
-            .or_else(|| voice_settings.model.clone())
-            .filter(|m| !m.trim().is_empty())
-        else {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"voice synthesis requires an explicitly discovered model"}))).into_response();
-        };
-        let format = body.format.as_deref().unwrap_or("mp3");
-        let allowed = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
-        if !allowed.contains(&format) {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":format!("unsupported OpenAI speech format '{format}'")}))).into_response();
-        }
-        let config = vak_llm::openai::OpenAiConfig {
-            api_key,
-            base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
-            cache_key: false,
-            openrouter: false,
-        };
-        let result = vak_llm::openai::speak(
-            &config,
-            &body.text,
-            &model,
-            voice_name.as_deref().or(Some("alloy")),
-            format,
-            &CancellationToken::new(),
-        )
-        .await;
-        return match result {
-            Ok(audio) => {
-                let mime = match format {
-                    "mp3" => "audio/mpeg",
-                    "opus" => "audio/ogg",
-                    "aac" => "audio/aac",
-                    "flac" => "audio/flac",
-                    "pcm" => "audio/pcm",
-                    _ => "audio/wav",
-                };
-                ([(axum::http::header::CONTENT_TYPE, mime)], audio).into_response()
-            }
-            Err(error) => (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"error":error.to_string()})),
-            )
-                .into_response(),
-        };
-    }
-    if !matches!(
-        provider.as_str(),
-        "google" | "gemini" | "google-live" | "gemini-live"
-    ) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": format!("voice provider '{provider}' has no synthesis adapter installed") })),
-        ).into_response();
-    }
-    let api_key = match vak_config::get_var("GEMINI_API_KEY")
-        .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
-        .filter(|k| !k.trim().is_empty())
-        .map(|k| k.trim().to_string())
-    {
-        Some(k) => k,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "no GEMINI_API_KEY/GOOGLE_API_KEY configured for voice synthesis"
-                })),
-            )
-                .into_response();
-        }
-    };
-    let Some(model) = voice_settings
-        .synthesis_model
-        .or(voice_settings.model)
-        .filter(|m| !m.trim().is_empty())
-    else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "Gemini voice synthesis needs a configured model in Voice settings"
-            })),
-        )
-            .into_response();
-    };
-    let config = vak_llm::google_live::GoogleLiveConfig::new(api_key, model);
-    let cancel = CancellationToken::new();
-    let mut receipt = vak_llm::WorkReceipt::new(
-        vak_llm::WorkPurpose::VoiceSynthesis,
-        "google",
-        &config.model,
-    );
-    let started = std::time::Instant::now();
-    let result = vak_llm::google_live::speak(
-        &config,
-        &body.text,
-        persona.as_deref(),
-        voice_name.as_deref(),
-        &cancel,
-    )
-    .await;
-
-    match result {
-        Ok(wav) => {
-            receipt.record(
-                vak_llm::AttemptReason::Initial,
-                vak_llm::FailureDomain::Unknown,
-                vak_llm::Settlement::Ok,
-                started.elapsed().as_millis() as u64,
-                None,
-                None,
-            );
-            let mut response = (
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "audio/wav")],
-                wav,
-            )
-                .into_response();
-            if let Ok(encoded) = serde_json::to_string(&receipt)
-                && let Ok(value) = axum::http::HeaderValue::try_from(encoded)
-            {
-                response.headers_mut().insert("x-vak-work-receipt", value);
-            }
-            response
-        }
-        Err(e) => {
-            let (domain, settlement) = vak_llm::work::classify_error(&e);
-            receipt.record(
-                vak_llm::AttemptReason::Initial,
-                domain,
-                settlement,
-                started.elapsed().as_millis() as u64,
-                None,
-                Some(e.to_string()),
-            );
-            if cancel.is_cancelled() {
-                receipt.settle_cancelled();
-            }
-            let status = match &e {
-                vak_llm::LlmError::Auth(_) => StatusCode::BAD_REQUEST,
-                vak_llm::LlmError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-                vak_llm::LlmError::RateLimit { .. } => StatusCode::TOO_MANY_REQUESTS,
-                vak_llm::LlmError::Overloaded(_) => StatusCode::SERVICE_UNAVAILABLE,
-                _ => StatusCode::BAD_GATEWAY,
-            };
-            (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
-        }
-    }
-}
-
-/// Capability catalogue for voice settings and administration. Credentials
-/// and discovered model names are intentionally absent until a provider
-/// client performs authenticated discovery.
-async fn list_voice_providers() -> Json<serde_json::Value> {
-    let registry = vak_voice::default_registry();
-    let providers: Vec<_> = registry
-        .list()
-        .map(|descriptor| {
-            let has_key =
-                |name| vak_config::get_var(name).is_some_and(|value| !value.trim().is_empty());
-            let configured = descriptor.env_var.as_deref().is_some_and(has_key)
-                || (descriptor.name == "gemini-live" && has_key("GOOGLE_API_KEY"));
-            // Keep credentials out of the response while making setup state
-            // actionable in Settings and administration.
-            serde_json::json!({
-                "name": descriptor.name,
-                "env_var": descriptor.env_var,
-                "default_base_url": descriptor.default_base_url,
-                "endpointing": descriptor.endpointing,
-                "formats": descriptor.formats,
-                "input_formats": descriptor.input_formats,
-                "voices": descriptor.voices,
-                "models": descriptor.models,
-                "model_provenance": descriptor.model_provenance,
-                "voice_provenance": descriptor.voice_provenance,
-                "configured": configured,
-                "readiness": (descriptor.name == "local").then(vak_voice::local_tts_readiness),
-            })
-        })
-        .collect();
-    Json(serde_json::json!({
-        "providers": providers,
-        "discovery": "models and voices are populated only from provider responses",
-    }))
-}
 
 /// FinOps projection from the append-only cost ledger. Unknown-priced rows
 /// are retained as `unknown_rows`; they are never reported as zero spend.
@@ -3994,7 +3444,8 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         "voice": {
             "enabled": state.core.effective_voice().enabled,
             "provider": state.core.effective_voice().provider,
-            "model": state.core.effective_voice().model,
+            "transcription_model": state.core.effective_voice().transcription_model,
+            "synthesis_model": state.core.effective_voice().synthesis_model,
             "max_session_secs": state.core.effective_voice().max_session_secs,
             "max_concurrent": state.core.effective_voice().max_concurrent,
             "max_audio_bytes": state.core.effective_voice().max_audio_bytes,
@@ -13463,16 +12914,12 @@ struct ConfigPatch {
     voice_max_concurrent: Option<usize>,
     #[serde(default)]
     voice_max_audio_bytes: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice_provider: Option<Option<String>>,
-    #[serde(default)]
-    voice_model: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice_transcription_model: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice_synthesis_model: Option<Option<String>>,
-    #[serde(default)]
-    voice_realtime_model: Option<Option<String>>,
     /// Whether worker delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses. The
     /// `subagents` alias keeps a client sending the pre-rename field name
@@ -13668,84 +13115,52 @@ async fn patch_config_scope(
     }
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
     let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
-    if body
-        .voice_max_session_secs
+    let voice_patch = vak_config::VoicePatch {
+        enabled: body.voice_enabled,
+        max_session_secs: body.voice_max_session_secs,
+        max_concurrent: body.voice_max_concurrent,
+        max_audio_bytes: body.voice_max_audio_bytes,
+        provider: body.voice_provider.clone(),
+        transcription_model: body.voice_transcription_model.clone(),
+        synthesis_model: body.voice_synthesis_model.clone(),
+    };
+    let invalid_name = |value: &String| value.trim().is_empty() || value.chars().count() > 256;
+    if voice_patch
+        .max_session_secs
         .is_some_and(|v| !(1..=86_400).contains(&v))
-        || body
-            .voice_max_concurrent
+        || voice_patch
+            .max_concurrent
             .is_some_and(|v| !(1..=64).contains(&v))
-        || body
-            .voice_max_audio_bytes
+        || voice_patch
+            .max_audio_bytes
             .is_some_and(|v| !(1..=256 * 1024 * 1024).contains(&v))
-        || body
-            .voice_provider
+        || voice_patch
+            .provider
             .as_ref()
-            .and_then(|v| v.as_ref())
-            .is_some_and(|v| v.trim().is_empty() || v.chars().count() > 256)
-        || body
-            .voice_model
-            .as_ref()
-            .and_then(|v| v.as_ref())
-            .is_some_and(|v| v.trim().is_empty() || v.chars().count() > 256)
+            .and_then(Option::as_ref)
+            .is_some_and(|v| v.parse::<vak_voice::VoiceProvider>().is_err())
         || [
-            body.voice_transcription_model.as_ref(),
-            body.voice_synthesis_model.as_ref(),
-            body.voice_realtime_model.as_ref(),
+            voice_patch.transcription_model.as_ref(),
+            voice_patch.synthesis_model.as_ref(),
         ]
         .into_iter()
         .flatten()
         .flatten()
-        .any(|v| v.trim().is_empty() || v.chars().count() > 256)
+        .any(invalid_name)
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    if body.voice_enabled.is_some()
-        || body.voice_max_session_secs.is_some()
-        || body.voice_max_concurrent.is_some()
-        || body.voice_max_audio_bytes.is_some()
-        || body.voice_provider.is_some()
-        || body.voice_model.is_some()
-        || body.voice_transcription_model.is_some()
-        || body.voice_synthesis_model.is_some()
-        || body.voice_realtime_model.is_some()
-    {
-        let result = if global {
-            vak_config::global_path().map_or_else(
-                || {
-                    Err(vak_config::ConfigError::Write {
-                        path: std::path::PathBuf::from("<user-config>"),
-                        source: std::io::Error::other("user home unavailable"),
-                    })
-                },
-                |path| {
-                    vak_config::persist_voice_settings_at_with_models(
-                        path,
-                        body.voice_enabled,
-                        body.voice_max_session_secs,
-                        body.voice_max_concurrent,
-                        body.voice_max_audio_bytes,
-                        body.voice_provider.clone(),
-                        body.voice_model.clone(),
-                        body.voice_transcription_model.clone(),
-                        body.voice_synthesis_model.clone(),
-                        body.voice_realtime_model.clone(),
-                    )
-                },
-            )
+    if !voice_patch.is_empty() {
+        let path = if global {
+            vak_config::global_path().ok_or_else(|| vak_config::ConfigError::Write {
+                path: std::path::PathBuf::from("<user-config>"),
+                source: std::io::Error::other("user home unavailable"),
+            })
         } else {
-            vak_config::persist_voice_settings_at_with_models(
-                vak_config::project_path(core.cwd()),
-                body.voice_enabled,
-                body.voice_max_session_secs,
-                body.voice_max_concurrent,
-                body.voice_max_audio_bytes,
-                body.voice_provider.clone(),
-                body.voice_model.clone(),
-                body.voice_transcription_model.clone(),
-                body.voice_synthesis_model.clone(),
-                body.voice_realtime_model.clone(),
-            )
+            Ok(vak_config::project_path(core.cwd()))
         };
+        let result =
+            path.and_then(|path| vak_config::persist_voice_settings_at(path, &voice_patch));
         if result.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
@@ -19199,45 +18614,6 @@ mod configuration_control_tests {
         )
         .await;
         assert_eq!(status.status(), StatusCode::BAD_REQUEST);
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod voice_admission_tests {
-    use super::*;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn rolling_voice_admission_enforces_limit_and_resets_window() {
-        let requests = Arc::new(Mutex::new((Instant::now(), 0)));
-        let state = requests;
-        let mut window = state.lock().unwrap();
-        assert!(window.1 < 2);
-        window.1 += 1;
-        assert!(window.1 < 2);
-        window.1 += 1;
-        assert!(window.1 >= 2);
-        drop(window);
-
-        // The production helper resets by elapsed time; exercise its exact
-        // state shape without making the test sleep.
-        let mut window = state.lock().unwrap();
-        window.0 = Instant::now() - Duration::from_secs(61);
-        drop(window);
-        let state =
-            AppState::new(Core::new(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap());
-        *state.voice_requests.lock().unwrap() = (Instant::now() - Duration::from_secs(61), 2);
-        assert!(admit_voice_request(&state, 2));
-        assert_eq!(state.voice_requests.lock().unwrap().1, 1);
-    }
-
-    #[test]
-    fn zero_voice_limit_fails_closed() {
-        let state =
-            AppState::new(Core::new(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap());
-        assert!(!admit_voice_request(&state, 0));
-        assert_eq!(state.voice_requests.lock().unwrap().1, 0);
     }
 }
 

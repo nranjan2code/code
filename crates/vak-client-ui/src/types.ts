@@ -368,7 +368,7 @@ export interface DirListing {
 }
 
 export interface ConfigSnapshot {
-  voice?: { enabled: boolean; provider?: string | null; model?: string | null; transcription_model?: string | null; synthesis_model?: string | null; realtime_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
+  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
   provider: string;
   model: string;
   provider_source?: string;
@@ -634,16 +634,13 @@ export interface OnboardingState {
 }
 
 export interface VoiceProviderDescriptor {
-  name: string;
-  endpointing: "server" | "client";
+  name: "gemini" | "openai" | "local";
   formats: Array<"pcm16" | "ogg_opus" | "mp3" | "wav">;
-  voices: string[];
-  models: string[];
-  configured?: boolean;
-  readiness?: { ready: boolean; detail: string } | null;
+  credential_vars: string[];
+  configured: boolean;
+  readiness: { ready: boolean; detail: string } | null;
 }
 
 export interface VoiceProvidersResponse {
   providers: VoiceProviderDescriptor[];
-  discovery: string;
 }

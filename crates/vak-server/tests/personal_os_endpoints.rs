@@ -454,6 +454,7 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             // does not work" is a health fact, not a transcript detail.
             "capability reach",
             "voice configuration",
+            "local transcriber",
             "local TTS backend",
             // Configured capabilities that are currently unusable, with the
             // reason and the fix. Previously these were rendered only into

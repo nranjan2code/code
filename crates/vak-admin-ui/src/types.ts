@@ -189,30 +189,25 @@ export interface VoiceConfig {
   voice_name?: string | null;
   transcription_model?: string | null;
   synthesis_model?: string | null;
-  realtime_model?: string | null;
   /// Free-text style directive fed into the synthesis system instruction,
   /// e.g. "warm, upbeat, and enthusiastic".
   persona?: string | null;
 }
 
 export interface VoiceProviderSummary {
-  name: string;
+  name: "gemini" | "openai" | "local";
   formats: string[];
-  input_formats: string[];
-  voices: string[];
-  models: string[];
+  credential_vars: string[];
   configured: boolean;
-  model_provenance?: string | null;
-  voice_provenance?: string | null;
+  readiness: { ready: boolean; detail: string } | null;
 }
 
 export interface VoiceProviderListResponse {
   providers: VoiceProviderSummary[];
-  discovery?: string;
 }
 
 export interface ConfigInfo {
-  voice?: { enabled: boolean; provider?: string | null; model?: string | null; transcription_model?: string | null; synthesis_model?: string | null; realtime_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string; quota?: { session_seconds: number; concurrent_sessions: number; inbound_audio_bytes: number; scope: string; source?: string } };
+  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string; quota?: { session_seconds: number; concurrent_sessions: number; inbound_audio_bytes: number; scope: string; source?: string } };
   provider: string;
   model: string;
   provider_source?: string;
