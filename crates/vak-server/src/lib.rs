@@ -2949,43 +2949,115 @@ fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
     Ok(())
 }
 
-/// Development previews exercise every built-in recipe without writing a
-/// standing user preference. A release build reads the same durable store
-/// unchanged, even if it follows a development run in this data home.
+/// Built-in recipes are available in every build without writing a standing
+/// user preference. An explicit user or workspace activation still wins.
 fn effective_presentation_library(
     library: &vak_presentation::PresentationLibrary,
     workspace_owner: &str,
 ) -> vak_presentation::PresentationLibrary {
     let mut effective = library.clone();
-    if cfg!(debug_assertions) {
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            let id = seed.spec.id.clone();
-            let revision = seed.spec.revision;
-            let accepts = seed.spec.accepts.clone();
-            if let Err(error) = effective.register(seed) {
-                eprintln!("[presentation] dev seed {id} unavailable: {error}");
-                continue;
-            }
-            if accepts.iter().any(|semantic_type| {
-                effective
-                    .select_preferred(semantic_type, "user", workspace_owner)
-                    .is_some_and(|selected| {
-                        selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
-                    })
-            }) {
-                continue;
-            }
-            if let Err(error) = effective.activate(
+    for seed in vak_presentation::seeds::built_in_seed_pack() {
+        let id = seed.spec.id.clone();
+        let revision = seed.spec.revision;
+        let accepts = seed.spec.accepts.clone();
+        if library.is_suppressed(&id, vak_presentation::LibraryScope::User, "user")
+            || library.is_suppressed(
                 &id,
-                revision,
                 vak_presentation::LibraryScope::Workspace,
                 workspace_owner,
-            ) {
-                eprintln!("[presentation] dev seed {id} could not activate: {error}");
-            }
+            )
+        {
+            continue;
+        }
+        if let Err(error) = effective.register(seed) {
+            eprintln!("[presentation] built-in pack {id} unavailable: {error}");
+            continue;
+        }
+        if accepts.iter().any(|semantic_type| {
+            effective
+                .select_preferred(semantic_type, "user", workspace_owner)
+                .is_some_and(|selected| {
+                    selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
+                })
+        }) {
+            continue;
+        }
+        if let Err(error) = effective.activate(
+            &id,
+            revision,
+            vak_presentation::LibraryScope::Workspace,
+            workspace_owner,
+        ) {
+            eprintln!("[presentation] built-in pack {id} could not activate: {error}");
         }
     }
     effective
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod built_in_presentation_tests {
+    #[test]
+    fn every_built_in_pack_is_selected_without_a_saved_activation() {
+        let library = super::effective_presentation_library(
+            &vak_presentation::PresentationLibrary::default(),
+            "/tmp/presentation-selection",
+        );
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            let selected = library
+                .select_preferred(&seed.spec.accepts[0], "user", "/tmp/presentation-selection")
+                .expect("built-in pack is selected");
+            assert_eq!(selected.spec.id, seed.spec.id, "{}", seed.spec.accepts[0]);
+        }
+    }
+
+    #[test]
+    fn deactivated_builtin_stays_off_until_explicitly_activated() {
+        let owner = "/tmp/presentation-selection";
+        let mut library = vak_presentation::PresentationLibrary::default();
+        library.deactivate(
+            "seed.timeline",
+            vak_presentation::LibraryScope::Workspace,
+            owner,
+        );
+        let effective = super::effective_presentation_library(&library, owner);
+        assert!(
+            effective
+                .select_preferred("timeline", "user", owner)
+                .is_none()
+        );
+        assert!(effective.select_preferred("table", "user", owner).is_some());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store =
+            vak_store::presentation::PresentationStore::new(dir.path().join("presentations.json"));
+        store.save(&library).expect("save suppression");
+        library = store.load().expect("reload suppression");
+        assert!(
+            super::effective_presentation_library(&library, owner)
+                .select_preferred("timeline", "user", owner)
+                .is_none()
+        );
+        let seed = vak_presentation::seeds::built_in_seed_pack()
+            .into_iter()
+            .find(|record| record.spec.id == "seed.timeline")
+            .expect("timeline seed");
+        library.register(seed).expect("register seed");
+        library
+            .activate(
+                "seed.timeline",
+                6,
+                vak_presentation::LibraryScope::Workspace,
+                owner,
+            )
+            .expect("activate seed");
+        let effective = super::effective_presentation_library(&library, owner);
+        assert_eq!(
+            effective
+                .select_preferred("timeline", "user", owner)
+                .map(|record| record.spec.id.as_str()),
+            Some("seed.timeline")
+        );
+    }
 }
 
 /// Paths that must be reachable without a token: health probe, the SPA
@@ -8911,8 +8983,13 @@ async fn import_presentations(
     let result = store.load().and_then(|mut library| {
         for mut definition in pack.definitions {
             // Pack import is always a preview operation. Never trust an
-            // enabled bit from an external serialized projection.
+            // enabled bit or foreign owner from an external serialized
+            // projection. Imported definitions belong to this user's
+            // library, so they can actually be activated after review.
             definition.enabled = false;
+            definition.origin.scope = vak_presentation::LibraryScope::User;
+            definition.origin.owner = "user".into();
+            definition.origin.plugin_id = None;
             library.register(definition).map_err(|error| {
                 vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
             })?;
@@ -9164,6 +9241,11 @@ async fn activate_all_presentations(
 ) -> axum::response::Response {
     let store = presentation_store(&state);
     let result = store.load().and_then(|mut library| {
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            library.register(seed).map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        }
         let mut latest_by_id: std::collections::BTreeMap<String, u64> =
             std::collections::BTreeMap::new();
         for def in library.definitions() {
@@ -9200,17 +9282,22 @@ async fn deactivate_all_presentations(
     let store = presentation_store(&state);
     match store.load() {
         Ok(mut library) => {
-            let before = library.activations().len();
-            let spec_ids: Vec<String> = library
-                .activations()
-                .iter()
-                .filter(|a| a.scope == body.scope && a.owner == body.owner)
-                .map(|a| a.spec_id.clone())
+            let mut spec_ids: std::collections::BTreeSet<String> = library
+                .definitions()
+                .map(|record| record.spec.id.clone())
                 .collect();
+            spec_ids.extend(
+                vak_presentation::seeds::built_in_seed_pack()
+                    .into_iter()
+                    .map(|record| record.spec.id),
+            );
+            let mut removed = 0;
             for id in spec_ids {
+                if !library.is_suppressed(&id, body.scope, &body.owner) {
+                    removed += 1;
+                }
                 library.deactivate(&id, body.scope, &body.owner);
             }
-            let removed = before.saturating_sub(library.activations().len());
             match store.save(&library) {
                 Ok(()) => Json(serde_json::json!({ "deactivated": removed })).into_response(),
                 Err(error) => (

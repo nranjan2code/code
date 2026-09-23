@@ -105,6 +105,19 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
       return renderMedia(safeNode, surface);
     case "universal_card":
       return renderUniversalCard(safeNode, surface);
+    case "map":
+    case "calendar":
+    case "board":
+    case "entity":
+    case "evidence":
+    case "graph":
+    case "form":
+    case "alert":
+    case "conversation":
+    case "transaction": {
+      const entries = Object.entries(props).filter(([key]) => !["title", "summary", "semantic_type"].includes(key));
+      return renderUniversalCard({ primitive: "universal_card", props: { ...props, kind: str(props, "kind") ?? safeNode.primitive.replaceAll("_", " "), entries }, children }, surface);
+    }
     default:
       return renderFallback(safeNode, surface);
   }
@@ -1418,11 +1431,14 @@ function renderFallback(node: AdaptiveRenderNode, _surface: RenderSurface) {
   const label = str(node.props, "label");
   const title = str(node.props, "title");
   const children = Array.isArray(node.children) ? node.children : [];
+  const details = Object.entries(node.props).filter(([key]) => !["title", "summary", "text", "label", "semantic_type"].includes(key));
   return (
     <div class={`adaptive-node adaptive-${node.primitive.toLowerCase()}`}>
       {title && <h4 class="adaptive-node-title">{title}</h4>}
       {label && <strong class="adaptive-node-label">{label}</strong>}
       {text && <span class="adaptive-node-text">{text}</span>}
+      {str(node.props, "summary") && <p>{str(node.props, "summary")}</p>}
+      <Show when={details.length > 0}><dl class="universal-card-nested"><For each={details}>{([key, value]) => <div><dt>{universalFieldLabel(key)}</dt><dd><UniversalValue value={value} /></dd></div>}</For></dl></Show>
       {children.map((child) => renderNode(child, _surface))}
     </div>
   );

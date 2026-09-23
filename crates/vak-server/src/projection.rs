@@ -3870,6 +3870,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_built_in_pack_compiles_its_real_emitter_shape() {
+        let cases = vak_core::presentation_tools::conformance_cases();
+        let mut failures = Vec::new();
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            let Some((_, semantic_type, payload)) = cases
+                .iter()
+                .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
+            else {
+                failures.push(format!("{} has no emitted semantic type", seed.spec.id));
+                continue;
+            };
+            let compiled = vak_presentation::compile(
+                &seed.spec,
+                &vak_presentation::CompileInput {
+                    semantic_type: (*semantic_type).into(),
+                    payload: payload.clone(),
+                    fallback_text: "Fallback".into(),
+                },
+            );
+            if !matches!(compiled, vak_presentation::CompiledPresentation::Rich(_)) {
+                failures.push(format!("{} ({semantic_type}): {compiled:?}", seed.spec.id));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} unusable packs:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
         SessionLog::create(
             dir.path().join(format!("{name}.jsonl")),

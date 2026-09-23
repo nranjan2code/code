@@ -275,6 +275,13 @@ pub struct PresentationActivation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresentationSuppression {
+    pub spec_id: String,
+    pub scope: LibraryScope,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresentationPackManifest {
     pub schema_version: u16,
     pub pack_id: String,
@@ -290,6 +297,8 @@ pub struct PresentationPackManifest {
 pub struct PresentationLibrary {
     specs: BTreeMap<(String, u64), StoredPresentation>,
     activations: Vec<PresentationActivation>,
+    #[serde(default)]
+    suppressions: Vec<PresentationSuppression>,
 }
 
 impl PresentationLibrary {
@@ -381,6 +390,7 @@ impl PresentationLibrary {
             owner: owner.to_owned(),
             semantic_types: stored.spec.accepts.clone(),
         };
+        self.clear_suppression(id, scope, owner);
         if let Some(existing) = self
             .activations
             .iter_mut()
@@ -399,6 +409,28 @@ impl PresentationLibrary {
     pub fn deactivate(&mut self, id: &str, scope: LibraryScope, owner: &str) {
         self.activations
             .retain(|entry| !(entry.spec_id == id && entry.scope == scope && entry.owner == owner));
+        if !self.is_suppressed(id, scope, owner) {
+            self.suppressions.push(PresentationSuppression {
+                spec_id: id.to_owned(),
+                scope,
+                owner: owner.to_owned(),
+            });
+        }
+    }
+
+    pub fn is_suppressed(&self, id: &str, scope: LibraryScope, owner: &str) -> bool {
+        self.suppressions
+            .iter()
+            .any(|entry| entry.spec_id == id && entry.scope == scope && entry.owner == owner)
+    }
+
+    pub fn clear_suppression(&mut self, id: &str, scope: LibraryScope, owner: &str) {
+        self.suppressions
+            .retain(|entry| !(entry.spec_id == id && entry.scope == scope && entry.owner == owner));
+    }
+
+    pub fn suppressions(&self) -> &[PresentationSuppression] {
+        &self.suppressions
     }
 
     /// Restore the immutable original revision for a scope, or clear its
@@ -406,6 +438,7 @@ impl PresentationLibrary {
     /// and receipts remain untouched.
     pub fn reset(&mut self, id: &str, scope: LibraryScope, owner: &str) -> bool {
         self.deactivate(id, scope, owner);
+        self.clear_suppression(id, scope, owner);
         let Some(original) = self.get(id, 1) else {
             return false;
         };
@@ -461,9 +494,18 @@ impl PresentationLibrary {
         definitions: impl IntoIterator<Item = StoredPresentation>,
         activations: Vec<PresentationActivation>,
     ) -> Result<Self, PresentationError> {
+        Self::from_parts_with_suppressions(definitions, activations, Vec::new())
+    }
+
+    pub fn from_parts_with_suppressions(
+        definitions: impl IntoIterator<Item = StoredPresentation>,
+        activations: Vec<PresentationActivation>,
+        suppressions: Vec<PresentationSuppression>,
+    ) -> Result<Self, PresentationError> {
         let mut library = Self {
             specs: BTreeMap::new(),
             activations,
+            suppressions,
         };
         for definition in definitions {
             library.register(definition)?;

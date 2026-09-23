@@ -92,6 +92,94 @@ const UNIVERSAL: &[(&str, &str)] = &[
     ("simulation", "simulation"),
 ];
 
+// These are the payload families of the built-in emit tools. Every seed must
+// bind the shape the tool actually validates; a title-only seed is not a card.
+const TABLE_TYPES: &[&str] = &[
+    "coding.benchmark",
+    "coding.dependencies",
+    "data.grid",
+    "table",
+    "dataframe",
+    "comparison",
+    "comparison_table",
+    "pros_cons",
+    "inventory",
+    "scorecard",
+    "budget",
+    "finance_summary",
+    "invoice_summary",
+    "travel_options",
+    "decision_matrix",
+    "criteria_matrix",
+    "tradeoff_analysis",
+];
+const TIMELINE_TYPES: &[&str] = &[
+    "coding.deployment",
+    "coding.incident",
+    "coding.architecture",
+    "coding.release",
+    "plan.timeline",
+    "timeline",
+    "itinerary",
+    "checklist",
+    "schedule",
+    "agenda",
+    "milestones",
+    "progress",
+    "status",
+    "steps",
+    "overview",
+    "summary",
+    "detail",
+    "notes",
+    "follow_up",
+    "reminder",
+    "shopping_list",
+    "lesson",
+    "reading_list",
+    "habit_plan",
+    "project_plan",
+    "meeting_notes",
+    "contact_log",
+    "home_project",
+    "care_plan",
+    "event_plan",
+    "media_list",
+    "collection",
+    "faq",
+    "decision",
+    "decision_analysis",
+    "meal_plan",
+];
+const RECIPE_TYPES: &[&str] = &[
+    "recipe.card",
+    "recipe",
+    "recipe_summary",
+    "lifestyle.recipe",
+    "lifestyle.culinary_recipe",
+];
+const RESEARCH_TYPES: &[&str] = &["research.synthesis", "research_brief", "news"];
+const UNIVERSAL_TYPES: &[&str] = &[
+    "map",
+    "route_map",
+    "calendar",
+    "availability",
+    "board",
+    "entity",
+    "search_results",
+    "coding.search",
+    "evidence",
+    "document",
+    "graph",
+    "form",
+    "action",
+    "transaction",
+    "alert",
+    "conversation",
+    "progress_dashboard",
+    "simulation",
+];
+
 fn binding(path: &str) -> SpecValue {
     SpecValue::Binding(Binding {
         path: path.into(),
@@ -137,7 +225,7 @@ fn list(primitive: Primitive, path: &str, item: SpecNode) -> SpecNode {
 
 #[allow(clippy::manual_unwrap_or_default)]
 fn seed(id: &str, accepts: &str) -> StoredPresentation {
-    let root_primitive = match accepts {
+    let mut root_primitive = match accepts {
         "itinerary" | "schedule" | "timeline" | "milestones" | "incident-timeline" => {
             Primitive::Timeline
         }
@@ -184,119 +272,111 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
             primitives[id.bytes().map(usize::from).sum::<usize>() % primitives.len()]
         }
     };
-    let mut props = BTreeMap::new();
-    props.insert("title".into(), binding("$.title"));
-    props.insert("subtitle".into(), binding("$.subtitle"));
-    props.insert("items".into(), binding("$.items"));
-    let mut text_props = BTreeMap::new();
-    text_props.insert("text".into(), binding("$.summary"));
-    let certified = matches!(id, "timeline" | "table" | "recipe" | "research-brief");
+    if TABLE_TYPES.contains(&accepts) {
+        root_primitive = Primitive::Table;
+    } else if TIMELINE_TYPES.contains(&accepts) {
+        root_primitive = Primitive::Timeline;
+    } else if RECIPE_TYPES.contains(&accepts) {
+        root_primitive = Primitive::Recipe;
+    } else if RESEARCH_TYPES.contains(&accepts) {
+        root_primitive = Primitive::Research;
+    } else if UNIVERSAL_TYPES.contains(&accepts) {
+        root_primitive = Primitive::Entity;
+    }
+    let certified = true;
     let mut root = SpecNode {
         primitive: root_primitive,
-        props,
-        children: vec![SpecNode {
-            primitive: Primitive::Text,
-            props: text_props,
-            children: Vec::new(),
-            each: None,
-            item: None,
-        }],
+        // The validated card payload is the source of truth. Preserve its
+        // fields in the tree, then bind ordered collections as children for
+        // the matching renderer. No title-only projection is allowed.
+        props: BTreeMap::from([(String::from("*"), required_binding("$"))]),
+        children: Vec::new(),
         each: None,
         item: None,
     };
-    let accepts = match id {
+    let accepts: Vec<String> = match id {
         "timeline" => vec![accepts.into(), "plan.timeline".into()],
         "recipe" => vec![accepts.into(), "recipe.card".into()],
         "research-brief" => vec![accepts.into(), "research.synthesis".into()],
         _ => vec![accepts.into()],
     };
-    match id {
-        "timeline" => {
-            root.props.remove("items");
-            root.children.clear();
-            root.each = Some(Binding {
-                path: "$.items".into(),
-                required: true,
-                empty: EmptyValue::Omit,
-            });
-            root.item = Some(Box::new(row(
-                Primitive::Section,
-                &[
-                    ("label", "$.label"),
-                    ("detail", "$.detail"),
-                    ("status", "$.status"),
-                ],
-            )));
-        }
-        "table" => {
-            root.props.remove("items");
-            root.props
-                .insert("columns".into(), required_binding("$.columns"));
-            root.children.clear();
-            root.each = Some(Binding {
-                path: "$.rows".into(),
-                required: true,
-                empty: EmptyValue::Omit,
-            });
-            root.item = Some(Box::new(row(Primitive::Row, &[("*", "$")])));
-        }
-        "recipe" => {
-            root.props.remove("items");
-            root.props.insert("servings".into(), binding("$.servings"));
-            root.props
-                .insert("cook_time_minutes".into(), binding("$.cook_time_minutes"));
-            root.children = vec![
-                list(
-                    Primitive::IngredientList,
-                    "$.ingredients",
-                    row(
-                        Primitive::Row,
-                        &[
-                            ("name", "$.name"),
-                            ("amount", "$.amount"),
-                            ("unit", "$.unit"),
-                        ],
-                    ),
+    if TIMELINE_TYPES.contains(&accepts[0].as_str()) {
+        root.each = Some(Binding {
+            path: "$.items".into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        });
+        root.item = Some(Box::new(row(Primitive::Section, &[("*", "$")])));
+    } else if TABLE_TYPES.contains(&accepts[0].as_str()) {
+        root.each = Some(Binding {
+            path: "$.rows".into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        });
+        root.item = Some(Box::new(row(Primitive::Row, &[("*", "$")])));
+    } else if RECIPE_TYPES.contains(&accepts[0].as_str()) {
+        root.children = vec![
+            list(
+                Primitive::IngredientList,
+                "$.ingredients",
+                row(
+                    Primitive::Row,
+                    &[
+                        ("name", "$.name"),
+                        ("amount", "$.amount"),
+                        ("unit", "$.unit"),
+                    ],
                 ),
-                list(
-                    Primitive::StepList,
-                    "$.steps",
-                    row(
-                        Primitive::Section,
-                        &[("text", "$.text"), ("timer_seconds", "$.timer_seconds")],
-                    ),
+            ),
+            list(
+                Primitive::StepList,
+                "$.steps",
+                row(
+                    Primitive::Section,
+                    &[("text", "$.text"), ("timer_seconds", "$.timer_seconds")],
                 ),
-            ];
-        }
-        "research-brief" => {
-            root.props.remove("items");
-            root.children = vec![
-                list(
-                    Primitive::TakeawayList,
-                    "$.takeaways",
-                    row(
-                        Primitive::Section,
-                        &[
-                            ("text", "$.text"),
-                            ("citation_indices", "$.citation_indices"),
-                        ],
-                    ),
+            ),
+        ];
+    } else if RESEARCH_TYPES.contains(&accepts[0].as_str()) {
+        root.children = vec![
+            list(
+                Primitive::TakeawayList,
+                "$.takeaways",
+                row(
+                    Primitive::Section,
+                    &[
+                        ("text", "$.text"),
+                        ("citation_indices", "$.citation_indices"),
+                    ],
                 ),
-                list(
-                    Primitive::SourceList,
-                    "$.sources",
-                    row(
-                        Primitive::Section,
-                        &[
-                            ("title", "$.title"),
-                            ("url", "$.url"),
-                            ("source_name", "$.source_name"),
-                        ],
-                    ),
+            ),
+            list(
+                Primitive::SourceList,
+                "$.sources",
+                row(
+                    Primitive::Section,
+                    &[
+                        ("title", "$.title"),
+                        ("url", "$.url"),
+                        ("source_name", "$.source_name"),
+                    ],
                 ),
-            ];
-        }
-        _ => {}
+            ),
+        ];
+    } else if accepts[0] == "coding.diff" {
+        root.each = Some(Binding {
+            path: "$.files".into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        });
+        root.item = Some(Box::new(row(Primitive::Section, &[("*", "$")])));
+    } else if accepts[0] == "test.report" {
+        root.each = Some(Binding {
+            path: "$.tests".into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        });
+        root.item = Some(Box::new(row(Primitive::Section, &[("*", "$")])));
     }
     let spec = PresentationSpec {
         schema_version: super::SPEC_SCHEMA_VERSION,
@@ -304,7 +384,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         // Seed definitions are immutable revisions. Bump this whenever the
         // declarative starter shape changes so an older persisted seed cannot
         // collide with the new digest at the same (id, revision) key.
-        revision: 4,
+        revision: 6,
         accepts,
         root,
         fallback: FallbackSpec::default(),
@@ -330,15 +410,15 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
             scope: LibraryScope::Workspace,
             owner: "builtin".into(),
             plugin_id: None,
-            generation: Some("seed-4-live-cards".into()),
+            generation: Some("seed-6-all-live-shapes".into()),
         },
         enabled: false,
     }
 }
 
-/// The built-in starter pack contains domain experiences plus universal
-/// interaction shapes. They are disabled previews and may be activated
-/// explicitly.
+/// Built-in domain and universal experiences. Records themselves are disabled
+/// so importing a definition grants no activation; the host applies defaults
+/// unless a person has explicitly suppressed or replaced a pack.
 pub fn built_in_seed_pack() -> Vec<StoredPresentation> {
     EVERYDAY
         .iter()
@@ -392,6 +472,26 @@ mod tests {
     }
 
     #[test]
+    fn every_seed_has_a_known_live_payload_family() {
+        for seed in built_in_seed_pack() {
+            let kind = seed.spec.accepts[0].as_str();
+            assert!(
+                TABLE_TYPES.contains(&kind)
+                    || TIMELINE_TYPES.contains(&kind)
+                    || RECIPE_TYPES.contains(&kind)
+                    || RESEARCH_TYPES.contains(&kind)
+                    || UNIVERSAL_TYPES.contains(&kind)
+                    || matches!(
+                        kind,
+                        "metric" | "ui.preview" | "coding.diff" | "test.report" | "terminal.view"
+                    ),
+                "{} has no complete payload family",
+                seed.spec.id
+            );
+        }
+    }
+
+    #[test]
     fn new_primitives_compile_rich_with_their_own_payloads() {
         // The enum additions are reachable end to end, not decorative: each
         // compiles through the same generic pipeline as every other seed.
@@ -410,7 +510,8 @@ mod tests {
                 serde_json::json!({
                     "title": "Grid storage in 2026",
                     "summary": "Three takeaways with sources",
-                    "items": ["Costs fell", "Deployment doubled"],
+                    "takeaways": [{"text":"Costs fell","citation_indices":[1]}],
+                    "sources": [{"title":"Report","url":"https://example.com"}],
                 }),
             ),
             (
@@ -475,6 +576,8 @@ mod tests {
                         "steps": [{"text":"Cook the oats"}],
                         "takeaways": [{"text":"One takeaway"}],
                         "sources": [{"title":"Source","url":"https://example.com"}],
+                        "files": [{"filename":"a.txt","hunks":"+hello","additions":1,"deletions":0}],
+                        "tests": [{"name":"works","status":"passed"}],
                     }),
                     fallback_text: "Example result".into(),
                 },

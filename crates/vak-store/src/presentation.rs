@@ -16,6 +16,8 @@ struct PresentationDisk {
     schema_version: u16,
     definitions: Vec<StoredPresentation>,
     activations: Vec<vak_presentation::PresentationActivation>,
+    #[serde(default)]
+    suppressions: Vec<vak_presentation::PresentationSuppression>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,8 +56,12 @@ impl PresentationStore {
                 disk.schema_version
             )));
         }
-        vak_presentation::PresentationLibrary::from_parts(disk.definitions, disk.activations)
-            .map_err(|error| PresentationStoreError::Invalid(error.to_string()))
+        vak_presentation::PresentationLibrary::from_parts_with_suppressions(
+            disk.definitions,
+            disk.activations,
+            disk.suppressions,
+        )
+        .map_err(|error| PresentationStoreError::Invalid(error.to_string()))
     }
 
     pub fn save(&self, library: &PresentationLibrary) -> Result<(), PresentationStoreError> {
@@ -66,6 +72,7 @@ impl PresentationStore {
             schema_version: PRESENTATION_STORE_SCHEMA,
             definitions: library.definitions().cloned().collect(),
             activations: library.activations().to_vec(),
+            suppressions: library.suppressions().to_vec(),
         };
         let bytes = serde_json::to_vec_pretty(&disk)?;
         let nonce = std::time::SystemTime::now()

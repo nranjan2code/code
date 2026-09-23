@@ -1363,9 +1363,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
 }
 
 export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
+  const root = () => props.tree.spec_id.startsWith("seed.") && props.tree.root.primitive === "entity"
+    ? { ...props.tree.root, props: { ...props.tree.root.props, kind: props.tree.spec_id.slice(5).replaceAll("-", " ") } }
+    : props.tree.root;
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      <GenericSpecRenderer node={props.tree.root} />
+      <GenericSpecRenderer node={root()} />
     </section>
   );
 }
