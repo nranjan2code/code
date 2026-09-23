@@ -251,7 +251,7 @@ impl DiscordBridge {
 
     /// One message through the gateway contract; wait for the final text.
     async fn process(&self, message: &DiscordMessage) -> GatewayReply {
-        let mut text = message.text.clone();
+        let text = message.text.clone();
         let mut attachments = Vec::new();
         if let Some(url) = &message.audio_url {
             match http()
@@ -267,19 +267,11 @@ impl DiscordBridge {
                         use base64::Engine as _;
                         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                         attachments.push(serde_json::json!({
-                            "data": encoded.clone(),
+                            "data": encoded,
                             "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
                             "kind": "audio",
                             "filename": "voice",
                         }));
-                        if let Ok(transcribed) = http().post(format!("{}/voice/transcribe", self.gateway_url))
-                                .bearer_auth(&self.gateway_token)
-                                .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
-                                .send().await
-                                && transcribed.status().is_success()
-                                && let Ok(value) = transcribed.json::<Value>().await
-                                && let Some(result) = value["text"].as_str()
-                            { text = format!("{}\n{}", text.trim(), result.trim()).trim().to_string(); }
                     }
                 }
                 _ => {}

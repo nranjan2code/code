@@ -3282,6 +3282,7 @@ function VoiceConfigEditor(props: {
       const blob = await api.speak({
         text: "Hi, this is a preview of my voice.",
         voice_override: {
+          provider: props.provider || null,
           voice_name: props.voiceName || null,
           transcription_model: props.transcriptionModel || null,
           synthesis_model: props.synthesisModel || null,

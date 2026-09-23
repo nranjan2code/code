@@ -228,7 +228,7 @@ impl SlackBridge {
     }
 
     async fn process(&self, message: &SlackMessage) -> GatewayReply {
-        let mut text = message.text.clone();
+        let text = message.text.clone();
         let mut attachments = Vec::new();
         if let Some(url) = &message.audio_url
             && let Ok(response) = http().get(url).bearer_auth(&self.bot_token).send().await
@@ -239,19 +239,11 @@ impl SlackBridge {
             use base64::Engine as _;
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
             attachments.push(serde_json::json!({
-                "data": encoded.clone(),
+                "data": encoded,
                 "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg"),
                 "kind": "audio",
                 "filename": "voice",
             }));
-            if let Ok(response) = http().post(format!("{}/voice/transcribe", self.gateway_url))
-                    .bearer_auth(&self.gateway_token)
-                    .json(&serde_json::json!({"audio_base64": encoded, "mime": message.audio_mime.as_deref().unwrap_or("audio/ogg")}))
-                    .send().await
-                    && response.status().is_success()
-                    && let Ok(value) = response.json::<Value>().await
-                    && let Some(transcript) = value["text"].as_str()
-                { text = format!("{}\n{}", text.trim(), transcript.trim()).trim().to_string(); }
         }
         // 0c-03: real per-user chat/sender, never a fixed placeholder.
         let req = match InboundRequest::new(

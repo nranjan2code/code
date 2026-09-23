@@ -1,12 +1,13 @@
-//! The voice surface (docs/design/49-live-voice.md): `/voice/transcribe`,
-//! `/voice/speak`, `/voice/providers` and `WS /voice/session`.
+//! The voice surface (docs/design/49-live-voice.md): `/voice/speak`,
+//! `/voice/providers`, `WS /voice/session`, and the transcription of voice
+//! notes the gateway admits from channels.
 //!
 //! Every route resolves its provider through [`vak_voice::VoiceProvider`] and
 //! its credentials through the canonical secret chain, and every paid call
 //! draws on one shared per-minute [`RequestWindow`]. Transcription has one
-//! implementation, [`transcribe`], used by the channel bridges' batch route
-//! and by the socket alike, so the two cannot drift in which providers,
-//! models or encodings they accept.
+//! implementation, [`transcribe`], used by the socket and by channel voice
+//! notes alike. A channel note is transcribed only after allowlist admission,
+//! through its chat's bot → chat voice tiers ([`narrowed`]).
 
 use crate::AppState;
 use axum::{
@@ -210,68 +211,19 @@ pub(crate) async fn transcribe(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct TranscribeBody {
-    audio_base64: String,
-    mime: String,
-}
-
-/// `POST /voice/transcribe`: bounded batch transcription for the channel
-/// bridges. It only transcribes; the bridge's gateway inbound records the
-/// resulting turn.
-pub(crate) async fn voice_transcribe(
-    State(state): State<AppState>,
-    Json(body): Json<TranscribeBody>,
-) -> Response {
-    use base64::Engine as _;
-    let settings = state.core.effective_voice();
-    if !body.mime.starts_with("audio/") {
-        return error_response(StatusCode::BAD_REQUEST, "mime must be an audio type");
-    }
-    let limit = settings.max_audio_bytes;
-    let audio = match base64::engine::general_purpose::STANDARD.decode(body.audio_base64.trim()) {
-        Ok(bytes) if !bytes.is_empty() && bytes.len() as u64 <= limit => bytes,
-        Ok(_) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("audio must be 1 byte to {limit} bytes"),
-            );
-        }
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "audio_base64 is invalid"),
-    };
-    if let Err(error) = route(&settings) {
-        return error.into_response();
-    }
-    // Only a valid request for an enabled route spends the rolling quota.
-    if !state.voice_requests.admit(settings.max_requests_per_minute) {
-        return error_response(
-            StatusCode::TOO_MANY_REQUESTS,
-            "voice request rate limit exceeded",
-        );
-    }
-    match transcribe(&settings, &audio, &body.mime, &CancellationToken::new()).await {
-        Ok(text) if text.is_empty() => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "No speech was recognized")
-        }
-        Ok(text) => Json(serde_json::json!({ "text": text })).into_response(),
-        Err(error) => error.into_response(),
-    }
-}
-
-#[derive(Deserialize)]
 pub(crate) struct SpeakBody {
     text: String,
     /// `wav` (default), `pcm16`, `ogg_opus` or `mp3`, within what the
     /// provider can produce.
     #[serde(default)]
     format: Option<String>,
-    #[serde(default)]
-    bot_id: Option<String>,
-    #[serde(default)]
-    chat_key: Option<String>,
+    /// A voice being auditioned (the admin console's Preview): the narrowest
+    /// tier, above everything the conversation resolves to.
     #[serde(default)]
     voice_override: Option<vak_config::VoiceConfig>,
-    /// The conversation the answer belongs to; its Agent's voice style and
-    /// personality shape the persona when nothing narrower does.
+    /// The conversation the answer belongs to. A gateway chat's session
+    /// brings that chat's bot → chat voice tiers; any session brings its
+    /// Agent's voice style and personality.
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -286,7 +238,8 @@ pub(crate) async fn voice_speak(
     if body.text.trim().is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "text must not be empty");
     }
-    let settings = state.core.effective_voice();
+    let voice = resolve_speaker(&state, &body);
+    let settings = voice.settings;
     let provider = match route(&settings) {
         Ok(provider) => provider,
         Err(error) => return error.into_response(),
@@ -315,7 +268,7 @@ pub(crate) async fn voice_speak(
             "voice request rate limit exceeded",
         );
     }
-    let (voice_name, persona) = resolve_voice(&state, &body);
+    let (voice_name, persona) = (voice.voice_name, voice.persona);
     let model = match provider {
         VoiceProvider::Local => None,
         _ => match pinned_model(settings.synthesis_model.as_ref(), "synthesis") {
@@ -418,55 +371,167 @@ async fn synthesize(
     }
 }
 
-/// Voice name and persona for a synthesis request. Resolution order: the
-/// caller's explicit override (the admin console auditioning a value) >
-/// the chat's or bot's resolved voice > the conversation's Agent identity.
-fn resolve_voice(state: &AppState, body: &SpeakBody) -> (Option<String>, Option<String>) {
-    let resolved = body.voice_override.clone().or_else(|| {
-        if let Some(chat_key) = body.chat_key.as_deref() {
-            state.gateway.resolve_voice(chat_key)
-        } else {
-            body.bot_id
-                .as_deref()
-                .and_then(|bot_id| state.gateway.bot_get(bot_id).and_then(|bot| bot.voice))
-        }
+/// Workspace voice settings narrowed by a voice tier: its provider and
+/// model pins win where set, like every other route tier (invariant 23).
+pub(crate) fn narrowed(
+    mut settings: vak_config::VoiceSettings,
+    tier: Option<&vak_config::VoiceConfig>,
+) -> vak_config::VoiceSettings {
+    let Some(tier) = tier else {
+        return settings;
+    };
+    let pin = |value: &Option<String>| value.clone().filter(|v| !v.trim().is_empty());
+    if let Some(provider) = pin(&tier.provider) {
+        settings.provider = Some(provider);
+    }
+    if let Some(model) = pin(&tier.transcription_model) {
+        settings.transcription_model = Some(model);
+    }
+    if let Some(model) = pin(&tier.synthesis_model) {
+        settings.synthesis_model = Some(model);
+    }
+    settings
+}
+
+/// The gateway chat a session is bound to, if any.
+fn chat_for_session(state: &AppState, session_id: &str) -> Option<String> {
+    state
+        .gateway
+        .bindings_snapshot()
+        .into_iter()
+        .find(|(_, binding)| binding.session_id.as_deref() == Some(session_id))
+        .map(|(key, _)| key)
+}
+
+struct Speaker {
+    settings: vak_config::VoiceSettings,
+    voice_name: Option<String>,
+    persona: Option<String>,
+}
+
+/// Route, voice and persona for a synthesis request, narrowest first: the
+/// auditioned override > the bound chat's bot → chat tiers (and its
+/// workspace) > the conversation's Agent identity > the workspace.
+fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Speaker {
+    let chat = body
+        .session_id
+        .as_deref()
+        .and_then(|id| chat_for_session(state, id));
+    let core = chat
+        .as_deref()
+        .and_then(|key| state.gateway.core_for_entry(&state.core, key).ok())
+        .unwrap_or_else(|| state.core.clone());
+    let chat_voice = chat
+        .as_deref()
+        .and_then(|key| state.gateway.resolve_voice(key));
+    let settings = narrowed(
+        narrowed(core.effective_voice(), chat_voice.as_ref()),
+        body.voice_override.as_ref(),
+    );
+    let non_empty = |value: Option<String>| value.filter(|v| !v.trim().is_empty());
+    let voice_name = non_empty(
+        body.voice_override
+            .as_ref()
+            .and_then(|voice| voice.voice_name.clone()),
+    )
+    .or_else(|| {
+        non_empty(
+            chat_voice
+                .as_ref()
+                .and_then(|voice| voice.voice_name.clone()),
+        )
     });
-    let voice_name = resolved
-        .as_ref()
-        .and_then(|voice| voice.voice_name.clone())
-        .filter(|name| !name.trim().is_empty());
     // The persona comes from the bot/chat `identity` prompt block
     // (docs/design/45-prompt-layers.md); an explicit override still wins.
-    let persona = body
-        .voice_override
-        .as_ref()
-        .and_then(|voice| voice.persona.clone())
-        .filter(|persona| !persona.trim().is_empty())
-        .or_else(|| {
-            if let Some(chat_key) = body.chat_key.as_deref() {
-                state.gateway.resolve_persona(chat_key)
-            } else {
-                body.bot_id
-                    .as_deref()
-                    .and_then(|bot_id| state.gateway.resolve_bot_persona(bot_id))
-            }
+    let persona = non_empty(
+        body.voice_override
+            .as_ref()
+            .and_then(|voice| voice.persona.clone()),
+    )
+    .or_else(|| {
+        chat.as_deref()
+            .and_then(|key| state.gateway.resolve_persona(key))
+    })
+    .or_else(|| {
+        let header = crate::read_historical_header(state, body.session_id.as_deref()?, None)?;
+        let agent = header.agent?;
+        let style = match agent.voice.as_str() {
+            "calm" => "Speak calmly, warmly, and at an unhurried pace.",
+            "bright" => "Speak with clear, friendly energy.",
+            "quiet" => "Speak gently, evenly, and without theatrical emphasis.",
+            _ => "Speak naturally and clearly.",
+        };
+        Some(if agent.personality.trim().is_empty() {
+            style.to_string()
+        } else {
+            format!("{style} {}", agent.personality)
         })
-        .or_else(|| {
-            let header = crate::read_historical_header(state, body.session_id.as_deref()?, None)?;
-            let agent = header.agent?;
-            let style = match agent.voice.as_str() {
-                "calm" => "Speak calmly, warmly, and at an unhurried pace.",
-                "bright" => "Speak with clear, friendly energy.",
-                "quiet" => "Speak gently, evenly, and without theatrical emphasis.",
-                _ => "Speak naturally and clearly.",
-            };
-            Some(if agent.personality.trim().is_empty() {
-                style.to_string()
-            } else {
-                format!("{style} {}", agent.personality)
-            })
-        });
-    (voice_name, persona)
+    });
+    Speaker {
+        settings,
+        voice_name,
+        persona,
+    }
+}
+
+/// What the model is told about one channel voice note.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum VoiceNote {
+    Heard(String),
+    Unheard(String),
+}
+
+impl VoiceNote {
+    /// The note's place in the user message: its words, or an honest account
+    /// of why there are none.
+    pub(crate) fn prompt_line(&self) -> String {
+        match self {
+            Self::Heard(text) => text.clone(),
+            Self::Unheard(reason) => format!("[voice note not transcribed: {reason}]"),
+        }
+    }
+}
+
+/// Transcribe one voice note from an admitted gateway chat through that
+/// chat's resolved route and the shared per-minute budget. Called only after
+/// allowlist admission, so an unknown or pending chat never spends a provider
+/// call.
+pub(crate) async fn transcribe_voice_note(
+    state: &AppState,
+    core: &vak_core::Core,
+    key: &str,
+    mime: &str,
+    data_base64: &str,
+    rejected: Option<&str>,
+) -> VoiceNote {
+    use base64::Engine as _;
+    if let Some(reason) = rejected {
+        return VoiceNote::Unheard(reason.to_string());
+    }
+    let Ok(audio) = base64::engine::general_purpose::STANDARD.decode(data_base64.trim()) else {
+        return VoiceNote::Unheard("the audio could not be decoded".into());
+    };
+    let settings = narrowed(
+        core.effective_voice(),
+        state.gateway.resolve_voice(key).as_ref(),
+    );
+    if audio.is_empty() || audio.len() as u64 > settings.max_audio_bytes {
+        return VoiceNote::Unheard(format!(
+            "the audio must be 1 to {} bytes",
+            settings.max_audio_bytes
+        ));
+    }
+    if let Err(error) = route(&settings) {
+        return VoiceNote::Unheard(error.message());
+    }
+    if !state.voice_requests.admit(settings.max_requests_per_minute) {
+        return VoiceNote::Unheard("this minute's voice request budget is spent".into());
+    }
+    match transcribe(&settings, &audio, mime, &CancellationToken::new()).await {
+        Ok(text) if text.is_empty() => VoiceNote::Unheard("no speech was recognized".into()),
+        Ok(text) => VoiceNote::Heard(text),
+        Err(error) => VoiceNote::Unheard(error.message()),
+    }
 }
 
 /// `GET /voice/providers`: the static provider catalogue with credential or
@@ -894,6 +959,41 @@ mod tests {
         assert_eq!(route(&settings).unwrap(), VoiceProvider::OpenAi);
         settings.enabled = false;
         assert!(matches!(route(&settings), Err(RouteError::Disabled)));
+    }
+
+    #[test]
+    fn a_chat_tier_narrows_the_workspace_route_and_blanks_inherit() {
+        let workspace = vak_config::VoiceSettings {
+            enabled: true,
+            provider: Some("gemini".into()),
+            transcription_model: Some("stt-workspace".into()),
+            synthesis_model: Some("tts-workspace".into()),
+            ..Default::default()
+        };
+        let chat = vak_config::VoiceConfig {
+            provider: Some("openai".into()),
+            synthesis_model: Some("tts-chat".into()),
+            transcription_model: Some("  ".into()),
+            ..Default::default()
+        };
+        let effective = narrowed(workspace.clone(), Some(&chat));
+        assert_eq!(effective.provider.as_deref(), Some("openai"));
+        assert_eq!(effective.synthesis_model.as_deref(), Some("tts-chat"));
+        assert_eq!(
+            effective.transcription_model.as_deref(),
+            Some("stt-workspace")
+        );
+        assert!(effective.enabled, "a tier never changes the enable switch");
+        assert_eq!(narrowed(workspace.clone(), None), workspace);
+    }
+
+    #[test]
+    fn a_voice_note_tells_the_model_the_truth() {
+        assert_eq!(VoiceNote::Heard("hi".into()).prompt_line(), "hi");
+        assert_eq!(
+            VoiceNote::Unheard("no speech was recognized".into()).prompt_line(),
+            "[voice note not transcribed: no speech was recognized]"
+        );
     }
 
     #[test]

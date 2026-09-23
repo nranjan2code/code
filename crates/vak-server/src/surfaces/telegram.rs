@@ -374,35 +374,6 @@ impl TelegramBridge {
                             "kind": "audio",
                             "filename": voice.file_name,
                         }));
-                        if let Some(audio) = attachments.last()
-                            && let Some(data) = audio.get("data").and_then(Value::as_str)
-                        {
-                            let request = http()
-                                .post(format!("{}/voice/transcribe", self.gateway_url))
-                                .bearer_auth(&self.gateway_token)
-                                .json(&serde_json::json!({
-                                    "audio_base64": data,
-                                    "mime": audio["mime"],
-                                }))
-                                .send()
-                                .await;
-                            match request {
-                                Ok(r) if r.status().is_success() => {
-                                    if let Ok(v) = r.json::<Value>().await
-                                        && let Some(transcript) = v["text"].as_str()
-                                        && !transcript.trim().is_empty()
-                                    {
-                                        text = format!("{}\n{}", text.trim(), transcript.trim())
-                                            .trim()
-                                            .to_string();
-                                    }
-                                }
-                                Ok(r) => {
-                                    eprintln!("[telegram] transcription returned {}", r.status())
-                                }
-                                Err(e) => eprintln!("[telegram] transcription request failed: {e}"),
-                            }
-                        }
                     }
                     Err(e) => eprintln!("[telegram] voice download failed: {e}"),
                 }

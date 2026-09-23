@@ -21,7 +21,7 @@ never built or has been removed.
 **One provider vocabulary.** `vak_voice::VoiceProvider`
 (`crates/vak-voice/src/provider.rs`) is the closed set `gemini`, `openai`,
 `local`, parsed in exactly one place. Every route resolves through it, so the
-socket, `/voice/transcribe`, `/voice/speak`, `/voice/providers`, `/config`
+socket, channel voice notes, `/voice/speak`, `/voice/providers`, `/config`
 and doctor cannot disagree about names. An unset provider is a configuration
 gap reported as such, never an implicit vendor. Hosted routes require explicit
 `transcription_model` / `synthesis_model` pins from the operator's discovered
@@ -29,12 +29,31 @@ catalogue (invariant 9); there is no shared `model` fallback and no realtime
 model, because no realtime adapter exists.
 
 **One server surface.** `crates/vak-server/src/voice.rs` holds every voice
-route. Transcription has a single implementation used by the channel
-bridges' batch route and the socket alike. Every paid call — batch
-transcription, synthesis, each socket utterance — draws on one
-per-process `RequestWindow` sized by `voice.max_requests_per_minute`.
-`/voice/speak` records a `WorkReceipt` with real latency for every provider,
-success or failure.
+route. Transcription has a single implementation used by the socket and by
+channel voice notes alike. Every paid call — a channel note, synthesis, each
+socket utterance — draws on one per-process `RequestWindow` sized by
+`voice.max_requests_per_minute`. `/voice/speak` records a `WorkReceipt` with
+real latency for every provider, success or failure.
+
+**Voice tiers.** The route a chat speaks and listens through is the
+workspace `[voice]` settings narrowed by its bot → chat `VoiceConfig`
+(provider and model pins win where set; a blank pin inherits), the same
+override-or-inherit chain as every other gateway tier (invariant 23).
+`/voice/speak` identifies the chat from the `session_id` it is given — the
+session's gateway binding — so a channel reply uses that chat's route, voice
+and persona without the bridge naming a chat key; the admin console's
+Preview passes its auditioned `voice_override` as the narrowest tier.
+
+**Channel voice notes.** Telegram, Discord and Slack bridges only attach the
+audio to `/gateway/inbound`. The gateway transcribes it after allowlist
+admission and request de-duplication, through the chat's tiers, so an unknown
+or pending chat never spends a provider call and a retried request is not
+transcribed twice. The transcript joins the typed text as the user's message;
+a note that could not be transcribed reaches the model as
+`[voice note not transcribed: <reason>]` rather than silently vanishing.
+Spoken words are steering, never control: commands are parsed from typed
+text only (invariant 32). Each heard note is a `voice_transcript` activity on
+the ledger. There is no separate batch transcription endpoint.
 
 **The socket protocol** (`crates/vak-voice/src/protocol.rs`, version 1).
 Binary frames are 16 kHz mono 16-bit PCM. Client and server controls are
@@ -83,14 +102,16 @@ has no valid provider, no credential for it, or no model pin.
 WebSocket upgrade against the real router with a scripted transcriber and
 model: flat noise is discarded without reaching the transcriber, speech
 becomes one Agent turn whose answer returns on the socket, playback is in
-the ledger, a forged client transcript is refused and never logged, and a
-cross-origin upgrade is refused.
+the ledger, a forged client transcript is refused and never logged, a
+cross-origin upgrade is refused, and a session with no provider route is
+refused at connect. `crates/vak-server/tests/voice_channels.rs` posts a voice
+note through the gateway: a pending chat's note never reaches the
+transcriber, and an admitted chat's note reaches the model as its words.
 
 **Open.** A human-heard, physical-microphone round trip in a quiet room;
-per-bot/per-chat voice routes (`VoiceConfig.provider` and its model pins are
-stored but not yet applied to dispatch — only `voice_name` and `persona`
-are); realtime streaming adapters; retiring the separate one-shot narration
-path in the client once spoken conversation covers it.
+a live channel voice note through a real bot; realtime streaming adapters;
+retiring the separate one-shot narration path in the client once spoken
+conversation covers it.
 
 Credential handling is intentionally outside the voice protocol: provider
 keys are resolved through vak's existing secret lookup chain and are never

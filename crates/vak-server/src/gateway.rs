@@ -1451,21 +1451,6 @@ impl GatewayState {
             })
     }
 
-    /// The bot tier's own persona, for a `bot_id` with no chat.
-    pub(crate) fn resolve_bot_persona(&self, bot_id: &str) -> Option<String> {
-        let bot = self.bot_get(bot_id)?;
-        bot.prompt
-            .identity
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty())
-            .or_else(|| {
-                bot.voice
-                    .and_then(|voice| voice.persona)
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-            })
-    }
-
     pub(crate) fn resolve_voice(&self, key: &str) -> Option<vak_config::VoiceConfig> {
         let entry = self
             .allowlist_get(key)
@@ -1860,17 +1845,9 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
             )));
             continue;
         }
+        // A voice note reaches the model as its transcript (or the reason
+        // there is none) in the message text, never as an attachment block.
         if a.kind == "audio" {
-            let filename = a.filename.as_deref().unwrap_or("audio");
-            if let Some(error) = a.error.as_deref() {
-                blocks.push(vak_llm::ContentBlock::text(format!(
-                    "[audio attachment '{filename}' rejected: {error}]"
-                )));
-                continue;
-            }
-            blocks.push(vak_llm::ContentBlock::text(format!(
-                "[audio attachment '{filename}' received; transcription provider is not configured]"
-            )));
             continue;
         }
         blocks.push(vak_llm::ContentBlock::image_base64(
@@ -2238,6 +2215,30 @@ async fn gateway_inbound(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(request_id.clone());
+    // Voice notes are transcribed only now — after allowlist admission and
+    // request de-duplication, so an unknown chat or a retried request never
+    // spends a provider call — through this chat's bot → chat voice tiers.
+    // Spoken words are steering text, never control: commands are parsed from
+    // what was typed.
+    let mut voice_notes = Vec::new();
+    for attachment in body.attachments.iter().filter(|a| a.kind == "audio") {
+        voice_notes.push(
+            crate::voice::transcribe_voice_note(
+                &state,
+                &core,
+                &key,
+                &attachment.mime,
+                &attachment.data,
+                attachment.error.as_deref(),
+            )
+            .await,
+        );
+    }
+    let expanded_text = std::iter::once(text.clone())
+        .filter(|typed| !typed.is_empty())
+        .chain(voice_notes.iter().map(crate::voice::VoiceNote::prompt_line))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut admission_data = std::collections::BTreeMap::from([
         ("request_id".into(), request_id.clone()),
         ("sender".into(), body.sender.clone().unwrap_or_default()),
@@ -2265,7 +2266,7 @@ async fn gateway_inbound(
             kind: vak_session::ActivityKind::Run,
             status: vak_session::ActivityStatus::Running,
             label: "Gateway request accepted".into(),
-            detail: Some(text.clone()),
+            detail: Some(expanded_text.clone()),
             data: admission_data,
         },
     );
@@ -2280,8 +2281,7 @@ async fn gateway_inbound(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("unknown");
-    let preview: String = text.chars().take(80).collect();
-    let expanded_text = text.clone();
+    let preview: String = expanded_text.chars().take(80).collect();
     state.hub.emit_gateway_inbound(&body.surface, who, &preview);
     // Only an explicit command is control; everything else a person types
     // while the run is busy is steering text (docs/design/47, control
@@ -2413,23 +2413,19 @@ async fn gateway_inbound(
         _ => expanded_text,
     };
     let prompt = compose_prompt(&attributed, &body.attachments);
-    // Audio ingress is an auditable presentation event as well as model
-    // input.  Keep the transcript activity on the append-only session ledger
-    // before dispatch so channel bridges and the web voice client have the
-    // same durable evidence.  The bridge supplies the authoritative text;
-    // the normal prompt entry is still recorded by the turn executor.
-    if body
-        .attachments
-        .iter()
-        .any(|a| a.kind == "audio" && !a.data.trim().is_empty())
-        && let Ok(mut session) = handle.session.lock()
-        && let Some(session) = session.as_mut()
-    {
-        let _ = session.append_voice_transcript(
-            uuid::Uuid::now_v7().to_string(),
-            attributed.clone(),
-            true,
-        );
+    // Each heard voice note is a durable transcript activity on the
+    // append-only ledger, the same evidence the web voice socket records.
+    for note in &voice_notes {
+        if let crate::voice::VoiceNote::Heard(transcript) = note
+            && let Ok(mut session) = handle.session.lock()
+            && let Some(session) = session.as_mut()
+        {
+            let _ = session.append_voice_transcript(
+                format!("voice:{request_id}"),
+                transcript.clone(),
+                true,
+            );
+        }
     }
     // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)
     // to the exact chat/bot destination it is running in. Chat surfaces use
@@ -3323,9 +3319,9 @@ mod tests {
     }
 
     #[test]
-    fn audio_attachment_is_never_advertised_as_an_image() {
+    fn a_voice_note_reaches_the_model_only_as_its_text() {
         let prompt = compose_prompt(
-            "",
+            "[voice note not transcribed: no speech was recognized]",
             &[InboundAttachment {
                 kind: "audio".into(),
                 mime: "audio/ogg".into(),
@@ -3334,9 +3330,10 @@ mod tests {
                 error: None,
             }],
         );
+        assert_eq!(prompt.content.len(), 1);
         assert!(matches!(
             &prompt.content[0],
-            vak_llm::ContentBlock::Text { text } if text.contains("audio attachment")
+            vak_llm::ContentBlock::Text { text } if text.contains("no speech was recognized")
         ));
     }
 
@@ -3742,10 +3739,6 @@ mod tests {
         state.gateway.bot_upsert(&core, bot);
         assert_eq!(
             state.gateway.resolve_persona("telegram:42").as_deref(),
-            Some("You are the ACME support bot: warm and brief.")
-        );
-        assert_eq!(
-            state.gateway.resolve_bot_persona("support").as_deref(),
             Some("You are the ACME support bot: warm and brief.")
         );
 

@@ -36,7 +36,6 @@
 //! - `POST /inbox/:id/ack`            → idempotent read-state tombstone
 //! - `GET  /inbox/unread_count`       → live unread total
 //! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
-//! - `POST /voice/transcribe`         → bounded provider-routed batch transcription
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 //! - `POST /agent-network/capabilities` → issue an explicitly scoped agent capability
@@ -945,7 +944,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/services/activate", post(activate_services))
         .route("/finops", get(finops_status).patch(patch_finops))
         .route("/voice/speak", post(voice::voice_speak))
-        .route("/voice/transcribe", post(voice::voice_transcribe))
         .route("/voice/providers", get(voice::voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))

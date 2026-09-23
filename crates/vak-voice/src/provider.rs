@@ -1,7 +1,7 @@
 //! The closed set of voice providers and their static capability catalogue.
 //!
 //! A provider name is parsed exactly once, here. Every surface — the socket,
-//! `/voice/transcribe`, `/voice/speak`, `/voice/providers`, doctor — resolves
+//! channel voice notes, `/voice/speak`, `/voice/providers`, doctor — resolves
 //! through [`VoiceProvider`], so they cannot disagree about which names exist
 //! or what an unset route means. Model and voice ids are never listed here:
 //! they are properties of the operator's key (invariant 9).
