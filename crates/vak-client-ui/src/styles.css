@@ -650,6 +650,19 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .plan-change input { flex: 1; min-width: 120px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 6px 9px; }
 .plan-change span { color: var(--text-soft); font-size: 12px; }
 .chat { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 30px 32px 36px; scroll-behavior: auto; }
+.turn-rail { position: absolute; z-index: 6; left: 8px; top: 42px; bottom: 48px; width: 22px; display: flex; flex-direction: column; justify-content: center; pointer-events: none; }
+.turn-rail-track { position: relative; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; padding: 3px 0; outline: none; cursor: pointer; pointer-events: auto; }
+.turn-rail-tick { display: block; flex: 0 0 2px; width: 7px; border-radius: 2px; background: var(--border-strong); opacity: .48; transition: width 120ms ease, opacity 120ms ease, background 120ms ease; }
+.turn-rail-tick.active { width: 13px; opacity: .88; }
+.turn-rail-track:hover .turn-rail-tick { opacity: .7; }
+.turn-rail-track .turn-rail-tick.hovered { width: 19px; background: var(--text-soft); opacity: 1; }
+.turn-rail-track:focus-visible { border-radius: 5px; outline: 2px solid var(--accent); outline-offset: 3px; }
+.turn-rail-preview { position: absolute; left: 28px; width: min(280px, calc(100vw - 100px)); display: grid; gap: 4px; padding: 9px 11px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 94%, transparent); color: var(--text); box-shadow: 0 9px 28px rgba(0,0,0,.16); font-size: 12px; line-height: 1.4; opacity: 0; transform: translate(3px, -50%); transition: opacity 130ms ease, transform 130ms ease; pointer-events: none; backdrop-filter: blur(10px); }
+.turn-rail-preview.visible { opacity: 1; transform: translate(0, -50%); }
+.turn-rail-preview small { color: var(--muted); font-size: 10px; }
+.turn-rail-preview span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.chat-turn { display: flow-root; }
+@media (max-width: 600px) { .turn-rail { left: 3px; width: 18px; } .turn-rail-preview { left: 22px; } .chat { padding-left: 28px; } }
 .scroll-latest { position: absolute; z-index: 5; left: 50%; bottom: 12px; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-soft); background: rgba(42,42,38,.94); box-shadow: 0 7px 22px rgba(0,0,0,.3); font-size: 10.5px; transform: translateX(-50%); backdrop-filter: blur(8px); }
 .scroll-latest:hover { color: var(--text); background: var(--surface-active); }
 .scroll-latest .icon { transform: rotate(90deg); }

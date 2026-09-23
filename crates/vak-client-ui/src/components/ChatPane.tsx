@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
@@ -759,8 +759,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   let smoothScrolling = false;
   let smoothTimer: number | null = null;
   const [atBottom, setAtBottom] = createSignal(true);
-  const [shownTurns, setShownTurns] = createSignal(40);
-  let loadingEarlier = false;
+  const [turnWindow, setTurnWindow] = createSignal({ start: 0, end: 40 });
+  const [activeTurn, setActiveTurn] = createSignal(1);
+  const [hoveredTurn, setHoveredTurn] = createSignal<number | null>(null);
+  let loadingWindow = false;
   let observedTurnCount = 0;
   const turns = createMemo(() => {
     const grouped: Item[][] = [[]];
@@ -775,34 +777,116 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
   const displayedTurns = createMemo(() => {
     const all = turns();
-    const start = Math.max(0, all.length - shownTurns());
-    return all.slice(start).map((turn, offset) => ({ turn, index: start + offset }));
+    const { start, end } = turnWindow();
+    return all.slice(start, end).map((turn, offset) => ({ turn, index: start + offset }));
   });
+  const navigableTurnCount = () => Math.max(0, turns().length - 1);
+  const turnPreview = (index: number) => {
+    const user = turns()[index]?.find((item) => item.kind === "user");
+    const text = user?.kind === "user" ? stripControlScaffolding(user.text).replace(/\s+/g, " ").trim() : "";
+    return text.length > 130 ? `${text.slice(0, 127)}…` : text || `Turn ${index}`;
+  };
+  const tickIndices = createMemo(() => {
+    const count = navigableTurnCount();
+    const marks = Math.min(count, 72);
+    return Array.from({ length: marks }, (_, position) =>
+      marks === 1 ? 1 : 1 + Math.round(position * (count - 1) / (marks - 1)));
+  });
+  const hoveredTick = createMemo(() => {
+    const hovered = hoveredTurn();
+    if (hovered === null) return null;
+    return tickIndices().reduce<number | null>((closest, index) =>
+      closest === null || Math.abs(index - hovered) < Math.abs(closest - hovered) ? index : closest, null);
+  });
+  const turnAtPointer = (event: MouseEvent | PointerEvent) => {
+    const bounds = event.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : null;
+    if (!bounds) return 1;
+    const fraction = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    return 1 + Math.round(fraction * (navigableTurnCount() - 1));
+  };
+  const updateActiveTurn = () => {
+    const candidates = content?.querySelectorAll<HTMLElement>("[data-turn-index]");
+    if (!candidates?.length) return;
+    const threshold = scroller.getBoundingClientRect().top + 40;
+    let current = Number(candidates[0].dataset.turnIndex) || 1;
+    for (const candidate of candidates) {
+      if (candidate.getBoundingClientRect().top > threshold) break;
+      current = Number(candidate.dataset.turnIndex) || current;
+    }
+    setActiveTurn(current);
+  };
+  const scrollToTurn = (index: number) => {
+    const count = navigableTurnCount();
+    if (!count) return;
+    const target = Math.max(1, Math.min(count, index));
+    pinned = false;
+    setAtBottom(false);
+    setActiveTurn(target);
+    const window = turnWindow();
+    if (target < window.start || target >= window.end) {
+      setTurnWindow({ start: Math.max(0, target - 20), end: Math.min(turns().length, target + 21) });
+    }
+    requestAnimationFrame(() => {
+      const element = content.querySelector<HTMLElement>(`[data-turn-index="${target}"]`);
+      if (!element) return;
+      scroller.scrollTo({ top: scroller.scrollTop + element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 22, behavior: "auto" });
+      updateActiveTurn();
+    });
+  };
   const working = createMemo(() => activeWorkingState(sid()));
 
   const onScroll = () => {
     if (smoothScrolling) return;
-    pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    pinned = turnWindow().end >= turns().length && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
     setAtBottom(pinned);
-    if (scroller.scrollTop < 160 && shownTurns() < turns().length && !loadingEarlier) {
-      loadingEarlier = true;
-      const height = scroller.scrollHeight;
-      const top = scroller.scrollTop;
-      setShownTurns((count) => Math.min(turns().length, count + 40));
+    updateActiveTurn();
+    if (scroller.scrollTop < 160 && turnWindow().start > 0 && !loadingWindow) {
+      loadingWindow = true;
+      const anchor = [...content.querySelectorAll<HTMLElement>("[data-turn-index]")]
+        .find((element) => element.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top);
+      const anchorIndex = anchor?.dataset.turnIndex;
+      const anchorTop = anchor?.getBoundingClientRect().top;
+      setTurnWindow((window) => {
+        const start = Math.max(0, window.start - 40);
+        return { start, end: Math.min(window.end, start + 120) };
+      });
       requestAnimationFrame(() => {
-        scroller.scrollTop = top + scroller.scrollHeight - height;
-        loadingEarlier = false;
+        const restored = content.querySelector<HTMLElement>(`[data-turn-index="${anchorIndex}"]`);
+        if (restored && anchorTop !== undefined) scroller.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+        loadingWindow = false;
+      });
+    } else if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160 && turnWindow().end < turns().length && !loadingWindow) {
+      loadingWindow = true;
+      const anchor = [...content.querySelectorAll<HTMLElement>("[data-turn-index]")]
+        .find((element) => element.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top);
+      const anchorIndex = anchor?.dataset.turnIndex;
+      const anchorTop = anchor?.getBoundingClientRect().top;
+      setTurnWindow((window) => {
+        const end = Math.min(turns().length, window.end + 40);
+        return { start: Math.max(window.start, end - 120), end };
+      });
+      requestAnimationFrame(() => {
+        const restored = content.querySelector<HTMLElement>(`[data-turn-index="${anchorIndex}"]`);
+        if (restored && anchorTop !== undefined) scroller.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+        loadingWindow = false;
       });
     }
   };
   const scrollToBottom = (force = false) => {
     if (force) {
+      const count = turns().length;
+      if (turnWindow().end < count || count - turnWindow().start > 120) {
+        setTurnWindow({ start: Math.max(0, count - 40), end: count });
+        requestAnimationFrame(() => scrollToBottom(true));
+        return;
+      }
       smoothScrolling = true;
       if (smoothTimer !== null) clearTimeout(smoothTimer);
       smoothTimer = window.setTimeout(() => { smoothScrolling = false; }, 400);
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: uiPreferences.reduceMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
       pinned = true;
       setAtBottom(true);
+      setActiveTurn(Math.max(1, count - 1));
       return;
     }
     if (pinned && !smoothScrolling) {
@@ -830,7 +914,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     void id;
     pinned = true;
     setAtBottom(true);
-    setShownTurns(40);
+    const count = untrack(() => turns().length);
+    setTurnWindow({ start: Math.max(0, count - 40), end: count });
+    setActiveTurn(Math.max(1, count - 1));
+    setHoveredTurn(null);
     observedTurnCount = 0;
     queueMicrotask(() => scheduleScroll());
   });
@@ -873,8 +960,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
   createEffect(() => {
     const count = turns().length;
-    if (observedTurnCount > 0 && count > observedTurnCount && !pinned) {
-      setShownTurns((shown) => shown + count - observedTurnCount);
+    if (count > observedTurnCount && pinned) {
+      setTurnWindow((window) => ({
+        start: observedTurnCount === 0 ? Math.max(0, count - 40) : count - window.start > 120 ? Math.max(0, count - 80) : window.start,
+        end: count,
+      }));
     }
     observedTurnCount = count;
   });
@@ -894,6 +984,41 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   return (
     <div class="chat-shell">
       <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
+      <Show when={navigableTurnCount() > 1}>
+        <nav class="turn-rail" aria-label="Conversation turns">
+          <div
+            class="turn-rail-track"
+            style={{ height: `min(100%, ${tickIndices().length * 10}px)` }}
+            role="slider"
+            tabIndex={0}
+            aria-label="Navigate conversation turns"
+            aria-valuemin={1}
+            aria-valuemax={navigableTurnCount()}
+            aria-valuenow={activeTurn()}
+            aria-valuetext={`Turn ${activeTurn()}: ${turnPreview(activeTurn())}`}
+            onPointerEnter={(event) => setHoveredTurn(turnAtPointer(event))}
+            onPointerMove={(event) => setHoveredTurn(turnAtPointer(event))}
+            onPointerLeave={() => setHoveredTurn(null)}
+            onBlur={() => setHoveredTurn(null)}
+            onClick={(event) => scrollToTurn(turnAtPointer(event))}
+            onKeyDown={(event) => {
+              const next = event.key === "ArrowUp" ? activeTurn() - 1 : event.key === "ArrowDown" ? activeTurn() + 1 : event.key === "Home" ? 1 : event.key === "End" ? navigableTurnCount() : null;
+              if (next === null) return;
+              event.preventDefault();
+              scrollToTurn(next);
+              setHoveredTurn(next);
+            }}
+          >
+            <For each={tickIndices()}>{(index) => <span class={`turn-rail-tick${index === activeTurn() ? " active" : ""}${index === hoveredTick() ? " hovered" : ""}`} aria-hidden="true" />}</For>
+            <div class={`turn-rail-preview${hoveredTurn() !== null ? " visible" : ""}`}
+              aria-hidden="true"
+              style={{ top: `clamp(25px, ${(Math.max(1, hoveredTurn() ?? activeTurn()) - 1) / Math.max(1, navigableTurnCount() - 1) * 100}%, calc(100% - 25px))` }}>
+              <small>Turn {hoveredTurn() ?? activeTurn()} of {navigableTurnCount()}</small>
+              <span>{turnPreview(hoveredTurn() ?? activeTurn())}</span>
+            </div>
+          </div>
+        </nav>
+      </Show>
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <div ref={content}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
@@ -902,12 +1027,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
-              <Index each={displayedTurns()}>{(entry) => <>
+              <Index each={displayedTurns()}>{(entry) => <div class="chat-turn" data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
                   {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser />}
                 </Show>
-              </>}</Index>
+              </div>}</Index>
               <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>
             </Show>
           </Show>
