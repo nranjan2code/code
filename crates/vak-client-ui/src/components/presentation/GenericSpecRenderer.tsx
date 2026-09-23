@@ -1770,7 +1770,7 @@ export function buildResearchSpec(data: unknown): AdaptiveRenderNode {
 /** Build a `metric` (or `metric_grid`) primitive node from a raw, possibly malformed payload. */
 export function buildMetricSpec(data: unknown): AdaptiveRenderNode {
   const record = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
-  const hasSingleValue = typeof record.label === "string" || typeof record.value === "string" || typeof record.value === "number";
+  const hasSingleValue = typeof record.value === "string" || typeof record.value === "number";
   if (hasSingleValue) {
     const label = typeof record.label === "string" ? record.label : "Metric";
     const value = typeof record.value === "string" || typeof record.value === "number" ? record.value : undefined;
@@ -1781,11 +1781,12 @@ export function buildMetricSpec(data: unknown): AdaptiveRenderNode {
       children: [],
     };
   }
-  const entries = Object.entries(record).filter(([k]) => k !== "title" && k !== "semantic_type");
+  const title = (typeof record.title === "string" && record.title) || (typeof record.label === "string" && record.label) || (typeof record.location === "string" && record.location) || "";
+  const entries = Object.entries(record).filter(([k]) => k !== "title" && k !== "label" && k !== "semantic_type" && !(k === "location" && title === record.location));
   if (entries.length > 0) {
     return {
       primitive: "metric_grid",
-      props: { title: (typeof record.location === "string" && record.location) || (typeof record.title === "string" && record.title) || (typeof record.label === "string" && record.label) || "" },
+      props: { title },
       children: entries.map(([key, val]) => ({
         primitive: "metric",
         props: { label: key.replace(/_/g, " "), value: typeof val === "string" || typeof val === "number" ? val : JSON.stringify(val) },
