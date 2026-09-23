@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use vak_llm::ToolDefinition;
 
-use super::domain::Domain;
+use super::domain::{Domain, Serves};
 
 /// One turn's tools, split for the request.
 #[derive(Debug, Clone, Default)]
@@ -56,13 +56,7 @@ pub fn build_tool_surface(
             None => true,
             Some(_) if tool.always_loaded() => true,
             Some(_) if tool.presents_cards() => predicted_cards.contains(tool.name()),
-            Some(required) => {
-                let serves = tool.serves();
-                serves.is_empty()
-                    || serves
-                        .iter()
-                        .any(|label| required.contains(&Domain::parse(label)))
-            }
+            Some(required) => Serves::from_labels(tool.serves()).serves_any(required),
         };
         if loaded {
             surface.core.push(definition);

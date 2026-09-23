@@ -855,13 +855,13 @@ pub struct McpServerConfig {
     pub network: bool,
     /// What this server is for, in its own words: `serves = ["live-data"]`.
     ///
-    /// Optional, and deliberately so. An empty list means *undeclared*,
-    /// which is never narrowed away by the per-turn capability slice — the
-    /// alternative, guessing a domain from the server's tool names, would
-    /// put a keyword table back in the harness and reintroduce the coupling
-    /// this field exists to remove. Declaring domains only ever makes the
-    /// slice tighter, so it is a context optimisation an operator opts into,
-    /// never a requirement for the server to work.
+    /// Optional, and deliberately so. It decides whether a call to this
+    /// server counts as retrieval that an answer must be grounded in; an
+    /// empty list means *undeclared*, and the server inherits the `mcp`
+    /// broker's web/live-data claim. It never hides the server from a turn.
+    /// The alternative, guessing a domain from the server's tool names,
+    /// would put a keyword table back in the harness and reintroduce the
+    /// coupling this field exists to remove.
     ///
     /// Skipped when empty so the config file and the management API keep
     /// exactly the shape they had before this field existed — a server that

@@ -2579,6 +2579,11 @@ struct SearchQuery {
     /// sessions home (docs/design/29-personal-os.md P1), not just this cwd.
     #[serde(default)]
     all: bool,
+    /// The Agent whose ledgers and memory are searched (default `vak`).
+    /// Each Agent's memory is private (AGENTS.md invariant 37), so a search
+    /// resolves one Agent the way `/memory` does and reads only its home.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 async fn search_sessions(
@@ -2586,8 +2591,9 @@ async fn search_sessions(
     axum::extract::Query(q): axum::extract::Query<SearchQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    let cwd = state.core.cwd().clone();
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    let home = core.sessions_home();
+    let cwd = core.cwd().clone();
     let query = q.q.clone();
     let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
     let exclude = q.exclude.clone();

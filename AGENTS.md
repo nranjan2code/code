@@ -330,9 +330,14 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 25. **Optional integrations never gate turn admission, and service managers
     own recovery.** A configured MCP server is advertised by name during
     prompt construction but is spawned and discovered only when the lazy
-    MCP meta-tool is invoked; a missing or wedged integration must not delay
-    recording the user message or dispatching the provider, and abandoned
-    MCP clients must terminate their child process. For durable services,
+    MCP meta-tool is invoked — never by the capability registry, admission,
+    or prompt assembly. The per-`Core` pool (`vak_mcp::McpManager`) reuses a
+    connection across sessions, shuts it down after `IDLE_TTL` unused, and
+    never respawns without demand; what demand observed (catalog, last
+    failure) reaches the registry as declared data. A missing or wedged
+    integration must not delay recording the user message or dispatching
+    the provider, and abandoned MCP clients must terminate their child
+    process. For durable services,
     launchd/systemd PID state is process truth and `KeepAlive` is the sole
     automatic restart owner. Health probes describe readiness; a transient
     timeout may notify but must never authorize a competing restart.
@@ -439,9 +444,9 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     the source of truth. A dropped hint costs one tick of latency and never
     costs correctness. Additions take effect at the next turn boundary of
     every live session via a published epoch; revocations take effect
-    immediately and fail closed. Two corollaries a review enforces: a probe
-    failure is a *state* carrying a reason and a retry, never data — it must
-    never introduce a callable name and never prevent its own retry — and a
+    immediately and fail closed. Two corollaries a review enforces: an
+    observed failure is a reason with a retry, never data — it must never
+    introduce a callable name and never prevent the next demand's retry — and a
     capability the operator installed must be reachable without editing the
     harness, which means the host defines a vocabulary and capabilities are
     data classified against it, never a table of instance names.
@@ -901,7 +906,9 @@ crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
                      vak-session's CriterionKind/EvidenceRef/WorkOwner rather
                      than defining a second vocabulary for the same idea.
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
-crates/vak-mcp       MCP stdio client behind a lazy meta-tool
+crates/vak-mcp       MCP stdio client behind a lazy meta-tool; the on-demand
+                     connection pool (no warm-up, idle eviction, failure
+                     backoff) and its observations
 crates/vak-bus       distributed event + message fabric for agent swarms:
                      CloudEvents envelopes, W3C trace context + Merkle
                      causal lineage, AES-256-GCM payload encryption,
@@ -969,8 +976,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      capability/ (the registry for all five extension kinds:
                      domain.rs is the vocabulary capabilities classify
                      themselves against so the harness never enumerates
-                     instances, resolution.rs makes usability a state machine
-                     with backoff so a failure is never cached as data,
+                     instances, resolution.rs is usability -- available or
+                     retired, with nothing probed,
                      snapshot.rs publishes immutable epochs a *turn* binds,
                      registry.rs is the level-triggered reconcile loop plus
                      the immediate revocation channel, provider.rs turns

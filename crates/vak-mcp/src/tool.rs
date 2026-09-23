@@ -103,7 +103,7 @@ impl Tool for McpTool {
     }
 
     fn description(&self) -> &str {
-        "Call tools exposed by configured MCP servers. Always use this broker (never call an MCP tool name directly). First use action \"list\"; it returns each exact tool name and inputSchema. Then use action \"call\" with server, tool, and arguments matching that schema exactly."
+        "Call tools exposed by configured MCP servers. Always use this broker (never call an MCP tool name directly). Use action \"list\" with a server to get its exact tool names and inputSchemas, then action \"call\" with server, tool, and arguments matching that schema exactly."
     }
 
     fn schema(&self) -> Value {
@@ -113,8 +113,8 @@ impl Tool for McpTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["list", "call"], "description": "Use list first to discover exact server and tool names; use call to invoke one."},
-                "server": {"type": "string", "description": "Required for call: a server name returned by list."},
+                "action": {"type": "string", "enum": ["list", "call"], "description": "list: a server's exact tool names and schemas (without a server, just the server names); call: invoke one tool."},
+                "server": {"type": "string", "description": "The server to list or call. Required for call."},
                 "tool": {"type": "string", "description": "Required for call: a tool name returned by list for that server."},
                 "arguments": {"type": "object", "description": "For call: arguments matching the discovered tool's inputSchema."}
             },
@@ -125,7 +125,7 @@ impl Tool for McpTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         match args.get("action").and_then(|a| a.as_str()) {
-            Some("list") => self.list(ctx).await,
+            Some("list") => self.list(args, ctx).await,
             Some("call") => self.call(args, ctx).await,
             Some(other) => ToolOutput::error(format!("unknown mcp action '{other}'")),
             None => ToolOutput::error("missing required parameter: action"),
@@ -134,48 +134,73 @@ impl Tool for McpTool {
 }
 
 impl McpTool {
-    async fn list(&self, ctx: &ToolContext) -> ToolOutput {
-        let mut out = String::new();
-        let mut catalog = Vec::new();
-        for server in self.manager.server_names() {
-            out.push_str(&format!("{server}:\n"));
-            match self.manager.get(&server).await {
-                Ok(client) => match client.list_tools().await {
-                    Ok(tools) if tools.is_empty() => out.push_str("  (no tools)\n"),
-                    Ok(tools) => {
-                        let mut visible = Vec::new();
-                        for t in tools {
-                            if !self.allowed(&server, &t.name) {
-                                continue;
-                            }
-                            let schema = self.manager.redact(
-                                serde_json::to_string(&t.input_schema)
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                            );
-                            out.push_str(&format!(
-                                "  {} — {}\n    inputSchema: {schema}\n",
-                                t.name, t.description
-                            ));
-                            visible.push(t);
-                        }
-                        catalog.push((server.clone(), visible));
-                    }
-                    Err(e) => out.push_str(&format!(
-                        "  error: {}\n",
-                        self.manager.redact(e.to_string())
-                    )),
-                },
-                Err(e) => out.push_str(&format!(
-                    "  connect failed: {}\n",
-                    self.manager.redact(e.to_string())
-                )),
-            }
-        }
-        if out.is_empty() {
+    /// Servers this turn may reach: configured, and not wholly denied.
+    fn reachable_servers(&self) -> Vec<String> {
+        self.manager
+            .server_names()
+            .into_iter()
+            .filter(|server| self.allowed(server, "*"))
+            .collect()
+    }
+
+    /// `list` without a server connects to nothing: it answers from what the
+    /// pool already knows. With a server it is demand for exactly that one.
+    async fn list(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+        let servers = self.reachable_servers();
+        if servers.is_empty() {
             return ToolOutput::ok("no MCP servers configured");
         }
+        let Some(server) = args.get("server").and_then(|s| s.as_str()) else {
+            let observed = self.manager.observations();
+            let mut out =
+                String::from("MCP servers (call list with a server to get its tool schemas):\n");
+            for server in &servers {
+                let known = observed.get(server);
+                match known.and_then(|o| o.tools.as_ref()) {
+                    Some(tools) => {
+                        let names: Vec<&str> = tools
+                            .iter()
+                            .filter(|t| self.allowed(server, &t.name))
+                            .map(|t| t.name.as_str())
+                            .collect();
+                        out.push_str(&format!("- {server}: {}\n", names.join(", ")));
+                    }
+                    None => out.push_str(&format!("- {server}\n")),
+                }
+                if let Some(failure) = known.and_then(|o| o.failure.as_deref()) {
+                    out.push_str(&format!("  last attempt failed: {failure}\n"));
+                }
+            }
+            return ToolOutput::ok(out);
+        };
+        if !servers.iter().any(|name| name == server) {
+            return ToolOutput::error(format!(
+                "unknown mcp server '{server}'; available: {}",
+                servers.join(", ")
+            ));
+        }
+        let tools = match self.manager.list_tools(server).await {
+            Ok(tools) => tools,
+            Err(reason) => return ToolOutput::error(format!("mcp list failed: {reason}")),
+        };
+        let visible: Vec<_> = tools
+            .into_iter()
+            .filter(|t| self.allowed(server, &t.name))
+            .collect();
         if let Some(observer) = &self.catalog_observer {
-            observer(&catalog);
+            observer(&[(server.to_string(), visible.clone())]);
+        }
+        if visible.is_empty() {
+            return ToolOutput::ok(format!("{server}: (no tools)"));
+        }
+        let mut out = format!("{server}:\n");
+        for t in &visible {
+            let schema =
+                serde_json::to_string(&t.input_schema).unwrap_or_else(|_| "{}".to_string());
+            out.push_str(&format!(
+                "  {} — {}\n    inputSchema: {schema}\n",
+                t.name, t.description
+            ));
         }
         ToolOutput::ok(ctx.truncate_output(out))
     }

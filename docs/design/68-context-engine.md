@@ -262,9 +262,11 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   not predict and the model then used is the measured misread. On Anthropic
   the deferred schemas additionally ride `defer_loading: true` with the
   server-side tool search tool (§11).
-- **MCP**: reached only through `mcp`. The prompt names each admitted server
-  with its tool *names* only; `mcp` `list` returns a server's schemas and
-  descriptions when they are needed.
+- **MCP**: reached only through `mcp`, and started only by that demand
+  (docs/design/41-capability-registry.md). The prompt names each admitted
+  server with the tool *names* the pool last observed (none before its first
+  use); `mcp` `list` with a server returns its schemas and descriptions when
+  they are needed.
 - **Skills**: listed once in the prompt (name and description); a body is
   loaded through `skill` on demand, never inlined.
 

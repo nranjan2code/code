@@ -234,7 +234,7 @@ mod tests {
             serves: Serves::Undeclared,
             digest: None,
             source: None,
-            resolution: Resolution::Static,
+            resolution: Resolution::Available,
             configuration: serde_json::Value::Null,
         }
     }

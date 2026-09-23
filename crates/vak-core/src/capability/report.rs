@@ -51,11 +51,13 @@ impl CapabilityReport {
         let capabilities = set
             .all()
             .map(|capability| {
-                let remedy = match &capability.resolution {
-                    super::resolution::Resolution::Degraded { failure, .. } => {
-                        failure.remedy.clone()
-                    }
-                    _ => String::new(),
+                let failure = mcp_failure(capability);
+                let remedy = failure
+                    .map(|_| mcp_remedy(&capability.id.name))
+                    .unwrap_or_default();
+                let status = match failure {
+                    Some(reason) => format!("ready (last attempt failed: {reason})"),
+                    None => capability.resolution.summary(),
                 };
                 CapabilityRow {
                     id: capability.id.to_string(),
@@ -65,7 +67,7 @@ impl CapabilityReport {
                     summary: capability.summary.clone(),
                     serves: capability.serves.labels(),
                     usable: capability.is_usable(),
-                    status: capability.resolution.summary(),
+                    status,
                     remedy,
                     source: capability.source.as_ref().map(|p| p.display().to_string()),
                 }
@@ -132,6 +134,21 @@ impl CapabilityReport {
     }
 }
 
+/// The failure the MCP pool last observed for a server, if any. The server
+/// stays callable — the next demand retries after the pool's backoff — so
+/// this is a status to report, not a reason to withhold it.
+pub fn mcp_failure(capability: &super::snapshot::Capability) -> Option<&str> {
+    if capability.id.kind != vak_session::types::CapabilityKind::McpServer {
+        return None;
+    }
+    capability.configuration.get("last_failure")?.as_str()
+}
+
+/// What an operator can change when a server fails.
+pub fn mcp_remedy(server: &str) -> String {
+    format!("check the `{server}` entry under [mcp.servers] — command, args, and any required env")
+}
+
 /// The model-facing standing section: what is configured but not usable on
 /// this turn, and what changed since this session's last turn.
 ///
@@ -168,11 +185,6 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
                 capability.id,
                 capability.resolution.summary()
             ));
-            if let super::resolution::Resolution::Degraded { failure, .. } = &capability.resolution
-                && !failure.remedy.is_empty()
-            {
-                out.push_str(&format!(" Fix: {}.", failure.remedy));
-            }
             out.push('\n');
         }
     }
@@ -184,24 +196,23 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
 mod tests {
     use super::*;
     use crate::capability::domain::Serves;
-    use crate::capability::resolution::{Failure, Resolution};
+    use crate::capability::resolution::Resolution;
     use crate::capability::snapshot::{Capability, CapabilityId, Origin};
-    use std::time::SystemTime;
     use vak_session::types::CapabilityKind;
 
-    fn broken(name: &str) -> Capability {
+    fn failing_server(name: &str) -> Capability {
         Capability {
-            id: CapabilityId::new(CapabilityKind::McpServer, name),
-            origin: Origin::Workspace,
-            summary: String::new(),
-            serves: Serves::Undeclared,
-            digest: None,
-            source: None,
-            resolution: Resolution::Degraded {
-                failure: Failure::new("connection refused", "run `vak mcp start tavily`"),
-                retry_at: SystemTime::now() + std::time::Duration::from_secs(30),
+            configuration: serde_json::json!({"last_failure": "connection refused"}),
+            ..ok(name, CapabilityKind::McpServer)
+        }
+    }
+
+    fn revoked(name: &str) -> Capability {
+        Capability {
+            resolution: Resolution::Retired {
+                reason: "operator disabled".into(),
             },
-            configuration: serde_json::Value::Null,
+            ..ok(name, CapabilityKind::McpServer)
         }
     }
 
@@ -213,22 +224,30 @@ mod tests {
             serves: Serves::Undeclared,
             digest: None,
             source: None,
-            resolution: Resolution::Static,
+            resolution: Resolution::Available,
             configuration: serde_json::Value::Null,
         }
     }
 
+    /// A server whose last attempt failed stays callable (the pool retries
+    /// on the next demand), so the operator sees the failure and its fix
+    /// without the model being told the server is gone.
     #[test]
-    fn the_operator_sees_the_same_failure_the_model_does() {
-        let set = CapabilitySet::new(7, vec![ok("read", CapabilityKind::Tool), broken("tavily")]);
+    fn the_operator_sees_an_observed_mcp_failure_and_its_fix() {
+        let set = CapabilitySet::new(
+            7,
+            vec![ok("read", CapabilityKind::Tool), failing_server("tavily")],
+        );
         let report = CapabilityReport::build(&set, ReconcileStatus::default());
-        let row = report.unusable().next().expect("one unusable");
+        let row = report
+            .capabilities
+            .iter()
+            .find(|row| row.name == "tavily")
+            .unwrap();
+        assert!(row.usable);
         assert!(row.status.contains("connection refused"));
-        assert!(row.remedy.contains("vak mcp start"));
-
-        let prompt = standing_section(&set, None);
-        assert!(prompt.contains("connection refused"));
-        assert!(prompt.contains("vak mcp start"));
+        assert!(row.remedy.contains("[mcp.servers]"));
+        assert!(standing_section(&set, None).is_empty());
     }
 
     #[test]
@@ -238,7 +257,7 @@ mod tests {
             vec![
                 ok("read", CapabilityKind::Tool),
                 ok("pdf", CapabilityKind::Skill),
-                broken("tavily"),
+                revoked("tavily"),
             ],
         );
         let report = CapabilityReport::build(&set, ReconcileStatus::default());
@@ -248,6 +267,7 @@ mod tests {
             "unusable must be visible: {line}"
         );
         assert!(line.contains("1 tool"));
+        assert!(standing_section(&set, None).contains("removed: operator disabled"));
     }
 
     #[test]

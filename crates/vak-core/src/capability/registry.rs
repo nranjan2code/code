@@ -23,6 +23,14 @@
 //! narrowing is always safe, widening needs admission. An operator disabling
 //! a compromised plugin must not wait for a long turn to finish, while a
 //! newly added skill appearing halfway through a plan would be a torn read.
+//!
+//! # Offline by construction
+//!
+//! A pass never talks to anything. Declarations are a filesystem walk at
+//! worst, and an MCP server's catalog and failure arrive as declared data
+//! from the on-demand pool (`vak_mcp::McpManager`), which is the only thing
+//! allowed to start a server. So reconciling is cheap enough to run at every
+//! turn admission, and it can never spawn an integration nobody asked for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -45,7 +53,7 @@ pub const RECONCILE_INTERVAL: Duration = Duration::from_secs(10);
 /// one reconcile rather than six.
 pub const DEBOUNCE: Duration = Duration::from_millis(250);
 
-/// One capability as its source declares it, before any probing.
+/// One capability as its source declares it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
     pub id: CapabilityId,
@@ -54,24 +62,12 @@ pub struct Declaration {
     pub serves: Serves,
     pub digest: Option<String>,
     pub source: Option<std::path::PathBuf>,
+    /// Kind-specific detail, part of the published digest — for an MCP
+    /// server, what the pool has observed (catalog, last failure).
     pub configuration: serde_json::Value,
-    /// Whether this capability talks to something outside the process and
-    /// therefore has to be probed before it can be called usable. True for
-    /// MCP servers; false for everything knowable offline.
-    pub needs_probe: bool,
 }
 
-/// What a successful probe learned.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProbeReport {
-    /// Discovered detail (an MCP tool catalog) folded into `configuration`.
-    pub configuration: serde_json::Value,
-    /// Whether the source announces its own changes. When false the loop
-    /// re-probes on a rhythm, because silence carries no information.
-    pub announces_changes: bool,
-}
-
-/// Where declarations come from and how probing happens.
+/// Where declarations come from.
 ///
 /// Implemented by `Core`, which already owns skill/hook/command/MCP
 /// discovery. Keeping it behind a trait means the loop is testable without a
@@ -79,31 +75,12 @@ pub struct ProbeReport {
 #[async_trait]
 pub trait CapabilityProvider: Send + Sync {
     /// Everything currently declared. Cheap and offline: a filesystem walk
-    /// at worst, never a network call.
+    /// at worst, never a network call or a spawned process.
     fn declare(&self) -> Vec<Declaration>;
 
-    /// Probe one capability that declared `needs_probe`.
-    async fn probe(&self, id: &CapabilityId) -> Result<ProbeReport, ProbeFailure>;
-
-    /// Housekeeping on each pass: evicting idle connections, etc. Default is
-    /// nothing.
+    /// Housekeeping on each pass, such as evicting idle pooled connections.
+    /// It may only ever release resources, never acquire them.
     async fn upkeep(&self) {}
-}
-
-/// A probe that did not succeed, in terms an operator can act on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProbeFailure {
-    pub reason: String,
-    pub remedy: String,
-}
-
-impl ProbeFailure {
-    pub fn new(reason: impl Into<String>, remedy: impl Into<String>) -> Self {
-        ProbeFailure {
-            reason: reason.into(),
-            remedy: remedy.into(),
-        }
-    }
 }
 
 /// Why the loop woke up. Purely an optimisation — the ticker would have
@@ -112,8 +89,9 @@ impl ProbeFailure {
 pub enum Hint {
     /// A watched capability directory changed.
     SourceChanged(String),
-    /// An MCP server announced a catalog change.
-    ServerAnnounced(String),
+    /// The MCP pool learned something about a server (a catalog, a
+    /// failure), or the server announced a catalog change.
+    ServerObserved(String),
     /// Configuration or plugin enablement moved.
     ConfigChanged,
     /// Someone asked for an immediate pass (boot, or a CLI about to run one
@@ -132,8 +110,6 @@ pub struct ReconcileStatus {
     pub last_change: Option<SystemTime>,
     pub epoch: Epoch,
     pub passes: u64,
-    pub probes_run: u64,
-    pub probes_failed: u64,
 }
 
 /// The registry.
@@ -141,9 +117,6 @@ pub struct CapabilityRegistry {
     provider: Arc<dyn CapabilityProvider>,
     current: RwLock<Arc<CapabilitySet>>,
     next_epoch: AtomicU64,
-    /// Resolutions carried across passes so backoff accumulates rather than
-    /// resetting every time the loop runs.
-    resolutions: RwLock<BTreeMap<CapabilityId, Resolution>>,
     /// The immediate channel. Checked at dispatch, independent of any epoch.
     revoked: RwLock<BTreeMap<CapabilityId, String>>,
     revoked_fast: std::sync::RwLock<BTreeMap<CapabilityId, String>>,
@@ -160,7 +133,6 @@ impl CapabilityRegistry {
             provider,
             current: RwLock::new(Arc::new(CapabilitySet::empty())),
             next_epoch: AtomicU64::new(1),
-            resolutions: RwLock::new(BTreeMap::new()),
             revoked: RwLock::new(BTreeMap::new()),
             revoked_fast: std::sync::RwLock::new(BTreeMap::new()),
             status: RwLock::new(ReconcileStatus::default()),
@@ -232,76 +204,18 @@ impl CapabilityRegistry {
             .is_some_and(|revoked| revoked.contains_key(id))
     }
 
-    /// Force `id` to be probed on the next pass, discarding any backoff.
-    ///
-    /// Used when something external tells us the world changed — an MCP
-    /// server announcing `tools/list_changed`, or an operator saying they
-    /// have fixed a server and want it retried now rather than at the end of
-    /// a ten-minute backoff. Only ever schedules work; it cannot mark
-    /// anything usable on its own.
-    pub async fn mark_due(&self, id: &CapabilityId) {
-        let mut resolutions = self.resolutions.write().await;
-        if let Some(resolution) = resolutions.get_mut(id) {
-            if !matches!(resolution, Resolution::Static) {
-                *resolution = Resolution::Probing;
-            }
-        } else {
-            resolutions.insert(id.clone(), Resolution::Probing);
-        }
-    }
-
-    /// Mark `id` due and hint the reconcile loop for an immediate pass.
-    pub async fn force_probe(&self, id: &CapabilityId) {
-        self.mark_due(id).await;
-        self.hint(Hint::Immediate);
-    }
-
-    /// Whether any declared capability needs probing and is currently due.
-    pub async fn has_due_probes(&self) -> bool {
-        let now = SystemTime::now();
-        let declarations = self.provider.declare();
-        let resolutions = self.resolutions.read().await;
-        declarations.iter().any(|d| {
-            d.needs_probe
-                && resolutions
-                    .get(&d.id)
-                    .map(|r| r.is_due(now))
-                    .unwrap_or(true)
-        })
-    }
-
-    /// Whether the environment has pending changes that warrant a reconcile pass
-    /// before turn admission (due probes, declaration count mismatch, or digest changes).
+    /// Whether the declared world differs from the published set, so turn
+    /// admission knows a pass is worth running before it binds an epoch.
     pub async fn has_pending_changes(&self) -> bool {
-        let now = SystemTime::now();
         let declarations = self.provider.declare();
-        let resolutions = self.resolutions.read().await;
         let current = self.current.read().await;
-
-        let any_due = declarations.iter().any(|d| {
-            let digest_changed = current
-                .get(&d.id)
-                .map(|c| c.digest != d.digest)
-                .unwrap_or(true);
-            d.needs_probe
-                && (digest_changed
-                    || resolutions
-                        .get(&d.id)
-                        .map(|r| r.is_due(now))
-                        .unwrap_or(true))
-        });
-        if any_due {
-            return true;
-        }
-
-        if declarations.len() != current.all().count() {
-            return true;
-        }
-
-        declarations.iter().any(|d| match current.get(&d.id) {
-            None => true,
-            Some(existing) => existing.digest != d.digest,
-        })
+        declarations.len() != current.all().count()
+            || declarations.iter().any(|d| match current.get(&d.id) {
+                None => true,
+                Some(existing) => {
+                    existing.digest != d.digest || existing.configuration != d.configuration
+                }
+            })
     }
 
     /// Whether `id` is revoked right now, regardless of the caller's epoch.
@@ -323,127 +237,28 @@ impl CapabilityRegistry {
         let previous = self.current.read().await.clone();
         let declarations = self.provider.declare();
 
-        // 1. Carry resolutions forward for ids that survived, so backoff and
-        //    catalog TTLs accumulate across passes.
-        let mut resolutions = self.resolutions.write().await;
-        let declared_ids: BTreeSet<CapabilityId> =
-            declarations.iter().map(|d| d.id.clone()).collect();
-        resolutions.retain(|id, _| declared_ids.contains(id));
-        for declaration in &declarations {
-            let digest_changed = previous
-                .get(&declaration.id)
-                .map(|c| c.digest != declaration.digest)
-                .unwrap_or(true);
-            if digest_changed && declaration.needs_probe {
-                resolutions.insert(declaration.id.clone(), Resolution::Probing);
-            } else {
-                resolutions.entry(declaration.id.clone()).or_insert({
-                    if declaration.needs_probe {
-                        Resolution::Probing
-                    } else {
-                        Resolution::Static
-                    }
-                });
-            }
-        }
-
-        // 2. Anything that needs probing and is due, probed concurrently.
-        //    Concurrency matters: serial probing made the cost of N dead
-        //    servers the sum of their timeouts rather than the max.
-        let due: Vec<CapabilityId> = declarations
-            .iter()
-            .filter(|d| d.needs_probe)
-            .filter(|d| {
-                let digest_changed = previous
-                    .get(&d.id)
-                    .map(|c| c.digest != d.digest)
-                    .unwrap_or(true);
-                digest_changed
-                    || resolutions
-                        .get(&d.id)
-                        .map(|r| r.is_due(now))
-                        .unwrap_or(true)
-            })
-            .map(|d| d.id.clone())
-            .collect();
-        drop(resolutions);
-
-        let mut probed: BTreeMap<CapabilityId, (Resolution, serde_json::Value)> = BTreeMap::new();
-        if !due.is_empty() {
-            let results = futures::future::join_all(
-                due.iter()
-                    .map(|id| async move { (id.clone(), self.provider.probe(id).await) }),
-            )
-            .await;
-            let mut resolutions = self.resolutions.write().await;
-            let mut status = self.status.write().await;
-            for (id, result) in results {
-                status.probes_run += 1;
-                match result {
-                    Ok(report) => {
-                        resolutions
-                            .insert(id.clone(), Resolution::ready(now, report.announces_changes));
-                        probed.insert(
-                            id,
-                            (
-                                Resolution::ready(now, report.announces_changes),
-                                report.configuration,
-                            ),
-                        );
-                    }
-                    Err(failure) => {
-                        status.probes_failed += 1;
-                        let previous = resolutions.get(&id).cloned().unwrap_or(Resolution::Probing);
-                        let next = previous.failed(now, failure.reason, failure.remedy);
-                        resolutions.insert(id.clone(), next.clone());
-                        probed.insert(id, (next, serde_json::Value::Null));
-                    }
-                }
-            }
-        }
-
-        // 3. Assemble. A revoked capability is retired in the published set
-        //    as well as blocked at dispatch, so the prompt stops advertising
-        //    it at the next turn instead of describing a tool that will
-        //    always refuse.
+        // A revoked capability is retired in the published set as well as
+        // blocked at dispatch, so the prompt stops advertising it at the next
+        // turn instead of describing a tool that will always refuse.
         let revoked = self.revoked.read().await.clone();
-        let resolutions = self.resolutions.read().await;
         let capabilities: Vec<Capability> = declarations
             .into_iter()
-            .map(|declaration| {
-                let resolution = if let Some(reason) = revoked.get(&declaration.id) {
-                    Resolution::Retired {
+            .map(|declaration| Capability {
+                resolution: match revoked.get(&declaration.id) {
+                    Some(reason) => Resolution::Retired {
                         reason: reason.clone(),
-                    }
-                } else if let Some((resolution, _)) = probed.get(&declaration.id) {
-                    resolution.clone()
-                } else {
-                    resolutions
-                        .get(&declaration.id)
-                        .cloned()
-                        .unwrap_or(Resolution::Static)
-                };
-                let configuration = match probed.get(&declaration.id) {
-                    Some((_, config)) if !config.is_null() => config.clone(),
-                    _ => previous
-                        .get(&declaration.id)
-                        .map(|capability| capability.configuration.clone())
-                        .filter(|config| !config.is_null())
-                        .unwrap_or(declaration.configuration),
-                };
-                Capability {
-                    id: declaration.id,
-                    origin: declaration.origin,
-                    summary: declaration.summary,
-                    serves: declaration.serves,
-                    digest: declaration.digest,
-                    source: declaration.source,
-                    resolution,
-                    configuration,
-                }
+                    },
+                    None => Resolution::Available,
+                },
+                id: declaration.id,
+                origin: declaration.origin,
+                summary: declaration.summary,
+                serves: declaration.serves,
+                digest: declaration.digest,
+                source: declaration.source,
+                configuration: declaration.configuration,
             })
             .collect();
-        drop(resolutions);
 
         let candidate = CapabilitySet::new(previous.epoch, capabilities);
 
@@ -456,10 +271,8 @@ impl CapabilityRegistry {
             return None;
         }
 
-        // 4. Publish. Only here does the epoch move, and only because the
-        //    world actually differs — a failing server on a backoff rhythm
-        //    does not churn every live session's prompt, because the digest
-        //    excludes volatile retry detail.
+        // Publish. Only here does the epoch move, and only because the world
+        // actually differs.
         let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
         let published = Arc::new(CapabilitySet::new(
             epoch,
@@ -516,19 +329,15 @@ mod tests {
     use std::sync::Mutex;
     use vak_session::types::CapabilityKind;
 
-    /// A provider whose declarations and probe outcomes the test drives.
+    /// A provider whose declarations the test drives.
     struct Fake {
         declarations: Mutex<Vec<Declaration>>,
-        probe_ok: Mutex<bool>,
-        probes: Mutex<u32>,
     }
 
     impl Fake {
         fn new(declarations: Vec<Declaration>) -> Arc<Self> {
             Arc::new(Fake {
                 declarations: Mutex::new(declarations),
-                probe_ok: Mutex::new(true),
-                probes: Mutex::new(0),
             })
         }
     }
@@ -538,20 +347,9 @@ mod tests {
         fn declare(&self) -> Vec<Declaration> {
             self.declarations.lock().unwrap().clone()
         }
-        async fn probe(&self, _id: &CapabilityId) -> Result<ProbeReport, ProbeFailure> {
-            *self.probes.lock().unwrap() += 1;
-            if *self.probe_ok.lock().unwrap() {
-                Ok(ProbeReport {
-                    configuration: serde_json::json!({"tools": ["search"]}),
-                    announces_changes: true,
-                })
-            } else {
-                Err(ProbeFailure::new("connection refused", "start the server"))
-            }
-        }
     }
 
-    fn decl(name: &str, kind: CapabilityKind, needs_probe: bool) -> Declaration {
+    fn decl(name: &str, kind: CapabilityKind) -> Declaration {
         Declaration {
             id: CapabilityId::new(kind, name),
             origin: Origin::Workspace,
@@ -560,38 +358,12 @@ mod tests {
             digest: None,
             source: None,
             configuration: serde_json::Value::Null,
-            needs_probe,
         }
     }
 
     #[tokio::test]
-    async fn current_blocking_reflects_a_published_degraded_mcp_server() {
-        // The sync accessor `capability_diagnostics()` (crates/vak-core/src/lib.rs)
-        // now uses instead of the older, disconnected `Core::mcp_cache` path
-        // — this is the exact shape it reads: an admitted MCP server whose
-        // probe failed shows up as `Resolution::Degraded` in the published
-        // set, readable without `.await`.
-        let provider = Fake::new(vec![decl("search", CapabilityKind::McpServer, true)]);
-        *provider.probe_ok.lock().unwrap() = false;
-        let (registry, _rx) = CapabilityRegistry::new(provider);
-        registry.reconcile().await;
-
-        let blocking = registry.current_blocking();
-        let cap = blocking
-            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
-            .expect("declared server must still be present, just degraded");
-        assert!(
-            matches!(cap.resolution, Resolution::Degraded { .. }),
-            "expected Degraded, got {:?}",
-            cap.resolution
-        );
-        // And it must agree with the async accessor — same underlying lock.
-        assert_eq!(blocking.epoch, registry.current().await.epoch);
-    }
-
-    #[tokio::test]
     async fn a_first_pass_publishes_an_epoch() {
-        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
         let (registry, _rx) = CapabilityRegistry::new(provider);
         assert!(registry.reconcile().await.is_some());
         let set = registry.current().await;
@@ -601,75 +373,42 @@ mod tests {
 
     #[tokio::test]
     async fn reconciling_an_unchanged_world_publishes_nothing() {
-        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
         let (registry, _rx) = CapabilityRegistry::new(provider);
         registry.reconcile().await;
         let first = registry.current().await.epoch;
         assert!(registry.reconcile().await.is_none(), "idempotent");
-        assert!(registry.reconcile().await.is_none());
+        assert!(!registry.has_pending_changes().await);
         assert_eq!(registry.current().await.epoch, first, "no epoch churn");
     }
 
+    /// What the MCP pool observes arrives as declared configuration, and a
+    /// change to it is a change to the world: a new epoch, picked up at the
+    /// next turn with no restart.
     #[tokio::test]
-    async fn a_non_due_reconcile_preserves_the_last_mcp_catalog() {
-        let provider = Fake::new(vec![decl("search", CapabilityKind::McpServer, true)]);
-        let (registry, _) = CapabilityRegistry::new(provider);
-        registry.reconcile().await;
-        let first = registry.current().await;
-        let first_config = first
-            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
-            .map(|capability| capability.configuration.clone());
-        registry.reconcile().await;
-        let second = registry.current().await;
-        let second_config = second
-            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
-            .map(|capability| capability.configuration.clone());
-        assert_eq!(first_config, second_config);
-    }
-
-    #[tokio::test]
-    async fn a_failed_probe_is_unusable_and_never_a_fake_tool() {
-        let provider = Fake::new(vec![decl("tavily", CapabilityKind::McpServer, true)]);
-        *provider.probe_ok.lock().unwrap() = false;
-        let (registry, _rx) = CapabilityRegistry::new(provider);
-        registry.reconcile().await;
-        let set = registry.current().await;
-        assert_eq!(set.usable().count(), 0);
-        assert_eq!(set.unusable().count(), 1);
-        let failed = set.unusable().next().unwrap();
-        assert!(matches!(failed.resolution, Resolution::Degraded { .. }));
-        // The old bug: a tool literally named `error` in the catalog.
-        assert!(!set.descriptors().iter().any(|d| d.name == "error"));
-    }
-
-    #[tokio::test]
-    async fn a_server_that_recovers_becomes_usable_with_no_restart() {
-        let provider = Fake::new(vec![decl("tavily", CapabilityKind::McpServer, true)]);
-        *provider.probe_ok.lock().unwrap() = false;
+    async fn an_observed_catalog_publishes_a_new_epoch() {
+        let provider = Fake::new(vec![decl("search", CapabilityKind::McpServer)]);
         let (registry, _rx) = CapabilityRegistry::new(provider.clone());
         registry.reconcile().await;
-        assert_eq!(registry.current().await.usable().count(), 0);
+        let before = registry.current().await.epoch;
 
-        // The operator starts the server. Clear the backoff the way the
-        // passage of time would, then reconcile again.
-        *provider.probe_ok.lock().unwrap() = true;
-        registry.resolutions.write().await.insert(
-            CapabilityId::new(CapabilityKind::McpServer, "tavily"),
-            Resolution::Probing,
-        );
-
-        let delta = registry.reconcile().await;
-        assert!(delta.is_some(), "recovery must publish a new epoch");
+        provider.declarations.lock().unwrap()[0].configuration =
+            serde_json::json!({"tools": [{"name": "query"}]});
+        assert!(registry.has_pending_changes().await);
+        assert!(registry.reconcile().await.is_some());
+        let set = registry.current().await;
+        assert!(set.epoch > before);
         assert_eq!(
-            registry.current().await.usable().count(),
-            1,
-            "this is the case the old retry guard made impossible"
+            set.get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
+                .unwrap()
+                .configuration,
+            serde_json::json!({"tools": [{"name": "query"}]})
         );
     }
 
     #[tokio::test]
     async fn a_capability_added_later_appears_without_a_restart() {
-        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
         let (registry, _rx) = CapabilityRegistry::new(provider.clone());
         registry.reconcile().await;
         let before = registry.current().await.epoch;
@@ -678,7 +417,7 @@ mod tests {
             .declarations
             .lock()
             .unwrap()
-            .push(decl("pdf", CapabilityKind::Skill, false));
+            .push(decl("pdf", CapabilityKind::Skill));
 
         let delta = registry.reconcile().await.expect("a change was published");
         assert_eq!(delta.added.len(), 1);
@@ -689,8 +428,8 @@ mod tests {
     #[tokio::test]
     async fn removing_a_capability_at_source_removes_it_from_the_set() {
         let provider = Fake::new(vec![
-            decl("read", CapabilityKind::Tool, false),
-            decl("pdf", CapabilityKind::Skill, false),
+            decl("read", CapabilityKind::Tool),
+            decl("pdf", CapabilityKind::Skill),
         ]);
         let (registry, _rx) = CapabilityRegistry::new(provider.clone());
         registry.reconcile().await;
@@ -706,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn revocation_is_immediate_and_independent_of_any_epoch() {
-        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
         let (registry, _rx) = CapabilityRegistry::new(provider);
         registry.reconcile().await;
         let id = CapabilityId::new(CapabilityKind::Tool, "read");
@@ -721,11 +460,16 @@ mod tests {
         // And retired from the published set on the next pass.
         registry.reconcile().await;
         assert_eq!(registry.current().await.usable().count(), 0);
+        assert_eq!(
+            registry.current_blocking().unusable().count(),
+            1,
+            "the synchronous accessor reads the same published set"
+        );
     }
 
     #[tokio::test]
     async fn restoring_a_revoked_capability_requires_a_fresh_published_epoch() {
-        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool, false)]);
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
         let (registry, _rx) = CapabilityRegistry::new(provider);
         registry.reconcile().await;
         let id = CapabilityId::new(CapabilityKind::Tool, "read");
@@ -744,21 +488,5 @@ mod tests {
         registry.reconcile().await;
         assert!(registry.current().await.epoch > before);
         assert_eq!(registry.current().await.usable().count(), 1);
-    }
-
-    #[tokio::test]
-    async fn backoff_accumulates_across_passes_rather_than_resetting() {
-        let provider = Fake::new(vec![decl("tavily", CapabilityKind::McpServer, true)]);
-        *provider.probe_ok.lock().unwrap() = false;
-        let (registry, _rx) = CapabilityRegistry::new(provider);
-        registry.reconcile().await;
-        // Not due yet, so a second pass must not probe again.
-        registry.reconcile().await;
-        let status = registry.status().await;
-        assert_eq!(
-            status.probes_run, 1,
-            "backoff must be honoured across passes"
-        );
-        assert_eq!(status.probes_failed, 1);
     }
 }

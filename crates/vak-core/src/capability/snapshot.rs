@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use vak_session::types::{CapabilityDescriptor, CapabilityKind};
 
 use super::McpInventory;
-use super::domain::{Domain, Serves};
+use super::domain::Serves;
 use super::resolution::Resolution;
 
 /// A monotonic version of the whole capability set. Never reused, never
@@ -185,10 +185,10 @@ impl CapabilitySet {
     }
 
     /// Digest over identity, usability and content — the things that change
-    /// what a turn can do. Deliberately *excludes* volatile resolution
-    /// detail like `retry_at` and attempt counts, so a server failing on a
-    /// backoff rhythm does not publish a new epoch every few seconds and
-    /// churn every live session's prompt.
+    /// what a turn can do. An MCP server's configuration carries only its
+    /// observed catalog and failure *reason*, never attempt counts or
+    /// timestamps, so repeated failures for the same reason do not churn
+    /// every live session's prompt.
     fn digest_of(map: &BTreeMap<CapabilityId, Capability>) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -239,9 +239,9 @@ impl CapabilitySet {
     /// The MCP tool inventory (server names and discovered tools) extracted
     /// from usable `McpServer` capabilities in this set.
     ///
-    /// This is the canonical source of truth for MCP tools: the registry
-    /// reconciles `configuration.tools` and retains last-known-good tools across
-    /// transient probe failures.
+    /// This is the canonical source of truth for MCP tools: each server's
+    /// `configuration.tools` is what the on-demand pool last observed, and it
+    /// survives the pool evicting an idle connection.
     pub fn mcp_inventory(&self) -> McpInventory {
         let mut inventory = Vec::new();
         for cap in self.of_kind(CapabilityKind::McpServer) {
@@ -273,23 +273,6 @@ impl CapabilitySet {
             }
         }
         inventory
-    }
-
-    /// Narrow to the capabilities serving at least one required domain.
-    ///
-    /// Strictly subtractive, and only `Tool` entries are sliced: a skill is
-    /// already progressively disclosed by its loader and an MCP server is
-    /// already lazy, so slicing those spends risk for no context saving.
-    /// Undeclared capabilities always survive.
-    pub fn sliced_to(&self, required: &std::collections::BTreeSet<Domain>) -> Vec<&Capability> {
-        self.usable()
-            .filter(|c| {
-                if c.id.kind != CapabilityKind::Tool {
-                    return true;
-                }
-                c.serves.serves_any(required)
-            })
-            .collect()
     }
 
     /// What changed between two published sets.
@@ -384,11 +367,10 @@ mod tests {
             digest: None,
             source: None,
             resolution: if usable {
-                Resolution::Static
+                Resolution::Available
             } else {
-                Resolution::Degraded {
-                    failure: super::super::resolution::Failure::new("down", ""),
-                    retry_at: SystemTime::now(),
+                Resolution::Retired {
+                    reason: "revoked".into(),
                 }
             },
             configuration: serde_json::Value::Null,
@@ -410,18 +392,14 @@ mod tests {
     }
 
     #[test]
-    fn the_digest_ignores_volatile_retry_detail() {
-        // Two sets identical except for backoff bookkeeping must share a
-        // digest, or a failing server republishes an epoch every few seconds.
-        let mut a = cap("tavily", CapabilityKind::McpServer, false);
+    fn the_digest_follows_observed_configuration() {
+        let a = cap("tavily", CapabilityKind::McpServer, true);
         let mut b = a.clone();
-        a.resolution = Resolution::Static.failed(SystemTime::now(), "down", "");
-        b.resolution = Resolution::Static
-            .failed(SystemTime::now(), "down", "")
-            .failed(SystemTime::now(), "down", "");
-        let set_a = CapabilitySet::new(1, vec![a]);
+        b.configuration = serde_json::json!({"tools": [{"name": "search"}]});
+        let set_a = CapabilitySet::new(1, vec![a.clone()]);
         let set_b = CapabilitySet::new(2, vec![b]);
-        assert_eq!(set_a.digest, set_b.digest);
+        assert_ne!(set_a.digest, set_b.digest, "a learned catalog is news");
+        assert_eq!(set_a.digest, CapabilitySet::new(3, vec![a]).digest);
     }
 
     #[test]
@@ -466,28 +444,5 @@ mod tests {
         let delta = after.delta_from(&before);
         assert!(delta.removed.is_empty(), "still configured, just unusable");
         assert_eq!(delta.updated.len(), 1);
-    }
-
-    #[test]
-    fn slicing_never_removes_a_non_tool_or_an_undeclared_tool() {
-        let required = std::collections::BTreeSet::from([Domain::LiveData]);
-        let mut filesystem_tool = cap("read", CapabilityKind::Tool, true);
-        filesystem_tool.serves = Serves::declared([Domain::Filesystem]);
-        let set = CapabilitySet::new(
-            1,
-            vec![
-                filesystem_tool,
-                cap("bash", CapabilityKind::Tool, true), // undeclared
-                cap("pdf", CapabilityKind::Skill, true),
-            ],
-        );
-        let kept: Vec<_> = set
-            .sliced_to(&required)
-            .into_iter()
-            .map(|c| c.id.name.clone())
-            .collect();
-        assert!(kept.contains(&"bash".to_string()), "undeclared fails open");
-        assert!(kept.contains(&"pdf".to_string()), "skills are not sliced");
-        assert!(!kept.contains(&"read".to_string()));
     }
 }

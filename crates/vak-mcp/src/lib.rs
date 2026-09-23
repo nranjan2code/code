@@ -9,7 +9,7 @@ pub mod tool;
 pub use client::{
     McpClient, McpError, McpNotification, McpToolInfo, NotificationSink, ServerConfig,
 };
-pub use manager::{IDLE_TTL, McpManager, PROBE_TIMEOUT, ProbeOutcome};
+pub use manager::{IDLE_TTL, LIST_TIMEOUT, ListOutcome, McpManager, ServerObservation};
 pub use tool::McpTool;
 
 mod validate;

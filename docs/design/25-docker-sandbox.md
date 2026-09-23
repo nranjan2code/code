@@ -127,9 +127,13 @@ image   = "alpine:3.20"   # default alpine:3.20
   for agent execution; its private writable layer is retained until the task
   ends or the owner is dropped.
 - The workspace authorization broker, authenticated server endpoints, and
-  model-facing `agent_network` tool are implemented. The Docker task still
-  stays on `--network none`; cross-workspace communication is host-mediated,
-  capability-checked, mutually authorized, bounded, and queued.
+  model-facing `agent_network` tool are implemented. The tool is offered to
+  a workspace's agent only while that workspace holds a live broker
+  registration whose policy is enabled with at least one peer
+  (`AgentNetworkBroker::is_enabled`); otherwise it is not in the turn's
+  tools at all. The Docker task still stays on `--network none`;
+  cross-workspace communication is host-mediated, capability-checked,
+  mutually authorized, bounded, and queued.
 - No `--user` mapping yet: on Linux hosts with plain dockerd, container
   writes are root-owned. macOS/Windows Desktop handle this transparently;
   rootless/docker-userns-remap setups are unaffected.

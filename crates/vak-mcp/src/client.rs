@@ -470,7 +470,7 @@ fn shell_quote(value: &str) -> String {
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct McpToolInfo {
     pub name: String,
     pub description: String,

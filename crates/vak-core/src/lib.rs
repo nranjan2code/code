@@ -522,10 +522,8 @@ struct CoreInner {
     /// turn. Keyed by a fingerprint of the resolved server set so a
     /// runtime `set_mcp_servers` call or a plugin enable/disable — both of
     /// which change what `effective_mcp()` returns — transparently swaps
-    /// in a fresh manager instead of serving a stale one. The inventory
-    /// (server -> tool name/description pairs) is filled in by a
-    /// best-effort background warm-up and read by `system_prompt()`; a
-    /// turn never blocks on it — see `mcp_manager()` / `cached_mcp_inventory()`.
+    /// in a fresh manager instead of serving a stale one. Nothing is spawned
+    /// until a model's `mcp` call needs it — see `mcp_manager()`.
     mcp_cache: std::sync::Mutex<Option<McpCache>>,
     /// The capability registry and its reconcile loop
     /// (docs/design/41-capability-registry.md). Created on first use and
@@ -1793,19 +1791,8 @@ impl Core {
         self.inner
             .mcp_runtime_pinned
             .store(false, std::sync::atomic::Ordering::Release);
-        let registry = self.capability_registry();
-        for name in config.servers.keys() {
-            let id =
-                capability::CapabilityId::new(vak_session::types::CapabilityKind::McpServer, name);
-            let reg = registry.clone();
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(async move {
-                    reg.mark_due(&id).await;
-                    reg.hint(capability::Hint::Immediate);
-                });
-            }
-        }
-        registry.hint(capability::Hint::ConfigChanged);
+        self.capability_registry()
+            .hint(capability::Hint::ConfigChanged);
     }
 
     pub fn invalidate_mcp_cache(&self) {
@@ -1822,96 +1809,21 @@ impl Core {
         }
     }
 
-    /// Kick the MCP tool-inventory warm-up as early as possible: right
-    /// after boot, not at the first session's first turn.
-    ///
-    /// `system_prompt()` also triggers this lazily, but a session's first
-    /// turn gives the background discovery pass only the gap between
-    /// session creation and that turn's `AgentConfig` build — often under
-    /// a second, nowhere near enough for a cold `npx <mcp-server>` spawn.
-    /// A process boots once and then sits idle through real human seconds
-    /// (reading the sidebar, picking "New task", typing) before the first
-    /// message ever arrives; starting the same background pass here
-    /// instead spends that idle time productively, so even a single-turn
-    /// task's very first `system_prompt()` call has a real chance of
-    /// finding the rich catalog already in `cached_mcp_inventory()`
-    /// instead of falling back to the name-only line.
-    ///
-    /// Fire-and-forget, like the warm-up it triggers: never blocks the
-    /// caller, and calling it when nothing is configured is a no-op.
-    pub fn warm_mcp(&self) {
-        self.mcp_manager();
-    }
-
-    /// `warm_mcp()`'s bounded, awaitable sibling for one-shot CLI callers
-    /// (`vak exec`, `vak flow exec`, `vak plan`) that have no boot-to-
-    /// first-message idle window to spend: the process is built, a Core
-    /// is constructed, and the single turn runs immediately after. There
-    /// is no later turn to catch up on either, so the background warm-up
-    /// `system_prompt()` triggers on its own would in practice never pay
-    /// off for these — by the time it might land, the process has already
-    /// exited.
-    ///
-    /// Waits up to `timeout` for the same background discovery pass
-    /// `mcp_manager()` kicks off, then returns regardless — a deliberate,
-    /// explicit trade against "turn admission never blocks on an optional
-    /// integration", taken only by a caller that opts in, and only
-    /// because for this one shape of caller the alternative is "never
-    /// gets the rich catalog, ever", not "gets it one turn later". Polls
-    /// the cache rather than firing a second discovery call, so a slow
-    /// server just means this returns at `timeout` with the fallback
-    /// still in effect — never a duplicate connection race with the
-    /// in-flight background pass.
-    pub async fn warm_mcp_bounded(&self, timeout: std::time::Duration) {
-        if self.mcp_manager().is_none() {
-            return;
-        }
-        let deadline = tokio::time::Instant::now() + timeout;
-        while self.cached_mcp_inventory().is_none() && tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    }
-
-    /// How long admission may wait for the capability registry before it
-    /// gives up and freezes what it has. Bounded, because an optional
-    /// integration must never block a turn indefinitely; generous enough
-    /// that a cold `npx <mcp-server>` usually lands inside it.
-    pub const ADMISSION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
-
     /// **The** capability packet for a turn, for every surface.
     ///
-    /// This is the one place anything waits for capability discovery, and it
-    /// exists because the wait used to live in each surface's startup code
-    /// and they all answered it differently: the CLI called
-    /// `warm_mcp_bounded` and waited two seconds, `vak serve` called
-    /// `warm_mcp` and never waited at all, and the desktop called nothing.
-    /// The same question therefore produced a different packet depending on
-    /// where it was asked — and on the desktop it was not even a race, it was
-    /// deterministic: nothing warmed, so every session froze an MCP section
-    /// naming servers with no catalog behind them. A model given a server
-    /// name and no tools concludes it cannot reach anything, which is how an
-    /// admitted, working search server still produced "I do not have a tool
-    /// that can provide real-time weather information".
+    /// Every surface asks here, so the same question always gets the same
+    /// packet.
     ///
     /// One canonical way (AGENTS.md invariant 30): surfaces do not decide
-    /// this, admission does. The registry reconciles once if it has never
-    /// published, bounded by [`Self::ADMISSION_BUDGET`]; a timeout is not an
-    /// error, it just means this turn is admitted with whatever resolved in
-    /// time and the reconcile loop repairs it for the next one — with no
-    /// restart and no session rotation (invariant 31).
+    /// this, admission does. A pass is offline — declarations plus what the
+    /// MCP pool has already observed — so admission reconciles when anything
+    /// changed and never waits on an integration (invariant 25).
     pub async fn admitted_capabilities(&self) -> Vec<CapabilityDescriptor> {
         let registry = self.capability_registry();
         if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
-            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
+            registry.reconcile().await;
         }
-        let published = registry.current().await;
-        if published.epoch == 0 {
-            // The registry never got to publish. Fall back to the direct
-            // descriptors so a turn is never capability-less because
-            // discovery was slow.
-            return self.capability_descriptors();
-        }
-        published.descriptors()
+        registry.current().await.descriptors()
     }
 
     /// Fast live revocation check for presentation and other non-async
@@ -2331,11 +2243,9 @@ impl Core {
     /// in a fresh manager (dropping the old one, which shuts its clients
     /// down on drop) rather than serving stale servers indefinitely.
     ///
-    /// Turn admission still never blocks on an optional integration: this
-    /// only constructs the manager (no I/O — `ServerConfig` is inert until
-    /// something calls `.get()` on it) and fires a best-effort background
-    /// warm-up of the tool inventory that `system_prompt()` picks up once
-    /// it lands.
+    /// This only constructs the pool — no I/O, no spawn, no warm-up. A server
+    /// starts when a model's `mcp` call first needs it, and the pool shuts it
+    /// down again after `vak_mcp::IDLE_TTL` unused (AGENTS.md invariant 25).
     fn mcp_manager(&self) -> Option<Arc<vak_mcp::McpManager>> {
         let servers = self.resolved_mcp_servers();
         if servers.is_empty() {
@@ -2359,134 +2269,66 @@ impl Core {
                 return Some(c.manager.clone());
             }
         }
-        // Route server-initiated notifications into the reconcile loop.
-        //
-        // MCP servers announce catalog changes with
-        // `notifications/tools/list_changed`; the transport used to drop
-        // every notification, so the protocol's own answer to hot-swap was
-        // discarded one layer below where it was useful. Forwarding it as a
-        // hint means a server that gains a tool is picked up in one debounce
-        // window rather than at the next catalog TTL — and because the loop
-        // is level-triggered, losing this signal only costs latency.
-        let manager = {
-            let mut manager = vak_mcp::McpManager::new_sandboxed(
-                servers.into_iter().collect(),
-                self.inner.cwd.clone(),
-                self.build_sandbox(),
-            );
-            if tokio::runtime::Handle::try_current().is_ok() {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                manager = manager.with_notifications(tx);
-                let core = self.clone();
-                tokio::spawn(async move {
-                    while let Some((server, notification)) = rx.recv().await {
-                        if notification.invalidates_tools() {
-                            // Clear the cached catalog so the next pass
-                            // re-probes rather than trusting a stale one.
-                            if let Ok(mut cache) = core.inner.mcp_cache.lock()
-                                && let Some(c) = cache.as_mut()
-                            {
-                                c.inventory = None;
-                            }
-                            let registry = core.capability_registry();
-                            registry
-                                .mark_due(&capability::CapabilityId::new(
-                                    vak_session::types::CapabilityKind::McpServer,
-                                    &server,
-                                ))
-                                .await;
-                            registry.hint(capability::Hint::ServerAnnounced(server));
-                        }
-                    }
-                });
+        // The pool reports what demand taught it (a catalog learned, a
+        // failure recorded or cleared) and forwards a live server's
+        // `notifications/tools/list_changed`; both become registry hints, so
+        // the next turn sees the change. The loop is level-triggered, so a
+        // lost hint costs one tick of latency, never correctness.
+        let manager = vak_mcp::McpManager::new_sandboxed(
+            servers.into_iter().collect(),
+            self.inner.cwd.clone(),
+            self.build_sandbox(),
+        );
+        // Without a reactor (synchronous prompt assembly, one-shot tooling)
+        // nothing can be spawned or observed, so there is nothing to wire.
+        let (manager, wiring) = match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                let (observed_tx, observed_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (notify_tx, notify_rx) = tokio::sync::mpsc::unbounded_channel();
+                (
+                    manager
+                        .with_observer(observed_tx)
+                        .with_notifications(notify_tx),
+                    Some((observed_rx, notify_rx)),
+                )
             }
-            Arc::new(manager)
+            Err(_) => (manager, None),
         };
-        {
-            let mut cache = self
-                .inner
-                .mcp_cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *cache = Some(McpCache {
-                fingerprint: fp,
-                manager: manager.clone(),
-                inventory: None,
-                warming: false,
+        let manager = Arc::new(manager);
+        if let Some((mut observed_rx, mut notify_rx)) = wiring {
+            let registry = self.capability_registry();
+            let pool = Arc::downgrade(&manager);
+            tokio::spawn(async move {
+                loop {
+                    let server = tokio::select! {
+                        Some(server) = observed_rx.recv() => server,
+                        Some((server, notification)) = notify_rx.recv() => {
+                            if !notification.invalidates_tools() {
+                                continue;
+                            }
+                            match pool.upgrade() {
+                                // Forgetting announces, which arrives on
+                                // `observed_rx` and hints from there.
+                                Some(pool) => pool.forget_catalog(&server),
+                                None => return,
+                            }
+                            continue;
+                        }
+                        else => return,
+                    };
+                    registry.hint(capability::Hint::ServerObserved(server));
+                }
             });
         }
-        // Only when a reactor exists: `spawn_mcp_inventory_warm` uses
-        // `tokio::spawn`, and `mcp_manager()` is reached from synchronous
-        // paths (prompt assembly in tests and one-shot tooling) that have no
-        // runtime. Without a reactor there is nothing to warm and the
-        // name-only section is the correct answer.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            self.spawn_mcp_inventory_warm(fp, manager.clone());
-        }
-        Some(manager)
-    }
-
-    /// Kick a discovery pass for this server set, if one is not already in
-    /// flight.
-    ///
-    /// Failures no longer poison the cache. The old shape stored a failed
-    /// probe as `Some(inventory)` containing a synthesised tool named
-    /// `error`, and the re-entry guard (`inventory.is_none()`) then saw
-    /// `Some(_)` and refused to try again for the life of the process —
-    /// which, under "never restart", meant never. Here a failure leaves the
-    /// catalog absent and clears `warming`, so the next pass retries, and
-    /// `capability_registry()`'s loop drives those passes on a rhythm with
-    /// proper backoff.
-    fn spawn_mcp_inventory_warm(&self, fp: u64, manager: Arc<vak_mcp::McpManager>) {
-        {
-            let mut cache = self
-                .inner
-                .mcp_cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match cache.as_mut() {
-                Some(c) if c.fingerprint == fp && !c.warming => {
-                    c.warming = true;
-                }
-                _ => return,
-            }
-        }
-        let core = self.clone();
-        tokio::spawn(async move {
-            let probed = manager.inventory().await;
-            let mut cache = core
-                .inner
-                .mcp_cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(c) = cache.as_mut()
-                && c.fingerprint == fp
-            {
-                c.inventory = Some(probed);
-                c.warming = false;
-            }
-        });
-    }
-
-    /// The catalogs of servers that answered, for the prompt's MCP section.
-    ///
-    /// Only successful probes appear. A server that failed is deliberately
-    /// absent rather than present-with-an-error-tool: the prompt must never
-    /// advertise something dispatch will refuse, and the failure is reported
-    /// through the standing section instead, where it carries a remedy.
-    fn cached_mcp_inventory(&self) -> Option<McpInventory> {
-        let probed = self
+        *self
             .inner
             .mcp_cache
             .lock()
-            .ok()?
-            .as_ref()
-            .and_then(|c| c.inventory.clone())?;
-        let usable: McpInventory = probed
-            .into_iter()
-            .filter_map(|(server, outcome)| outcome.ok().map(|tools| (server, tools)))
-            .collect();
-        (!usable.is_empty()).then_some(usable)
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(McpCache {
+            fingerprint: fp,
+            manager: manager.clone(),
+        });
+        Some(manager)
     }
 
     /// Replace lifecycle hooks for subsequent turns without restarting the
@@ -3682,6 +3524,23 @@ impl Core {
         if self.effective_browse() {
             tools.push(Arc::new(vak_tools::WebBrowseTool));
         }
+        // Inter-agent messaging, only while an operator has authorized this
+        // workspace on the broker (docs/design/25-docker-sandbox.md). The
+        // broker keys workspaces by canonical path, as the server registers
+        // them.
+        let workspace = self
+            .inner
+            .cwd
+            .canonicalize()
+            .unwrap_or_else(|_| self.inner.cwd.clone())
+            .display()
+            .to_string();
+        let network = self.agent_network_broker();
+        if network.is_enabled(&workspace) {
+            tools.push(Arc::new(agent_network::AgentNetworkTool::new(
+                network, workspace,
+            )));
+        }
         tools.retain(|tool| self.channel_tool_allowed(tool.name()));
         tools
     }
@@ -3745,7 +3604,7 @@ impl Core {
                 source: declaration.source,
                 // Unprobed: `Static` describes it without claiming a probe
                 // succeeded. Admission is what proves the rest.
-                resolution: capability::Resolution::Static,
+                resolution: capability::Resolution::Available,
                 configuration: declaration.configuration,
             })
             .map(|capability| capability.to_descriptor())
@@ -3891,45 +3750,19 @@ impl Core {
             });
         }
 
-        // 5. MCP servers that were probed and failed.
-        //
-        // Previously invisible in every surface: a failed probe was stored
-        // as a *successful* catalog holding a tool named `error`, so the
-        // prompt advertised a dead server as usable and nothing ever said
-        // otherwise. Reporting it here puts the failure and its remedy in
-        // front of the model and — through `health::collect` — in front of
-        // the operator, from the same probe result, so the two cannot
-        // disagree about which servers are down.
-        //
-        // Reads `capability::registry::Resolution::Degraded` (via
-        // `CapabilityRegistry::current_blocking`), not the older
-        // `Core::mcp_cache`/`failed_mcp_servers()` path. Those were two
-        // independently-evolved sources for the same fact — the registry
-        // has real backoff/attempt tracking `mcp_cache` never did, and is
-        // already the single source of truth for the discovered tool
-        // catalog itself (see `mcp_config_section`'s doc comment, which
-        // describes fixing this exact class of two-sources-disagree defect
-        // for the catalog; this closes the matching gap for health status).
+        // 5. MCP servers whose last on-demand attempt failed, as the pool
+        // observed it. Operator-facing only (`source: None`): the server is
+        // still callable — the next demand retries after the pool's backoff —
+        // so it must not join the prompt's "NOT usable" list; the model sees
+        // the failure on the server's own line in the MCP section instead.
         for capability in self.capability_registry().current_blocking().all() {
-            if capability.id.kind != vak_session::types::CapabilityKind::McpServer {
-                continue;
-            }
-            if let capability::resolution::Resolution::Degraded { failure, .. } =
-                &capability.resolution
-            {
-                let server = capability.id.name.clone();
+            if let Some(reason) = capability::report::mcp_failure(capability) {
                 out.push(CapabilityDiagnostic {
                     kind: "mcp-server".into(),
-                    name: server.clone(),
-                    reason: failure.reason.clone(),
-                    source: Some("[mcp.servers]".into()),
-                    remedy: if failure.remedy.is_empty() {
-                        format!(
-                            "check the `{server}` entry under [mcp.servers] — command, args, and any required env"
-                        )
-                    } else {
-                        failure.remedy.clone()
-                    },
+                    name: capability.id.name.clone(),
+                    reason: reason.to_string(),
+                    source: None,
+                    remedy: capability::report::mcp_remedy(&capability.id.name),
                     // A server that will not answer is broken, not chosen.
                     deliberate: false,
                 });
@@ -4392,27 +4225,10 @@ impl Core {
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
 
         self.invalidate_mcp_cache();
-        let registry = self.capability_registry();
-        let mcp = self.effective_mcp();
-        for (name, server) in &mcp.servers {
-            let references_var = server.env.iter().any(|(_, v)| v.contains(env_var))
-                || server.command.contains(env_var)
-                || server.args.iter().any(|a| a.contains(env_var));
-            if references_var {
-                let id = capability::CapabilityId::new(
-                    vak_session::types::CapabilityKind::McpServer,
-                    name,
-                );
-                let reg = registry.clone();
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.spawn(async move {
-                        reg.mark_due(&id).await;
-                        reg.hint(capability::Hint::Immediate);
-                    });
-                }
-            }
-        }
-        registry.hint(capability::Hint::ConfigChanged);
+        // A changed secret changes the server set's fingerprint, so the next
+        // demand gets a fresh pool; the registry just needs to re-declare.
+        self.capability_registry()
+            .hint(capability::Hint::ConfigChanged);
         Ok(())
     }
 
@@ -4428,27 +4244,10 @@ impl Core {
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
 
         self.invalidate_mcp_cache();
-        let registry = self.capability_registry();
-        let mcp = self.effective_mcp();
-        for (name, server) in &mcp.servers {
-            let references_var = server.env.iter().any(|(_, v)| v.contains(env_var))
-                || server.command.contains(env_var)
-                || server.args.iter().any(|a| a.contains(env_var));
-            if references_var {
-                let id = capability::CapabilityId::new(
-                    vak_session::types::CapabilityKind::McpServer,
-                    name,
-                );
-                let reg = registry.clone();
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.spawn(async move {
-                        reg.mark_due(&id).await;
-                        reg.hint(capability::Hint::Immediate);
-                    });
-                }
-            }
-        }
-        registry.hint(capability::Hint::ConfigChanged);
+        // A changed secret changes the server set's fingerprint, so the next
+        // demand gets a fresh pool; the registry just needs to re-declare.
+        self.capability_registry()
+            .hint(capability::Hint::ConfigChanged);
         Ok(())
     }
 
@@ -5908,7 +5707,7 @@ impl Core {
         let (provider, model) = (self.provider()?, self.effective_model());
         let registry = self.capability_registry();
         if registry.current().await.epoch == 0 || registry.has_pending_changes().await {
-            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
+            registry.reconcile().await;
         }
         // Rendered from the re-bound packet, not from the frozen string.
         //
@@ -5956,14 +5755,7 @@ impl Core {
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
         let channel_policy = self.channel_policy().unwrap_or_default();
-        let mut mcp_inventory = cap_set.mcp_inventory();
-        if let Some(cached) = self.cached_mcp_inventory() {
-            for (server, tools) in cached {
-                if !mcp_inventory.iter().any(|(s, _)| s == &server) {
-                    mcp_inventory.push((server, tools));
-                }
-            }
-        }
+        let mcp_inventory = cap_set.mcp_inventory();
         let builtin_names: std::collections::BTreeSet<String> =
             self.tool_names().into_iter().collect();
         let mut turn_capabilities = capability::TurnCapabilities::build(&capability::TurnProbe {
@@ -8802,25 +8594,11 @@ fn interpolate_env_var_with(
     Some(out)
 }
 
-/// `CoreInner::mcp_cache`'s payload: the manager currently live for
-/// `fingerprint`'s server set, plus whatever the background inventory
-/// warm-up has produced for it so far.
-/// server name -> (tool name, description) pairs, as returned by
-/// `McpManager::inventory()`.
-use capability::McpInventory;
-
-/// A whole discovery pass: every configured server with the outcome of its
-/// probe. A failure is `Err(reason)` and never a synthesised catalog entry.
-type McpProbes = Vec<(String, vak_mcp::ProbeOutcome)>;
-
+/// `CoreInner::mcp_cache`'s payload: the pool currently live for
+/// `fingerprint`'s server set.
 struct McpCache {
     fingerprint: u64,
     manager: Arc<vak_mcp::McpManager>,
-    inventory: Option<McpProbes>,
-    /// True while a `spawn_mcp_inventory_warm` task for this fingerprint
-    /// is in flight, so a burst of turns doesn't each fire their own
-    /// discovery pass against the same server set.
-    warming: bool,
 }
 
 /// Identifies one resolved MCP server set for cache-invalidation purposes:
@@ -8856,32 +8634,15 @@ struct ToolScope {
     audience_id: Option<String>,
 }
 
-/// Model-visible fallback for configured MCP servers when live discovery is
-/// unavailable. This belongs in the frozen session contract as well as the
-/// live prompt so a transient launcher failure cannot hide a capability.
 /// The MCP section of the prompt, rendered from the admitted capability
-/// packet itself.
+/// packet alone — one source, so the prompt can never describe servers the
+/// turn did not admit.
 ///
-/// The catalog used to come from a second place — `Core::mcp_cache`'s
-/// inventory — while the server *names* came from the packet. Two sources
-/// for one fact, and they disagreed exactly when it mattered: a session
-/// admitted before discovery landed froze the name-only line while the cache
-/// filled in moments later, and nothing ever reconciled the two. A model
-/// handed "these servers exist, go call `list` yourself" and no catalog
-/// reasonably concludes it has nothing to reach, which is how a working,
-/// admitted search server produced "I do not have a tool that can provide
-/// real-time weather information".
-///
-/// Now there is one source. `CapabilityKind::McpServer` descriptors carry
-/// their discovered catalog in `configuration.tools` (filled by the
-/// registry's probe), so whatever the packet admits is exactly what the
-/// prompt describes.
-/// Reached only through the `mcp` broker (docs/design/68-context-engine.md
-/// §5): this section names servers and, per server, one line per tool with
-/// no input schema — `mcp list` is where a schema is discovered, right
-/// before the call that needs it. A tool also exposed as a direct capability
-/// is removed from the direct list by the turn-capability pipeline before it
-/// ever reaches here, so nothing is offered both ways.
+/// Each server is named with the tool *names* the on-demand pool last
+/// observed (none before its first use; `configuration.tools`) and, when its
+/// last attempt failed, that reason. No descriptions or schemas: `mcp` `list`
+/// with a server returns those right before the call that needs them
+/// (docs/design/68-context-engine.md §5).
 fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
     if servers.is_empty() {
         return String::new();
@@ -8905,6 +8666,18 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
             section.push_str(&format!("- {}\n", capability.name));
         } else {
             section.push_str(&format!("- {}: {}\n", capability.name, tools.join(", ")));
+        }
+        // Still callable — the pool retries on the next demand after its
+        // backoff — so the model is told, not denied.
+        if let Some(failure) = capability
+            .configuration
+            .get("last_failure")
+            .and_then(|f| f.as_str())
+        {
+            section.push_str(&format!(
+                "  last attempt failed: {failure}. If the request needs it, try once more and otherwise tell the user it is unavailable and how to fix it: {}.\n",
+                capability::report::mcp_remedy(&capability.name)
+            ));
         }
     }
     section

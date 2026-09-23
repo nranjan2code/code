@@ -6,9 +6,9 @@
 //! * A capability **declares what it serves** (`domain`), so the harness
 //!   matches instead of holding a table of built-in names. Adding an
 //!   integration never edits the harness.
-//! * Usability is a **state machine** (`resolution`), never data. A failed
-//!   probe carries a reason, a remedy and a `retry_at` — it is never stored
-//!   as a catalog entry, and it never blocks a retry.
+//! * Declaration is **offline**. Nothing here spawns or probes: an MCP
+//!   server's catalog and last failure are what the on-demand pool observed,
+//!   declared as data (`resolution`, `vak_mcp::McpManager`).
 //! * The registry publishes **immutable versioned snapshots**
 //!   (`snapshot`), and a **turn** binds one for its whole duration. That is
 //!   what lets a three-week-old session pick up a skill added today with no
@@ -29,11 +29,11 @@ pub mod turn;
 
 pub use domain::{Domain, Serves};
 pub use registry::{
-    CapabilityProvider, CapabilityRegistry, DEBOUNCE, Declaration, Hint, ProbeFailure, ProbeReport,
-    RECONCILE_INTERVAL, ReconcileStatus,
+    CapabilityProvider, CapabilityRegistry, DEBOUNCE, Declaration, Hint, RECONCILE_INTERVAL,
+    ReconcileStatus,
 };
 pub use report::{CapabilityReport, CapabilityRow, standing_section};
-pub use resolution::{Failure, Resolution};
+pub use resolution::Resolution;
 pub use snapshot::{
     Binding, Capability, CapabilityDelta, CapabilityId, CapabilitySet, Epoch, Origin,
 };

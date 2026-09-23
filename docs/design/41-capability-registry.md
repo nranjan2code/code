@@ -92,30 +92,35 @@ Two rules keep it honest:
    table in the harness would reintroduce exactly the coupling this design
    deletes.
 
-## Resolve: usability is a state, never data
+## Resolve: declaration is offline; MCP is on demand
 
 ```
-Static ─┐
-        ├─ Probing ──► Ready{checked_at, announces_changes}
-        │       └────► Degraded{failure, retry_at} ──┐
-        │                    ▲                       │
-        │                    └── backoff + jitter ───┘
-        └──────────────────────────────► Retired{reason}
+Available ──► Retired{reason}      (revoked)
 ```
 
-Only `Ready` and `Static` are usable, and only they carry a catalog. A
-failure carries a reason, a remedy, and a `retry_at`; it is never a catalog
-entry and never blocks a retry. Backoff is exponential with a ten-minute cap,
-so a server down for a week is probed on a slow rhythm and one down for ten
-seconds recovers almost at once.
+A capability is usable when declared and not revoked. Nothing in the
+registry talks to anything: a pass is a filesystem walk at worst, so turn
+admission reconciles whenever the declared world changed and never waits.
 
-A server that declares `tools.listChanged` is re-probed when it says so, with
-a long TTL as backstop. One that does not is re-probed on a short rhythm,
-because silence carries no information.
+MCP servers are started **only by demand** — a model's `mcp` call — never by
+the registry, admission, or prompt assembly (AGENTS.md invariant 25). The
+per-`Core` pool (`vak_mcp::McpManager`, so one per workspace in the server's
+`CorePool`) spawns a server when a call needs it, reuses the connection for
+every session, and shuts it down after `IDLE_TTL` unused; eviction never
+triggers a respawn. What demand teaches the pool — a server's catalog, or
+why its last attempt failed — is recorded as a `ServerObservation`, declared
+as that server's configuration, and published in the next epoch, so the
+following turn's prompt names its tools with no restart. A failure is a
+reason on a still-callable server, never a catalog entry and never a callable
+name; repeated demand inside the pool's exponential backoff gets the recorded
+reason back instead of a fresh spawn, and the next demand after it retries.
+A server that announces `notifications/tools/list_changed` has its catalog
+forgotten, to be re-learned on its next use.
 
-Probes run concurrently under a per-server budget well below the request
-timeout: the cost of N unreachable servers must be the *max* of the budget,
-not the sum.
+The registry used to probe every configured server on a background timer —
+spawning servers nobody had asked for, re-spawning them right after the pool
+evicted them for idleness — and admission waited up to five seconds for
+those probes. Both are gone.
 
 ## Reconcile: level-triggered, not edge-triggered
 
@@ -141,9 +146,10 @@ its standing section. This is what makes rotation unnecessary rather than
 merely forbidden.
 
 The epoch moves only when the world actually differs. The set digest covers
-identity, usability, content and declared domains, and deliberately excludes
-volatile retry bookkeeping, so a server failing on a backoff rhythm does not
-republish an epoch every few seconds and churn every live session's prompt.
+identity, usability, content, declared domains and configuration. An MCP
+server's observation carries only its catalog and failure *reason*, never
+attempt counts or times, so repeated failures for one cause do not churn
+every live session's prompt.
 
 Audit is strengthened, not weakened. Previously you could reconstruct what a
 session was *born* with; now every turn records the epoch it ran at, and
@@ -217,19 +223,21 @@ server is no longer invisible to the operator and present to the model.
 7. A host may add run-scoped direct-write paths. They are evaluated before a
    `write` or `edit` tool is dispatched and never depend on model compliance
    with a natural-language scope instruction.
-8. Per-turn narrowing is a subset operation, never a set operation. Only
-   `Tool` entries are sliced — a skill is already progressively disclosed by
-   its loader and an MCP server is already lazy — and a capability that
-   declares no domains is never narrowed away.
-9. A failure is never data. No probe result may introduce a callable name,
-   and no cached failure may prevent a retry.
+8. A turn's reading never removes a capability. It only chooses which
+   admitted tools are loaded; the rest are listed and one `find_tools` call
+   away, and a tool that declares no domains is always loaded.
+9. A failure is never data. No observation may introduce a callable name,
+   and no recorded failure may prevent the next demand from retrying once
+   the pool's backoff has passed.
+10. Nothing but demand starts an MCP server: not declaration, not
+    reconciliation, not admission, not prompt assembly.
 
 ## Layout
 
 ```
 crates/vak-core/src/capability/
   domain.rs      Domain vocabulary and Serves; the anti-hardcoding boundary
-  resolution.rs  Resolution state machine, Failure, backoff, catalog TTLs
+  resolution.rs  Resolution: available or retired
   snapshot.rs    Capability, CapabilitySet, Epoch, Binding, CapabilityDelta
   registry.rs    CapabilityRegistry, the reconcile loop, revocation channel
   provider.rs    Core as CapabilityProvider; five kinds → one declaration set

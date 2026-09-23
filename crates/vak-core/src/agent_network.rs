@@ -218,6 +218,22 @@ impl AgentNetworkBroker {
         BrokerCapability { workspace, token }
     }
 
+    /// Whether `workspace` holds a live registration whose policy enables
+    /// networking with at least one peer — the condition under which its
+    /// agent is offered the `agent_network` tool. Off by default: nothing is
+    /// registered until an operator authorizes the workspace.
+    pub fn is_enabled(&self, workspace: &str) -> bool {
+        let state = self.lock();
+        state
+            .policies
+            .get(workspace)
+            .is_some_and(|policy| policy.enabled && !policy.allowed_peers.is_empty())
+            && state
+                .capabilities
+                .get(workspace)
+                .is_some_and(|record| record.expires_at > std::time::Instant::now())
+    }
+
     pub fn revoke(&self, capability: &BrokerCapability) -> bool {
         let mut state = self.lock();
         if state

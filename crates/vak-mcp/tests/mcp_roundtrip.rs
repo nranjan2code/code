@@ -44,7 +44,9 @@ fn ctx() -> ToolContext {
 #[tokio::test]
 async fn list_discovers_server_and_tools() {
     let tool = McpTool::new(manager());
-    let out = tool.execute(&json!({"action": "list"}), &ctx()).await;
+    let out = tool
+        .execute(&json!({"action": "list", "server": "fake"}), &ctx())
+        .await;
     assert!(!out.is_error, "list failed: {}", out.content);
     assert!(out.content.contains("fake:"), "got: {}", out.content);
     assert!(out.content.contains("echo — Echo back"));

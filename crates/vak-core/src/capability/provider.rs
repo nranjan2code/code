@@ -13,9 +13,7 @@ use async_trait::async_trait;
 use vak_session::types::CapabilityKind;
 
 use super::domain::{Domain, Serves};
-use super::registry::{
-    CapabilityProvider, CapabilityRegistry, Declaration, Hint, ProbeFailure, ProbeReport,
-};
+use super::registry::{CapabilityProvider, CapabilityRegistry, Declaration, Hint};
 use super::snapshot::{CapabilityId, Origin};
 use crate::Core;
 
@@ -140,7 +138,6 @@ impl CapabilityProvider for Core {
                 digest: None,
                 source: None,
                 configuration: serde_json::Value::Null,
-                needs_probe: false,
             });
         }
         if self.channel_tool_allowed("flow") {
@@ -152,7 +149,6 @@ impl CapabilityProvider for Core {
                 digest: None,
                 source: None,
                 configuration: serde_json::Value::Null,
-                needs_probe: false,
             });
         }
 
@@ -183,12 +179,18 @@ impl CapabilityProvider for Core {
                 digest: Some(digest),
                 source: Some(skill.path.clone()),
                 configuration: serde_json::Value::Null,
-                needs_probe: false,
             });
         }
 
         // --- mcp servers -------------------------------------------------
+        // Declared from config alone; what the on-demand pool has observed
+        // (catalog, last failure) rides along as data. Nothing here starts a
+        // server — only a model's `mcp` call does.
         let mcp = self.effective_mcp();
+        let observed = self
+            .mcp_manager()
+            .map(|manager| manager.observations())
+            .unwrap_or_default();
         for (name, server) in mcp.servers {
             let serves = if server.serves.is_empty() {
                 // Deliberately not guessed from tool names: a keyword table
@@ -234,11 +236,10 @@ impl CapabilityProvider for Core {
                 serves,
                 digest,
                 source: None,
-                configuration: serde_json::Value::Null,
-                // The one kind that talks to something outside the process,
-                // and therefore the one kind that must be probed before it
-                // can be called usable.
-                needs_probe: true,
+                configuration: observed
+                    .get(&name)
+                    .map(mcp_observation_json)
+                    .unwrap_or(serde_json::Value::Null),
             });
         }
 
@@ -257,7 +258,6 @@ impl CapabilityProvider for Core {
                 // The hook's own config, read back by `crate::hook_def` — the
                 // same reader config validation uses.
                 configuration: serde_json::to_value(&hook).unwrap_or_default(),
-                needs_probe: false,
             });
         }
 
@@ -271,60 +271,51 @@ impl CapabilityProvider for Core {
                 digest: None,
                 source: None,
                 configuration: serde_json::json!({ "template": command.template }),
-                needs_probe: false,
             });
         }
 
         out
     }
 
-    async fn probe(&self, id: &CapabilityId) -> Result<ProbeReport, ProbeFailure> {
-        if id.kind != CapabilityKind::McpServer {
-            return Ok(ProbeReport {
-                configuration: serde_json::Value::Null,
-                announces_changes: true,
-            });
-        }
-        let Some(manager) = self.mcp_manager() else {
-            return Err(ProbeFailure::new(
-                "no MCP manager for this server set",
-                "check that the server is still configured",
-            ));
-        };
-        match manager.probe(&id.name).await {
-            Ok(tools) => {
-                let announces_changes = manager.is_connected(&id.name).await;
-                Ok(ProbeReport {
-                    configuration: serde_json::json!({
-                        "tools": tools
-                            .iter()
-                            .map(|t| serde_json::json!({
-                                "name": t.name,
-                                "description": t.description,
-                                "inputSchema": t.input_schema,
-                            }))
-                            .collect::<Vec<_>>(),
-                    }),
-                    announces_changes,
-                })
-            }
-            Err(reason) => Err(ProbeFailure::new(
-                reason,
-                format!(
-                    "check the `{}` entry under [mcp.servers] — command, args, and any required env",
-                    id.name
-                ),
-            )),
-        }
-    }
-
     async fn upkeep(&self) {
-        // Idle eviction. A process that stays up for weeks must not hold a
+        // Idle eviction: the pool's only background work, and it only ever
+        // releases. A process that stays up for weeks must not hold a
         // subprocess for every server it has ever touched; the next call
         // respawns on demand.
         if let Some(manager) = self.mcp_manager() {
             manager.evict_idle(vak_mcp::IDLE_TTL).await;
         }
+    }
+}
+
+/// A server's observation as declared configuration: its tools (name,
+/// description, schema) once used, and the last failure's reason. Only the
+/// reason — never attempt counts or times — so repeated failures for one
+/// cause do not republish an epoch.
+fn mcp_observation_json(observation: &vak_mcp::ServerObservation) -> serde_json::Value {
+    let mut config = serde_json::Map::new();
+    if let Some(tools) = &observation.tools {
+        config.insert(
+            "tools".into(),
+            tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "inputSchema": t.input_schema,
+                    })
+                })
+                .collect(),
+        );
+    }
+    if let Some(failure) = &observation.failure {
+        config.insert("last_failure".into(), failure.clone().into());
+    }
+    if config.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::Object(config)
     }
 }
 
