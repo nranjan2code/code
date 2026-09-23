@@ -100,6 +100,41 @@ fn binding(path: &str) -> SpecValue {
     })
 }
 
+fn required_binding(path: &str) -> SpecValue {
+    SpecValue::Binding(Binding {
+        path: path.into(),
+        required: true,
+        empty: EmptyValue::Omit,
+    })
+}
+
+fn row(primitive: Primitive, props: &[(&str, &str)]) -> SpecNode {
+    SpecNode {
+        primitive,
+        props: props
+            .iter()
+            .map(|(key, path)| ((*key).into(), binding(path)))
+            .collect(),
+        children: Vec::new(),
+        each: None,
+        item: None,
+    }
+}
+
+fn list(primitive: Primitive, path: &str, item: SpecNode) -> SpecNode {
+    SpecNode {
+        primitive,
+        props: BTreeMap::new(),
+        children: Vec::new(),
+        each: Some(Binding {
+            path: path.into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        }),
+        item: Some(Box::new(item)),
+    }
+}
+
 #[allow(clippy::manual_unwrap_or_default)]
 fn seed(id: &str, accepts: &str) -> StoredPresentation {
     let root_primitive = match accepts {
@@ -155,27 +190,123 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
     props.insert("items".into(), binding("$.items"));
     let mut text_props = BTreeMap::new();
     text_props.insert("text".into(), binding("$.summary"));
+    let certified = matches!(id, "timeline" | "table" | "recipe" | "research-brief");
+    let mut root = SpecNode {
+        primitive: root_primitive,
+        props,
+        children: vec![SpecNode {
+            primitive: Primitive::Text,
+            props: text_props,
+            children: Vec::new(),
+            each: None,
+            item: None,
+        }],
+        each: None,
+        item: None,
+    };
+    let accepts = match id {
+        "timeline" => vec![accepts.into(), "plan.timeline".into()],
+        "recipe" => vec![accepts.into(), "recipe.card".into()],
+        "research-brief" => vec![accepts.into(), "research.synthesis".into()],
+        _ => vec![accepts.into()],
+    };
+    match id {
+        "timeline" => {
+            root.props.remove("items");
+            root.children.clear();
+            root.each = Some(Binding {
+                path: "$.items".into(),
+                required: true,
+                empty: EmptyValue::Omit,
+            });
+            root.item = Some(Box::new(row(
+                Primitive::Section,
+                &[
+                    ("label", "$.label"),
+                    ("detail", "$.detail"),
+                    ("status", "$.status"),
+                ],
+            )));
+        }
+        "table" => {
+            root.props.remove("items");
+            root.props
+                .insert("columns".into(), required_binding("$.columns"));
+            root.children.clear();
+            root.each = Some(Binding {
+                path: "$.rows".into(),
+                required: true,
+                empty: EmptyValue::Omit,
+            });
+            root.item = Some(Box::new(row(Primitive::Row, &[("*", "$")])));
+        }
+        "recipe" => {
+            root.props.remove("items");
+            root.props.insert("servings".into(), binding("$.servings"));
+            root.props
+                .insert("cook_time_minutes".into(), binding("$.cook_time_minutes"));
+            root.children = vec![
+                list(
+                    Primitive::IngredientList,
+                    "$.ingredients",
+                    row(
+                        Primitive::Row,
+                        &[
+                            ("name", "$.name"),
+                            ("amount", "$.amount"),
+                            ("unit", "$.unit"),
+                        ],
+                    ),
+                ),
+                list(
+                    Primitive::StepList,
+                    "$.steps",
+                    row(
+                        Primitive::Section,
+                        &[("text", "$.text"), ("timer_seconds", "$.timer_seconds")],
+                    ),
+                ),
+            ];
+        }
+        "research-brief" => {
+            root.props.remove("items");
+            root.children = vec![
+                list(
+                    Primitive::TakeawayList,
+                    "$.takeaways",
+                    row(
+                        Primitive::Section,
+                        &[
+                            ("text", "$.text"),
+                            ("citation_indices", "$.citation_indices"),
+                        ],
+                    ),
+                ),
+                list(
+                    Primitive::SourceList,
+                    "$.sources",
+                    row(
+                        Primitive::Section,
+                        &[
+                            ("title", "$.title"),
+                            ("url", "$.url"),
+                            ("source_name", "$.source_name"),
+                        ],
+                    ),
+                ),
+            ];
+        }
+        _ => {}
+    }
     let spec = PresentationSpec {
         schema_version: super::SPEC_SCHEMA_VERSION,
         id: format!("seed.{id}"),
         // Seed definitions are immutable revisions. Bump this whenever the
         // declarative starter shape changes so an older persisted seed cannot
         // collide with the new digest at the same (id, revision) key.
-        revision: 3,
-        accepts: vec![accepts.into()],
-        root: SpecNode {
-            primitive: root_primitive,
-            props,
-            children: vec![SpecNode {
-                primitive: Primitive::Text,
-                props: text_props,
-                children: Vec::new(),
-                each: None,
-                item: None,
-            }],
-            each: None,
-            item: None,
-        },
+        revision: 4,
+        accepts,
+        root,
         fallback: FallbackSpec::default(),
         accessibility: AccessibilitySpec {
             summary: Some(Binding {
@@ -184,7 +315,10 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
                 empty: EmptyValue::EmptyText,
             }),
         },
-        metadata: BTreeMap::from([(String::from("seed"), String::from("true"))]),
+        metadata: BTreeMap::from([
+            (String::from("seed"), String::from("true")),
+            (String::from("certified"), certified.to_string()),
+        ]),
     };
     StoredPresentation {
         digest: match digest(&spec) {
@@ -196,7 +330,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
             scope: LibraryScope::Workspace,
             owner: "builtin".into(),
             plugin_id: None,
-            generation: Some("seed-3-universal".into()),
+            generation: Some("seed-4-live-cards".into()),
         },
         enabled: false,
     }
@@ -228,7 +362,14 @@ mod tests {
             pack.iter()
                 .any(|record| record.spec.accepts == ["coding.diff"])
         );
-        assert!(pack.iter().all(|record| !record.digest.is_empty()));
+        assert!(
+            pack.iter().all(|record| !record.digest.is_empty()),
+            "{:?}",
+            pack.iter()
+                .filter(|record| record.digest.is_empty())
+                .map(|record| &record.spec.id)
+                .collect::<Vec<_>>()
+        );
         let mut primitives = Vec::new();
         for record in &pack {
             if !primitives.contains(&record.spec.root.primitive) {
@@ -260,7 +401,8 @@ mod tests {
                 serde_json::json!({
                     "title": "Weeknight dal",
                     "summary": "A fast lentil dal",
-                    "items": ["Rinse lentils", "Simmer 20 minutes"],
+                    "ingredients": [{"name":"Lentils","amount":1,"unit":"cup"}],
+                    "steps": [{"text":"Rinse lentils"},{"text":"Simmer 20 minutes"}],
                 }),
             ),
             (
@@ -282,9 +424,13 @@ mod tests {
         ];
         let pack = built_in_seed_pack();
         for (semantic_type, payload) in cases {
-            let found = pack
-                .iter()
-                .find(|record| record.spec.accepts == [semantic_type.to_owned()]);
+            let found = pack.iter().find(|record| {
+                record
+                    .spec
+                    .accepts
+                    .iter()
+                    .any(|accepted| accepted == semantic_type)
+            });
             assert!(found.is_some(), "no seed accepts {semantic_type}");
             let Some(record) = found else { continue };
             let result = compile(
@@ -322,7 +468,13 @@ mod tests {
                         "title": "Example",
                         "subtitle": "A reusable starter",
                         "summary": "A concise example result",
-                        "items": ["One", "Two"],
+                        "items": [{"label":"One"},{"label":"Two"}],
+                        "columns": [{"key":"label","label":"Label"}],
+                        "rows": [{"label":"One"}],
+                        "ingredients": [{"name":"Oats","amount":1,"unit":"cup"}],
+                        "steps": [{"text":"Cook the oats"}],
+                        "takeaways": [{"text":"One takeaway"}],
+                        "sources": [{"title":"Source","url":"https://example.com"}],
                     }),
                     fallback_text: "Example result".into(),
                 },
@@ -333,6 +485,66 @@ mod tests {
                 record.spec.id,
                 result
             );
+        }
+    }
+
+    #[test]
+    fn certified_live_cards_keep_their_real_collections() {
+        let cases = [
+            (
+                "plan.timeline",
+                serde_json::json!({"title":"Trip", "items":[{"label":"Leave","detail":"At eight"},{"label":"Arrive","detail":"At nine"}]}),
+                2,
+            ),
+            (
+                "table",
+                serde_json::json!({"title":"Options", "columns":[{"key":"name","label":"Name"}], "rows":[{"name":"Train"},{"name":"Bus"}]}),
+                2,
+            ),
+            (
+                "recipe.card",
+                serde_json::json!({"title":"Dal", "ingredients":[{"name":"Lentils","amount":1}], "steps":[{"text":"Rinse"}]}),
+                2,
+            ),
+            (
+                "research.synthesis",
+                serde_json::json!({"title":"Brief", "takeaways":[{"text":"Costs fell"}], "sources":[{"title":"Report","url":"https://example.com"}]}),
+                2,
+            ),
+        ];
+        let pack = built_in_seed_pack();
+        for (semantic_type, payload, child_count) in cases {
+            let record = pack
+                .iter()
+                .find(|record| record.spec.accepts.iter().any(|kind| kind == semantic_type))
+                .expect("certified seed");
+            assert_eq!(
+                record.spec.metadata.get("certified").map(String::as_str),
+                Some("true")
+            );
+            let CompiledPresentation::Rich(tree) = compile(
+                &record.spec,
+                &CompileInput {
+                    semantic_type: semantic_type.into(),
+                    payload,
+                    fallback_text: "Fallback".into(),
+                },
+            ) else {
+                panic!("{semantic_type} must compile rich");
+            };
+            assert_eq!(tree.root.children.len(), child_count, "{semantic_type}");
+            match semantic_type {
+                "plan.timeline" => assert_eq!(tree.root.children[0].props["label"], "Leave"),
+                "table" => assert_eq!(tree.root.children[0].props["name"], "Train"),
+                "recipe.card" => {
+                    assert_eq!(tree.root.children[0].children[0].props["name"], "Lentils")
+                }
+                "research.synthesis" => assert_eq!(
+                    tree.root.children[0].children[0].props["text"],
+                    "Costs fell"
+                ),
+                _ => unreachable!(),
+            }
         }
     }
 }

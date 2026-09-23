@@ -739,19 +739,11 @@ function ResultOutcomeSummary(props: { item: OutputItem }) {
 
 function ResultEvidence(props: { item: OutputItem }) {
   const outcome = () => props.item.outcome;
-  return <Show when={outcome()}>{(value) => {
-    const receipts = () => value().evidence_receipt_ids.length;
-    const requirements = () => value().requirement_ids.length;
-    const hasEvidence = () => receipts() > 0 || requirements() > 0 || Boolean(value().human_review && value().human_review !== "not_required");
-    return <Show when={hasEvidence() || value().status !== "succeeded"}>
-      <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
-        <Show when={value().status !== "succeeded"}><span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span></Show>
-        <Show when={receipts() > 0}><span><Icon name="check" size={12} />{receipts()} evidence {receipts() === 1 ? "receipt" : "receipts"}</span></Show>
-        <Show when={requirements() > 0}><span>{requirements()} {requirements() === 1 ? "check" : "checks"} requested{receipts() === 0 ? " · no receipt recorded" : ""}</span></Show>
-        <Show when={value().human_review && value().human_review !== "not_required"}><span>Review: {value().human_review}</span></Show>
-      </footer>
-    </Show>;
-  }}</Show>;
+  return <Show when={outcome()}>{(value) => <Show when={value().status !== "succeeded"}>
+    <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
+      <span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span>
+    </footer>
+  </Show>}</Show>;
 }
 
 function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string }) {
@@ -1240,7 +1232,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     const grouping = !showOperatorChrome();
     const isPrimaryCard = (entry: { item: OutputItem }) => {
       const source = entry.item.provenance?.source ?? "";
-      return (entry.item.content.type === "structured" && source.startsWith("emit_") && source.endsWith("_card")) ||
+      return ((entry.item.content.type === "structured" || entry.item.content.type === "adaptive") && source.startsWith("emit_") && source.endsWith("_card")) ||
         (entry.item.content.type === "adaptive" && source === "adaptive_library");
     };
     const cardCopyText = (entry: { item: OutputItem }) => {
@@ -1272,7 +1264,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       const entry = entries[i];
       const content = entry.item.content;
       if (content.type !== "structured" && content.type !== "adaptive") continue;
-      const key = content.type === "structured" ? content.output.semantic_type : `adaptive:${entry.item.id}`;
+      const key = content.type === "structured" ? content.output.semantic_type : `adaptive:${content.tree.spec_id}`;
       finalCards.set(key, entry);
     }
     const carriedCards = [...finalCards.values()];
@@ -1371,89 +1363,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
 }
 
 export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
-  const render = (node: import("../types").AdaptiveRenderNode): JSX.Element => {
-    const text = typeof node.props.text === "string" ? node.props.text : typeof node.props.value === "string" ? String(node.props.value) : "";
-    const label = typeof node.props.label === "string" ? node.props.label : "";
-    const title = typeof node.props.title === "string" ? node.props.title : "";
-    const content = (
-      <>
-        {title && <h4 class="adaptive-node-title">{title}</h4>}
-        {label && <strong class="adaptive-node-label">{label}</strong>}
-        {text && <span class="adaptive-node-text">{text}</span>}
-        {node.children.map(render)}
-      </>
-    );
-    switch (node.primitive.toLowerCase()) {
-      case "title":
-        return <h3 class="adaptive-node adaptive-title">{title || text}</h3>;
-      case "text":
-      case "richtext":
-        return <p class="adaptive-node adaptive-text">{text || content}</p>;
-      case "section":
-        return <section class="adaptive-node adaptive-section">{content}</section>;
-      case "stack":
-        return <div class="adaptive-node adaptive-stack">{node.children.map(render)}</div>;
-      case "row":
-        return <div class="adaptive-node adaptive-row">{node.children.map(render)}</div>;
-      case "list":
-        return <ul class="adaptive-node adaptive-list">{node.children.length ? node.children.map((child) => <li>{render(child)}</li>) : <li>{content}</li>}</ul>;
-      case "checklist":
-        return <ul class="adaptive-node adaptive-checklist">{node.children.length ? node.children.map((child) => <li class="adaptive-checklist-item"><span class="adaptive-check-marker">✓</span>{render(child)}</li>) : <li>{content}</li>}</ul>;
-      case "steps":
-        return <ol class="adaptive-node adaptive-steps">{node.children.length ? node.children.map((child) => <li>{render(child)}</li>) : <li>{content}</li>}</ol>;
-      case "timeline":
-        return (
-          <div class="adaptive-node adaptive-timeline">
-            {title && <h4 class="adaptive-timeline-title">{title}</h4>}
-            <div class="adaptive-timeline-items">
-              {node.children.map((child) => (
-                <div class="adaptive-timeline-step">
-                  <div class="adaptive-timeline-bullet" />
-                  <div class="adaptive-timeline-content">{render(child)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      case "comparison":
-        return (
-          <div class="adaptive-node adaptive-comparison">
-            {title && <h4 class="adaptive-comparison-title">{title}</h4>}
-            <div class="adaptive-comparison-grid">{node.children.map(render)}</div>
-          </div>
-        );
-      case "keyvalue":
-        return <div class="adaptive-node adaptive-keyvalue">{label && <span class="adaptive-kv-label">{label}</span>}{text && <span class="adaptive-kv-value">{text}</span>}{node.children.map(render)}</div>;
-      case "metric": {
-        const value = text || (node.props.value != null ? String(node.props.value) : "");
-        return value ? <div class="adaptive-node adaptive-metric">{label && <small>{label}</small>}<strong>{value}</strong></div> : null;
-      }
-      case "progress":
-        return <div class="adaptive-node adaptive-progress"><progress value={Number(node.props.value ?? 0)} max={Number(node.props.max ?? 100)} />{label && <span>{label}</span>}</div>;
-      case "badge":
-      case "label":
-        return <span class="adaptive-node adaptive-badge">{label || text}</span>;
-      case "callout":
-        return <aside class="adaptive-node adaptive-callout">{label && <strong>{label}</strong>}{text && <p>{text}</p>}{node.children.map(render)}</aside>;
-      case "quote":
-        return <blockquote class="adaptive-node adaptive-quote">{text || content}</blockquote>;
-      case "divider":
-        return <hr class="adaptive-node adaptive-divider" />;
-      case "disclosure":
-        return <details class="adaptive-node adaptive-disclosure"><summary>{title || label || "Details"}</summary>{content}</details>;
-      default:
-        return <div class={`adaptive-node adaptive-${node.primitive.toLowerCase()}`}>{content}</div>;
-    }
-  };
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      {render(props.tree.root)}
-      <Show when={showOperatorChrome()}>
-        <details class="adaptive-fallback-toggle">
-          <summary>Show original</summary>
-          <p>{props.fallback}</p>
-        </details>
-      </Show>
+      <GenericSpecRenderer node={props.tree.root} />
     </section>
   );
 }

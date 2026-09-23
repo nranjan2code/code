@@ -171,10 +171,14 @@ pub enum Primitive {
     /// express the ingredient/step/timer triple without the surface guessing
     /// which column means what, so this is a distinct concept, not a shortcut.
     Recipe,
+    IngredientList,
+    StepList,
     /// A question with takeaways, sources and citations bound together. The
     /// citation-to-takeaway relationship is lost if this is flattened into a
     /// Section plus a CitationList.
     Research,
+    TakeawayList,
+    SourceList,
     /// A sandboxed preview of authored UI. The isolation contract (no ambient
     /// privileges for the previewed document) is part of the primitive, which
     /// no composition of existing primitives carries.
@@ -870,7 +874,16 @@ fn compile_node(
     for (key, value) in &node.props {
         match resolve_spec_value(value, data)? {
             Some(resolved) => {
-                props.insert(key.clone(), resolved);
+                if key == "*" {
+                    let Value::Object(values) = resolved else {
+                        return Err(PresentationError::InvalidSpec(
+                            "spread binding is not an object".into(),
+                        ));
+                    };
+                    props.extend(values);
+                } else {
+                    props.insert(key.clone(), resolved);
+                }
                 coverage.rendered_paths.push(format!("{path}.{key}"));
             }
             None => coverage.omitted_paths.push(format!("{path}.{key}")),

@@ -93,7 +93,11 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
         | Primitive::Transaction
         | Primitive::Alert
         | Primitive::Conversation
-        | Primitive::Simulation => {
+        | Primitive::Simulation
+        | Primitive::IngredientList
+        | Primitive::StepList
+        | Primitive::TakeawayList
+        | Primitive::SourceList => {
             let value = text("text");
             if !value.is_empty() {
                 out.push_str(&format!("{}{}\n", indent, value));

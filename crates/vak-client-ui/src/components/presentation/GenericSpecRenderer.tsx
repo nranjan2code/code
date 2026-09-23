@@ -19,21 +19,14 @@ import Icon from "../Icon";
  * `vak_presentation::RenderNode` (primitive/props/children). That pipeline
  * exists end-to-end (crates/vak-presentation/src/lib.rs `compile()` ->
  * crates/vak-delivery/src/presentation.rs `OutputContent::Adaptive` ->
- * `AdaptiveTreeView` in PresentationRenderer.tsx) but is inert today because
- * built-in seeds (crates/vak-presentation/src/seeds.rs) register disabled
- * and nothing activates them by default, so `semantic_type` payloads never
- * arrive as `{ type: "adaptive" }` in practice — they arrive as raw
- * `{ type: "structured", output: { payload } }` and are matched against the
- * STRUCTURED_RENDERERS registry.
+ * PresentationRenderer.tsx). Certified active packs render real emitted
+ * cards through this component. Other semantic types retain their structured
+ * renderer until their definitions carry the complete content.
  *
  * Rather than inventing a second, parallel schema, this component consumes
  * the SAME `AdaptiveRenderNode` shape. The `buildXSpec` adapters below turn
- * today's raw, ad-hoc payloads into that shape client-side (the job a
- * server-side `compile()` call would otherwise do). When vak-server starts
- * activating built-in seeds by default (see docs/design/67-presentation-
- * renderer-guide.md), the real `{ type: "adaptive" }` items it produces can
- * be fed into this exact component with no changes — only the adapters
- * become unnecessary.
+ * raw payloads into that shape client-side for structured outputs. The server
+ * compiler emits the same node shape for selected packs.
  *
  * `surface` is the one thing that varies per rendering context (main chat
  * timeline vs. a denser panel/compact view). It is deliberately NOT part of
@@ -253,6 +246,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
   const [copied, setCopied] = createSignal(false);
   const compact = surface === "compact";
   const options = str(node.props, "variant") === "options";
+  const quiet = options || (specRows(node).length <= 5 && specColumns(node).length <= 6);
   const interaction = useContext(PresentationInteractionContext);
 
   const columns = () => specColumns(node);
@@ -305,13 +299,13 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact, "data-grid-options": options }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">{options ? "Options" : "Data Grid"}</span>
+          <span class="card-badge badge-indigo">{quiet ? "Options" : "Data Grid"}</span>
           <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
-          <Show when={!options}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
+          <Show when={!quiet}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
             {filteredAndSortedRows().length} of {rows().length} rows
           </span></Show>
         </div>
-        <Show when={!options}><div class="card-actions">
+        <Show when={!quiet}><div class="card-actions">
           <input
             type="text"
             class="grid-search-input"
@@ -337,9 +331,11 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                     scope="col"
                     aria-sort={sortCol() === col.key ? (sortAsc() ? "ascending" : "descending") : "none"}
                   >
-                    <button type="button" onClick={() => handleSort(col.key)}>
-                      {col.label} {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
-                    </button>
+                    <Show when={!quiet} fallback={<span>{col.label}</span>}>
+                      <button type="button" onClick={() => handleSort(col.key)}>
+                        {col.label} {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
+                      </button>
+                    </Show>
                   </th>
                 )}
               </For>

@@ -122,9 +122,15 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         .filter(|item| {
             item.turn_id == turn
                 && item.kind == OutputKind::Card
-                && item.provenance.as_ref().and_then(|p| p.source.as_deref())
+                && item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.source.as_deref())
                     .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
-                && matches!(item.content, OutputContent::Structured { .. })
+                && matches!(
+                    item.content,
+                    OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
+                )
         })
         .map(|item| item.fallback_text.trim())
         .filter(|text| !text.is_empty())
@@ -743,6 +749,16 @@ fn snapshot_inner(
                                                 "user",
                                                 &workspace_owner,
                                             )
+                                            .filter(|stored| {
+                                                stored.spec.metadata.get("seed").map(String::as_str)
+                                                    != Some("true")
+                                                    || stored
+                                                        .spec
+                                                        .metadata
+                                                        .get("certified")
+                                                        .map(String::as_str)
+                                                        == Some("true")
+                                            })
                                             .map(|stored| {
                                                 (stored.spec.id.clone(), stored.spec.revision)
                                             })
@@ -1154,6 +1170,54 @@ fn snapshot_inner(
                                     if repair_armed && let Some(superseded) = previous {
                                         ids_to_remove.insert(superseded);
                                     }
+                                    let fallback_text = structured_markdown(&output);
+                                    let workspace_owner = session
+                                        .header()
+                                        .map(|header| {
+                                            header.contract_cwd().to_string_lossy().into_owned()
+                                        })
+                                        .unwrap_or_else(|| "workspace".into());
+                                    let selected = adaptive_library.and_then(|library| {
+                                        selected_presentation
+                                            .as_ref()
+                                            .and_then(|(spec_id, revision)| {
+                                                library.get(spec_id, *revision)
+                                            })
+                                            .filter(|stored| {
+                                                stored.spec.accepts.contains(&output.semantic_type)
+                                            })
+                                            .or_else(|| {
+                                                library.select_preferred(
+                                                    &output.semantic_type,
+                                                    "user",
+                                                    &workspace_owner,
+                                                )
+                                            })
+                                    });
+                                    let adaptive = selected
+                                        .filter(|stored| {
+                                            stored.spec.metadata.get("seed").map(String::as_str)
+                                                != Some("true")
+                                                || stored
+                                                    .spec
+                                                    .metadata
+                                                    .get("certified")
+                                                    .map(String::as_str)
+                                                    == Some("true")
+                                        })
+                                        .and_then(|stored| {
+                                            OutputContent::from_compiled_adaptive(
+                                                vak_presentation::compile(
+                                                    &stored.spec,
+                                                    &vak_presentation::CompileInput {
+                                                        semantic_type: output.semantic_type.clone(),
+                                                        payload: output.payload.clone(),
+                                                        fallback_text: fallback_text.clone(),
+                                                    },
+                                                ),
+                                                fallback_text.clone(),
+                                            )
+                                        });
                                     timeline.items.push(OutputItem {
                                         id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
@@ -1162,8 +1226,9 @@ fn snapshot_inner(
                                         kind: OutputKind::Card,
                                         status: OutputStatus::Succeeded,
                                         outcome: None,
-                                        fallback_text: structured_markdown(&output),
-                                        content: OutputContent::Structured { output },
+                                        fallback_text,
+                                        content: adaptive
+                                            .unwrap_or(OutputContent::Structured { output }),
                                         provenance: Some(OutputProvenance {
                                             session_id: Some(session_id.into()),
                                             entry_id: Some(entry.id.clone()),
@@ -1294,7 +1359,10 @@ fn snapshot_inner(
         .iter()
         .filter(|item| {
             item.kind == OutputKind::Card
-                && item.provenance.as_ref().and_then(|p| p.source.as_deref())
+                && item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.source.as_deref())
                     .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
         })
         .map(|item| item.turn_id.clone())
@@ -3884,18 +3952,28 @@ mod tests {
     fn card_result_projects_only_an_explicit_additional_note() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "card-note");
-        log.append_message(MessageRecord { message: Message::user_text("chart it"), meta: None }).expect("user");
+        log.append_message(MessageRecord {
+            message: Message::user_text("chart it"),
+            meta: None,
+        })
+        .expect("user");
         append_card_call(&mut log, "c1", "sales rise steadily");
         log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::text("Note: The holiday dip needs review.")]),
+            message: Message::assistant(vec![ContentBlock::text(
+                "Note: The holiday dip needs review.",
+            )]),
             meta: None,
-        }).expect("answer");
+        })
+        .expect("answer");
         let timeline = super::snapshot("card-note", &log);
         let note = timeline.items.iter().find_map(|item| match &item.content {
             OutputContent::Document { document } => document.metadata.get("card_note"),
             _ => None,
         });
-        assert_eq!(note.map(String::as_str), Some("The holiday dip needs review."));
+        assert_eq!(
+            note.map(String::as_str),
+            Some("The holiday dip needs review.")
+        );
     }
 
     #[test]

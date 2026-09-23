@@ -2969,7 +2969,9 @@ fn effective_presentation_library(
             if accepts.iter().any(|semantic_type| {
                 effective
                     .select_preferred(semantic_type, "user", workspace_owner)
-                    .is_some()
+                    .is_some_and(|selected| {
+                        selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
+                    })
             }) {
                 continue;
             }
@@ -6174,7 +6176,20 @@ async fn presentation_snapshot(
     }
     match open_historical_session(&state, &id) {
         Some(session) => {
-            let mut timeline = crate::projection::snapshot(&id, &session);
+            let mut timeline = match presentation_store(&state).load() {
+                Ok(library) => {
+                    let owner = session
+                        .header()
+                        .map(|header| header.contract_cwd().to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let effective = effective_presentation_library(&library, &owner);
+                    let planner = delivery::merged_presentation_planner(&state.active_core());
+                    crate::projection::snapshot_with_planner_and_library(
+                        &id, &session, &planner, &effective,
+                    )
+                }
+                Err(_) => crate::projection::snapshot(&id, &session),
+            };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
                 &state.core.sessions_home(),
@@ -6225,7 +6240,20 @@ async fn session_result(
                 .clone()
         }
     } else if let Some(session) = open_historical_session(&state, &id) {
-        crate::projection::snapshot(&id, &session)
+        match presentation_store(&state).load() {
+            Ok(library) => {
+                let owner = session
+                    .header()
+                    .map(|header| header.contract_cwd().to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let effective = effective_presentation_library(&library, &owner);
+                let planner = delivery::merged_presentation_planner(&state.active_core());
+                crate::projection::snapshot_with_planner_and_library(
+                    &id, &session, &planner, &effective,
+                )
+            }
+            Err(_) => crate::projection::snapshot(&id, &session),
+        }
     } else {
         return (
             StatusCode::NOT_FOUND,

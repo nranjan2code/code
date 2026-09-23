@@ -165,6 +165,18 @@ session tests. The first P3-style generic scenario is also now
 landed as the validated `plan.timeline` semantic type and desktop/browser
 timeline card; it retains the existing exact Markdown/channel fallback.
 
+Development builds register all 75 built-in seed definitions. Four definitions
+currently have complete bindings for real emitted cards and are marked
+`certified`: `plan.timeline`, `table`, `recipe.card`, and
+`research.synthesis`. The projection selects these from the durable card
+ledger and compiles their actual payloads; an incomplete or failed definition
+leaves the existing structured card in place. The other definitions remain
+visible in the development library for preview and authoring, but do not
+automatically replace a real result. The same effective library is loaded when
+a historical session is reopened, so a selected card rehydrates after restart.
+The four certified definitions were checked against saved real Agent turns in
+the development UI; this is not a claim that every seed is production-ready.
+
 This document is the implementation contract for replacing Vak's finite set of
 hard-coded rich-result cards with a safe, adaptive presentation runtime. The
 runtime may compose, preview, revise, store, reuse, export, import, and deliver
