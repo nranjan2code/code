@@ -42,7 +42,9 @@ override-or-inherit chain as every other gateway tier (invariant 23).
 `/voice/speak` identifies the chat from the `session_id` it is given — the
 session's gateway binding — so a channel reply uses that chat's route, voice
 and persona without the bridge naming a chat key; the admin console's
-Preview passes its auditioned `voice_override` as the narrowest tier.
+Preview passes its auditioned `voice_override` as the narrowest tier. A bot
+or chat tier is checked when it is written: an unknown provider name is
+refused then, not discovered when a voice note fails.
 
 **Channel voice notes.** Telegram, Discord and Slack bridges only attach the
 audio to `/gateway/inbound`. The gateway transcribes it after allowlist

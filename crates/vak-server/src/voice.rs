@@ -393,6 +393,26 @@ pub(crate) fn narrowed(
     settings
 }
 
+/// Whether a bot or chat voice tier can be stored: a pinned provider must be
+/// one that exists, and every pin must be a plausible identifier. Checked at
+/// write time so a typo is refused where it is made, not discovered when a
+/// voice note fails.
+pub(crate) fn check_tier(tier: &vak_config::VoiceConfig) -> Result<(), String> {
+    if let Some(provider) = tier.provider.as_deref().filter(|p| !p.trim().is_empty()) {
+        provider.trim().parse::<VoiceProvider>()?;
+    }
+    for (name, value) in [
+        ("voice_name", &tier.voice_name),
+        ("transcription_model", &tier.transcription_model),
+        ("synthesis_model", &tier.synthesis_model),
+    ] {
+        if value.as_deref().is_some_and(|v| v.chars().count() > 256) {
+            return Err(format!("{name} must be at most 256 characters"));
+        }
+    }
+    Ok(())
+}
+
 /// The gateway chat a session is bound to, if any.
 fn chat_for_session(state: &AppState, session_id: &str) -> Option<String> {
     state
@@ -985,6 +1005,25 @@ mod tests {
         );
         assert!(effective.enabled, "a tier never changes the enable switch");
         assert_eq!(narrowed(workspace.clone(), None), workspace);
+    }
+
+    #[test]
+    fn a_voice_tier_with_an_unknown_provider_is_refused_at_write() {
+        let mut tier = vak_config::VoiceConfig {
+            provider: Some("google".into()),
+            ..Default::default()
+        };
+        assert!(
+            check_tier(&tier)
+                .unwrap_err()
+                .contains("unknown voice provider")
+        );
+        tier.provider = Some("openai".into());
+        assert!(check_tier(&tier).is_ok());
+        tier.provider = None;
+        tier.synthesis_model = Some("x".repeat(257));
+        assert!(check_tier(&tier).is_err());
+        assert!(check_tier(&vak_config::VoiceConfig::default()).is_ok());
     }
 
     #[test]

@@ -12452,6 +12452,13 @@ async fn update_bot(
         };
     }
     if let Some(voice) = body.voice {
+        if let Some(Err(error)) = voice.as_ref().map(voice::check_tier) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
         bot.voice = voice;
     }
     if let Some(prompt) = body.prompt {

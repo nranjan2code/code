@@ -1598,6 +1598,17 @@ pub(crate) async fn patch_gateway_allowlist(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     });
+    if let Some(Some(Err(error))) = body
+        .voice
+        .as_ref()
+        .map(|voice| voice.as_ref().map(crate::voice::check_tier))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
     let Some(entry) = state.gateway.allowlist_patch(
         &state.core,
         &key,

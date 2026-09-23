@@ -166,3 +166,29 @@ async fn channel_voice_notes_are_transcribed_only_after_admission() {
         "no false statement about the transcription provider: {request}"
     );
 }
+
+/// A bot's voice tier is checked where it is written: a provider that does
+/// not exist is refused, not stored to fail later on a voice note.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bot_voice_tier_with_an_unknown_provider_is_refused() {
+    let base = spawn_gateway(true, Arc::new(Recording::default())).await;
+    let client = reqwest::Client::new();
+    let created = client
+        .post(format!("{base}/gateway/bots"))
+        .json(&serde_json::json!({"id": "support", "surface": "telegram", "label": "Support"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(created.status().is_success(), "{}", created.status());
+    let patch = |provider: &str| {
+        client
+            .patch(format!("{base}/gateway/bots/support"))
+            .json(&serde_json::json!({"voice": {"provider": provider}}))
+            .send()
+    };
+    assert_eq!(
+        patch("google").await.unwrap().status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert!(patch("openai").await.unwrap().status().is_success());
+}
