@@ -792,11 +792,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     return Array.from({ length: marks }, (_, position) =>
       marks === 1 ? 1 : 1 + Math.round(position * (count - 1) / (marks - 1)));
   });
+  const nearestTick = (turn: number) => tickIndices().reduce<number | null>((closest, index) =>
+    closest === null || Math.abs(index - turn) < Math.abs(closest - turn) ? index : closest, null);
+  const activeTick = createMemo(() => nearestTick(activeTurn()));
   const hoveredTick = createMemo(() => {
     const hovered = hoveredTurn();
-    if (hovered === null) return null;
-    return tickIndices().reduce<number | null>((closest, index) =>
-      closest === null || Math.abs(index - hovered) < Math.abs(closest - hovered) ? index : closest, null);
+    return hovered === null ? null : nearestTick(hovered);
   });
   const turnAtPointer = (event: MouseEvent | PointerEvent) => {
     const bounds = event.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : null;
@@ -1009,7 +1010,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
               setHoveredTurn(next);
             }}
           >
-            <For each={tickIndices()}>{(index) => <span class={`turn-rail-tick${index === activeTurn() ? " active" : ""}${index === hoveredTick() ? " hovered" : ""}`} aria-hidden="true" />}</For>
+            <For each={tickIndices()}>{(index) => <span class={`turn-rail-tick${index === activeTick() ? " active" : ""}${index === hoveredTick() ? " hovered" : ""}`} aria-hidden="true" />}</For>
             <div class={`turn-rail-preview${hoveredTurn() !== null ? " visible" : ""}`}
               aria-hidden="true"
               style={{ top: `clamp(25px, ${(Math.max(1, hoveredTurn() ?? activeTurn()) - 1) / Math.max(1, navigableTurnCount() - 1) * 100}%, calc(100% - 25px))` }}>
