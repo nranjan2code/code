@@ -36,15 +36,21 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   let candidateFrames: Int16Array[] = [];
   let candidateSpeechMs = 0;
   let candidateSilenceMs = 0;
+  let awaitingUtteranceId = "";
   let latestSpokenUtterance = "";
   let answerGeneration = 0;
   let voiceSessionId = "";
   const AUDIO_SAMPLE_RATE = 16_000;
   const SPEECH_THRESHOLD = 0.018;
   const MIN_SPEECH_MS = 240;
-  const END_SILENCE_MS = 650;
+  // Natural pauses inside one request should not become separate Agent turns.
+  const END_SILENCE_MS = 1_500;
   function streamDetectedSpeech(pcm: Int16Array) {
     if (!socket || !pcm.length) return;
+    // One captured request owns the input until its answer is ready. Room
+    // noise during provider work must not become a competing Agent turn.
+    // Capture resumes for spoken interruption while the answer is playing.
+    if (awaitingUtteranceId && !audioSpeechActive && !playbackSource) return;
     let energy = 0;
     for (const sample of pcm) {
       const normalized = sample / 32768;
@@ -92,6 +98,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     audioSilenceMs += frameMs;
     if (audioSpeechMs >= MIN_SPEECH_MS && audioSilenceMs >= END_SILENCE_MS) {
       socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
+      awaitingUtteranceId = utterance;
       audioSpeechActive = false;
       audioSpeechMs = 0;
       audioSilenceMs = 0;
@@ -116,6 +123,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     candidateFrames = [];
     candidateSpeechMs = 0;
     candidateSilenceMs = 0;
+    awaitingUtteranceId = "";
     answerGeneration += 1;
     voiceSessionId = "";
     setTranscript("");
@@ -161,15 +169,22 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
         onTranscript: (event) => {
           if (generation !== voiceGeneration) return;
           setTranscript(event.text);
-          if (!event.final && !event.text.trim()) { setStatus(capture ? "Listening" : "No speech heard"); return; }
+          if (!event.final && !event.text.trim()) {
+            if (event.utteranceId === awaitingUtteranceId) {
+              awaitingUtteranceId = "";
+              if (!audioSpeechActive) setStatus(capture ? "Listening" : "No speech heard");
+            }
+            return;
+          }
           if (event.final) {
-            setStatus("Processing");
+            if (event.utteranceId === awaitingUtteranceId) setStatus("Processing");
             props.onFinal(event.text);
           }
         },
         onTurnCompleted: (utteranceId, reply) => {
           if (generation !== voiceGeneration || !utteranceId || utteranceId === latestSpokenUtterance) return;
           latestSpokenUtterance = utteranceId;
+          if (awaitingUtteranceId && utteranceId !== awaitingUtteranceId) return;
           if (audioSpeechActive) return;
           void speakAnswer(reply);
         },
@@ -203,6 +218,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
           socket.sendAudio(pcm);
         }
         socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
+        awaitingUtteranceId = utterance;
       } else {
         setStatus("Allow microphone");
         const startedCapture = await startMicrophone((pcm) => {
@@ -219,8 +235,13 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   }
   async function speakAnswer(text: string) {
     const answer = spokenReplyText(text);
-    if (!answer || !active()) return;
+    if (!answer || !active()) {
+      awaitingUtteranceId = "";
+      if (active()) setStatus(capture ? "Listening" : "Done");
+      return;
+    }
     if (answer.startsWith("error:")) {
+      awaitingUtteranceId = "";
       setStatus(capture ? "Listening" : "Done");
       setNotice({ kind: "error", text: answer });
       return;
@@ -236,6 +257,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       onAnswerAudio(bytes, blob.type);
     } catch (error) {
       if (generation !== answerGeneration) return;
+      awaitingUtteranceId = "";
       setStatus(capture ? "Listening" : "Done");
       setNotice({ kind: "error", text: `The answer is ready as text, but voice playback failed: ${(error as Error).message}` });
     }
@@ -263,6 +285,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       startPlaybackBuffer(buffer, generation);
     }).catch((error) => {
       if (generation === playbackGeneration) setNotice({ kind: "error", text: `The answer is ready as text, but voice playback could not start: ${(error as Error).message}` });
+      awaitingUtteranceId = "";
       if (active()) setStatus(capture ? "Listening" : "Done");
     });
   }
@@ -293,6 +316,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     playbackStartedAt = 0;
     playbackCurrentDurationMs = 0;
     playbackCompletedMs = 0;
+    awaitingUtteranceId = "";
     if (active()) setStatus(capture ? "Listening" : "Done");
   }
   function startPlaybackBuffer(buffer: AudioBuffer, generation: number) {
@@ -314,6 +338,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       }
       playbackUtterance = "";
       playbackCompletedMs = 0;
+      awaitingUtteranceId = "";
       if (active()) setStatus(capture ? "Listening" : "Done");
     };
     source.start();
