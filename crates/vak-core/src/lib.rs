@@ -673,6 +673,198 @@ fn effective_turn_cap(base: usize, intent_cap: Option<usize>) -> usize {
     intent_cap.map(|cap| cap.min(base)).unwrap_or(base)
 }
 
+/// A step-limit continuation may finish work saved in its earlier bounded
+/// turn. Carry only a proven write from the *same intent thread*: the latest
+/// run must have stopped at the cap, its write tool must have succeeded, and
+/// the current workspace file must still equal the logged input bytes. The
+/// Agent stop gate additionally requires a fresh inspection this turn.
+fn continued_saved_file(
+    session: &SessionLog,
+    intent: &vak_intent::Intent,
+    workspace: &Path,
+) -> bool {
+    let threads = intent
+        .strands
+        .iter()
+        .filter_map(|strand| match &strand.lineage {
+            vak_intent::Lineage::Continues { thread_id } => Some(thread_id.as_str()),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if threads.is_empty() {
+        return false;
+    }
+    let chain = session.chain_to_root();
+    let capped = chain.iter().rev().find_map(|entry| match &entry.payload {
+        vak_session::EntryPayload::Activity(activity) if activity.label == "Run finished" => {
+            Some(activity.detail.as_deref() == Some("max_turns"))
+        }
+        _ => None,
+    });
+    if capped != Some(true) {
+        return false;
+    }
+    let Ok(root) = workspace.canonicalize() else {
+        return false;
+    };
+    let mut same_thread = false;
+    let mut writes = std::collections::HashMap::<String, (PathBuf, String)>::new();
+    for entry in chain {
+        match &entry.payload {
+            vak_session::EntryPayload::Intent(record) => {
+                same_thread = record
+                    .strands
+                    .iter()
+                    .any(|strand| threads.contains(strand.thread_id.as_str()));
+                writes.clear();
+            }
+            vak_session::EntryPayload::Message(record) if same_thread => {
+                for block in &record.message.content {
+                    match block {
+                        vak_llm::ContentBlock::ToolUse { id, name, input }
+                            if vak_tools::canonical_tool_name(name) == "write" =>
+                        {
+                            if let (Some(path), Some(content)) = (
+                                input.get("path").and_then(serde_json::Value::as_str),
+                                input.get("content").and_then(serde_json::Value::as_str),
+                            ) {
+                                writes.insert(id.clone(), (PathBuf::from(path), content.into()));
+                            }
+                        }
+                        vak_llm::ContentBlock::ToolResult {
+                            tool_use_id,
+                            is_error: false,
+                            ..
+                        } => {
+                            if let Some((path, content)) = writes.remove(tool_use_id) {
+                                let path = if path.is_absolute() {
+                                    path
+                                } else {
+                                    root.join(path)
+                                };
+                                if let Ok(path) = path.canonicalize()
+                                    && let Ok(relative) = path.strip_prefix(&root)
+                                    && !relative.starts_with(".vak")
+                                    && std::fs::metadata(&path).is_ok_and(|meta| {
+                                        meta.is_file() && meta.len() == content.len() as u64
+                                    })
+                                    && std::fs::read(&path)
+                                        .is_ok_and(|bytes| bytes == content.as_bytes())
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod continuation_receipt_tests {
+    use super::*;
+    use vak_intent::{Lineage, Strand, StrandRelation};
+    use vak_session::types::{
+        ActivityKind, ActivityRecord, ActivityStatus, IntentRecord, MessageRecord,
+    };
+
+    #[tokio::test]
+    async fn only_capped_same_thread_unchanged_saved_file_can_carry_forward() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("sessions"));
+        let mut session = core.start_session().await.unwrap();
+        let file = dir.path().join("report.csv");
+        std::fs::write(&file, "value\n60\n").unwrap();
+        let mut initial = vak_intent::Intent::general(1);
+        let mut strand = Strand {
+            strand_id: "s0.0".into(),
+            thread_id: "s0.0".into(),
+            text: "Create report.csv".into(),
+            reading: vak_intent::Reading::general(),
+            relation: StrandRelation::Independent,
+            lineage: Lineage::New,
+            engagement: vak_intent::Engagement::general(),
+        };
+        initial.strands.push(strand.clone());
+        session
+            .append_intent(IntentRecord {
+                reading: initial.reading.clone(),
+                strands: initial.strands.clone(),
+                engagement: initial.engagement.clone(),
+                provenance: initial.provenance.clone(),
+                outcome: None,
+                model_visible: None,
+                commitment_id: None,
+                strand_commitments: Default::default(),
+            })
+            .unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                    id: "write-1".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "report.csv", "content": "value\n60\n"}),
+                }]),
+                meta: None,
+            })
+            .unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message {
+                    role: vak_llm::Role::Assistant,
+                    content: vec![vak_llm::ContentBlock::tool_result("write-1", "saved")],
+                },
+                meta: None,
+            })
+            .unwrap();
+        session
+            .append_activity(ActivityRecord {
+                activity_id: "run-1".into(),
+                turn: Some(0),
+                kind: ActivityKind::Run,
+                status: ActivityStatus::Partial,
+                label: "Run finished".into(),
+                detail: Some("max_turns".into()),
+                data: Default::default(),
+            })
+            .unwrap();
+        strand.strand_id = "s1.0".into();
+        strand.lineage = Lineage::Continues {
+            thread_id: "s0.0".into(),
+        };
+        let mut continuation = vak_intent::Intent::general(1);
+        continuation.strands.push(strand.clone());
+        assert!(continued_saved_file(&session, &continuation, dir.path()));
+        std::fs::write(&file, "value\n99\n").unwrap();
+        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+        std::fs::write(&file, "value\n60\n").unwrap();
+        continuation.strands[0].lineage = Lineage::Continues {
+            thread_id: "other".into(),
+        };
+        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+        continuation.strands[0] = strand;
+        session
+            .append_activity(ActivityRecord {
+                activity_id: "run-2".into(),
+                turn: Some(1),
+                kind: ActivityKind::Run,
+                status: ActivityStatus::Succeeded,
+                label: "Run finished".into(),
+                detail: Some("completed".into()),
+                data: Default::default(),
+            })
+            .unwrap();
+        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+    }
+}
+
 /// The complete executable surface handed to a standalone flow or agent.
 /// Callers must construct their executor from this value instead of reading
 /// prompt text and tool factories independently.
@@ -5696,6 +5888,8 @@ impl Core {
         let mut admitted_outcome =
             vak_intent::OutcomeSpec::from_intent(prompt.text_content(), &resolved_intent);
         admitted_outcome.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
+        cfg.continued_saved_file =
+            continued_saved_file(&session, &resolved_intent, &self.inner.cwd);
         cfg.outcome = Some(admitted_outcome.clone());
 
         // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----

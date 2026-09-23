@@ -268,6 +268,10 @@ pub struct AgentConfig {
     /// not model-authored authority; permission and broker checks remain the
     /// enforcement boundary.
     pub outcome: Option<vak_intent::OutcomeSpec>,
+    /// A prior bounded turn in the same intent thread successfully saved a
+    /// file which still exists in this workspace. A continuation must inspect
+    /// it in this turn before the stop gate treats that effect as completed.
+    pub continued_saved_file: bool,
     pub work_mode: WorkMode,
     pub work_enabled: bool,
     pub max_work_items: usize,
@@ -440,6 +444,7 @@ impl AgentConfig {
     pub fn new(system_prefix: impl Into<String>) -> Self {
         AgentConfig {
             outcome: None,
+            continued_saved_file: false,
             work_mode: WorkMode::Direct,
             work_enabled: true,
             max_work_items: 20,
@@ -1077,7 +1082,10 @@ impl Agent {
             }
         };
         let prompt_owned = prompt.text_content();
-        let mut receipts = stop_policy::ReceiptSummary::default();
+        let mut receipts = stop_policy::ReceiptSummary {
+            continued_saved_file: self.config.continued_saved_file,
+            ..Default::default()
+        };
         let mut verification_stale = false;
         let mut user_completion_released = false;
         self.obligations.clear();
@@ -2336,6 +2344,25 @@ impl Agent {
                 }
                 topic_repair_attempted = true;
             }
+            let inspection_ids = calls
+                .iter()
+                .filter(|call| {
+                    matches!(
+                        call.name.as_str(),
+                        "read"
+                            | "read_file"
+                            | "glob"
+                            | "grep"
+                            | "inspect"
+                            | "browse"
+                            | "webfetch"
+                            | "session_search"
+                            | "search"
+                            | "session_list"
+                    )
+                })
+                .map(|call| call.id.clone())
+                .collect::<std::collections::HashSet<_>>();
             let mut results = self.execute_batch(calls, &cancel, &events).await;
             results.extend(gated.into_iter().map(|(call, gate)| {
                 let message = match gate {
@@ -2526,6 +2553,9 @@ impl Agent {
                 match out {
                     ToolRunOutput::Ok(_) => {
                         receipts.successful_tool_calls += 1;
+                        if inspection_ids.contains(id) {
+                            receipts.successful_inspections += 1;
+                        }
                         if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
                             && !self.obligations.iter().any(|o| o == cmd)
                         {
@@ -4612,6 +4642,7 @@ impl Agent {
             || n == 1
             || self.config.work_mode == WorkMode::Managed
             || calls.iter().any(|call| call.name == "work")
+            || batch_has_file_dependency(&calls)
         {
             let mut out = Vec::with_capacity(n);
             for (call, verdict) in calls.into_iter().zip(authz) {
@@ -5162,6 +5193,56 @@ mod verification_stale_tests {
             &succeeded,
             false
         ));
+    }
+}
+
+/// A model may issue `write(path)` and `read(path)` in one tool batch. Those
+/// calls have an order dependency even when parallel tools are enabled: the
+/// read must observe the saved bytes, not race the write in another worker.
+fn batch_has_file_dependency(calls: &[PendingToolCall]) -> bool {
+    calls.iter().enumerate().any(|(i, first)| {
+        let Some(path) = first.input.get("path").and_then(Value::as_str) else {
+            return false;
+        };
+        matches!(first.name.as_str(), "write" | "edit" | "read")
+            && calls.iter().skip(i + 1).any(|second| {
+                second.input.get("path").and_then(Value::as_str) == Some(path)
+                    && matches!(second.name.as_str(), "write" | "edit" | "read")
+                    && (first.name != "read" || second.name != "read")
+            })
+    })
+}
+
+#[cfg(test)]
+mod file_batch_dependency_tests {
+    use super::{PendingToolCall, batch_has_file_dependency};
+
+    fn call(name: &str, path: &str) -> PendingToolCall {
+        PendingToolCall {
+            id: format!("{name}-{path}"),
+            name: name.into(),
+            input: serde_json::json!({"path": path}),
+        }
+    }
+
+    #[test]
+    fn same_file_write_and_read_run_in_model_order() {
+        assert!(batch_has_file_dependency(&[
+            call("write", "report.csv"),
+            call("read", "report.csv")
+        ]));
+        assert!(batch_has_file_dependency(&[
+            call("read", "report.csv"),
+            call("edit", "report.csv")
+        ]));
+        assert!(!batch_has_file_dependency(&[
+            call("write", "a.csv"),
+            call("read", "b.csv")
+        ]));
+        assert!(!batch_has_file_dependency(&[
+            call("read", "a.csv"),
+            call("read", "a.csv")
+        ]));
     }
 }
 

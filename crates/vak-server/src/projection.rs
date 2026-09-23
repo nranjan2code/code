@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub(crate) use vak_intent::control::{clean_scaffolding, is_scaffolding_line};
 
@@ -340,6 +340,30 @@ pub(crate) fn append_sandbox_artifacts(
             fallback_text: format!("Generated artifact: {path}"),
         });
     }
+    deduplicate_file_artifacts(&mut timeline.items);
+}
+
+/// Repeated successful writes to one file within a turn are revisions of the
+/// same deliverable. Keep the newest observed artifact and its actions, while
+/// leaving identically named files in other turns or directories distinct.
+fn deduplicate_file_artifacts(items: &mut Vec<OutputItem>) {
+    let mut seen = HashSet::new();
+    let mut latest_first = Vec::with_capacity(items.len());
+    for item in items.drain(..).rev() {
+        let duplicate = if let OutputContent::Artifact { artifact } = &item.content {
+            artifact
+                .path
+                .as_ref()
+                .is_some_and(|path| !seen.insert((item.turn_id.clone(), path.clone())))
+        } else {
+            false
+        };
+        if !duplicate {
+            latest_first.push(item);
+        }
+    }
+    latest_first.reverse();
+    *items = latest_first;
 }
 
 /// Returns a concise, transport-neutral artifact list for channel delivery.
@@ -1263,6 +1287,7 @@ fn snapshot_inner(
     if !ids_to_remove.is_empty() {
         deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
+    deduplicate_file_artifacts(&mut deduplicated);
     timeline.items = deduplicated;
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -2321,6 +2346,44 @@ mod tests {
     #[test]
     fn read_tools_do_not_claim_artifacts() {
         assert!(artifact_from_tool("read", &serde_json::json!({ "path": "a" })).is_none());
+    }
+
+    #[test]
+    fn repeated_writes_keep_one_latest_artifact_per_turn_and_path() {
+        let artifact = |id: &str, turn: &str, path: &str| OutputItem {
+            id: id.into(),
+            timestamp: "2026-09-23T00:00:00Z".into(),
+            turn_id: turn.into(),
+            role: OutputRole::Tool,
+            kind: OutputKind::Artifact,
+            status: OutputStatus::Succeeded,
+            outcome: None,
+            content: OutputContent::Artifact {
+                artifact: vak_delivery::ArtifactRef {
+                    name: path.into(),
+                    path: Some(path.into()),
+                    media_type: Some("text/csv".into()),
+                    description: None,
+                },
+            },
+            provenance: None,
+            actions: Vec::new(),
+            fallback_text: path.into(),
+        };
+        let mut items = vec![
+            artifact("first", "turn-1", "report.csv"),
+            artifact("other-dir", "turn-1", "sub/report.csv"),
+            artifact("other-turn", "turn-2", "report.csv"),
+            artifact("last", "turn-1", "report.csv"),
+        ];
+        super::deduplicate_file_artifacts(&mut items);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other-dir", "other-turn", "last"]
+        );
     }
 
     #[test]

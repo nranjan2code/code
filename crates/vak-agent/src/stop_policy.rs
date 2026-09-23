@@ -62,6 +62,9 @@ impl BlockReason {
 /// Summary of tool execution receipts produced during a run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReceiptSummary {
+    /// Proven saved file from the same intent thread before a step-limit
+    /// continuation. Only counts with a successful inspection in this turn.
+    pub continued_saved_file: bool,
     /// Total tool invocations attempted.
     pub total_tool_calls: u32,
     /// Number of tool calls that completed with ToolRunOutput::Ok.
@@ -78,13 +81,18 @@ pub struct ReceiptSummary {
     pub doc_files_modified: u32,
     /// Number of inspection/read tool calls (read_file, glob, grep, etc.).
     pub read_or_inspected: u32,
+    /// Inspections that actually returned successfully. A prior saved file
+    /// only counts after one of these in the continuation turn.
+    pub successful_inspections: u32,
     /// Most recent unresolved tool failure, if any.
     pub unresolved_error: Option<(String, String)>,
 }
 
 impl ReceiptSummary {
     pub fn has_execution_receipt(&self) -> bool {
-        self.substantive_bash_calls > 0 || self.files_modified > 0
+        self.substantive_bash_calls > 0
+            || self.files_modified > 0
+            || (self.continued_saved_file && self.successful_inspections > 0)
     }
 
     pub fn has_inspection_receipt(&self) -> bool {
@@ -799,6 +807,33 @@ mod tests {
                 &with_file,
                 false
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn capped_continuation_counts_prior_saved_file_only_after_successful_inspection() {
+        let policy = StopPolicy::default();
+        let mut reading = vak_intent::Reading::general();
+        reading.act = vak_intent::Act::Modify;
+        let spec = vak_intent::OutcomeSpec::from_reading("create report.csv", &reading, 1);
+        let prompt = "Continue the most recent unfinished task";
+        let answer = "The saved report contains 60 minutes.";
+        let prior_only = ReceiptSummary {
+            continued_saved_file: true,
+            read_or_inspected: 1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            policy.evaluate_receipts(prompt, answer, Some(&spec), &prior_only, false),
+            Some(BlockReason::ExecutionReceiptMissing { .. })
+        ));
+        let inspected = ReceiptSummary {
+            successful_inspections: 1,
+            ..prior_only
+        };
+        assert_eq!(
+            policy.evaluate_receipts(prompt, answer, Some(&spec), &inspected, false),
             None
         );
     }

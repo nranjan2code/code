@@ -1076,12 +1076,11 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean }) {
   const continuationPrompt = () => {
-    const original = props.items.find((item) => item.role === "user" && item.content.type === "document")?.fallback_text.trim();
-    return [
-      "Continue the unfinished request in this same conversation and workspace.",
-      original ? `Original request: ${original}` : "Use the preceding user request as the objective.",
-      "Inspect saved work and receipts already present, finish only what remains, and report what you actually verified. Do not repeat completed work unless it needs correction.",
-    ].join("\n\n");
+    // The original request and completed tool receipts are already in the
+    // append-only ledger. Repeating its imperative text here causes the intent
+    // resolver to demand a second file modification in this new turn, even
+    // when the saved file is the work being continued.
+    return "Continue the most recent unfinished task in this conversation. Inspect saved work, perform only outstanding steps, and give a concise answer. Read the actual saved file or data before calculating; after a successful read, use that result instead of rereading the same file or relying on a displayed card.";
   };
   const uniqueResultId = () => {
     const ids = new Set(props.items.map((entry) => entry.outcome?.result_id).filter((id): id is string => Boolean(id)));
@@ -1184,7 +1183,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           <div>
             <strong>Continue this task?</strong>
             <p>Vak reached this run’s step limit. Saved work is shown above. Continuing starts another bounded turn in this conversation.</p>
-            <Show when={props.allowContinuation}><button type="button" class="button subtle" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId)}>Continue</button></Show>
+            <Show when={props.allowContinuation}><button type="button" class="button subtle" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId, undefined, "follow_up")}>Continue</button></Show>
           </div>
         </section>;
       }

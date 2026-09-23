@@ -604,6 +604,7 @@ export async function sendPrompt(
   // session's changes were actually on screen.
   targetId?: string | null,
   replyTarget?: ReplyTarget | null,
+  relation?: api.RoutingEnvelope["relation"],
 ) {
   if (!text.trim() && !(attachments && attachments.length)) return;
   let id = targetId ?? activeId();
@@ -688,7 +689,7 @@ export async function sendPrompt(
           conversation_id: id,
           target_work_id: replyTarget?.sessionId,
           target_result_id: replyTarget?.resultId,
-          relation: replyTarget ? "correction" : "independent",
+          relation: relation ?? (replyTarget ? "correction" : "independent"),
           provenance: "client.composer",
         };
         try {
