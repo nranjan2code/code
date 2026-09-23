@@ -2266,14 +2266,14 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 /* Explanatory line under a group heading, before its rows. Matches the
    nav's scope copy so the two read as the same voice. */
 .settings-group-copy { margin: -3px 0 11px; color: var(--muted); font-size: 11px; line-height: 1.5; max-width: 62ch; }
-.settings-card { overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-raised); }
+.settings-card { overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-raised); container-type: inline-size; }
 .setting-row { display: flex; align-items: center; gap: 24px; min-height: 70px; padding: 13px 17px; border-bottom: 1px solid var(--border-soft); }
 .setting-row:last-child { border-bottom: 0; }
 .setting-row.danger { background: rgba(216,111,114,.04); }
 .setting-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .setting-copy strong { color: var(--text-soft); font-size: 12.5px; font-weight: 570; }
-.setting-copy span { max-width: 580px; color: var(--muted); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
-.setting-control { flex: none; display: flex; align-items: center; gap: 8px; }
+.setting-copy span { max-width: 580px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.setting-control { flex: 0 1 auto; min-width: 0; max-width: 55%; display: flex; align-items: center; gap: 8px; }
 .setting-control select, .settings-input, .settings-number { height: 32px; outline: 0; border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; color: var(--text-soft); background: var(--surface); }
 .settings-input { width: 190px; }
 .settings-input.wide { width: 260px; font-family: var(--mono); font-size: 10.5px; }
@@ -2282,7 +2282,12 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-soft); box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform 140ms ease; }
 .switch.on { background: var(--accent); }
 .switch.on span { background: #fff; transform: translateX(15px); }
-.settings-value { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.settings-value { color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow-wrap: anywhere; }
+@container (max-width: 600px) {
+  .setting-row { flex-wrap: wrap; gap: 9px; }
+  .setting-copy { flex-basis: 100%; }
+  .setting-control { max-width: 100%; }
+}
 .settings-button { min-height: 31px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-soft); background: var(--surface); font-size: 11.5px; }
 .settings-button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-hover); }
 .settings-button.danger { color: var(--red); }
