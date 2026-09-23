@@ -302,7 +302,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
   };
 
   return (
-    <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact }}>
+    <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact, "data-grid-options": options }}>
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">{options ? "Options" : "Data Grid"}</span>
@@ -354,17 +354,13 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                     {(col) => {
                       const val = String(row[col.key] ?? "");
                       const isStatus = col.key.toLowerCase().includes("status");
-                      const isPositive = val.startsWith("+") || val.toLowerCase().includes("healthy");
-                      const isNegative = val.startsWith("-") || val.toLowerCase().includes("fail");
                       return (
                         <td
                           class={col.isNumeric ? "cell-numeric" : ""}
                           style={{
-                            color: isPositive ? "var(--emerald-bright)" : isNegative ? "var(--rose-bright)" : undefined,
                             "font-weight": isStatus ? "600" : undefined,
                           }}
                         >
-                          <Show when={isStatus}>● </Show>
                           {val}
                         </td>
                       );
