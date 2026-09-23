@@ -680,8 +680,9 @@ impl Tool for EmitCardTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!(
-                "Card displayed to the user ({}). It is already on screen: do not restate its \
-                 data or write a `vak` fence for it; at most add one short sentence of narration.",
+                "Card displayed to the user ({}). It is already on screen. Leave final text empty \
+                 if the card answers fully. Only additional information will be shown: begin it \
+                 with `Note:` and do not repeat card data or write a `vak` fence.",
                 output.semantic_type
             )),
             Err(reason) => ToolOutput::error(format!(

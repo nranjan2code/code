@@ -1238,6 +1238,19 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       lead = [];
     };
     const grouping = !showOperatorChrome();
+    const isPrimaryCard = (entry: { item: OutputItem }) => {
+      const source = entry.item.provenance?.source ?? "";
+      return (entry.item.content.type === "structured" && source.startsWith("emit_") && source.endsWith("_card")) ||
+        (entry.item.content.type === "adaptive" && source === "adaptive_library");
+    };
+    const cardCopyText = (entry: { item: OutputItem }) => {
+      const readable = entry.item.fallback_text.replace(/```json[\s\S]*?```/g, "").trim();
+      if (readable.split("\n").filter(Boolean).length > 1 || entry.item.content.type !== "structured") return readable;
+      const payload = entry.item.content.output.payload;
+      const values = Object.entries(payload).filter(([key]) => key !== "title").map(([key, value]) =>
+        `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+      return [readable, ...values].filter(Boolean).join("\n");
+    };
     const sameResult = (left: OutputItem, right: OutputItem) => {
       const a = left.outcome?.result_id;
       const b = right.outcome?.result_id;
@@ -1298,7 +1311,14 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           material.push(next);
           index += 1;
         }
-        const result = <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
+        const hasCard = material.some(isPrimaryCard);
+        const displayText = hasCard
+          ? [
+              ...material.filter(isPrimaryCard).map(cardCopyText),
+              answer.metadata.card_note,
+            ].filter(Boolean).join("\n\n")
+          : answer.source_markdown;
+        const result = <AssistantMessage sessionId={props.sessionId} text={displayText}>
             <article
               class="primary-result"
               data-result-id={item.outcome?.result_id ?? item.id}
@@ -1310,9 +1330,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
                   {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
                 </div>
               </Show>
-              <Show when={material.some((entry) => entry.item.content.type === "structured" || entry.item.content.type === "adaptive")}
+              <Show when={hasCard}
                 fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
-                <details class="primary-result-note"><summary>Agent note</summary><div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div></details>
+                <Show when={answer.metadata.card_note}>{(note) => <div class="primary-result-note"><MarkdownView text={note()} /></div>}</Show>
               </Show>
               <ResultEvidence item={item} />
               <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />

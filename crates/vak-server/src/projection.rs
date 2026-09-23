@@ -122,6 +122,8 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         .filter(|item| {
             item.turn_id == turn
                 && item.kind == OutputKind::Card
+                && item.provenance.as_ref().and_then(|p| p.source.as_deref())
+                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
                 && matches!(item.content, OutputContent::Structured { .. })
         })
         .map(|item| item.fallback_text.trim())
@@ -131,9 +133,9 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         return narration;
     }
     let cards = cards.join("\n\n");
-    match narration.trim() {
-        "" | "(no text)" => cards,
-        _ => format!("{cards}\n\n{narration}"),
+    match vak_delivery::supplemental_card_note(&narration) {
+        Some(note) => format!("{cards}\n\n{note}"),
+        None => cards,
     }
 }
 
@@ -1288,6 +1290,30 @@ fn snapshot_inner(
         deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
     deduplicate_file_artifacts(&mut deduplicated);
+    let card_turns: std::collections::HashSet<String> = deduplicated
+        .iter()
+        .filter(|item| {
+            item.kind == OutputKind::Card
+                && item.provenance.as_ref().and_then(|p| p.source.as_deref())
+                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
+        })
+        .map(|item| item.turn_id.clone())
+        .collect();
+    for item in &mut deduplicated {
+        if !card_turns.contains(&item.turn_id) || item.role != OutputRole::Assistant {
+            continue;
+        }
+        let document = match &mut item.content {
+            OutputContent::Document { document } => Some(document),
+            OutputContent::Outcome { document, .. } => document.as_mut(),
+            _ => None,
+        };
+        if let Some(document) = document
+            && let Some(note) = vak_delivery::supplemental_card_note(&document.source_markdown)
+        {
+            document.metadata.insert("card_note".into(), note.into());
+        }
+    }
     timeline.items = deduplicated;
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -3831,9 +3857,8 @@ mod tests {
         append_presentation_for_call(log, "emit_chart_card", id, &input);
     }
 
-    /// The bug this guards: a card emitted through a tool is not in the
-    /// model's final text, so a channel that delivered only that text sent
-    /// "the chart is shown above" with nothing above it.
+    /// Channels deliver the card as the answer and retain only explicitly
+    /// additional narration.
     #[test]
     fn a_channel_gets_the_cards_of_the_run_ahead_of_the_narration() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3849,10 +3874,28 @@ mod tests {
             text.contains("sales rise steadily"),
             "card content must reach the channel: {text}"
         );
-        assert!(
-            text.ends_with("The chart is shown above."),
-            "narration follows the card: {text}"
-        );
+        assert!(!text.contains("The chart is shown above."), "{text}");
+        let with_note = super::text_with_run_cards(&log, "Note: Check the holiday dip.".into());
+        assert!(with_note.contains("sales rise steadily"), "{with_note}");
+        assert!(with_note.ends_with("Check the holiday dip."), "{with_note}");
+    }
+
+    #[test]
+    fn card_result_projects_only_an_explicit_additional_note() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-note");
+        log.append_message(MessageRecord { message: Message::user_text("chart it"), meta: None }).expect("user");
+        append_card_call(&mut log, "c1", "sales rise steadily");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Note: The holiday dip needs review.")]),
+            meta: None,
+        }).expect("answer");
+        let timeline = super::snapshot("card-note", &log);
+        let note = timeline.items.iter().find_map(|item| match &item.content {
+            OutputContent::Document { document } => document.metadata.get("card_note"),
+            _ => None,
+        });
+        assert_eq!(note.map(String::as_str), Some("The holiday dip needs review."));
     }
 
     #[test]

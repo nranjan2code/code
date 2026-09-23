@@ -49,6 +49,18 @@ pub use vak_presentation as adaptive_presentation;
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
 
+/// A card is the user-facing answer. Text after a card is only user-facing
+/// when the Agent explicitly marks it as additional information. The complete
+/// model text remains in the append-only session for inspection and replay.
+pub fn supplemental_card_note(narration: &str) -> Option<&str> {
+    let text = narration.trim();
+    let note = text
+        .strip_prefix("Note:")
+        .or_else(|| text.strip_prefix("Additional note:"))?
+        .trim();
+    (!note.is_empty()).then_some(note)
+}
+
 /// The complete answer and its conservative structural projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerDraft {
@@ -1396,6 +1408,14 @@ pub mod worker {
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn card_note_requires_explicit_additional_text() {
+        assert_eq!(supplemental_card_note("The plan is shown above."), None);
+        assert_eq!(supplemental_card_note("Note: Bring an umbrella."), Some("Bring an umbrella."));
+        assert_eq!(supplemental_card_note("Additional note: Allow extra travel time."), Some("Allow extra travel time."));
+        assert_eq!(supplemental_card_note("Note:   "), None);
+    }
 
     fn job(markup: Markup, max_chars: Option<usize>) -> DeliveryJob {
         let source =
