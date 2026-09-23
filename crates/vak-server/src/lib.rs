@@ -13164,6 +13164,7 @@ async fn get_config(
         "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
         "context_window": cfg.context_window,
         "theme": core.effective_theme(),
+        "voice": core.effective_voice(),
         "memory": {
             "search_enabled": core.effective_memory_search_enabled(),
             "write_enabled": core.effective_memory_write_enabled(),

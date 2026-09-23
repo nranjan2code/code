@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup } from "solid-js";
 import * as api from "../api";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { VoiceSessionSocket } from "../voice";
-import { setNotice, stripControlScaffolding } from "../store";
+import { setNotice, setSettingsOpen, stripControlScaffolding } from "../store";
 import AgentMark, { type CharacterState } from "./AgentMark";
 
 /** Governed voice capture control for the composer. It only streams PCM after
@@ -121,6 +121,14 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     setTranscript("");
     const generation = ++voiceGeneration;
     try {
+      const config = await api.getConfig();
+      if (generation !== voiceGeneration) return;
+      if (!config.voice?.enabled) {
+        setConnecting(false);
+        setStatus("Set up voice");
+        setSettingsOpen(true);
+        return;
+      }
       const sessionId = props.sessionId ?? await props.ensureSession();
       if (!sessionId) throw new Error("Could not open a conversation for voice. Try again.");
       if (generation !== voiceGeneration) return;
