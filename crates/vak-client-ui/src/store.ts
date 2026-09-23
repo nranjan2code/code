@@ -742,6 +742,7 @@ export type SettingsPageId =
   | "advanced"
   | "archived";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
+export const [pendingSettingsSection, setPendingSettingsSection] = createSignal<"voice" | null>(null);
 // Read-only historical transcript viewer (docs/design/29): any session by id,
 // served from disk — no attach, no stream, never touches live view state.
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);

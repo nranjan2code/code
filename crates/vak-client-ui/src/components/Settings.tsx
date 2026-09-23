@@ -5,11 +5,13 @@ import {
   density,
   openInEditor,
   pendingSettingsPage,
+  pendingSettingsSection,
   providers,
   setDensity,
   setNotice,
   setProviders,
   setSettingsOpen,
+  setPendingSettingsSection,
   setSettingsScope,
   settingsScope,
   setShowShortcuts,
@@ -87,8 +89,8 @@ function Row(props: { title: string; description: string; children: JSX.Element;
   return <div class="setting-row" classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
 }
 
-function Group(props: { title?: string; children: JSX.Element }) {
-  return <section class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+function Group(props: { title?: string; id?: string; children: JSX.Element }) {
+  return <section id={props.id} class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
 }
 
 function CapabilityIcon(props: { name: string }) {
@@ -377,13 +379,15 @@ export default function Settings() {
   }
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
+  let focusVoiceWhenLoaded = pendingSettingsSection() === "voice";
+  setPendingSettingsSection(null);
   onMount(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     // The modal is inserted through a lazy Suspense boundary; the shared
     // focus trap can run before the first control has a layout box. Explicitly
     // hand focus to the modal once its component is mounted.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      settingsRoot.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]")?.focus({ preventScroll: true });
+      if (!focusVoiceWhenLoaded) settingsRoot.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]")?.focus({ preventScroll: true });
     }));
     onCleanup(() => {
       if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true });
@@ -392,6 +396,16 @@ export default function Settings() {
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [evidenceAgeHours, setEvidenceAgeHours] = createSignal(24);
   const [loading, setLoading] = createSignal(true);
+  createEffect(() => {
+    if (!focusVoiceWhenLoaded || loading() || page() !== "general") return;
+    requestAnimationFrame(() => {
+      const section = settingsRoot.querySelector<HTMLElement>("#voice-settings");
+      if (!section) return;
+      focusVoiceWhenLoaded = false;
+      section.scrollIntoView({ block: "start" });
+      section.querySelector<HTMLElement>("button, input, select, textarea")?.focus({ preventScroll: true });
+    });
+  });
   // Background-service states (docs/design/27-operations.md); polled while
   // the Services page is open.
   const [ops, setOps] = createSignal<api.OpsStatusShape | null>(null);
@@ -1243,7 +1257,7 @@ export default function Settings() {
                 </Show>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
-              <Group title="Voice">
+              <Group id="voice-settings" title="Voice">
                 <Row title="Enable voice conversations" description="Allow microphone sessions and governed speech input/output."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
                 <Row title="Speak agent actions out loud" description="Narrate turn completions and permission prompts through the voice pipeline."><Switch label="Speak agent actions out loud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
                 <Row title="Session limit" description="Maximum duration for one voice session, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
