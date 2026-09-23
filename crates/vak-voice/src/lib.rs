@@ -84,7 +84,7 @@ pub fn default_registry() -> VoiceRegistry {
             vec![SpeakFormat::Pcm16, SpeakFormat::Wav],
         ),
         (
-            "openai-realtime",
+            "openai",
             Endpointing::Server,
             vec![SpeakFormat::Pcm16, SpeakFormat::OggOpus, SpeakFormat::Mp3],
         ),
@@ -99,7 +99,7 @@ pub fn default_registry() -> VoiceRegistry {
     ] {
         let env_var = match name {
             "gemini-live" => Some("GEMINI_API_KEY".into()),
-            "openai-realtime" => Some("OPENAI_API_KEY".into()),
+            "openai" => Some("OPENAI_API_KEY".into()),
             _ => None,
         };
         let default_base_url = (name == "local").then(|| "http://127.0.0.1:8080/v1".into());
@@ -110,7 +110,7 @@ pub fn default_registry() -> VoiceRegistry {
             endpointing,
             formats,
             input_formats: match name {
-                "gemini-live" | "openai-realtime" => vec![
+                "gemini-live" | "openai" => vec![
                     ListenFormat::Pcm16,
                     ListenFormat::Wav,
                     ListenFormat::OggOpus,
@@ -153,7 +153,7 @@ mod tests {
     fn default_catalogue_is_capability_only() {
         let registry = default_registry();
         let names: Vec<_> = registry.list().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, vec!["gemini-live", "local", "openai-realtime"]);
+        assert_eq!(names, vec!["gemini-live", "local", "openai"]);
         assert!(
             registry
                 .list()

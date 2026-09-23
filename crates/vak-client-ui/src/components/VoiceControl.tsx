@@ -102,7 +102,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     if (active() && props.sessionId && props.sessionId !== voiceSessionId) stopVoice();
   });
   onCleanup(() => { stopVoice(); void playbackContext?.close(); });
-  async function toggle() {
+  async function toggle(recording?: File) {
     if (connecting()) return;
     if (active()) { stopVoice(); return; }
     // Unlock output while this call still has the user's click gesture. The
@@ -136,6 +136,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
         onTranscript: (event) => {
           if (generation !== voiceGeneration) return;
           setTranscript(event.text);
+          if (!event.final && !event.text.trim()) { setStatus(capture ? "Listening" : "No speech heard"); return; }
           if (event.final) {
             setStatus("Processing");
             props.onFinal(event.text);
@@ -151,23 +152,51 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       });
       await socket.connect();
       if (generation !== voiceGeneration || !socket) return;
-      setStatus("Allow microphone");
-      const startedCapture = await startMicrophone((pcm) => {
+      if (recording) {
+        setStatus("Preparing recording");
+        const source = await playbackContext!.decodeAudioData(await recording.arrayBuffer());
         if (generation !== voiceGeneration) return;
-        try { streamDetectedSpeech(pcm); } catch (error) { failVoice((error as Error).message); }
-      });
-      if (generation !== voiceGeneration) { startedCapture.stop(); return; }
-      capture = startedCapture;
-      setActive(true);
-      setConnecting(false);
-      setStatus("Listening");
+        const sampleCount = Math.ceil(source.duration * AUDIO_SAMPLE_RATE);
+        if (sampleCount * 2 > (config.voice?.max_audio_bytes ?? 16 * 1024 * 1024)) throw new Error("Recording exceeds the voice audio budget");
+        const offline = new OfflineAudioContext(1, sampleCount, AUDIO_SAMPLE_RATE);
+        const input = offline.createBufferSource();
+        input.buffer = source;
+        input.connect(offline.destination);
+        input.start();
+        const rendered = await offline.startRendering();
+        if (generation !== voiceGeneration) return;
+        setActive(true);
+        setConnecting(false);
+        setStatus("Processing");
+        utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        socket.sendControl({ t: "speech_started", utterance_id: utterance });
+        const samples = rendered.getChannelData(0);
+        for (let offset = 0; offset < samples.length; offset += 512) {
+          const frame = samples.subarray(offset, offset + 512);
+          const pcm = new Int16Array(frame.length);
+          for (let index = 0; index < frame.length; index += 1) pcm[index] = Math.max(-1, Math.min(1, frame[index])) * 32767;
+          socket.sendAudio(pcm);
+        }
+        socket.sendControl({ t: "speech_stopped", utterance_id: utterance });
+      } else {
+        setStatus("Allow microphone");
+        const startedCapture = await startMicrophone((pcm) => {
+          if (generation !== voiceGeneration) return;
+          try { streamDetectedSpeech(pcm); } catch (error) { failVoice((error as Error).message); }
+        });
+        if (generation !== voiceGeneration) { startedCapture.stop(); return; }
+        capture = startedCapture;
+        setActive(true);
+        setConnecting(false);
+        setStatus("Listening");
+      }
     } catch (error) { failVoice((error as Error).message); }
   }
   async function speakAnswer(text: string) {
     const answer = spokenReplyText(text);
     if (!answer || !active()) return;
     if (answer.startsWith("error:")) {
-      setStatus("Listening");
+      setStatus(capture ? "Listening" : "Done");
       setNotice({ kind: "error", text: answer });
       return;
     }
@@ -182,7 +211,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       onAnswerAudio(bytes, blob.type);
     } catch (error) {
       if (generation !== answerGeneration) return;
-      setStatus("Listening");
+      setStatus(capture ? "Listening" : "Done");
       setNotice({ kind: "error", text: `The answer is ready as text, but voice playback failed: ${(error as Error).message}` });
     }
   }
@@ -209,7 +238,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       startPlaybackBuffer(buffer, generation);
     }).catch((error) => {
       if (generation === playbackGeneration) setNotice({ kind: "error", text: `The answer is ready as text, but voice playback could not start: ${(error as Error).message}` });
-      if (active()) setStatus("Listening");
+      if (active()) setStatus(capture ? "Listening" : "Done");
     });
   }
   function failVoice(message: string) {
@@ -239,7 +268,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     playbackStartedAt = 0;
     playbackCurrentDurationMs = 0;
     playbackCompletedMs = 0;
-    if (active()) setStatus("Listening");
+    if (active()) setStatus(capture ? "Listening" : "Done");
   }
   function startPlaybackBuffer(buffer: AudioBuffer, generation: number) {
     if (!playbackContext || generation !== playbackGeneration || !active()) return;
@@ -260,7 +289,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       }
       playbackUtterance = "";
       playbackCompletedMs = 0;
-      if (active()) setStatus("Listening");
+      if (active()) setStatus(capture ? "Listening" : "Done");
     };
     source.start();
     setStatus("Speaking");
@@ -292,6 +321,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   };
   return <span class="voice-control" data-state={state()} role="group" aria-label="Voice conversation controls">
     <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() && status() === "Voice" ? "Connecting…" : visibleStatus()}</span></button>
+    {!active() && !connecting() && <label class="composer-context voice-recording-entry">Use recording<input type="file" accept="audio/*" aria-label="Use an audio recording" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void toggle(file); }} /></label>}
     {transcript() && <span class="voice-transcript" aria-live="polite">{transcript()}</span>}
     {active() && <><button class="composer-context" disabled={!playbackSource} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playbackSource} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
     {voiceError() && <button class="composer-context voice-fallback" onClick={() => window.dispatchEvent(new CustomEvent("vak:focus-composer"))}>Type instead</button>}

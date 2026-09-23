@@ -973,7 +973,7 @@ async fn drive_voice(
                                     )
                                     .await
                                     .map_err(|e| vak_llm::LlmError::InvalidRequest(e.to_string()))
-                            } else if matches!(provider.as_str(), "openai" | "openai-compatible") {
+                            } else if provider == "openai" {
                                 let Some(key) = vak_config::get_var("OPENAI_API_KEY")
                                     .filter(|k| !k.trim().is_empty())
                                 else {
@@ -1003,10 +1003,24 @@ async fn drive_voice(
                                     cache_key: false,
                                     openrouter: false,
                                 };
+                                let audio = match vak_voice::audio::wrap_wav(
+                                    &utterance_audio,
+                                    vak_voice::audio::PcmSpec {
+                                        sample_rate_hz: 16_000,
+                                        channels: 1,
+                                    },
+                                ) {
+                                    Ok(audio) => audio,
+                                    Err(error) => {
+                                        send_voice_error(&mut socket, &error.to_string()).await;
+                                        utterance_audio.clear();
+                                        continue;
+                                    }
+                                };
                                 vak_llm::openai::transcribe(
                                     &cfg,
-                                    &utterance_audio,
-                                    "audio/pcm",
+                                    &audio,
+                                    "audio/wav",
                                     &model,
                                     &cancel,
                                 )
@@ -1053,13 +1067,25 @@ async fn drive_voice(
                                 .await;
                                 continue;
                             };
-                            let transcription_error = match &result {
-                                Ok(value) if value.trim().is_empty() => {
-                                    Some("No speech was recognized".to_string())
+                            let transcription_error = result
+                                .as_ref()
+                                .err()
+                                .map(|error| format!("Voice transcription failed: {error}"));
+                            if result.as_ref().is_ok_and(|text| text.trim().is_empty()) {
+                                if let Ok(frame) = vak_voice::protocol::Frame::encode_control(
+                                    &vak_voice::protocol::Control::Transcript {
+                                        utterance_id: utterance_id.clone(),
+                                        text: String::new(),
+                                        final_: false,
+                                    },
+                                ) {
+                                    let _ = socket
+                                        .send(Message::Text(
+                                            String::from_utf8_lossy(&frame).into_owned().into(),
+                                        ))
+                                        .await;
                                 }
-                                Err(error) => Some(format!("Voice transcription failed: {error}")),
-                                _ => None,
-                            };
+                            }
                             if let Ok(text) = result
                                 && !text.trim().is_empty()
                                 && committed_utterances.insert(utterance_id.clone())

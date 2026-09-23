@@ -1705,14 +1705,14 @@ async fn voice_transcribe(
         .to_ascii_lowercase();
     if !matches!(
         provider.as_str(),
-        "google" | "gemini" | "google-live" | "gemini-live" | "openai" | "openai-compatible"
+        "google" | "gemini" | "google-live" | "gemini-live" | "openai"
     ) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": format!("voice provider '{provider}' has no transcription adapter installed")})),
         ).into_response();
     }
-    let key = if matches!(provider.as_str(), "openai" | "openai-compatible") {
+    let key = if provider == "openai" {
         vak_config::get_var("OPENAI_API_KEY")
     } else {
         vak_config::get_var("GEMINI_API_KEY").or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
@@ -1729,7 +1729,7 @@ async fn voice_transcribe(
         .or(voice_settings.model)
         .unwrap_or_default();
     let cancel = tokio_util::sync::CancellationToken::new();
-    let result = if matches!(provider.as_str(), "openai" | "openai-compatible") {
+    let result = if provider == "openai" {
         let config = vak_llm::openai::OpenAiConfig {
             api_key,
             base_url: vak_llm::openai::OPENAI_DEFAULT_BASE_URL.into(),
@@ -1742,6 +1742,11 @@ async fn voice_transcribe(
         vak_llm::google_live::transcribe(&config, &audio, &body.mime, &cancel).await
     };
     match result {
+        Ok(text) if text.trim().is_empty() => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "No speech was recognized"})),
+        )
+            .into_response(),
         Ok(text) => {
             if let Some(session_id) = body
                 .session_id
@@ -1953,7 +1958,7 @@ async fn voice_speak(
         )
             .into_response();
     }
-    if matches!(provider.as_str(), "openai" | "openai-compatible") {
+    if provider == "openai" {
         let Some(api_key) =
             vak_config::get_var("OPENAI_API_KEY").filter(|key| !key.trim().is_empty())
         else {
@@ -1988,7 +1993,7 @@ async fn voice_speak(
             &config,
             &body.text,
             &model,
-            voice_name.as_deref(),
+            voice_name.as_deref().or(Some("alloy")),
             format,
             &CancellationToken::new(),
         )

@@ -94,35 +94,19 @@ impl Tool for McpTool {
     }
 
     fn schema(&self) -> Value {
-        // The contract is intentionally `oneOf` (not a flat `required`):
-        // `server`/`tool`/`arguments` are only meaningful for `action == "call"`,
-        // and `additionalProperties: false` on each branch keeps the model from
-        // inventing shapes it cannot reach. This is the schema the model sees
-        // during tool selection, so it must be precise — a model that trusts a
-        // flat `required: ["action"]` will omit `server`/`tool` and guess.
+        // OpenAI function declarations require a top-level object without
+        // oneOf/anyOf. Keep the two actions explicit in descriptions, and
+        // enforce call-only fields again in execute before touching a server.
         serde_json::json!({
             "type": "object",
-            "oneOf": [
-                {
-                    "description": "List every configured MCP server and the tools it exposes (exact names + inputSchemas). Always call this first.",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["list"]}
-                    },
-                    "required": ["action"],
-                    "additionalProperties": false
-                },
-                {
-                    "description": "Invoke one discovered tool. `server` must be a name returned by `action: list`; `tool` one of that server's tools.",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["call"]},
-                        "server": {"type": "string", "description": "Discovered server name"},
-                        "tool": {"type": "string", "description": "Discovered tool name"},
-                        "arguments": {"type": "object", "description": "Arguments matching the tool's inputSchema (call only)"}
-                    },
-                    "required": ["action", "server", "tool"],
-                    "additionalProperties": false
-                }
-            ]
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "call"], "description": "Use list first to discover exact server and tool names; use call to invoke one."},
+                "server": {"type": "string", "description": "Required for call: a server name returned by list."},
+                "tool": {"type": "string", "description": "Required for call: a tool name returned by list for that server."},
+                "arguments": {"type": "object", "description": "For call: arguments matching the discovered tool's inputSchema."}
+            },
+            "required": ["action"],
+            "additionalProperties": false
         })
     }
 

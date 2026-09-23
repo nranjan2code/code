@@ -789,6 +789,9 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
   white-space: nowrap;
 }
 .voice-transcript::before { content: "Heard: "; color: var(--faint); }
+.voice-recording-entry { position: relative; cursor: pointer; white-space: nowrap; }
+.voice-recording-entry input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.voice-recording-entry:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .voice-fallback { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .voice-control[data-state="listening"] > button:first-child > span:first-child { animation: none; } }
 .thinking { margin-bottom: 12px; padding: 1px 0; color: var(--muted); }

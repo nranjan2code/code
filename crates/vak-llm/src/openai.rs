@@ -93,11 +93,6 @@ pub async fn transcribe(
         .unwrap_or("")
         .trim()
         .to_string();
-    if text.is_empty() {
-        return Err(LlmError::Parse(
-            "provider returned an empty transcript".into(),
-        ));
-    }
     Ok(text)
 }
 
