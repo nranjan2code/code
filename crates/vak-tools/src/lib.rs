@@ -194,6 +194,23 @@ pub trait Tool: Send + Sync {
     fn presents_cards(&self) -> bool {
         false
     }
+
+    /// The capability domains this tool serves (`filesystem`, `web`, …; the
+    /// vocabulary is `vak_core::capability::Domain`). The tool classifies
+    /// itself so the harness never keeps a name table. Empty means
+    /// undeclared, and an undeclared tool is always loaded: deferring is a
+    /// context saving, never a policy, so an unknown tool fails open.
+    fn serves(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Loaded into every turn's schemas regardless of the turn's reading —
+    /// the orientation and discovery primitives a model needs to operate at
+    /// all. Everything else is loaded when the reading predicts it and is
+    /// otherwise one `find_tools` call away.
+    fn always_loaded(&self) -> bool {
+        false
+    }
 }
 
 /// Declared concurrent-execution constraints for one tool invocation.

@@ -171,6 +171,10 @@ impl vak_tools::Tool for EntityRecordTool {
         "entity_record"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
+    }
+
     fn description(&self) -> &str {
         "Record or update a domain entity in the semantic knowledge graph. \
          Entities represent durable systems, concepts, people, datasets, or components \
@@ -328,6 +332,10 @@ pub struct EntityQueryTool {
 impl vak_tools::Tool for EntityQueryTool {
     fn name(&self) -> &str {
         "entity_query"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
     }
 
     fn description(&self) -> &str {

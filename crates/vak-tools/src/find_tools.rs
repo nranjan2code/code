@@ -46,6 +46,10 @@ impl Tool for FindToolsTool {
         "find_tools"
     }
 
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Search tools not currently loaded, by name, description, or argument names/descriptions. Returns full schemas for the best matches, which are then usable for the rest of this turn."
     }

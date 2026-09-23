@@ -21,6 +21,11 @@ pub struct McpTool {
 }
 
 impl McpTool {
+    /// The broker to every external integration. Claiming `live-data` is
+    /// what lets a live-data reading reach a configured search server;
+    /// servers refine it by declaring their own `serves`.
+    pub const SERVES: &'static [&'static str] = &["live-data", "web", "documents", "messaging"];
+
     pub fn new(manager: Arc<McpManager>) -> Self {
         McpTool {
             manager,
@@ -87,6 +92,14 @@ impl McpTool {
 impl Tool for McpTool {
     fn name(&self) -> &str {
         "mcp"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        Self::SERVES
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
     }
 
     fn description(&self) -> &str {

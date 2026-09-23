@@ -123,6 +123,7 @@ async fn pre_tool_use_hook_blocks_execution() {
         command: r#"echo '{"decision":"block","reason":"no touching"}'"#.to_string(),
         timeout_ms: 5000,
         failure_mode: vak_hooks::HookFailureMode::Open,
+        refusal: None,
     }];
     let marker_path = marker_path.display().to_string();
     let mut agent = build(
@@ -179,6 +180,7 @@ async fn stop_hook_forces_continuation_once() {
         command: cmd,
         timeout_ms: 5000,
         failure_mode: vak_hooks::HookFailureMode::Open,
+        refusal: None,
     }];
     let mut agent = build(
         vec![text_msg("first attempt"), text_msg("goodbye")],

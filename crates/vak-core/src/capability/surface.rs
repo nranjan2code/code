@@ -1,109 +1,99 @@
-//! The per-turn tool surface: core (in the stable prefix) vs. deferred
-//! (schema withheld, reachable only through `find_tools` or, on Anthropic,
-//! `defer_loading`). See docs/design/68-context-engine.md §5.
+//! The per-turn tool surface: which admitted tools are *loaded* (full schema
+//! in the request) and which are *deferred* (named in the prompt's catalogue,
+//! schema one `find_tools` call away). See docs/design/68-context-engine.md §5.
 //!
-//! This module decides a *presentation* split over tools the rest of the
-//! pipeline already admitted for the turn — it never widens what was
-//! admitted, and it never re-derives domain membership on its own: the
-//! domain match comes from [`crate::intent::slice_capabilities`], the same
-//! selector `crate::intent` exposes for any other caller.
+//! This is presentation, never policy. Every tool here was already admitted
+//! by [`super::turn`]; the split only decides what the model reads up front.
+//! A wrong prediction therefore costs one `find_tools` round trip and is the
+//! measured misread (`crate::misread`), never a missing capability.
+//!
+//! The split reads each tool's own declaration (`Tool::always_loaded`,
+//! `Tool::serves`, `Tool::presents_cards`) — the harness keeps no table of
+//! tool names.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use vak_llm::ToolDefinition;
-use vak_session::types::{CapabilityDescriptor, CapabilityKind};
 
-/// Tool names carried in the stable prefix on every turn, regardless of
-/// domain: the orientation and discovery primitives a model needs to
-/// operate at all. `recall` is included by name for forward-compatibility
-/// with the evidence store (docs/design/68 §3) — today no capability named
-/// `recall` exists, so it is silently absent from both `core` and
-/// `deferred` rather than advertised as a broken tool.
-const ALWAYS_CORE: &[&str] = &["find_tools", "skill", "mcp", "recall"];
+use super::domain::Domain;
 
-fn is_card_tool(name: &str) -> bool {
-    name.starts_with("emit_") && name.ends_with("_card")
-}
-
-/// The result of splitting one turn's admitted tools into what stays in the
-/// stable prefix and what is only reachable on demand.
+/// One turn's tools, split for the request.
 #[derive(Debug, Clone, Default)]
 pub struct ToolSurface {
-    /// Always sent with full schemas, in the stable prefix.
+    /// Sent with full schemas.
     pub core: Vec<ToolDefinition>,
-    /// Schema withheld from the prefix; reachable via `find_tools`, or via
-    /// Anthropic `defer_loading` on legs that support it.
+    /// Schema withheld; reachable through `find_tools`, or Anthropic
+    /// `defer_loading` on legs that support it.
     pub deferred: Vec<ToolDefinition>,
-    /// One line per deferred tool — `- name — first sentence`. No schemas.
-    pub index: String,
+    /// Deferred because the turn's reading did not predict them — the set a
+    /// later call measures a misread against. Card tools are excluded: a
+    /// card is an output choice, not a reading of what the request needs.
+    pub unpredicted: BTreeSet<String>,
 }
 
-/// Build the tool surface for one turn.
+/// Split the admitted `tools` for one turn.
 ///
-/// `admitted` is the turn's already-filtered capability descriptors (channel
-/// → reach → contract → domain slice all already applied); only
-/// [`CapabilityKind::Tool`] entries are considered — an MCP server can never
-/// reach `core` or `deferred` here, because it is reached only through the
-/// `mcp` broker (docs/design/68 §5). `tool_defs` are the corresponding
-/// schemas, already built for the turn (e.g. by `vak_tools::definitions`).
-/// `required_domains` and `declared_serves` are passed straight through to
-/// [`crate::intent::slice_capabilities`]: `All` (a disabled kernel) puts
-/// every admitted tool in core, an explicit domain set keeps what serves it,
-/// and the orientation floor — what a reading too weak to slice arrives as —
-/// keeps only floor and undeclared tools in core. The `ALWAYS_CORE` set
-/// survives independently of all of that.
+/// * `required_domains` is the reading's prediction. `All` (progressive
+///   disclosure off, or the kernel disabled) loads everything.
+/// * `predicted_cards` names the card tools the request itself reads as
+///   (`presentation_tools::predicted_card_tools`); other card tools defer.
+///
+/// Always-loaded and undeclared tools are loaded whatever the prediction:
+/// the first because the model cannot operate without them, the second
+/// because deferring is a context saving and an unknown tool fails open.
 pub fn build_tool_surface(
-    admitted: &[CapabilityDescriptor],
-    tool_defs: &[ToolDefinition],
+    tools: &[Arc<dyn vak_tools::Tool>],
     required_domains: &vak_intent::DomainSet,
-    declared_serves: &BTreeMap<String, Vec<String>>,
-    renders_cards: bool,
+    predicted_cards: &BTreeSet<String>,
 ) -> ToolSurface {
-    let tool_names: BTreeSet<&str> = admitted
-        .iter()
-        .filter(|c| c.kind == CapabilityKind::Tool)
-        .map(|c| c.name.as_str())
-        .collect();
-
-    let admitted_tools: Vec<CapabilityDescriptor> = admitted
-        .iter()
-        .filter(|c| c.kind == CapabilityKind::Tool)
-        .cloned()
-        .collect();
-    let domain_selected: BTreeSet<String> =
-        crate::intent::slice_capabilities(&admitted_tools, required_domains, declared_serves)
-            .into_iter()
-            .map(|c| c.name)
-            .collect();
-
-    let mut core = Vec::new();
-    let mut deferred = Vec::new();
-    for def in tool_defs {
-        // Anything not a Tool-kind admitted capability — an MCP alias, a
-        // stale name — is never advertised directly at all.
-        if !tool_names.contains(def.name.as_str()) {
-            continue;
-        }
-        let always_core =
-            ALWAYS_CORE.contains(&def.name.as_str()) || (renders_cards && is_card_tool(&def.name));
-        if always_core || domain_selected.contains(&def.name) {
-            core.push(def.clone());
+    let required: Option<BTreeSet<Domain>> = (!required_domains.is_unconstrained())
+        .then(|| required_domains.iter().map(|d| Domain::parse(d)).collect());
+    let mut surface = ToolSurface::default();
+    for tool in tools {
+        let definition = ToolDefinition::new(tool.name(), tool.description(), tool.schema());
+        let loaded = match &required {
+            None => true,
+            Some(_) if tool.always_loaded() => true,
+            Some(_) if tool.presents_cards() => predicted_cards.contains(tool.name()),
+            Some(required) => {
+                let serves = tool.serves();
+                serves.is_empty()
+                    || serves
+                        .iter()
+                        .any(|label| required.contains(&Domain::parse(label)))
+            }
+        };
+        if loaded {
+            surface.core.push(definition);
         } else {
-            deferred.push(def.clone());
+            if !tool.presents_cards() {
+                surface.unpredicted.insert(tool.name().to_string());
+            }
+            surface.deferred.push(definition);
         }
     }
+    surface
+}
 
-    let index = deferred
-        .iter()
-        .map(|def| format!("- {} — {}", def.name, first_sentence(&def.description)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    ToolSurface {
-        core,
-        deferred,
-        index,
+/// The prompt's catalogue of the admitted tools that are not always loaded:
+/// one line each, name and first sentence, no schema. `entries` are
+/// `(name, description)` pairs. It depends only on what is admitted — never
+/// on the turn's reading — so it stays byte-stable in the cached prefix while
+/// the loaded set moves. Empty when nothing can defer.
+pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let mut lines: Vec<String> = entries
+        .into_iter()
+        .map(|(name, description)| format!("- {name} — {}", first_sentence(description)))
+        .collect();
+    if lines.is_empty() {
+        return String::new();
     }
+    lines.sort();
+    format!(
+        "\nMore tools (a tool not in your schemas this turn is loaded by calling `find_tools` with its name or purpose; call it before using one):\n{}\n",
+        lines.join("\n")
+    )
 }
 
 fn first_sentence(description: &str) -> &str {
@@ -118,186 +108,127 @@ fn first_sentence(description: &str) -> &str {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use vak_session::types::CapabilityInvocation;
+    use serde_json::Value;
 
-    fn tool_cap(name: &str) -> CapabilityDescriptor {
-        CapabilityDescriptor {
-            name: name.into(),
-            kind: CapabilityKind::Tool,
-            invocation: CapabilityInvocation::ModelTool,
-            description: String::new(),
-            source: None,
-            digest: None,
-            provenance: None,
-            configuration: serde_json::Value::Null,
+    struct Fake {
+        name: &'static str,
+        serves: &'static [&'static str],
+        always: bool,
+        card: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl vak_tools::Tool for Fake {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "Does a thing. Then more detail nobody needs up front."
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _: &Value, _: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+            vak_tools::ToolOutput::ok("")
+        }
+        fn serves(&self) -> &'static [&'static str] {
+            self.serves
+        }
+        fn always_loaded(&self) -> bool {
+            self.always
+        }
+        fn presents_cards(&self) -> bool {
+            self.card
         }
     }
 
-    fn mcp_cap(name: &str) -> CapabilityDescriptor {
-        CapabilityDescriptor {
-            kind: CapabilityKind::McpServer,
-            ..tool_cap(name)
-        }
+    fn tool(name: &'static str, serves: &'static [&'static str]) -> Arc<dyn vak_tools::Tool> {
+        Arc::new(Fake {
+            name,
+            serves,
+            always: false,
+            card: false,
+        })
     }
 
-    fn def(name: &str, description: &str) -> ToolDefinition {
-        ToolDefinition::new(name, description, serde_json::json!({}))
+    fn fixture() -> Vec<Arc<dyn vak_tools::Tool>> {
+        vec![
+            Arc::new(Fake {
+                name: "read",
+                serves: &["filesystem"],
+                always: true,
+                card: false,
+            }),
+            tool("bash", &["code-exec"]),
+            tool("webfetch", &["web", "live-data"]),
+            tool("plugin_thing", &[]),
+            Arc::new(Fake {
+                name: "emit_chart_card",
+                serves: &[],
+                always: false,
+                card: true,
+            }),
+        ]
     }
 
-    fn domains(values: &[&str]) -> vak_intent::DomainSet {
-        vak_intent::DomainSet::only(values.iter().copied())
-    }
-
-    fn serves(pairs: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
-        pairs
-            .iter()
-            .map(|(name, ds)| {
-                (
-                    name.to_string(),
-                    ds.iter().map(|d| d.to_string()).collect::<Vec<_>>(),
-                )
-            })
-            .collect()
+    fn names(defs: &[ToolDefinition]) -> Vec<&str> {
+        defs.iter().map(|d| d.name.as_str()).collect()
     }
 
     #[test]
-    fn always_core_tools_stay_core_regardless_of_domain() {
-        let admitted = vec![tool_cap("find_tools"), tool_cap("skill"), tool_cap("mcp")];
-        let defs = vec![
-            def("find_tools", "Search deferred tools."),
-            def("skill", "Load a skill."),
-            def("mcp", "Call an MCP server."),
-        ];
-        let surface = build_tool_surface(
-            &admitted,
-            &defs,
-            &vak_intent::DomainSet::Empty,
-            &BTreeMap::new(),
-            false,
-        );
-        assert_eq!(surface.core.len(), 3);
+    fn unconstrained_domains_load_everything() {
+        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::All, &BTreeSet::new());
+        assert_eq!(surface.core.len(), 5);
         assert!(surface.deferred.is_empty());
+        assert!(surface.unpredicted.is_empty());
     }
 
     #[test]
-    fn card_tools_are_core_only_when_the_surface_renders_cards() {
-        // Declared (not undeclared) and domain-mismatched, so the only way
-        // into `core` is the card-tool rule this test exercises — an
-        // undeclared tool would fail open through `slice_capabilities`
-        // regardless of `renders_cards` and defeat the test.
-        let admitted = vec![tool_cap("emit_metric_card")];
-        let defs = vec![def("emit_metric_card", "Emit a metric card.")];
-        let declared = serves(&[("emit_metric_card", &["documents"])]);
-        let with_cards = build_tool_surface(
-            &admitted,
-            &defs,
-            &vak_intent::DomainSet::Empty,
-            &declared,
-            true,
-        );
-        assert_eq!(with_cards.core.len(), 1);
-        let without_cards = build_tool_surface(
-            &admitted,
-            &defs,
-            &vak_intent::DomainSet::Empty,
-            &declared,
-            false,
-        );
-        assert!(without_cards.core.is_empty());
-        assert_eq!(without_cards.deferred.len(), 1);
-    }
-
-    /// A disabled kernel (`All`) reproduces the pre-kernel surface: every
-    /// admitted tool in the stable prefix.
-    #[test]
-    fn unconstrained_domains_put_every_tool_in_core() {
-        let admitted = vec![tool_cap("bash"), tool_cap("webfetch")];
-        let defs = vec![
-            def("bash", "Run a command."),
-            def("webfetch", "Fetch a URL."),
-        ];
-        let declared = serves(&[("bash", &["code-exec"]), ("webfetch", &["web"])]);
+    fn a_reading_loads_what_it_predicts_and_defers_the_rest() {
         let surface = build_tool_surface(
-            &admitted,
-            &defs,
-            &vak_intent::DomainSet::All,
-            &declared,
-            false,
+            &fixture(),
+            &vak_intent::DomainSet::only(["web"]),
+            &BTreeSet::new(),
         );
-        assert_eq!(surface.core.len(), 2, "{:?}", surface.core);
-        assert!(surface.deferred.is_empty());
-    }
-
-    /// An uncertain reading arrives as the orientation floor and defers
-    /// every declared tool outside it (design 68, Principle 6).
-    #[test]
-    fn the_orientation_floor_defers_declared_tools() {
-        let admitted = vec![tool_cap("bash"), tool_cap("webfetch"), tool_cap("read")];
-        let defs = vec![
-            def("bash", "Run a command."),
-            def("webfetch", "Fetch a URL."),
-            def("read", "Read a file."),
-        ];
-        let declared = serves(&[
-            ("bash", &["code-exec"]),
-            ("webfetch", &["web"]),
-            ("read", &["filesystem"]),
-        ]);
-        let floor = vak_intent::Engagement::orienting().limits.required_domains;
-        let surface = build_tool_surface(&admitted, &defs, &floor, &declared, false);
-        let core: Vec<&str> = surface.core.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(core, vec!["read"]);
-        assert_eq!(surface.deferred.len(), 2);
-    }
-
-    #[test]
-    fn matching_domain_tools_join_core() {
-        let admitted = vec![tool_cap("webfetch"), tool_cap("bash")];
-        let defs = vec![
-            def("webfetch", "Fetch a URL."),
-            def("bash", "Run a command."),
-        ];
-        let declared = serves(&[("webfetch", &["web"]), ("bash", &["code-exec"])]);
-        let surface = build_tool_surface(&admitted, &defs, &domains(&["web"]), &declared, false);
-        assert!(surface.core.iter().any(|d| d.name == "webfetch"));
-        assert!(surface.deferred.iter().any(|d| d.name == "bash"));
-    }
-
-    #[test]
-    fn mcp_servers_never_reach_the_surface_directly() {
-        // Even if an MCP server's alias schema is handed in as a tool_def
-        // (it should never be, post-refactor), it is dropped unless a
-        // Tool-kind capability of the same name was actually admitted.
-        let admitted = vec![mcp_cap("tavily")];
-        let defs = vec![def("tavily", "Search the web.")];
-        let surface = build_tool_surface(
-            &admitted,
-            &defs,
-            &vak_intent::DomainSet::All,
-            &BTreeMap::new(),
-            false,
+        assert_eq!(
+            names(&surface.core),
+            vec!["read", "webfetch", "plugin_thing"]
         );
-        assert!(surface.core.is_empty());
-        assert!(surface.deferred.is_empty());
+        assert_eq!(names(&surface.deferred), vec!["bash", "emit_chart_card"]);
+        assert_eq!(
+            surface.unpredicted,
+            BTreeSet::from(["bash".to_string()]),
+            "a deferred card is an output choice, not a misread"
+        );
     }
 
     #[test]
-    fn the_index_lists_names_and_first_sentences_with_no_schema() {
-        let admitted = vec![tool_cap("bash")];
-        let defs = vec![def(
-            "bash",
-            "Run a shell command. Output is captured and truncated.",
-        )];
-        let declared = serves(&[("bash", &["code-exec"])]);
+    fn a_predicted_card_tool_is_loaded() {
         let surface = build_tool_surface(
-            &admitted,
-            &defs,
+            &fixture(),
             &vak_intent::DomainSet::Empty,
-            &declared,
-            false,
+            &BTreeSet::from(["emit_chart_card".to_string()]),
         );
-        assert_eq!(surface.index, "- bash — Run a shell command.");
-        assert!(!surface.index.contains("truncated"));
-        assert!(!surface.index.contains('{'), "index must carry no schema");
+        assert!(names(&surface.core).contains(&"emit_chart_card"));
+    }
+
+    /// The catalogue is a function of the admitted tools only, so the cached
+    /// prefix does not move when the reading does.
+    #[test]
+    fn the_catalogue_is_stable_sorted_and_schema_free() {
+        let entries = [
+            (
+                "webfetch",
+                "Fetch a URL. Long detail nobody needs up front.",
+            ),
+            ("bash", "Run a command."),
+        ];
+        let catalogue = tool_catalogue(entries);
+        let mut reversed = entries;
+        reversed.reverse();
+        assert_eq!(catalogue, tool_catalogue(reversed));
+        assert!(catalogue.contains("- bash — Run a command.\n- webfetch — Fetch a URL.\n"));
+        assert!(!catalogue.contains("nobody needs"));
+        assert!(tool_catalogue([]).is_empty());
     }
 }

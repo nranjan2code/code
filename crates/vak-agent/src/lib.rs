@@ -119,6 +119,10 @@ pub trait FlowDispatcher: Send + Sync {
     ) -> ToolOutput;
 }
 
+/// What the managed `flow` tool serves; read by capability declarations,
+/// which see the capability before any dispatcher exists.
+pub const FLOW_SERVES: &[&str] = &["orchestration"];
+
 struct ManagedFlowTool {
     dispatcher: Arc<dyn FlowDispatcher>,
     session: Arc<Mutex<SessionLog>>,
@@ -129,6 +133,10 @@ struct ManagedFlowTool {
 impl Tool for ManagedFlowTool {
     fn name(&self) -> &str {
         "flow"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        FLOW_SERVES
     }
 
     fn description(&self) -> &str {
@@ -290,9 +298,11 @@ pub struct AgentConfig {
     pub tail: TailInput,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
-    /// Discovered MCP tool names accepted as compatibility aliases. Calls
-    /// are rewritten to the `mcp` broker before authorization and dispatch.
-    pub mcp_aliases: Arc<StdMutex<std::collections::HashMap<String, McpToolAlias>>>,
+    /// Bare MCP tool name → owning server. MCP tools are only ever called
+    /// through the `mcp` broker; a call a model addresses by the bare name
+    /// (or an `mcp` call missing its server) is repaired to that form before
+    /// authorization and dispatch.
+    pub mcp_tool_index: McpToolIndex,
     /// Optional host dispatcher exposed only as the managed `flow` tool.
     pub flow_dispatcher: Option<Arc<dyn FlowDispatcher>>,
     /// Exact tool schemas admitted with the session. When absent, standalone
@@ -397,11 +407,21 @@ pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync
 pub type ToolActivityRecorder = Arc<dyn Fn(&str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
-/// Given a final answer's text and the names of the tools offered this turn,
+/// Given a final answer's text and the names of the tools admitted this turn,
 /// returns a nudge when the answer reads as something that should have been
 /// presented as a card. Supplied by `Core` (which owns the presentation
 /// vocabulary) so the agent loop stays free of any card knowledge.
-pub type PresentationCheck = Arc<dyn Fn(&str, &[String]) -> Option<String> + Send + Sync>;
+pub type PresentationCheck =
+    Arc<dyn Fn(&str, &[String]) -> Option<PresentationNudge> + Send + Sync>;
+
+/// A presentation-check redo: the card tool it asks for and the nudge text.
+/// The loop loads `tool` for the redo, since a card tool the turn's reading
+/// did not predict was deferred.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentationNudge {
+    pub tool: String,
+    pub text: String,
+}
 
 /// Whether a tool call reaches information from outside the machine and the
 /// conversation (the kind an answer should cite), given the tool's name and
@@ -453,7 +473,7 @@ impl AgentConfig {
             tail: TailInput::default(),
             model: String::new(),
             tools: Vec::new(),
-            mcp_aliases: Arc::new(StdMutex::new(std::collections::HashMap::new())),
+            mcp_tool_index: McpToolIndex::default(),
             flow_dispatcher: None,
             tool_definitions: None,
             input_normalizer: None,
@@ -534,13 +554,9 @@ fn prefix_digest_seen(session: &SessionLog, digest: &str) -> bool {
     })
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct McpToolAlias {
-    pub server: String,
-    pub tool: String,
-    pub description: String,
-    pub schema: serde_json::Value,
-}
+/// Bare MCP tool name → owning server, shared with the broker's live
+/// catalogue observer so a tool discovered mid-turn is indexed at once.
+pub type McpToolIndex = Arc<StdMutex<std::collections::HashMap<String, String>>>;
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
@@ -600,6 +616,52 @@ fn tools_for_leg(
         return tools.to_vec();
     }
     tools.iter().filter(|t| !t.defer).cloned().collect()
+}
+
+/// Promote tools `find_tools` returned this turn from deferred to loaded, so
+/// the next step declares them on every provider. A deferred copy of the same
+/// name is replaced in place, not kept beside it: a non-Anthropic leg drops
+/// every deferred definition (`tools_for_leg`), so keeping only that copy
+/// meant a discovered tool was never callable there.
+fn load_discovered(
+    definitions: &mut Vec<vak_llm::ToolDefinition>,
+    discovered: Vec<vak_llm::ToolDefinition>,
+) {
+    for mut found in discovered {
+        found.defer = false;
+        match definitions
+            .iter_mut()
+            .find(|existing| existing.name == found.name)
+        {
+            Some(existing) => existing.defer = false,
+            None => definitions.push(found),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_loading_tests {
+    use super::{load_discovered, tools_for_leg};
+    use vak_llm::ToolDefinition;
+
+    fn def(name: &str) -> ToolDefinition {
+        ToolDefinition::new(name, "d", serde_json::json!({"type": "object"}))
+    }
+
+    #[test]
+    fn a_discovered_tool_is_declared_on_a_non_anthropic_leg() {
+        let mut defs = vec![def("find_tools"), def("bash").deferred()];
+        assert!(
+            !tools_for_leg(&defs, "ollama")
+                .iter()
+                .any(|d| d.name == "bash"),
+            "deferred tools stay out of a non-Anthropic request until found"
+        );
+        load_discovered(&mut defs, vec![def("bash")]);
+        assert_eq!(defs.len(), 2, "promoted in place, never duplicated");
+        let sent = tools_for_leg(&defs, "ollama");
+        assert!(sent.iter().any(|d| d.name == "bash"));
+    }
 }
 
 /// Renders a turn's full record (docs/design/68-context-engine.md §10) as
@@ -966,12 +1028,9 @@ impl Agent {
             .tool_definitions
             .clone()
             .unwrap_or_else(|| vak_tools::definitions(&self.config.tools));
-        // The `work` tool definition is admitted iff the `flow` capability
-        // survived the full four-stage pipeline in vak-core (channel →
-        // reach → contract → domain slice). `flow_dispatcher` is None when
-        // the pipeline rejected `flow` — so we check that, not just
-        // `work_mode == Managed`, which would append `work` even when the
-        // domain slice correctly withheld it.
+        // The `work` tool is offered iff the `flow` capability was admitted:
+        // `flow_dispatcher` is None when admission rejected it, so this checks
+        // that rather than `work_mode == Managed` alone.
         if self.config.flow_dispatcher.is_some()
             && !definitions
                 .iter()
@@ -993,27 +1052,13 @@ impl Agent {
                 }),
             ));
         }
-        // MCP tools are reached only through the `mcp` broker
-        // (docs/design/68-context-engine.md §5): `mcp_aliases` still
-        // resolves a call the model addresses by the bare tool name
-        // (`normalize_mcp_alias` in `execute_batch_calls`), but the alias
-        // schema is never advertised directly — advertising it here was the
-        // triplication (inline catalogue, direct tool, broker) the design
-        // deletes. `mcp list` / `find_tools` are how a model discovers one.
         let discovered = self
             .config
             .discovered_tools
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        for definition in discovered {
-            if !definitions
-                .iter()
-                .any(|existing| existing.name == definition.name)
-            {
-                definitions.push(definition);
-            }
-        }
+        load_discovered(&mut definitions, discovered);
         definitions
     }
 
@@ -2055,6 +2100,19 @@ impl Agent {
                             .collect();
                         if let Some(nudge) = check(&text, &offered) {
                             presentation_repair_attempted = true;
+                            if let Some(tool) =
+                                self.config.tools.iter().find(|t| t.name() == nudge.tool)
+                            {
+                                self.config
+                                    .discovered_tools
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .push(vak_llm::ToolDefinition::new(
+                                        tool.name(),
+                                        tool.description(),
+                                        tool.schema(),
+                                    ));
+                            }
                             if turn + 1 >= self.config.max_turns {
                                 return TurnOutcome::MaxTurnsReached;
                             }
@@ -2069,7 +2127,7 @@ impl Agent {
                                     .await
                                     .append_message(MessageRecord::control(
                                         vak_intent::control::ControlKind::PresentationCheck,
-                                        nudge,
+                                        nudge.text,
                                     ));
                             turn += 1;
                             continue;
@@ -4570,16 +4628,16 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Vec<(String, ToolRunOutput)> {
-        let aliases = self
+        let index = self
             .config
-            .mcp_aliases
+            .mcp_tool_index
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let calls = calls
             .into_iter()
             .map(normalize_tool_call)
-            .map(|call| normalize_mcp_alias(call, &aliases))
+            .map(|call| normalize_mcp_call(call, &index))
             .collect::<Vec<_>>();
         let n = calls.len();
         let cwd = self
@@ -5275,16 +5333,16 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     call
 }
 
-fn normalize_mcp_alias(
+fn normalize_mcp_call(
     mut call: PendingToolCall,
-    aliases: &std::collections::HashMap<String, McpToolAlias>,
+    index: &std::collections::HashMap<String, String>,
 ) -> PendingToolCall {
-    if let Some(alias) = aliases.get(&call.name) {
-        call.name = "mcp".into();
+    if let Some(server) = index.get(&call.name) {
+        let tool = std::mem::replace(&mut call.name, "mcp".into());
         call.input = serde_json::json!({
             "action": "call",
-            "server": alias.server,
-            "tool": alias.tool,
+            "server": server,
+            "tool": tool,
             "arguments": call.input,
         });
     } else if call.name == "mcp" {
@@ -5317,7 +5375,7 @@ fn normalize_mcp_alias(
         }
         // Dynamic broker auto-resolution: if the model called `mcp` with `action: "call"`
         // and specified `tool`, but omitted or left `server` empty, resolve `server`
-        // dynamically if the tool name uniquely maps to an admitted server in `aliases`.
+        // dynamically if the tool name uniquely maps to an admitted server in `index`.
         if let Some(obj) = call.input.as_object_mut() {
             let is_call = obj.get("action").and_then(|a| a.as_str()) == Some("call");
             let server_missing = obj
@@ -5326,12 +5384,9 @@ fn normalize_mcp_alias(
             if is_call
                 && server_missing
                 && let Some(tool_name) = obj.get("tool").and_then(|t| t.as_str())
-                && let Some(alias) = aliases.get(tool_name)
+                && let Some(server) = index.get(tool_name)
             {
-                obj.insert(
-                    "server".into(),
-                    serde_json::Value::String(alias.server.clone()),
-                );
+                obj.insert("server".into(), serde_json::Value::String(server.clone()));
             }
             if is_call
                 && obj
@@ -6392,39 +6447,39 @@ mod tool_recovery_tests {
 
     #[test]
     fn mcp_missing_action_is_recovered_from_shape() {
-        use super::{McpToolAlias, PendingToolCall, normalize_mcp_alias};
-        let aliases = std::collections::HashMap::<String, McpToolAlias>::new();
-        let call = normalize_mcp_alias(
+        use super::{PendingToolCall, normalize_mcp_call};
+        let index = std::collections::HashMap::<String, String>::new();
+        let call = normalize_mcp_call(
             PendingToolCall {
                 id: "1".into(),
                 name: "mcp".into(),
                 input: serde_json::json!({"server":"weather","tool":"forecast"}),
             },
-            &aliases,
+            &index,
         );
         assert_eq!(
             call.input.get("action").and_then(|v| v.as_str()),
             Some("call")
         );
-        let list = normalize_mcp_alias(
+        let list = normalize_mcp_call(
             PendingToolCall {
                 id: "2".into(),
                 name: "mcp".into(),
                 input: serde_json::json!({}),
             },
-            &aliases,
+            &index,
         );
         assert_eq!(
             list.input.get("action").and_then(|v| v.as_str()),
             Some("list")
         );
-        let repair = normalize_mcp_alias(
+        let repair = normalize_mcp_call(
             PendingToolCall {
                 id: "3".into(),
                 name: "mcp".into(),
                 input: serde_json::json!({"action":"call","tool":"forecast"}),
             },
-            &aliases,
+            &index,
         );
         assert_eq!(
             repair.input.get("action").and_then(|v| v.as_str()),

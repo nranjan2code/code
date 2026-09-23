@@ -194,6 +194,10 @@ impl Tool for WebFetchTool {
         "webfetch"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["web", "live-data"]
+    }
+
     fn description(&self) -> &str {
         "Fetch a URL over HTTP(S) with GET. Blocks loopback/private/link-local targets, follows at most 3 redirects, caps the body at 512KiB, accepts only text/json/xml content types, and returns a status header line followed by the UTF-8 body. Never sends credentials."
     }

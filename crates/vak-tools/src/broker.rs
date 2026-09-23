@@ -185,6 +185,14 @@ impl Tool for BrokeredTool {
         self.inner.claims(args)
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        self.inner.serves()
+    }
+
+    fn always_loaded(&self) -> bool {
+        self.inner.always_loaded()
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         execute(self.name(), args, &self.worker_exe, ctx).await
     }

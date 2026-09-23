@@ -458,9 +458,10 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     requirement on top, so a resolution bug cannot authorize anything.
     `DomainSet::All` means everything and only a *disabled* kernel produces
     it; an uncertain reading resolves to the explicit *orienting* engagement
-    (general posture, orientation-floor domains) and is never excluded at
-    stage 4 — it sees less and reaches the rest through `find_tools`, so
-    being unsure never removes a tool it cannot get back. A request resolves
+    (general posture, orientation-floor domains). A reading never removes a
+    capability at all: admission is policy only, and the reading decides
+    which admitted tools are *loaded* — the rest are one `find_tools` call
+    away, so being wrong never removes a tool the turn cannot get back. A request resolves
     to its **strands** (one reading per part, with relations and cross-turn
     lineage); the turn's engagement meets every authority-bearing limit
     across them and unions their domains. Resolver tiers 2/3 may raise
@@ -976,13 +977,15 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      Core's five discovery paths into one declaration set,
                      report.rs is the single projection the model, doctor and
                      the console all render),
-                     capability/turn.rs (TurnCapabilities: the single four-stage
-                     pipeline for all capability kinds at turn admission:
-                     channel → reach → contract → domain slice),
-                     capability/surface.rs (ToolSurface: core tools always
-                     admitted, deferred tools behind a one-line index,
-                     fail-narrow slicing -- a low-confidence reading gets NO
-                     domain tools rather than all of them --
+                     capability/turn.rs (TurnCapabilities: the single admission
+                     pipeline for all capability kinds -- channel → reach,
+                     policy only; the reading never removes a capability),
+                     capability/surface.rs (ToolSurface: which admitted tools
+                     are loaded vs deferred, from each tool's own
+                     `Tool::always_loaded`/`serves`/`presents_cards`, plus the
+                     reading-independent "More tools" catalogue -- a
+                     low-confidence reading loads NO domain tools rather than
+                     all of them, and reaches the rest through `find_tools`;
                      docs/design/68-context-engine.md §5),
                      capacity_profile_for (the bind-time probe entry point:
                      ledger-recorded profile wins over the in-process cache
@@ -992,9 +995,9 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      prompts.rs (`Resolution{text, tail}` -- the stable
                      prefix and the per-turn tail are two separate strings
                      since 3.5.0; see docs/design/07-prompt.md),
-                     mcp_config_section (server names + one line per tool,
-                     no inline schemas -- MCP is reached only through the
-                     `mcp` broker),
+                     mcp_config_section (server names + tool names only, no
+                     descriptions or schemas -- MCP is reached only through
+                     the `mcp` broker),
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no
@@ -1009,9 +1012,9 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      upkeep pass: schedule wakes, predicate wakes, escalation
                      policies, explicit expiry), tools_commitments.rs (the
                      read-only `commitments` capability), misread.rs (intent
-                     evidence: a capability the slice withheld that the model
-                     then asked for is a MEASURED misread, not a suspected
-                     one -- slicing is what makes the loop closeable),
+                     evidence: a tool the reading left deferred that the model
+                     then used is a MEASURED misread, not a suspected one --
+                     deferring is what makes the loop closeable),
                      session_search injection w/ profile tier, memory/
                      skill-proposal tools + duplicate screening
                      (docs/design/26-learning.md, 29 P5), sandbox

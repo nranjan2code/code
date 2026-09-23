@@ -30,6 +30,14 @@ impl vak_tools::Tool for CommitmentsTool {
         "commitments"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory", "orchestration"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Read the durable commitments this agent holds: long-running work that \
          outlives a single conversation, what evidence each one still needs \

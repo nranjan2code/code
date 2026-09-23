@@ -19,6 +19,10 @@ impl Tool for DocReaderTool {
         "doc_read"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["documents"]
+    }
+
     fn description(&self) -> &str {
         "Inspect and extract text, sections, tables, or summaries from documents and data files (Markdown, Plaintext, CSV, TSV, JSON, YAML, TOML, INI, ENV, HTML, XML). Supports section navigation, outlines, and paginated table views."
     }

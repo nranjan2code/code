@@ -365,38 +365,24 @@ async fn dynamic_secret_resolution_triggers_reconcile_and_admits_server() {
     assert!(current.epoch > 1, "epoch must advance");
     assert_eq!(current.usable().count(), 1);
 
-    // Now verify TurnCapabilities::build admits the server even if session contract didn't have it
-    let contract = vak_session::types::FrozenContract {
-        app_version: "3.2.2".into(),
-        provider: "test".into(),
-        model: "test".into(),
-        route_ladder: vec![],
-        route_objective: "balanced".into(),
-        route_annotations: vec![],
-        system_prompt: "test".into(),
-        permission_mode: "full-access".into(),
-        capabilities: vec![], // Born with empty capabilities!
-        prompt_layers: vec![],
-    };
+    // A server that came back after the session began is admitted at the
+    // next turn boundary: admission reads the live set, never a frozen one.
     let inventory = current.mcp_inventory();
     let empty_policy = vak_config::ChannelPolicy::default();
-    let required: BTreeSet<vak_core::capability::Domain> = BTreeSet::new();
+    let builtins: BTreeSet<String> = ["read".to_string(), "glob".to_string()].into();
     let probe = vak_core::capability::TurnProbe {
         capabilities: &current,
-        capability_epoch: current.epoch,
         revoked_ids: BTreeSet::new(),
-        session_contract: Some(&contract),
         channel_policy: &empty_policy,
         reach_standings: &[],
-        required_domains: (!required.is_empty()).then_some(&required),
-        mcp_inventory: Some(&inventory),
-        orientation_floor: &["read", "glob", "grep", "skill"],
-        builtin_names: vec!["read".into(), "glob".into()],
+        mcp_inventory: &inventory,
+        builtin_names: &builtins,
     };
     let tc = vak_core::capability::TurnCapabilities::build(&probe);
-    assert!(
-        tc.mcp_aliases.contains_key("search"),
-        "search tool must be admitted as callable alias in turn 2"
+    assert_eq!(
+        tc.mcp_tool_index.get("search").map(String::as_str),
+        Some("search_srv"),
+        "a bare `search` call resolves to its server in turn 2"
     );
     assert!(
         tc.mcp_server_names.contains(&"search_srv".to_string()),

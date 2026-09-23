@@ -21,7 +21,7 @@ use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
 use crate::{
-    Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, McpToolAlias, SteeringQueues,
+    Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, McpToolIndex, SteeringQueues,
 };
 
 fn vak_core_identity() -> vak_session::types::AgentIdentity {
@@ -64,7 +64,7 @@ pub struct TaskDeps {
     pub capabilities: Vec<CapabilityDescriptor>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<crate::RevocationCheck>,
-    pub mcp_aliases: Option<Arc<std::sync::Mutex<std::collections::HashMap<String, McpToolAlias>>>>,
+    pub mcp_tool_index: Option<McpToolIndex>,
     pub input_normalizer: Option<InputNormalizer>,
     /// Read-only subset (read/glob/grep) used when a task declares
     /// `readonly: true`; children get these plus ReadOnly permission mode.
@@ -341,6 +341,14 @@ impl WorkerRegistry {
 }
 
 impl TaskTool {
+    /// Declared as a constant so capability declarations can read it
+    /// without constructing the tool's dependencies.
+    pub const SERVES: &'static [&'static str] = &["orchestration"];
+
+    /// Constant so the prompt's tool catalogue can list the tool before its
+    /// turn-bound dependencies exist.
+    pub const DESCRIPTION: &'static str = "Delegate a self-contained subtask to a worker with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. Optionally select a saved Agent so its identity and working style are applied; this never changes permissions. The worker cannot spawn further workers.";
+
     pub fn new(deps: TaskDeps) -> Self {
         TaskTool {
             deps: Arc::new(deps),
@@ -355,8 +363,12 @@ impl Tool for TaskTool {
         "task"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        Self::SERVES
+    }
+
     fn description(&self) -> &str {
-        "Delegate a self-contained subtask to a worker with its own context window and transcript. Use for focused research or exploration whose details you do not need in your own context. Optionally select a saved Agent so its identity and working style are applied; this never changes permissions. The worker cannot spawn further workers."
+        Self::DESCRIPTION
     }
 
     fn schema(&self) -> Value {
@@ -673,10 +685,7 @@ impl TaskTool {
         cfg.tools = child_tools;
         cfg.hooks = self.deps.hooks.clone();
         cfg.revocation_check = self.deps.revocation_check.clone();
-        cfg.mcp_aliases =
-            self.deps.mcp_aliases.clone().unwrap_or_else(|| {
-                Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))
-            });
+        cfg.mcp_tool_index = self.deps.mcp_tool_index.clone().unwrap_or_default();
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
         cfg.max_retries = self.deps.max_retries;

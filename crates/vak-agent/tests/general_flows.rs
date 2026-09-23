@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, AgentEvent, McpToolAlias, SteeringQueues, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, AgentEvent, SteeringQueues, TurnOutcome};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
@@ -581,15 +581,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
             let mut registered = aliases_after_list.lock().unwrap();
             for (server, tools) in catalog {
                 for tool in tools {
-                    registered.insert(
-                        tool.name.clone(),
-                        McpToolAlias {
-                            server: server.clone(),
-                            tool: tool.name.clone(),
-                            description: tool.description.clone(),
-                            schema: tool.input_schema.clone(),
-                        },
-                    );
+                    registered.insert(tool.name.clone(), server.clone());
                 }
             }
         }),
@@ -611,7 +603,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
         ],
         vec![mcp_tool, Arc::new(WriteTool)],
         |config| {
-            config.mcp_aliases = aliases.clone();
+            config.mcp_tool_index = aliases.clone();
         },
     );
 
@@ -665,30 +657,17 @@ async fn mcp_call_omitting_server_auto_resolves_and_completes() {
             let mut registered = aliases_map.lock().unwrap();
             for (server, tools) in catalog {
                 for tool in tools {
-                    registered.insert(
-                        tool.name.clone(),
-                        McpToolAlias {
-                            server: server.clone(),
-                            tool: tool.name.clone(),
-                            description: tool.description.clone(),
-                            schema: tool.input_schema.clone(),
-                        },
-                    );
+                    registered.insert(tool.name.clone(), server.clone());
                 }
             }
         }),
     ));
 
     // Pre-populate alias as would be done from admitted capability inventory
-    aliases.lock().unwrap().insert(
-        "echo".into(),
-        McpToolAlias {
-            server: "notes".into(),
-            tool: "echo".into(),
-            description: "echo text back".into(),
-            schema: serde_json::json!({"properties": {"text": {"type": "string"}}, "required": ["text"]}),
-        },
-    );
+    aliases
+        .lock()
+        .unwrap()
+        .insert("echo".into(), "notes".into());
 
     let (mut agent, _provider, dir) = setup(
         vec![
@@ -714,7 +693,7 @@ async fn mcp_call_omitting_server_auto_resolves_and_completes() {
         ],
         vec![mcp_tool, Arc::new(WriteTool)],
         |config| {
-            config.mcp_aliases = aliases.clone();
+            config.mcp_tool_index = aliases.clone();
         },
     );
 

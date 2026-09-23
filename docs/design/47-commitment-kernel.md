@@ -224,10 +224,10 @@ engagement**: the general posture and the orientation floor
 never a collapsed top element. `DomainSet::All` keeps its one meaning,
 everything, and only a disabled kernel produces it (design 68 Principle 6:
 when a decision cannot be made confidently, send less and give the model a
-way to ask for more). Stage 4 of turn-capability assembly *excludes* a
-capability only for a reading confident enough to slice; an uncertain
-reading's floor shapes the tool surface (core versus deferred) and leaves
-every admitted tool reachable through `find_tools`.
+way to ask for more). No reading, confident or not, removes a capability:
+admission is policy only (docs/design/41-capability-registry.md), and the
+reading decides which admitted tools are loaded versus deferred behind
+`find_tools`.
 
 ### Authority: the autonomy spectrum
 

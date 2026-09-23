@@ -482,7 +482,7 @@ Typed and enforced (a wrong answer here is a bug, not a judgement call):
 - **Whether a call reaches outside information** (the grounding check). Decided
   by `AgentConfig::retrieval_check`, which `Core` builds from what each
   capability *declares it serves* (`Domain::Web` / `Domain::LiveData`): a
-  built-in through `builtin_domains`, an MCP call through its server's
+  built-in through its own `Tool::serves`, an MCP call through its server's
   `serves`, falling back to the `mcp` broker's own declaration when a server
   declares nothing, and listing tools is not retrieval. The agent never looks
   at a tool's name or its output; a tool nothing classifies is not retrieval.

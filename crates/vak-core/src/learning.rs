@@ -25,6 +25,10 @@ impl vak_tools::Tool for RememberTool {
         "remember"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
+    }
+
     fn description(&self) -> &str {
         "Persist a durable note about this workspace for FUTURE sessions \
          (decisions, facts, preferences, pointers). Use sparingly for things \
@@ -109,6 +113,10 @@ pub struct ProposeSkillTool {
 impl vak_tools::Tool for ProposeSkillTool {
     fn name(&self) -> &str {
         "propose_skill"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
     }
 
     fn description(&self) -> &str {

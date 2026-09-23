@@ -732,7 +732,7 @@ pub fn presentation_check_nudge(
     text: &str,
     offered_tools: &[String],
     recipes: &vak_delivery::RecipeCatalog,
-) -> Option<String> {
+) -> Option<vak_agent::PresentationNudge> {
     let signals = vak_delivery::signals_from_text(text);
     let intended = recipes.intended_outputs(&signals, "desktop")?;
     let (semantic_type, tool) = intended.primary_types.iter().find_map(|semantic_type| {
@@ -742,15 +742,40 @@ pub fn presentation_check_nudge(
             .any(|offered| offered == tool)
             .then_some((semantic_type.as_str(), tool))
     })?;
-    Some(format!(
-        "[presentation-check]: Your answer reads as `{}` (signals: {}), which the app presents \
-         as a card, but no card was emitted. If a card fits, call `{tool}` with \
-         semantic_type `{semantic_type}` and this content, then add at most one short sentence \
-         and do not restate the data as text. If a card genuinely does not fit, resend your \
-         answer unchanged.",
-        intended.recipe_id,
-        intended.matched_signals.join(", ")
-    ))
+    Some(vak_agent::PresentationNudge {
+        tool: tool.to_string(),
+        text: format!(
+            "[presentation-check]: Your answer reads as `{}` (signals: {}), which the app presents \
+             as a card, but no card was emitted. If a card fits, call `{tool}` with \
+             semantic_type `{semantic_type}` and this content, then add at most one short sentence \
+             and do not restate the data as text. If a card genuinely does not fit, resend your \
+             answer unchanged.",
+            intended.recipe_id,
+            intended.matched_signals.join(", ")
+        ),
+    })
+}
+
+/// The card tools a request itself reads as, from the app's own signal and
+/// recipe detection over the request text — the same detection the
+/// presentation check runs over the answer. These are loaded for the turn;
+/// every other card tool is deferred until the check or `find_tools` asks.
+pub fn predicted_card_tools(
+    request: &str,
+    recipes: &vak_delivery::RecipeCatalog,
+) -> std::collections::BTreeSet<String> {
+    let signals = vak_delivery::signals_from_text(request);
+    recipes
+        .intended_outputs(&signals, "desktop")
+        .map(|intended| {
+            intended
+                .primary_types
+                .iter()
+                .filter_map(|semantic_type| emit_tool_for(semantic_type))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Names of every tool that declares `presents_cards()`, for the permission
@@ -1216,12 +1241,25 @@ mod tests {
         let table = "Weekly moves:\n\n| Index | Change |\n|---|---|\n| Nifty | -0.22% |\n| Sensex | -0.65% |\n";
         let nudge = presentation_check_nudge(table, &offered, &recipes)
             .expect("a markdown table reads as a data grid");
-        assert!(
-            nudge.contains("emit_table_card") && nudge.contains("data.grid"),
-            "{nudge}"
+        assert_eq!(
+            nudge.tool, "emit_table_card",
+            "the loop loads this for the redo"
         );
-        // no offered tool => no nudge (never tell the model to call something it lacks)
+        assert!(
+            nudge.text.contains("emit_table_card") && nudge.text.contains("data.grid"),
+            "{}",
+            nudge.text
+        );
+        // no admitted tool => no nudge (never tell the model to call something it lacks)
         assert!(presentation_check_nudge(table, &[], &recipes).is_none());
+    }
+
+    #[test]
+    fn a_request_that_reads_as_a_card_predicts_its_tool_and_small_talk_predicts_none() {
+        let recipes = vak_delivery::built_in_recipes();
+        let request = "Compare these:\n\n| Index | Change |\n|---|---|\n| Nifty | -0.22% |\n";
+        assert!(predicted_card_tools(request, &recipes).contains("emit_table_card"));
+        assert!(predicted_card_tools("hi there, how are you?", &recipes).is_empty());
     }
 
     #[test]

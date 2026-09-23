@@ -98,6 +98,14 @@ impl vak_tools::Tool for SessionSearchTool {
         "session_search"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Search past conversations and sessions (user requests and assistant answers) \
          plus your durable memory notes and the user profile. Use when the user \

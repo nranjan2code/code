@@ -181,6 +181,10 @@ impl Tool for WebBrowseTool {
         "browse"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["web", "live-data"]
+    }
+
     fn description(&self) -> &str {
         "Render a URL in a locally installed headless Chromium-family browser and return the JavaScript-rendered DOM. Applies the same private-range blocklist as webfetch to the requested host, runs with a fresh throwaway profile (never sends credentials), caps runtime at 20s, and returns a header line followed by the DOM. In-browser redirects are not re-screened in v1."
     }

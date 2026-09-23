@@ -480,31 +480,6 @@ impl Engagement {
 
 // ------------------------------------------------------ capability slice ---
 
-/// Capabilities every non-conversational turn keeps, whatever the act.
-///
-/// An agent that cannot look at anything cannot correct a misread of its own
-/// task, so this floor is what makes slicing safe to attempt at all.
-/// Built-in tools that survive every slice by name, whatever the domains.
-///
-/// A name floor rather than a domain floor because these are the tools that
-/// let a turn *look at what is in front of it* and correct a misread of its
-/// own task — and that has to hold even for acts whose domains would exclude
-/// them (`skill` serves documents and orchestration, but a greeting must
-/// still be able to load one). This list is vak's own built-ins and never
-/// grows when a user installs something, so it does not reintroduce the
-/// coupling `act_domains` exists to remove.
-pub const ORIENTATION_FLOOR: &[&str] = &[
-    "read",
-    "glob",
-    "grep",
-    "skill",
-    "session_search",
-    // Read-only self-knowledge. "What am I already committed to" is the same
-    // category of question as "what did we decide last week", and an agent
-    // that cannot see its own obligations will cheerfully re-open one.
-    "commitments",
-];
-
 /// Kinds of work this act plausibly needs, as domain names.
 ///
 /// This replaces a table that listed built-in *tool names* per act

@@ -98,6 +98,14 @@ impl Tool for RecallTool {
         "recall"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Reopen a past turn's full record, a presentation's canonical payload, or an evidence \
          result's full content (optionally by line range). Exactly one of turn, presentation, \

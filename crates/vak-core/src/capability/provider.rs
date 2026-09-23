@@ -7,7 +7,6 @@
 //! same [`Declaration`] and travel the same loop, so "added, updated,
 //! edited, removed" means one thing for all five.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -20,59 +19,30 @@ use super::registry::{
 use super::snapshot::{CapabilityId, Origin};
 use crate::Core;
 
-/// Built-in tools classify themselves here rather than in an act→tool table.
-///
-/// This is a property *of each tool*, kept beside the tool list rather than
-/// in the intent kernel, and it is the reason adding an MCP server never
-/// requires editing the harness: the slice matches on declared domains, and
-/// anything undeclared is never sliced away.
-fn builtin_domains(name: &str) -> Serves {
-    use Domain::*;
-    let domains: &[Domain] = match name {
-        "read" | "glob" | "grep" => &[Filesystem],
-        "write" | "edit" | "data_query" | "doc_read" => &[Documents],
-        "bash" => &[CodeExec],
-        "webfetch" => &[Web, LiveData],
-        "browse" => &[Web, LiveData],
-        // The broker to every external integration. Claiming `live-data`
-        // here is what lets a live-data question reach a configured search
-        // server; the individual servers refine it by declaring their own.
-        "mcp" => &[LiveData, Web, Documents, Messaging],
-        "skill" => &[Documents, Orchestration],
-        "task" | "flow" | "tasks" => &[Orchestration],
-        "session_search" => &[Memory],
-        "remember" | "propose_skill" | "entity_record" | "entity_query" => &[Memory],
-        "commitments" => &[Memory, Orchestration],
-        // A tool this build does not classify stays undeclared, which means
-        // it is never sliced away. Failing open is correct here: slicing
-        // saves context, it does not enforce policy.
-        _ => return Serves::Undeclared,
-    };
-    Serves::declared(domains.iter().cloned())
-}
-
 /// Whether a call reaches information from outside the machine and the
 /// conversation — the kind an answer should cite — decided from what the
 /// capability *declares it serves*, never from its name or its output.
 ///
-/// * A built-in resolves through [`builtin_domains`] (`webfetch`, `browse`).
+/// * A built-in resolves through its own `Tool::serves` (`tool_serves`).
 /// * An MCP call resolves to its server's declared `serves`. A server that
 ///   declares nothing falls back to the `mcp` broker's own declaration, which
 ///   claims the web and live data; declaring `serves = ["documents"]` opts a
 ///   server out. Listing a server's tools is not retrieval, only calling one.
-/// * A tool this build does not classify is not retrieval.
+/// * A tool that declares nothing is not retrieval.
 ///
-/// `alias_server` is the server a direct-named MCP alias maps to, if `name` is
+/// `mcp_server` is the server a bare MCP tool name resolves to, if `name` is
 /// one; `server_serves` returns a server's configured `serves` list.
 pub(crate) fn call_retrieves_external(
     name: &str,
     input: &serde_json::Value,
-    alias_server: Option<&str>,
+    mcp_server: Option<&str>,
+    tool_serves: &dyn Fn(&str) -> Vec<String>,
     server_serves: &dyn Fn(&str) -> Vec<String>,
 ) -> bool {
-    let reaches_outside = |serves: &Serves| {
-        serves.serves_any(&BTreeSet::from([Domain::Web, Domain::LiveData]))
-            && matches!(serves, Serves::Declared(_))
+    let reaches_outside = |serves: &[String]| {
+        Domain::parse_list(serves)
+            .iter()
+            .any(|domain| matches!(domain, Domain::Web | Domain::LiveData))
     };
     let server = if name == "mcp" {
         if input.get("action").and_then(|a| a.as_str()) != Some("call") {
@@ -80,18 +50,22 @@ pub(crate) fn call_retrieves_external(
         }
         input.get("server").and_then(|s| s.as_str())
     } else {
-        alias_server
+        mcp_server
     };
     match server {
         Some(server) => {
             let declared = server_serves(server);
             if declared.is_empty() {
-                reaches_outside(&builtin_domains("mcp"))
+                let broker: Vec<String> = vak_mcp::McpTool::SERVES
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect();
+                reaches_outside(&broker)
             } else {
-                reaches_outside(&Serves::Declared(Domain::parse_list(&declared)))
+                reaches_outside(&declared)
             }
         }
-        None => reaches_outside(&builtin_domains(name)),
+        None => reaches_outside(&tool_serves(name)),
     }
 }
 
@@ -137,22 +111,6 @@ impl Core {
         registry
     }
 
-    /// What each built-in tool declares it serves, for the per-turn slice.
-    ///
-    /// A tool absent from this map is undeclared and is never sliced away.
-    pub fn declared_tool_domains(&self) -> std::collections::BTreeMap<String, BTreeSet<Domain>> {
-        let mut out = std::collections::BTreeMap::new();
-        for name in self.tool_names() {
-            if let Serves::Declared(domains) = builtin_domains(&name) {
-                out.insert(name, domains);
-            }
-        }
-        if let Serves::Declared(domains) = builtin_domains("flow") {
-            out.insert("flow".into(), domains);
-        }
-        out
-    }
-
     /// Reconcile now and return the published set, for callers that cannot
     /// wait for the loop: a one-shot CLI turn, or a surface that just
     /// changed configuration and wants the result to be visible immediately.
@@ -169,16 +127,16 @@ impl CapabilityProvider for Core {
         let mut out = Vec::new();
 
         // --- tools -------------------------------------------------------
-        // `tool_names()` already applies the runtime toggles and channel
-        // policy, so a `[tools]` flag flipped through `PUT /config` shows up
-        // on the next reconcile rather than at the next process start.
-        for name in self.tool_names() {
-            let serves = builtin_domains(&name);
+        // `tool_declarations()` already applies the runtime toggles and
+        // channel policy, so a `[tools]` flag flipped through `PUT /config`
+        // shows up on the next reconcile rather than at the next process
+        // start. Each tool states its own domains.
+        for (name, serves) in self.tool_declarations() {
             out.push(Declaration {
                 id: CapabilityId::new(CapabilityKind::Tool, &name),
                 origin: Origin::Builtin,
                 summary: String::new(),
-                serves,
+                serves: Serves::from_labels(serves),
                 digest: None,
                 source: None,
                 configuration: serde_json::Value::Null,
@@ -190,7 +148,7 @@ impl CapabilityProvider for Core {
                 id: CapabilityId::new(CapabilityKind::Tool, "flow"),
                 origin: Origin::Builtin,
                 summary: "Managed static-flow dispatcher".into(),
-                serves: builtin_domains("flow"),
+                serves: Serves::from_labels(vak_agent::FLOW_SERVES),
                 digest: None,
                 source: None,
                 configuration: serde_json::Value::Null,
@@ -296,13 +254,9 @@ impl CapabilityProvider for Core {
                 serves: Serves::Undeclared,
                 digest: None,
                 source: None,
-                configuration: serde_json::json!({
-                    "event": hook.event,
-                    "matcher": hook.matcher,
-                    "command": hook.command,
-                    "timeout_ms": hook.timeout_ms,
-                    "failure_mode": hook.failure_mode,
-                }),
+                // The hook's own config, read back by `crate::hook_def` — the
+                // same reader config validation uses.
+                configuration: serde_json::to_value(&hook).unwrap_or_default(),
                 needs_probe: false,
             });
         }
@@ -393,6 +347,7 @@ fn origin_from_provenance(provenance: Option<&str>) -> Origin {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use vak_intent::Act;
 
     /// The act → domain table lives in the kernel (`vak_intent::engage`);
@@ -440,14 +395,14 @@ mod tests {
         // This is the specific link that made "how is the weather" work:
         // `mcp` must survive a slice that requires live data.
         let required = required_for(Act::Answer);
-        assert!(builtin_domains("mcp").serves_any(&required));
+        assert!(Serves::from_labels(vak_mcp::McpTool::SERVES).serves_any(&required));
     }
 
     #[test]
-    fn an_unclassified_tool_is_undeclared_and_never_sliced_away() {
-        assert!(builtin_domains("some_future_tool").is_undeclared());
+    fn a_tool_that_declares_nothing_is_undeclared_and_never_sliced_away() {
+        assert!(Serves::from_labels(&[]).is_undeclared());
         let required = BTreeSet::from([Domain::Vcs]);
-        assert!(builtin_domains("some_future_tool").serves_any(&required));
+        assert!(Serves::from_labels(&[]).serves_any(&required));
     }
 }
 
@@ -465,8 +420,20 @@ mod retrieval_tests {
         }
     }
 
-    fn retrieves(name: &str, input: serde_json::Value, alias: Option<&str>) -> bool {
-        call_retrieves_external(name, &input, alias, &serves)
+    /// Built-ins answer from their own `Tool::serves`, as the turn does.
+    fn tool_serves(name: &str) -> Vec<String> {
+        let mut tools = vak_tools::default_tools();
+        tools.push(std::sync::Arc::new(vak_tools::WebFetchTool));
+        tools.push(std::sync::Arc::new(vak_tools::WebBrowseTool));
+        tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .map(|tool| tool.serves().iter().map(|d| d.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    fn retrieves(name: &str, input: serde_json::Value, server: Option<&str>) -> bool {
+        call_retrieves_external(name, &input, server, &tool_serves, &serves)
     }
 
     #[test]
@@ -510,7 +477,7 @@ mod retrieval_tests {
     }
 
     #[test]
-    fn a_direct_named_mcp_alias_resolves_through_its_server() {
+    fn a_bare_mcp_tool_name_resolves_through_its_server() {
         assert!(retrieves("tavily_search", json!({}), Some("tavily")));
         assert!(!retrieves("notes_lookup", json!({}), Some("docs-only")));
     }

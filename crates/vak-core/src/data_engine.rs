@@ -203,6 +203,10 @@ impl vak_tools::Tool for DataQueryTool {
         "data_query"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["documents"]
+    }
+
     fn description(&self) -> &str {
         "Query and analyze structured data (CSV, JSON arrays, or Markdown tables) in memory. \
          Supports column projection (select), row filtering (filter), grouping & aggregation \

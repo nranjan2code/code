@@ -239,33 +239,40 @@ Properties:
 
 ### 5. Tool surface
 
-- **Core set**, always present: `recall`, `find_tools`, `skill`, `mcp`, and
-  the domain tools the intent reading selected. When the reading's confidence
-  is below the slice floor, the reading arrives as the explicit *orientation
-  floor* (`Engagement::orienting`, docs/design/47-commitment-kernel.md): the
-  filesystem and memory tools are core, everything else is in the index. An
-  unconstrained domain set (`DomainSet::All`) means everything and is what a
-  *disabled* kernel produces — never a fallback for uncertainty.
-- **Index**, one line per remaining tool (`name — description`), in the
-  stable prefix. No schemas.
-- **`find_tools({ query })`** returns full schemas for matching tools; they
-  are appended to the tool list for the rest of the turn (appended, so the
-  prefix stays stable). Their use is recorded as a feedback signal for the
-  intent slicer. On Anthropic the same catalogue is sent with
-  `defer_loading: true` and the server-side tool search tool instead, so the
-  deferred schemas never enter the prefix at all (§11); the ledger records
-  the `tool_reference` blocks either way.
-- **MCP**: reached only through `mcp`; the inline catalogue leaves the system
-  prompt; `mcp list` and `find_tools` serve it. Any capability that appears
-  through the broker is removed from the direct list (no Tavily triplication).
-- Presentation (`emit_*_card`): stays core when the surface can render cards;
-  the intent stance never contradicts it (§6).
+Every admitted tool is callable; the surface decides only which are *loaded*
+this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.md
+"Tool surface"). Each tool declares itself on the `Tool` trait.
+
+- **Loaded**: tools that declare `always_loaded` (`read`, `glob`, `grep`,
+  `find_tools`, `recall`, `skill`, `mcp`, `session_search`, `commitments`);
+  tools whose `serves` meets the reading's required domains; undeclared
+  tools; and the card tools the request itself reads as. An uncertain reading
+  arrives as the explicit *orientation floor* (`Engagement::orienting`,
+  docs/design/47-commitment-kernel.md), so it loads the filesystem and memory
+  tools. `DomainSet::All` loads everything and is what a *disabled* kernel or
+  `slice_capabilities = false` produces — never a fallback for uncertainty.
+- **Catalogue** ("More tools"), one line per admitted tool that is not
+  always loaded (`name — first sentence`), sorted, in the stable prefix. It
+  depends on the admitted set only, never on the reading, so it does not move
+  when the loaded set does. No schemas.
+- **`find_tools({ query })`** returns full schemas for matching deferred
+  tools and promotes them to loaded definitions for the rest of the turn on
+  every provider (`vak_agent::load_discovered`). The presentation-check nudge
+  loads the card tool it names the same way. A deferred tool the reading did
+  not predict and the model then used is the measured misread. On Anthropic
+  the deferred schemas additionally ride `defer_loading: true` with the
+  server-side tool search tool (§11).
+- **MCP**: reached only through `mcp`. The prompt names each admitted server
+  with its tool *names* only; `mcp` `list` returns a server's schemas and
+  descriptions when they are needed.
+- **Skills**: listed once in the prompt (name and description); a body is
+  loaded through `skill` on demand, never inlined.
 
 ### 6. RequestAssembler: stable prefix, moving tail
 
 ```
 [system]   static layers only: identity, contract, guardrails, surface,
-           card catalogue, skill guidelines, tool index.  ← byte-identical across turns
+           skill list, MCP server names, tool catalogue.  ← byte-identical across turns
 [tools]    core schemas in a fixed order, then any find_tools additions
 [messages] retrieved older turns (whole)
            compaction packet (if any)

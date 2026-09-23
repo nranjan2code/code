@@ -58,6 +58,8 @@ impl Reach {
 /// model, an operator, and an audit log without any of them re-deriving it.
 #[derive(Debug, Clone)]
 pub struct Standing {
+    /// The capability this standing is about.
+    pub id: crate::capability::CapabilityId,
     /// The tool the model would actually call (`mcp`, `webfetch`, `browse`).
     pub tool: String,
     /// How the capability is named to a reader: `mcp server \`search\``.
@@ -109,6 +111,10 @@ pub fn standings(probe: &Probe<'_>) -> Vec<Standing> {
         // placeholder rather than reporting a malformed call to a reader.
         let reason = reason.replace("/<missing tool>", "");
         out.push(Standing {
+            id: crate::capability::CapabilityId::new(
+                vak_session::types::CapabilityKind::McpServer,
+                server,
+            ),
             tool: "mcp".into(),
             label: format!("mcp server `{server}`"),
             remedy: remedy_for(probe, "mcp", reach),
@@ -119,6 +125,10 @@ pub fn standings(probe: &Probe<'_>) -> Vec<Standing> {
     for tool in probe.network_tools {
         let (reach, reason) = resolve(probe, tool, &json!({}));
         out.push(Standing {
+            id: crate::capability::CapabilityId::new(
+                vak_session::types::CapabilityKind::Tool,
+                tool,
+            ),
             tool: tool.clone(),
             label: format!("`{tool}`"),
             remedy: remedy_for(probe, tool, reach),
@@ -130,6 +140,10 @@ pub fn standings(probe: &Probe<'_>) -> Vec<Standing> {
         let args = json!({ "name": skill });
         let (reach, reason) = resolve(probe, "skill", &args);
         out.push(Standing {
+            id: crate::capability::CapabilityId::new(
+                vak_session::types::CapabilityKind::Skill,
+                skill,
+            ),
             tool: "skill".into(),
             label: format!("skill `{skill}`"),
             remedy: remedy_for(probe, "skill", reach),
@@ -216,14 +230,11 @@ pub fn fully_blocked_tools(standings: &[Standing]) -> Vec<String> {
 pub fn blocked_mcp_servers(standings: &[Standing]) -> Vec<String> {
     standings
         .iter()
-        .filter(|standing| standing.tool == "mcp" && standing.reach.is_blocked())
-        .filter_map(|standing| {
-            standing
-                .label
-                .strip_prefix("mcp server `")
-                .and_then(|rest| rest.strip_suffix('`'))
-                .map(str::to_string)
+        .filter(|standing| {
+            standing.id.kind == vak_session::types::CapabilityKind::McpServer
+                && standing.reach.is_blocked()
         })
+        .map(|standing| standing.id.name.clone())
         .collect()
 }
 
@@ -232,14 +243,11 @@ pub fn blocked_mcp_servers(standings: &[Standing]) -> Vec<String> {
 pub fn blocked_skills(standings: &[Standing]) -> Vec<String> {
     standings
         .iter()
-        .filter(|standing| standing.tool == "skill" && standing.reach.is_blocked())
-        .filter_map(|standing| {
-            standing
-                .label
-                .strip_prefix("skill `")
-                .and_then(|rest| rest.strip_suffix('`'))
-                .map(str::to_string)
+        .filter(|standing| {
+            standing.id.kind == vak_session::types::CapabilityKind::Skill
+                && standing.reach.is_blocked()
         })
+        .map(|standing| standing.id.name.clone())
         .collect()
 }
 

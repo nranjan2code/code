@@ -5,11 +5,11 @@
 //! not from asking a model whether the answer was good. Intent resolution gets
 //! the same treatment.
 //!
-//! The strongest signal is a gift from capability slicing. When an engagement
-//! removes a tool and the model then asks for that exact tool, the reading was
-//! **measurably** wrong — not suspected wrong. Slicing does not merely improve
-//! the turn; it turns misclassification into an observable event, which is the
-//! only reason a feedback loop is possible at all.
+//! The strongest signal is a gift from progressive disclosure. When a reading
+//! leaves a tool deferred and the model then loads and uses that exact tool,
+//! the reading was **measurably** wrong — not suspected wrong. Deferring does
+//! not merely save context; it turns misclassification into an observable
+//! event, which is the only reason a feedback loop is possible at all.
 //!
 //! Epistemics match the routing ledger deliberately: success / failure /
 //! **unknown**, TTL-filtered, and absence is a neutral prior rather than a
@@ -82,7 +82,7 @@ pub struct MisreadRow {
     pub tier: String,
     pub resolver_version: u32,
     pub outcome: String,
-    /// The capability the model asked for after it was sliced away. Present
+    /// The tool the model used after the reading left it deferred. Present
     /// only on `Escalated`, and the most actionable field in the row: it names
     /// the exact lexicon or slice entry to change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,7 +107,7 @@ pub struct CellAccuracy {
     pub contradicted: u64,
     /// Observations that say nothing either way.
     pub unknown: u64,
-    /// Capabilities the slice removed and the model then asked for, most
+    /// Deferred tools the model then used, most
     /// frequent first. This is the actionable output of the whole loop.
     pub wanted: Vec<(String, u64)>,
 }
@@ -232,29 +232,19 @@ impl MisreadLedger {
     }
 }
 
-/// Detect the measured misread: a capability the domain slice removed, that
-/// the model then tried to call anyway.
+/// Detect the measured misread: a tool the reading left deferred, that the
+/// model then used anyway.
 ///
-/// `excluded_by_domain_slice` is `TurnCapabilities::excluded_by_domain_slice`
-/// (crates/vak-core/src/capability/turn.rs) — the names that passed channel +
-/// reach + contract (they really were admitted to this session) but were
-/// then hidden from this turn by domain slicing. `attempted` is every tool
-/// name the model tried to invoke this turn, admitted or not.
-///
-/// This used to check `engagement.limits.capabilities` (a `CapabilitySlice`),
-/// but nothing in production ever narrows that field — domain slicing (the
-/// mechanism that actually runs) narrows `required_domains` instead, which
-/// `CapabilitySlice` never reflected. That made this function permanently
-/// dead: `CapabilitySlice::All` always matched and the signal never fired.
-/// Now it reads directly from what actually excluded the capability this
-/// turn.
+/// `unpredicted` is `ToolSurface::unpredicted` (crates/vak-core/src/capability/
+/// surface.rs) — admitted tools the reading did not load, card tools excluded.
+/// `attempted` is every tool name the model invoked this turn.
 pub fn escalated_capability(
-    excluded_by_domain_slice: &BTreeSet<String>,
+    unpredicted: &BTreeSet<String>,
     attempted: &[String],
 ) -> Option<String> {
     attempted
         .iter()
-        .find(|name| excluded_by_domain_slice.contains(name.as_str()))
+        .find(|name| unpredicted.contains(name.as_str()))
         .cloned()
 }
 
@@ -291,13 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn a_domain_excluded_capability_the_model_then_wanted_is_the_measured_misread() {
-        // `excluded_by_domain_slice` is what `TurnCapabilities::build`
-        // (crates/vak-core/src/capability/turn.rs) actually populates from
-        // live domain slicing — this replaces the old, permanently-dead
-        // `CapabilitySlice`-based check (nothing in production ever set
-        // `engagement.limits.capabilities` to `Only`, only `required_domains`
-        // was ever narrowed).
+    fn a_deferred_tool_the_model_then_used_is_the_measured_misread() {
         let excluded = BTreeSet::from(["bash".to_string()]);
         assert_eq!(
             escalated_capability(&excluded, &["read".into(), "bash".into()]),
@@ -307,7 +291,7 @@ mod tests {
         assert_eq!(escalated_capability(&excluded, &["read".into()]), None);
     }
 
-    /// A turn where nothing was domain-excluded cannot have escalated past
+    /// A turn where nothing was deferred cannot have escalated past
     /// an exclusion that never happened.
     #[test]
     fn no_exclusions_reports_no_escalation() {

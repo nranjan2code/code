@@ -141,6 +141,25 @@ retained.
   docs/design/68-context-engine.md §6. `prompt_drift`/the drift fingerprint
   covers `text` only, since `tail` is per-turn by definition.
 
+- Unreleased (after 3.5.1): **the seed is back under its 1500-token budget**
+  (16.6 KB → 4.3 KB, ~1,000 tokens), now enforced by
+  `the_seed_stays_under_its_token_budget`. Every distinct rule survives; what
+  went is repetition and the fifteen card payload examples plus fence syntax
+  in `capability_contract`. Cards are taught by the `emit_*_card` tools'
+  own descriptions and schemas — exactly the path v3.4.5 measured at 100%
+  valid against ~20% for fences — and a card tool the turn did not load is
+  listed in the "More tools" catalogue. The generated "Also accepted as
+  `semantic_type`" catalogue was fence-path coverage and is removed with it.
+  The contract now names `find_tools` as how a listed tool is loaded. Beyond
+  the seed, the composed prefix no longer carries: an inlined "active skill"
+  body (a heuristic pick that changed with each reading, read without the
+  digest check the `skill` tool enforces), MCP tool descriptions (server and
+  tool names only; `mcp list` returns the rest), a second copy of the skill
+  list (it was also in the `skill` tool's description), or memory notes of
+  kind `invariant`/`procedural` promoted to guardrails (memory never writes a
+  prompt layer — invariant 28). It gains the reading-independent tool
+  catalogue, which was computed and logged but never rendered.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

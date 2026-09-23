@@ -14,6 +14,14 @@ impl Tool for ReadTool {
         "read"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["filesystem"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files."
     }

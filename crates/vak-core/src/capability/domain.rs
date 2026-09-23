@@ -133,6 +133,15 @@ impl Serves {
         Serves::Declared(domains.into_iter().collect())
     }
 
+    /// From a tool's own `Tool::serves` labels; an empty list is undeclared.
+    pub fn from_labels(labels: &[&str]) -> Serves {
+        if labels.is_empty() {
+            Serves::Undeclared
+        } else {
+            Serves::declared(labels.iter().map(|label| Domain::parse(label)))
+        }
+    }
+
     /// Whether this capability should survive a slice that requires
     /// `required`. An undeclared capability always survives; a declared one
     /// survives when it serves at least one required domain.

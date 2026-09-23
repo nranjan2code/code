@@ -250,43 +250,17 @@ impl Drop for StoreLock {
 /// Parse MEMORY.md blocks. Tolerant by design: lines before the first
 /// heading and malformed headings attach to whatever precedes them, so a
 /// hand-edit never silently loses content.
+///
+/// Reads exactly `home`'s memory. An Agent's memory is private
+/// (invariant 37); an empty home is empty, never a reason to read another
+/// Agent's notes.
 pub fn list_notes(home: &Path, cwd: &Path) -> Vec<NoteBlock> {
-    let mut notes = blocks_at(&memory_path(home, cwd));
-    if notes.is_empty() {
-        let agents_dir = home.join("agents");
-        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let agent_notes = blocks_at(&memory_path(&p, cwd));
-                    if !agent_notes.is_empty() {
-                        notes.extend(agent_notes);
-                    }
-                }
-            }
-        }
-    }
-    notes
+    blocks_at(&memory_path(home, cwd))
 }
 
-/// Parse the global profile tier.
+/// Parse the global profile tier of exactly `home`.
 pub fn list_profile_notes(home: &Path) -> Vec<NoteBlock> {
-    let mut notes = blocks_at(&profile_path(home));
-    if notes.is_empty() {
-        let agents_dir = home.join("agents");
-        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let agent_notes = blocks_at(&profile_path(&p));
-                    if !agent_notes.is_empty() {
-                        notes.extend(agent_notes);
-                    }
-                }
-            }
-        }
-    }
-    notes
+    blocks_at(&profile_path(home))
 }
 
 fn blocks_at(path: &Path) -> Vec<NoteBlock> {

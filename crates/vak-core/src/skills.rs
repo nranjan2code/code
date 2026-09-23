@@ -51,7 +51,6 @@ pub struct FrozenSkill {
     pub path: PathBuf,
     pub digest: String,
     pub provenance: Option<String>,
-    pub is_active: bool,
 }
 
 impl FrozenSkill {
@@ -98,18 +97,12 @@ pub fn frozen_from_capabilities(
         .iter()
         .filter(|capability| capability.kind == vak_session::types::CapabilityKind::Skill)
         .filter_map(|capability| {
-            let is_active = capability
-                .configuration
-                .get("active")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
             Some(FrozenSkill {
                 name: capability.name.clone(),
                 description: capability.description.clone(),
                 path: capability.source.clone()?,
                 digest: capability.digest.clone()?,
                 provenance: capability.provenance.clone(),
-                is_active,
             })
         })
         .collect()
@@ -144,20 +137,22 @@ pub struct SkillTool {
 }
 
 impl SkillTool {
+    /// Declared as a constant so capability declarations can read it
+    /// without the turn's admitted skill set.
+    pub const SERVES: &'static [&'static str] = &["documents", "orchestration"];
+
+    /// The skill catalogue itself is in the prompt (`prompt_section_from_capabilities`),
+    /// once; the tool carries only the admitted names, as its schema enum.
     pub fn new(skills: impl IntoIterator<Item = FrozenSkill>) -> Self {
         let skills = skills
             .into_iter()
             .map(|skill| (skill.name.clone(), skill))
             .collect::<BTreeMap<_, _>>();
-        let mut description = String::from(
-            "Load one admitted skill document by name. Skills are instructions, not executable functions. Available skills:\n",
-        );
-        for skill in skills.values() {
-            description.push_str(&format!("- {}: {}\n", skill.name, skill.description));
-        }
         Self {
             skills,
-            description,
+            description: "Load one skill document by its exact name from the skills listed \
+                          in your instructions. Skills are instructions, not executable functions."
+                .into(),
         }
     }
 }
@@ -166,6 +161,14 @@ impl SkillTool {
 impl vak_tools::Tool for SkillTool {
     fn name(&self) -> &str {
         "skill"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        Self::SERVES
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
     }
 
     fn description(&self) -> &str {
@@ -449,27 +452,9 @@ fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-pub fn prompt_section(skills: &[Skill]) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-    let mut s = String::from(
-        "\nSkills available. Load instructions with the `skill` tool using the exact name (e.g. `skill({\"name\": \"...\"})`); skills are reference documents, not callable tool names:\n",
-    );
-    for sk in skills {
-        s.push_str(&format!(
-            "- `{}`: {}\n",
-            sk.name,
-            if sk.description.is_empty() {
-                "(no description)"
-            } else {
-                &sk.description
-            }
-        ));
-    }
-    s
-}
-
+/// The one place skills are listed to the model: name and description,
+/// one line each. Bodies are loaded on demand through the `skill` tool,
+/// which checks the admitted digest.
 pub fn prompt_section_from_capabilities(
     capabilities: &[vak_session::types::CapabilityDescriptor],
 ) -> String {
@@ -480,58 +465,17 @@ pub fn prompt_section_from_capabilities(
     if skills.is_empty() {
         return String::new();
     }
-
-    let mut active = Vec::new();
-    let mut catalog = Vec::new();
-
-    for skill in &skills {
-        let is_active = skill
-            .configuration
-            .get("active")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if is_active {
-            active.push(*skill);
-        } else {
-            catalog.push(*skill);
-        }
+    let mut out = String::from(
+        "\nSkills (load one with `skill({\"name\": \"...\"})` before relying on it; a skill name is never a tool name):\n",
+    );
+    for skill in skills {
+        let description = skill
+            .description
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push_str(&format!("- `{}`: {}\n", skill.name, description));
     }
-
-    let mut out = String::new();
-
-    if !active.is_empty() {
-        out.push_str("\n## Active Skill Guidelines\nThe following guidelines apply to this task. Follow them throughout your execution:\n\n");
-        for skill in &active {
-            out.push_str(&format!("### Skill: `{}`\n", skill.name));
-            let content = skill.source.as_ref().and_then(|path| {
-                std::fs::read_to_string(path)
-                    .ok()
-                    .map(|text| strip_frontmatter(&text).trim().to_string())
-            });
-            if let Some(body) = content {
-                if !body.is_empty() {
-                    out.push_str(&body);
-                    out.push_str("\n\n");
-                } else {
-                    out.push_str(&format!("{}\n\n", skill.description));
-                }
-            } else {
-                out.push_str(&format!("{}\n\n", skill.description));
-            }
-        }
-    }
-
-    if !catalog.is_empty() {
-        if active.is_empty() {
-            out.push_str("\nSkills available. Load instructions with the `skill` tool using the exact name (e.g. `skill({\"name\": \"...\"})`); skills are reference documents, not callable tool names:\n");
-        } else {
-            out.push_str("Additional reference skills available via the `skill` tool:\n");
-        }
-        for skill in catalog {
-            out.push_str(&format!("- `{}`: {}\n", skill.name, skill.description));
-        }
-    }
-
     out
 }
 
@@ -601,19 +545,34 @@ mod tests {
     }
 
     #[test]
-    fn prompt_advertises_the_typed_skill_loader_without_leaking_paths() {
-        let skill = Skill {
+    fn prompt_lists_each_skill_once_without_leaking_paths_or_bodies() {
+        let skill = vak_session::types::CapabilityDescriptor {
+            name: "code-task".into(),
+            kind: vak_session::types::CapabilityKind::Skill,
+            invocation: vak_session::types::CapabilityInvocation::ModelTool,
+            description: "focused\n  implementation".into(),
+            source: Some("/workspace/.vak/skills/code-task/SKILL.md".into()),
+            digest: Some("sha".into()),
+            provenance: None,
+            configuration: serde_json::Value::Null,
+        };
+        let prompt = prompt_section_from_capabilities(&[skill]);
+        assert!(prompt.contains("`skill({\"name\": \"...\"})`"));
+        assert!(prompt.contains("- `code-task`: focused implementation\n"));
+        assert!(!prompt.contains("/workspace/.vak/skills"));
+        let tool = SkillTool::new([FrozenSkill {
             name: "code-task".into(),
             description: "focused implementation".into(),
-            path: std::path::PathBuf::from("/workspace/.vak/skills/code-task/SKILL.md"),
+            path: "/workspace/.vak/skills/code-task/SKILL.md".into(),
+            digest: "sha".into(),
             provenance: None,
-            shadowed: false,
-            serves: None,
-        };
-        let prompt = prompt_section(&[skill]);
-        assert!(prompt.contains("`skill` tool using the exact name"));
-        assert!(prompt.contains("`code-task`: focused implementation"));
-        assert!(!prompt.contains("/workspace/.vak/skills"));
+        }]);
+        use vak_tools::Tool;
+        assert!(
+            !tool.description().contains("focused implementation"),
+            "the catalogue is listed once, in the prompt"
+        );
+        assert_eq!(tool.schema()["properties"]["name"]["enum"][0], "code-task");
     }
 
     #[tokio::test]
@@ -634,7 +593,6 @@ mod tests {
             path: path.clone(),
             digest,
             provenance: None,
-            is_active: false,
         }]);
         let ctx = vak_tools::ToolContext {
             cwd: dir.path().to_path_buf(),
@@ -707,7 +665,6 @@ mod tests {
             path,
             digest,
             provenance: None,
-            is_active: false,
         };
         let expanded = expand_invocation("/skill:code-task fix parser", &[frozen])?
             .ok_or("command should expand")?;
@@ -754,46 +711,5 @@ mod tests {
         )
         .unwrap();
         assert!(validate(&path).is_ok());
-    }
-
-    #[test]
-    fn active_skills_are_inlined_and_catalog_is_indexed() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let dir = tempfile::tempdir()?;
-        let skill_path = dir.path().join("SKILL.md");
-        std::fs::write(
-            &skill_path,
-            "---\nname: software-development\ndescription: build software cleanly\n---\nAlways verify with tests.\n",
-        )?;
-
-        let active_cap = vak_session::types::CapabilityDescriptor {
-            name: "software-development".into(),
-            kind: vak_session::types::CapabilityKind::Skill,
-            invocation: vak_session::types::CapabilityInvocation::SkillLoader,
-            description: "build software cleanly".into(),
-            source: Some(skill_path),
-            digest: Some("abc123".into()),
-            provenance: None,
-            configuration: serde_json::json!({"active": true}),
-        };
-
-        let catalog_cap = vak_session::types::CapabilityDescriptor {
-            name: "debugging".into(),
-            kind: vak_session::types::CapabilityKind::Skill,
-            invocation: vak_session::types::CapabilityInvocation::SkillLoader,
-            description: "diagnose failures".into(),
-            source: None,
-            digest: None,
-            provenance: None,
-            configuration: serde_json::Value::Null,
-        };
-
-        let prompt = prompt_section_from_capabilities(&[active_cap, catalog_cap]);
-        assert!(prompt.contains("## Active Skill Guidelines"));
-        assert!(prompt.contains("### Skill: `software-development`"));
-        assert!(prompt.contains("Always verify with tests."));
-        assert!(prompt.contains("Additional reference skills available via the `skill` tool:"));
-        assert!(prompt.contains("- `debugging`: diagnose failures"));
-        Ok(())
     }
 }

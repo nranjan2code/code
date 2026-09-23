@@ -83,6 +83,10 @@ impl vak_tools::Tool for AgentNetworkTool {
         "agent_network"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["messaging"]
+    }
+
     fn description(&self) -> &str {
         "Send a bounded message to, or receive a message from, an explicitly authorized agent workspace."
     }

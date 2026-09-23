@@ -25,6 +25,10 @@ impl Tool for BashTool {
         "bash"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["code-exec"]
+    }
+
     fn description(&self) -> &str {
         "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`). Use this for anything and everything: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. HTML/SVG/image files written to `.vak/scratch/` are automatically previewed live in the Workbench — do not start blocking foreground HTTP servers for static file preview. Real-time stdout/stderr streams to the Workbench panel."
     }

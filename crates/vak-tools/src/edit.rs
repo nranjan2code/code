@@ -17,6 +17,10 @@ impl Tool for EditTool {
         "edit"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["documents"]
+    }
+
     fn description(&self) -> &str {
         "Apply exact string replacements to a file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes."
     }

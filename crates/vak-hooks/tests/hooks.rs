@@ -15,6 +15,7 @@ fn hook(command: &str) -> Arc<Vec<HookDef>> {
         command: command.to_string(),
         timeout_ms: 5000,
         failure_mode: vak_hooks::HookFailureMode::Open,
+        refusal: None,
     }])
 }
 
@@ -101,6 +102,7 @@ async fn matcher_filters_by_tool_and_args() {
         command: r#"echo '{"decision":"block","reason":"push blocked"}'"#.to_string(),
         timeout_ms: 5000,
         failure_mode: vak_hooks::HookFailureMode::Open,
+        refusal: None,
     }]);
 
     let hit = run_hooks(
@@ -137,6 +139,7 @@ async fn timeout_kills_hook_and_reports() {
         command: "sleep 30".to_string(),
         timeout_ms: 800,
         failure_mode: vak_hooks::HookFailureMode::Open,
+        refusal: None,
     }]);
     let start = std::time::Instant::now();
     let out = run_hooks(
@@ -162,6 +165,7 @@ async fn closed_failure_mode_blocks_on_timeout_and_nonzero_exit() {
         command: "sleep 30".to_string(),
         timeout_ms: 50,
         failure_mode: vak_hooks::HookFailureMode::Closed,
+        refusal: None,
     }]);
     let timed_out = run_hooks(
         timeout,
@@ -181,6 +185,7 @@ async fn closed_failure_mode_blocks_on_timeout_and_nonzero_exit() {
         command: "exit 1".to_string(),
         timeout_ms: 5000,
         failure_mode: vak_hooks::HookFailureMode::Closed,
+        refusal: None,
     }]);
     let failed = run_hooks(
         nonzero,

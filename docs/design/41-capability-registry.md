@@ -235,8 +235,9 @@ crates/vak-core/src/capability/
   provider.rs    Core as CapabilityProvider; five kinds → one declaration set
   report.rs      CapabilityReport and the model's standing section
   turn.rs        TurnCapabilities, TurnProbe, and the single build() pipeline
-                  covering channel → reach → contract → domain slice for
-                  ALL four kinds (tool, MCP, skill, hook) in one place
+                  covering channel → reach (+ revocation) for every kind
+  surface.rs     ToolSurface: which admitted tools are loaded vs deferred,
+                  and the stable tool catalogue the prompt lists
 ```
 
 Tests: `crates/vak-core/tests/capability_lifecycle.rs` pins the behaviours
@@ -247,42 +248,71 @@ undeclared capability survives every slice.
 
 ### Turn capabilities (`turn.rs`)
 
-`TurnCapabilities` is the single assembly point for every capability kind
-that crosses the broker boundary into `Agent::tool_definitions()` or the
-MCP catalog observer. It runs four stages in order:
+`TurnCapabilities::build` is the single admission point for every kind. It
+runs two stages, and both are **policy**:
 
 1. **Channel policy** — `ChannelPolicy` allow/deny globs for tools, MCP,
    skills, and hooks.
-2. **Reach standings** — per-capability availability based on live
-   resolution state (a down MCP server is named and skipped, not faked).
-3. **Frozen contract** — only capabilities present in the session's
-   `FrozenContract.capabilities` are retained.
-4. **Domain slice** — the intent-derived `required_domains` set is
-   intersected against each capability's `Serves` declaration; undeclared
-   capabilities fail open.
+2. **Reach** — a capability the composed permission policy fully blocks is
+   removed, keyed by the typed `CapabilityId` each `reach::Standing` carries
+   (never by parsing its display label); so is one revoked since the last
+   published epoch.
 
-Outputs: `mcp_aliases` (aliased tool definitions scoped to surviving
-servers), `mcp_server_names` (for the catalog observer's `GET /mcp/tools`
-prune), `hooks` (already filtered through all four stages),
-`frozen_skills` (constructed from the surviving set, never assembled
-separately), and `flow_admitted` (a bool that replaces the post-hoc
-`work` tool append in `Agent::tool_definitions()`).
+Admission never reads the turn's intent reading. Two stages that used to sit
+here are gone. The frozen-contract filter was a no-op in production (the turn
+passed no contract, and invariant 31 forbids one from hiding a capability
+added mid-session), and the domain slice made a *prediction* into a
+*policy*: a capability a confident reading excluded was uncallable for the
+turn. Prediction now lives only in the surface below, where being wrong costs
+one `find_tools` call.
 
-The 19 unit tests in `turn.rs` cover each kind individually (survive +
-blocked), both domain-slice paths, channel-deny blocking, contract
-filtering, and two combined cases that exercise all four kinds through
-a single `TurnCapabilities::build()` call.
+Outputs: `tool_names`, `descriptors` (the prompt and ledger projection),
+`mcp_tool_index` (bare MCP tool name → owning server, so the loop can repair
+a call addressed by the bare name into an `mcp` broker call; names ambiguous
+across servers or shadowing a built-in are left out), `mcp_server_names`,
+`hooks`, `frozen_skills`, and `flow_admitted`.
 
-### Intent-driven active skill inlining
+Hooks are read by `vak_core::hook_def`, the same reader config validation
+uses. A hook whose definition cannot be read is reported by
+`Core::capability_diagnostics`; if it was advisory it is dropped, and if it
+was declared fail-closed it becomes a `HookDef` with a `refusal`, which
+blocks every tool call with the reason — a guard that cannot be read must not
+quietly stop guarding.
 
-Stage 4 (domain slice) also evaluates affinity of surviving skills against the
-turn's `required_domains`. When a surviving skill has the highest declared domain
-affinity to the turn (e.g. `software-development` for `[CodeExec, Documents, Vcs, Filesystem]`),
-it is promoted to `is_active: true` and recorded with `configuration: {"active": true}` in
-its `CapabilityDescriptor`.
+### Tool surface (`surface.rs`)
 
-The system prompt resolver inlines active skills directly under `## Active Skill Guidelines`,
-providing immediate operational guidance on Turn 1 across both local and frontier models
-with zero voluntary-tool-call round-trips. Remaining catalog skills remain accessible on-demand
-via the `skill` tool.
+Every admitted tool is callable. The surface decides only which are *loaded*
+(full schema in the request) this turn, from each tool's own declaration on
+the `vak_tools::Tool` trait — the harness keeps no table of tool names:
+
+- `always_loaded()` — the orientation and discovery primitives (`read`,
+  `glob`, `grep`, `find_tools`, `recall`, `skill`, `mcp`, `session_search`,
+  `commitments`) are loaded on every turn;
+- `serves()` — a tool is loaded when it serves a domain the reading requires;
+  an undeclared tool is always loaded (deferring saves context, it is not
+  policy);
+- `presents_cards()` — a card tool is loaded when the request itself reads as
+  that card (`presentation_tools::predicted_card_tools`, the same recipe
+  detection the presentation check runs over the answer); otherwise it waits
+  for `find_tools` or for the presentation-check nudge, which loads the tool
+  it names for the redo.
+
+Everything else is deferred: named in the prompt's "More tools" catalogue
+(`tool_catalogue`: name and first sentence, sorted, a function of the
+admitted set only, so it is byte-stable in the cached prefix), and loaded by
+one `find_tools` call. A tool `find_tools` returns is promoted to a loaded
+definition on every provider (`vak_agent::load_discovered`); on Anthropic legs
+deferred tools additionally ride `defer_loading`. With
+`[intent] slice_capabilities = false` (or the kernel off) everything is
+loaded and there is no catalogue.
+
+A deferred tool the reading did not predict and the model then used is the
+measured misread (`misread::escalated_capability` over
+`ToolSurface::unpredicted`); card tools are excluded, since a card is an
+output choice rather than a reading of what the request needs.
+
+Skills are listed once, in the prompt (name and description); the `skill`
+tool carries only the admitted names as its schema enum and loads a body
+on demand after checking its admitted digest. No skill body is inlined into
+the prompt.
 

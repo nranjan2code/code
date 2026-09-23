@@ -70,6 +70,10 @@ impl vak_tools::Tool for TasksTool {
         "tasks"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["orchestration"]
+    }
+
     fn description(&self) -> &str {
         "Manage this workspace's scheduled routines — recurring prompts or \
          shell checks that fire on their own later, without you being asked \

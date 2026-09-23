@@ -11,6 +11,10 @@ impl Tool for WriteTool {
         "write"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["documents"]
+    }
+
     fn description(&self) -> &str {
         "Write content to a file, creating parent directories as needed. Overwrites the file if it exists."
     }

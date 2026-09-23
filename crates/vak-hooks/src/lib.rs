@@ -47,6 +47,10 @@ pub struct HookDef {
     pub command: String,
     pub timeout_ms: u64,
     pub failure_mode: HookFailureMode,
+    /// Set when the hook's definition could not be understood and it was
+    /// declared fail-closed: it then refuses everything it might have
+    /// guarded, with this reason, instead of silently not existing.
+    pub refusal: Option<String>,
 }
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
@@ -126,7 +130,13 @@ pub async fn run_hooks_with_recorder(
         }
 
         let started = std::time::Instant::now();
-        let outcome = run_one(hook, event, session_id, cwd, tool, extra, cancel).await;
+        let outcome = match &hook.refusal {
+            Some(reason) => HookOutcome {
+                blocked: true,
+                reason: Some(reason.clone()),
+            },
+            None => run_one(hook, event, session_id, cwd, tool, extra, cancel).await,
+        };
         if let Some(recorder) = recorder {
             recorder(hook, !outcome.blocked, started.elapsed().as_millis() as u64);
         }

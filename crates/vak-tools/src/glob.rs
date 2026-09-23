@@ -17,6 +17,14 @@ impl Tool for GlobTool {
         "glob"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["filesystem"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Find files matching a glob pattern (supports **). Returns matching paths relative to the search directory."
     }

@@ -18,6 +18,14 @@ impl Tool for GrepTool {
         "grep"
     }
 
+    fn serves(&self) -> &'static [&'static str] {
+        &["filesystem"]
+    }
+
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Search file contents with a regular expression. Returns file:line:text matches. Use include to filter by glob (e.g. \"*.rs\")."
     }

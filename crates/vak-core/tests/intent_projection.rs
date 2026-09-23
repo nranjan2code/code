@@ -87,37 +87,33 @@ fn approval_composition_never_loosens_configuration() {
     }
 }
 
-/// A slice intersects the admitted packet and can only ever subtract.
+/// A reading decides only what is *loaded*: the surface partitions exactly the
+/// admitted tools into loaded and deferred, and can neither add a tool nor
+/// lose one.
 #[test]
-fn a_capability_slice_only_ever_subtracts() {
-    use vak_session::types::{CapabilityDescriptor, CapabilityInvocation, CapabilityKind};
-    let admitted: Vec<CapabilityDescriptor> = ["bash", "grep"]
-        .into_iter()
-        .map(|name| CapabilityDescriptor {
-            name: name.into(),
-            kind: CapabilityKind::Tool,
-            invocation: CapabilityInvocation::ModelTool,
-            description: String::new(),
-            source: None,
-            digest: None,
-            provenance: None,
-            configuration: serde_json::Value::Null,
-        })
-        .collect();
-    let required = DomainSet::only(["code-exec"]);
-    let declared: std::collections::BTreeMap<String, Vec<String>> = [
-        ("bash".to_string(), vec!["code-exec".to_string()]),
-        ("deploy_to_prod".to_string(), vec!["code-exec".to_string()]),
-    ]
-    .into_iter()
-    .collect();
-    let sliced = intent::slice_capabilities(&admitted, &required, &declared);
-    let names: Vec<&str> = sliced.iter().map(|c| c.name.as_str()).collect();
-    // `grep` is in the orientation floor and survives by name; the unadmitted
-    // `deploy_to_prod` is not conjured into existence by being declared.
-    assert!(names.contains(&"bash"));
-    assert!(!names.contains(&"deploy_to_prod"));
-    assert!(sliced.len() <= admitted.len());
+fn a_reading_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
+    let admitted = vak_tools::default_tools();
+    let names = |defs: &[vak_llm::ToolDefinition]| -> Vec<String> {
+        defs.iter().map(|d| d.name.clone()).collect()
+    };
+    for required in [
+        DomainSet::only(["code-exec"]),
+        DomainSet::Empty,
+        DomainSet::All,
+    ] {
+        let surface =
+            vak_core::capability::build_tool_surface(&admitted, &required, &Default::default());
+        let mut seen = names(&surface.core);
+        seen.extend(names(&surface.deferred));
+        seen.sort();
+        let mut expected: Vec<String> = admitted.iter().map(|t| t.name().to_string()).collect();
+        expected.sort();
+        assert_eq!(seen, expected, "{required:?}");
+        assert!(
+            names(&surface.core).contains(&"read".to_string()),
+            "an always-loaded tool is loaded whatever the reading"
+        );
+    }
 }
 
 /// A revoked grant stops narrowing and does not leave a remembered widening

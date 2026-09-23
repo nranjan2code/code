@@ -123,8 +123,8 @@ async fn remember_propose_recall_promote_loop() {
         vak_agent::TurnOutcome::Completed { .. }
     ));
 
-    // Notes landed on disk with provenance...
-    let notes = vak_core::memory::list_notes(&home, &cwd);
+    // Notes landed in this Agent's own memory, with provenance...
+    let notes = vak_core::memory::list_notes(&core.sessions_home(), &cwd);
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].kind, "decision");
     assert_eq!(notes[0].tag, "deploy-rollbacks");

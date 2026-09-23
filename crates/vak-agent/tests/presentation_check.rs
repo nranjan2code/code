@@ -26,8 +26,12 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
+type Requests = Arc<Mutex<Vec<Vec<String>>>>;
+
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,
+    /// The tool names each request actually declared.
+    requests: Requests,
 }
 
 #[async_trait]
@@ -38,9 +42,13 @@ impl Provider for Scripted {
 
     async fn stream(
         &self,
-        _request: ChatRequest,
+        request: ChatRequest,
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.tools.iter().map(|t| t.name.clone()).collect());
         let next = self.responses.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(64);
         match next {
@@ -123,7 +131,7 @@ async fn build_agent(
     session_id: &str,
     responses: Vec<AssistantMessage>,
     with_check: bool,
-) -> Agent {
+) -> (Agent, Requests) {
     let header = SessionHeader {
         agent: None,
         session_id: session_id.into(),
@@ -154,9 +162,11 @@ async fn build_agent(
     )
     .unwrap();
 
-    Agent::new(
+    let requests = Requests::default();
+    let agent = Agent::new(
         Arc::new(Scripted {
             responses: Mutex::new(VecDeque::from(responses)),
+            requests: requests.clone(),
         }),
         log,
         {
@@ -165,19 +175,32 @@ async fn build_agent(
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg.tools = vec![Arc::new(FakeEmitChartCard)];
+            // As in production: a card tool the request did not predict is
+            // deferred, so it is not declared until something loads it.
+            cfg.tool_definitions = Some(vec![
+                vak_llm::ToolDefinition::new(
+                    "emit_chart_card",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                )
+                .deferred(),
+            ]);
             if with_check {
                 cfg.presentation_check = Some(Arc::new(|text, offered| {
                     (text.contains("TABLE") && offered.iter().any(|t| t == "emit_chart_card")).then(
-                        || {
-                            "[presentation-check]: this reads as a card; call emit_chart_card."
-                                .to_string()
+                        || vak_agent::PresentationNudge {
+                            tool: "emit_chart_card".into(),
+                            text:
+                                "[presentation-check]: this reads as a card; call emit_chart_card."
+                                    .into(),
                         },
                     )
                 }));
             }
             cfg
         },
-    )
+    );
+    (agent, requests)
 }
 
 // Raw ledger, not the model-visible projection: these tests are about the
@@ -238,7 +261,7 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 #[tokio::test]
 async fn prose_that_reads_as_a_card_gets_one_nudge_and_the_model_can_then_emit_it() {
     let dir = tempdir().unwrap();
-    let mut agent = build_agent(
+    let (mut agent, requests) = build_agent(
         &dir,
         "pc-nudge",
         vec![
@@ -263,12 +286,21 @@ async fn prose_that_reads_as_a_card_gets_one_nudge_and_the_model_can_then_emit_i
         "{users:?}"
     );
     assert!(assistant_texts(&agent).iter().any(|t| t == NARRATION));
+    let requests = requests.lock().unwrap();
+    assert!(
+        !requests[0].contains(&"emit_chart_card".to_string()),
+        "the deferred card tool is not declared before the nudge"
+    );
+    assert!(
+        requests[1].contains(&"emit_chart_card".to_string()),
+        "the nudge loads the card tool it asks for, on a non-Anthropic leg"
+    );
 }
 
 #[tokio::test]
 async fn the_nudge_is_one_shot_and_the_model_may_decline_by_resending() {
     let dir = tempdir().unwrap();
-    let mut agent = build_agent(
+    let (mut agent, _) = build_agent(
         &dir,
         "pc-once",
         vec![text_msg(PROSE), text_msg(PROSE)],
@@ -300,7 +332,7 @@ async fn the_nudge_is_one_shot_and_the_model_may_decline_by_resending() {
 #[tokio::test]
 async fn no_nudge_when_a_card_was_already_emitted_this_run() {
     let dir = tempdir().unwrap();
-    let mut agent = build_agent(
+    let (mut agent, _) = build_agent(
         &dir,
         "pc-emitted",
         vec![
@@ -327,7 +359,7 @@ async fn no_nudge_when_the_answer_already_carries_an_inline_card() {
     let with_fence = format!(
         "{PROSE}\n\n```vak\n{{\"semantic_type\":\"metric\",\"payload\":{{\"label\":\"x\",\"value\":1}}}}\n```"
     );
-    let mut agent = build_agent(&dir, "pc-fence", vec![text_msg(&with_fence)], true).await;
+    let (mut agent, _) = build_agent(&dir, "pc-fence", vec![text_msg(&with_fence)], true).await;
     assert!(matches!(
         run(&mut agent).await,
         TurnOutcome::Completed { .. }
@@ -342,7 +374,7 @@ async fn no_nudge_when_the_answer_already_carries_an_inline_card() {
 #[tokio::test]
 async fn with_no_check_configured_the_loop_is_untouched() {
     let dir = tempdir().unwrap();
-    let mut agent = build_agent(&dir, "pc-off", vec![text_msg(PROSE)], false).await;
+    let (mut agent, _) = build_agent(&dir, "pc-off", vec![text_msg(PROSE)], false).await;
     assert!(matches!(
         run(&mut agent).await,
         TurnOutcome::Completed { .. }
