@@ -44,11 +44,30 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
                 out.push_str(&format!("{}- {}\n", indent, value));
             }
         }
-        Primitive::KeyValue | Primitive::Metric | Primitive::Progress => {
+        Primitive::KeyValue | Primitive::Progress => {
             let label = text("label");
             let value = text("value");
             if !label.is_empty() || !value.is_empty() {
                 out.push_str(&format!("{}**{}:** {}\n", indent, label, value));
+            }
+        }
+        Primitive::Metric => {
+            let label = text("label");
+            if let Some(value) = node.props.get("value") {
+                let value = value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+                let unit = text("unit");
+                out.push_str(&format!("{}**{}:** {}{}\n", indent, label, value, if unit.is_empty() { String::new() } else { format!(" {unit}") }));
+            } else {
+                if !label.is_empty() {
+                    out.push_str(&format!("{}**{}**\n", indent, label));
+                }
+                for (key, value) in &node.props {
+                    if matches!(key.as_str(), "label" | "title" | "semantic_type") {
+                        continue;
+                    }
+                    let value = value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+                    out.push_str(&format!("{}- {}: {}\n", indent, key.replace('_', " "), value));
+                }
             }
         }
         Primitive::Text

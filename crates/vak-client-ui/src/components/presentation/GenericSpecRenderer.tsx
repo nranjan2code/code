@@ -166,6 +166,13 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
 }
 
 function renderMetric(node: AdaptiveRenderNode, surface: RenderSurface) {
+  // A declarative pack may bind the whole validated metric payload to this
+  // primitive. The emit tool permits both one value and a small grid; keep
+  // the latter visible instead of showing a single-value dash.
+  if (node.props.value === undefined || node.props.value === null) {
+    const grid = buildMetricSpec(node.props);
+    if (grid.primitive === "metric_grid") return renderMetricGrid(grid, surface);
+  }
   const label = str(node.props, "label") ?? "Metric";
   const value = node.props["value"];
   const unit = str(node.props, "unit");

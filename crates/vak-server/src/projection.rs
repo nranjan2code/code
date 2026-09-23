@@ -3902,6 +3902,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selected_metric_pack_keeps_every_reading_from_an_emitted_grid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "metric-grid");
+        log.append_message(MessageRecord {
+            message: Message::user_text("How is the weather?"),
+            meta: None,
+        })
+        .expect("user");
+        let input = serde_json::json!({
+            "semantic_type": "metric",
+            "payload": {"label": "Noida now", "condition": "Sunny", "temperature": "35.2°C", "humidity": "31%"}
+        });
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "grid-call".into(),
+                name: "emit_metric_card".into(),
+                input: input.clone(),
+            }]),
+            meta: None,
+        })
+        .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "grid-call".into(),
+                    content: "Card displayed to the user (metric).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+        append_presentation_for_call(&mut log, "emit_metric_card", "grid-call", &input);
+        let library = crate::effective_presentation_library(
+            &vak_presentation::PresentationLibrary::default(),
+            "/tmp/project",
+        );
+        let planner = vak_delivery::PresentationPlanner {
+            skills: vak_delivery::built_in_skill_registry(),
+            recipes: vak_delivery::built_in_recipes(),
+        };
+        let timeline = super::snapshot_with_planner_and_library("metric-grid", &log, &planner, &library);
+        let card = timeline.items.iter().find(|item| item.kind == OutputKind::Card).expect("card");
+        let OutputContent::Adaptive { tree, .. } = &card.content else {
+            panic!("selected pack should produce adaptive content");
+        };
+        assert_eq!(tree.spec_id, "seed.metric");
+        assert_eq!(tree.root.props.get("condition"), Some(&serde_json::json!("Sunny")));
+        assert_eq!(tree.root.props.get("temperature"), Some(&serde_json::json!("35.2°C")));
+        assert_eq!(tree.root.props.get("humidity"), Some(&serde_json::json!("31%")));
+        let lowered = vak_delivery::adaptive_presentation_markdown(
+            &vak_presentation::CompiledPresentation::Rich(tree.clone()),
+        );
+        for reading in ["Sunny", "35.2°C", "31%"] {
+            assert!(lowered.contains(reading), "constrained delivery lost {reading}: {lowered}");
+        }
+    }
+
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
         SessionLog::create(
             dir.path().join(format!("{name}.jsonl")),
