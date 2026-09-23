@@ -105,6 +105,12 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   async function toggle() {
     if (connecting()) return;
     if (active()) { stopVoice(); return; }
+    // Unlock output while this call still has the user's click gesture. The
+    // provider reply arrives much later, when browsers may reject autoplay.
+    try {
+      playbackContext ??= new AudioContext();
+      void playbackContext.resume().catch(() => { /* retry with a visible error when audio arrives */ });
+    } catch { /* capture/setup will still report its own failure */ }
     setConnecting(true);
     setVoiceError(false);
     setTranscript("");
@@ -195,11 +201,14 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
           return buffer;
         })())
       : playbackContext.decodeAudioData(bytes.slice(0));
-    void decode.then((buffer) => {
+    void decode.then(async (buffer) => {
+      if (generation !== playbackGeneration || !active()) return;
+      await playbackContext!.resume();
+      if (playbackContext!.state !== "running") throw new Error("Audio output is blocked. Press Voice again to allow playback.");
       if (generation !== playbackGeneration || !active()) return;
       startPlaybackBuffer(buffer, generation);
-    }).catch(() => {
-      if (generation === playbackGeneration) setNotice({ kind: "error", text: "The answer is ready as text, but this audio format cannot be played here." });
+    }).catch((error) => {
+      if (generation === playbackGeneration) setNotice({ kind: "error", text: `The answer is ready as text, but voice playback could not start: ${(error as Error).message}` });
       if (active()) setStatus("Listening");
     });
   }
