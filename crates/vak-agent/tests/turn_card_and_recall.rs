@@ -14,13 +14,14 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, PresentationCardInfo, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, TurnOutcome};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 use vak_permission::PermissionEngine;
 use vak_session::types::{FrozenContract, PresentationSource, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
+use vak_tools::PresentationCard;
 use vak_tools::bash::BashTool;
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
@@ -119,7 +120,7 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
             .and_then(|v| v.as_str())
             .unwrap_or("chart")
             .to_string();
-        Some(PresentationCardInfo {
+        Some(PresentationCard {
             semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),

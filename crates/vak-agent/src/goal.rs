@@ -186,7 +186,7 @@ pub fn transcript_digest(messages: &[vak_llm::Message], max_chars: usize) -> Str
     let mut chunks: Vec<String> = Vec::new();
     let mut used = 0usize;
     for m in messages.iter().rev() {
-        let text = render_one(m);
+        let text = render_one(messages, m);
         if used + text.len() > max_chars {
             break;
         }
@@ -197,7 +197,7 @@ pub fn transcript_digest(messages: &[vak_llm::Message], max_chars: usize) -> Str
     chunks.join("\n")
 }
 
-fn render_one(m: &vak_llm::Message) -> String {
+fn render_one(messages: &[vak_llm::Message], m: &vak_llm::Message) -> String {
     let role = match m.role {
         vak_llm::Role::User => "user",
         vak_llm::Role::Assistant => "assistant",
@@ -212,9 +212,14 @@ fn render_one(m: &vak_llm::Message) -> String {
                     serde_json::to_string(input).unwrap_or_default()
                 ));
             }
-            ContentBlock::ToolResult { content, .. } => {
-                let preview: String = content.chars().take(300).collect();
-                out.push_str(&format!("[tool-result] {preview}"));
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                let digest =
+                    vak_session::transcript_result(messages, tool_use_id, content, *is_error);
+                out.push_str(&format!("[tool-result] {digest}"));
             }
             _ => {}
         }

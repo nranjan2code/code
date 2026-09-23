@@ -352,7 +352,7 @@ impl WebBrowseTool {
         } else {
             dom
         };
-        ToolOutput::ok(ctx.truncate_output(format!("{header}\n{body}")))
+        ToolOutput::ok(format!("{header}\n{body}"))
     }
 }
 

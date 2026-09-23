@@ -18,7 +18,6 @@ async fn verify_accept(
         let ctx = ToolContext {
             cwd: deps.cwd.clone(),
             cancel: cancel.child_token(),
-            limits: Default::default(),
             sandbox: deps.sandbox.clone(),
             sandbox_sink: None,
             agent_id: None,
@@ -29,7 +28,7 @@ async fn verify_accept(
         if out.is_error {
             return Err(format!(
                 "done-contract failed: `{command}`\n{}",
-                out.content
+                vak_tools::bounded(out.content)
             ));
         }
         let _ = cancel.child_token();
@@ -480,7 +479,6 @@ async fn execute_node(
             let ctx = ToolContext {
                 cwd: deps.cwd.clone(),
                 cancel: cancel.child_token(),
-                limits: Default::default(),
                 sandbox: deps.sandbox.clone(),
                 sandbox_sink: None,
                 agent_id: None,
@@ -496,10 +494,13 @@ async fn execute_node(
             };
             authorize_flow_tool("bash", &args, deps).await?;
             let out = tool.execute(&args, &ctx).await;
+            // A node's output is rendered into later nodes, prompts
+            // included, and a flow keeps no evidence ledger to recall from.
+            let content = vak_tools::bounded(out.content);
             if out.is_error {
-                Err(out.content)
+                Err(content)
             } else {
-                Ok(out.content)
+                Ok(content)
             }
         }
         "agent" => {

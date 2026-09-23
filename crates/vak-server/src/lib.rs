@@ -3977,6 +3977,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::ChildRun { .. } => {}
                         vak_session::EntryPayload::Presentation(_) => {}
                         vak_session::EntryPayload::TurnCard(_) => {}
+                        vak_session::EntryPayload::EvidenceBody(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -10922,7 +10923,6 @@ async fn dispatch_candidate_revision(
                                 ) {
                                     Ok(()) => {
                                         let answer = response.text_content();
-                                        let answer = answer.chars().take(2000).collect::<String>();
                                         detail = Some(if answer.trim().is_empty() {
                                             format!("New draft version {id} is ready for review")
                                         } else {
@@ -16413,7 +16413,6 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
     let ctx = vak_tools::ToolContext {
         cwd: cwd.to_path_buf(),
         cancel: CancellationToken::new(),
-        limits: vak_tools::OutputLimits::default(),
         sandbox: core.agent_sandbox(),
         sandbox_sink: None,
         agent_id: core.agent_identity().map(|a| a.id.clone()),
@@ -16423,12 +16422,12 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
     if out.is_error {
         ScriptOutcome {
             ok: false,
-            text: format!("script failed: {}", out.content.trim()),
+            text: format!("script failed: {}", vak_tools::bounded(out.content).trim()),
         }
     } else {
         ScriptOutcome {
             ok: true,
-            text: stdout_section(&out.content).trim().to_string(),
+            text: vak_tools::bounded(stdout_section(&out.content).trim().to_string()),
         }
     }
 }

@@ -211,8 +211,8 @@ constrains *what the process can touch* even when allowed.
   generalizes to nothing. A blanket `+webfetch` is a config decision made
   deliberately, not one that falls out of a single yes.
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
-  are permitted in workspace-write mode by design (output spill files rely on
-  it). Everything else outside the cwd is blocked at kernel level.
+  are permitted in workspace-write mode by design. Everything else outside
+  the cwd is blocked at kernel level.
 
 ## Later
 

@@ -123,10 +123,10 @@ impl Tool for McpTool {
         })
     }
 
-    async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+    async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match args.get("action").and_then(|a| a.as_str()) {
-            Some("list") => self.list(args, ctx).await,
-            Some("call") => self.call(args, ctx).await,
+            Some("list") => self.list(args).await,
+            Some("call") => self.call(args).await,
             Some(other) => ToolOutput::error(format!("unknown mcp action '{other}'")),
             None => ToolOutput::error("missing required parameter: action"),
         }
@@ -145,7 +145,7 @@ impl McpTool {
 
     /// `list` without a server connects to nothing: it answers from what the
     /// pool already knows. With a server it is demand for exactly that one.
-    async fn list(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+    async fn list(&self, args: &Value) -> ToolOutput {
         let servers = self.reachable_servers();
         if servers.is_empty() {
             return ToolOutput::ok("no MCP servers configured");
@@ -202,10 +202,10 @@ impl McpTool {
                 t.name, t.description
             ));
         }
-        ToolOutput::ok(ctx.truncate_output(out))
+        ToolOutput::ok(out)
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+    async fn call(&self, args: &Value) -> ToolOutput {
         let Some(server) = args.get("server").and_then(|s| s.as_str()) else {
             return ToolOutput::error("missing required parameter: server");
         };
@@ -235,36 +235,17 @@ impl McpTool {
                 if text.is_empty() {
                     ToolOutput::ok("(empty result)")
                 } else {
-                    let redacted = self.manager.redact(text);
-                    let preview = ctx.truncate_output(redacted.clone());
-                    if preview == redacted {
-                        return ToolOutput::ok(preview);
-                    }
-                    let artifact = self.manager.store_artifact(server, tool, &redacted);
-                    match artifact {
-                        Some(path) => {
-                            vak_tools::artifact::emit_file(
-                                ctx.sandbox_sink.as_ref(),
-                                &path,
-                                &ctx.cwd,
-                            );
-                            ToolOutput::ok(ctx.truncate_output(format!(
-                                "[full MCP result stored at {}. Use the read tool with this path and offset/limit for exact retrieval.]\n{redacted}",
-                                path.display()
-                            )))
-                        }
-                        None => ToolOutput::ok(preview),
-                    }
+                    ToolOutput::ok(self.manager.redact(text))
                 }
             }
             Err(e) => {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, false, started.elapsed().as_millis() as u64);
                 }
-                ToolOutput::error(ctx.truncate_output(format!(
+                ToolOutput::error(format!(
                     "mcp call failed: {}",
                     self.manager.redact(e.to_string())
-                )))
+                ))
             }
         }
     }

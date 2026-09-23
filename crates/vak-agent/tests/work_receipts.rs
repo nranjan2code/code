@@ -290,6 +290,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::ChildRun { .. } => "child-run",
             EntryPayload::Presentation(_) => "presentation",
             EntryPayload::TurnCard(_) => "turn-card",
+            EntryPayload::EvidenceBody(_) => "evidence-body",
         })
         .collect();
     assert_eq!(

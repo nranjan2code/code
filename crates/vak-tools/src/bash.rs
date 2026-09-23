@@ -258,10 +258,7 @@ impl Tool for BashTool {
                         paths.join(", ")
                     ));
                 }
-                return ToolOutput {
-                    content: interrupted_output(&out, &err, &reason),
-                    is_error: true,
-                };
+                return ToolOutput::error(interrupted_output(&out, &err, &reason));
             }
             _ = cancelled => {
                 telemetry_cancel.cancel();
@@ -280,7 +277,7 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths);
                 }
-                return ToolOutput { content: interrupted_output(&out, &err, "command cancelled"), is_error: true };
+                return ToolOutput::error(interrupted_output(&out, &err, "command cancelled"));
             }
             status = child.wait() => {
                 telemetry_cancel.cancel();
@@ -333,15 +330,12 @@ impl Tool for BashTool {
                 }
                 if !status.success() {
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
-                    return ToolOutput {
-                        content: ctx.truncate_output(text),
-                        is_error: true,
-                    };
+                    return ToolOutput::error(text);
                 }
                 if text.is_empty() {
                     text.push_str("(no output)");
                 }
-                ToolOutput::ok(ctx.truncate_output(text))
+                ToolOutput::ok(text)
             }
         }
     }

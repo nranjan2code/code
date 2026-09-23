@@ -226,13 +226,13 @@ impl Tool for WebFetchTool {
         };
         tokio::select! {
             _ = ctx.cancel.cancelled() => ToolOutput::error("fetch cancelled"),
-            out = self.run(url, ctx) => out,
+            out = self.run(url) => out,
         }
     }
 }
 
 impl WebFetchTool {
-    async fn run(&self, raw: &str, ctx: &ToolContext) -> ToolOutput {
+    async fn run(&self, raw: &str) -> ToolOutput {
         let url = match parse_target(raw) {
             Ok(u) => u,
             Err(e) => return ToolOutput::error(e),
@@ -301,7 +301,7 @@ impl WebFetchTool {
             "[webfetch] GET {final_url} -> {status} ({content_type}, {count} bytes)",
             count = body.len()
         );
-        ToolOutput::ok(ctx.truncate_output(format!("{header}\n{text}")))
+        ToolOutput::ok(format!("{header}\n{text}"))
     }
 }
 

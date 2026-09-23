@@ -165,7 +165,17 @@ they are tail material owned by the assembler. Compaction packets become
 Every tool result is stored in full under an `EvidenceId` (the existing
 receipt/`EvidenceRef::ToolResult` identity). In the request the model sees:
 
-- **Current turn:** every result verbatim. Always.
+- **Current turn:** every result verbatim up to 30,000 characters. A longer
+  result is carried as a *window* (`vak_tools::window`): whole lines from its
+  start and end, and one line naming the omitted range, its size in
+  characters, and the `recall({ id, range })` call that returns it. Inside a
+  window a line over 2,000 characters shows its start and says how many
+  characters it continues for; a result that fits is never windowed, however
+  long its lines. The `ToolResult` block logs exactly what the request
+  carried, and an `EvidenceBody` entry beside it holds the whole result, so
+  `recall`, the closed-turn digests and `SessionLog::evidence` read what the
+  tool returned. A `recall` result over the limit is windowed the same way
+  under its own id.
 - **Working-set turns before the current one:** a *digest*, produced
   deterministically from the result's shape, never by character count:
   - JSON: top-level keys, array lengths, and the first element of each array
@@ -179,7 +189,9 @@ receipt/`EvidenceRef::ToolResult` identity). In the request the model sees:
   their evidence ids with one-line descriptions.
 
 `recall({ id, range? })` is a core tool that returns the full result (or a
-line range). Recalled content is a current-turn result, so it is verbatim for
+line range). The summariser requests (compaction, handoff) show results the
+same way a closed turn does — as their digest with the evidence id — never
+cut to a character count. Recalled content is a current-turn result, so it is verbatim for
 the rest of that turn and digested afterwards: every digest is reversible by
 the model.
 

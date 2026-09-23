@@ -363,9 +363,10 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
             response.version
         ));
     }
-    ToolOutput {
-        content: response.content,
-        is_error: response.is_error,
+    if response.is_error {
+        ToolOutput::error(response.content)
+    } else {
+        ToolOutput::ok(response.content)
     }
 }
 

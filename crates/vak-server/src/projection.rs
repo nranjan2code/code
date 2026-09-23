@@ -438,9 +438,26 @@ fn snapshot_inner(
             vak_session::types::PresentationSource::ToolCall { tool_use_id } => {
                 Some((tool_use_id.clone(), (entry_id, record)))
             }
-            vak_session::types::PresentationSource::Fence { .. } => None,
+            vak_session::types::PresentationSource::Fence { .. }
+            | vak_session::types::PresentationSource::Delegated { .. } => None,
         })
         .collect();
+    // A delegated call (`task`) may carry several cards: the ones its worker
+    // showed, recorded in this ledger when the worker ended.
+    let mut delegated_by_tool_use_id: HashMap<
+        String,
+        Vec<(String, &vak_session::types::PresentationRecord)>,
+    > = HashMap::new();
+    for (entry_id, record) in session.presentations() {
+        if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. } =
+            &record.source
+        {
+            delegated_by_tool_use_id
+                .entry(tool_use_id.clone())
+                .or_default()
+                .push((entry_id, record));
+        }
+    }
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut turn_outcomes: HashMap<usize, vak_intent::OutcomeSpec> = HashMap::new();
@@ -1098,44 +1115,58 @@ fn snapshot_inner(
                                 // written once, at validation, and never
                                 // rebuilt from the call's arguments here.
                                 let name_is_card = vak_core::presentation_tools::is_card_tool(name);
-                                // At most one Presentation entry per
-                                // tool_use_id, so this is the id every
-                                // output produced below (0 or 1 of them)
-                                // was written as.
-                                let presentation_entry_id: Option<String> = name_is_card
-                                    .then(|| {
-                                        presentation_by_tool_use_id
-                                            .get(id)
-                                            .map(|(entry_id, _)| entry_id.clone())
-                                    })
-                                    .flatten();
-                                let outputs = if name_is_card {
-                                    presentation_by_tool_use_id
-                                        .get(id)
-                                        .map(|(_, record)| vak_delivery::StructuredOutput {
+                                let recorded = |(entry_id, record): &(
+                                    String,
+                                    &vak_session::types::PresentationRecord,
+                                )| {
+                                    (
+                                        vak_delivery::StructuredOutput {
                                             semantic_type: record.semantic_type.clone(),
                                             schema_version: u16::try_from(record.schema_version)
                                                 .unwrap_or(u16::MAX),
                                             skill_id: record.skill_id.clone(),
                                             skill_version: record.skill_version.clone(),
                                             payload: record.payload.clone(),
-                                        })
-                                        .into_iter()
-                                        .collect()
-                                } else {
-                                    detail
-                                        .as_deref()
-                                        .map(|text| {
-                                            structured_outputs_from_tool_result_with(
-                                                text,
-                                                "desktop",
-                                                &built_in_adapters(),
-                                                &planner.skills,
-                                            )
-                                        })
-                                        .unwrap_or_default()
+                                        },
+                                        Some(entry_id.clone()),
+                                    )
                                 };
-                                for (structured_index, output) in outputs.into_iter().enumerate() {
+                                // Each output with the Presentation entry it
+                                // was written as, when it has one.
+                                let outputs: Vec<(vak_delivery::StructuredOutput, Option<String>)> =
+                                    if name_is_card {
+                                        presentation_by_tool_use_id
+                                            .get(id)
+                                            .map(|(entry_id, record)| {
+                                                recorded(&(entry_id.clone(), *record))
+                                            })
+                                            .into_iter()
+                                            .collect()
+                                    } else {
+                                        let mut outputs: Vec<_> = delegated_by_tool_use_id
+                                            .get(id)
+                                            .map(|cards| cards.iter().map(recorded).collect())
+                                            .unwrap_or_default();
+                                        outputs.extend(
+                                            detail
+                                                .as_deref()
+                                                .map(|text| {
+                                                    structured_outputs_from_tool_result_with(
+                                                        text,
+                                                        "desktop",
+                                                        &built_in_adapters(),
+                                                        &planner.skills,
+                                                    )
+                                                })
+                                                .unwrap_or_default()
+                                                .into_iter()
+                                                .map(|output| (output, None)),
+                                        );
+                                        outputs
+                                    };
+                                for (structured_index, (output, presentation_entry_id)) in
+                                    outputs.into_iter().enumerate()
+                                {
                                     // The same card emitted twice in one answer is one
                                     // card, armed retry or not: identical content has
                                     // nothing to supersede and nothing to add.
@@ -1167,7 +1198,7 @@ fn snapshot_inner(
                                             entry_id: Some(entry.id.clone()),
                                             tool_call_id: Some(id.clone()),
                                             source: Some(name.clone()),
-                                            presentation_id: presentation_entry_id.clone(),
+                                            presentation_id: presentation_entry_id,
                                         }),
                                         actions: Vec::new(),
                                     });
@@ -2127,6 +2158,111 @@ mod tests {
             identity_digest: info.identity_digest,
         })
         .expect("append presentation");
+    }
+
+    #[test]
+    fn a_workers_cards_project_as_cards_of_the_task_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("delegated.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "delegated".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("chart it and summarise it"),
+            meta: None,
+        })
+        .expect("directive");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "task-1".into(),
+                name: "task".into(),
+                input: serde_json::json!({"prompt": "chart it"}),
+            }]),
+            meta: None,
+        })
+        .expect("task call");
+        let skills = vak_delivery::built_in_skill_registry();
+        let turn_id = log.latest_directive_entry_id().unwrap_or_default();
+        let mut ids = Vec::new();
+        for summary in ["revenue", "cost"] {
+            let info = vak_core::presentation_tools::presentation_info(
+                "emit_chart_card",
+                &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}}),
+                &skills,
+            )
+            .expect("fixture card validates");
+            let entry = log
+                .append_presentation(vak_session::types::PresentationRecord {
+                    turn_id: turn_id.clone(),
+                    source: vak_session::types::PresentationSource::Delegated {
+                        tool_use_id: "task-1".into(),
+                        worker_session_id: "child-1".into(),
+                    },
+                    semantic_type: info.semantic_type,
+                    skill_id: info.skill_id,
+                    skill_version: info.skill_version,
+                    schema_version: info.schema_version,
+                    payload_digest: vak_session::types::payload_digest(&info.payload),
+                    payload: info.payload,
+                    derived_from: vec!["task-1".into()],
+                    title: info.title,
+                    identity_digest: info.identity_digest,
+                })
+                .expect("delegated presentation");
+            ids.push(entry.id);
+        }
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "task-1".into(),
+                    content: "Revenue rose and cost held.".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("task result");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Both charts are above.")]),
+            meta: None,
+        })
+        .expect("answer");
+
+        let timeline = snapshot("delegated", &log);
+        let cards: Vec<&OutputItem> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .collect();
+        assert_eq!(cards.len(), 2, "both of the worker's cards are shown");
+        for (card, id) in cards.iter().zip(&ids) {
+            let provenance = card.provenance.as_ref().expect("provenance");
+            assert_eq!(provenance.tool_call_id.as_deref(), Some("task-1"));
+            assert_eq!(provenance.presentation_id.as_deref(), Some(id.as_str()));
+        }
     }
 
     #[test]

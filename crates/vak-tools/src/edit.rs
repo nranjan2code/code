@@ -168,6 +168,6 @@ impl Tool for EditTool {
         } else {
             out.push_str(" (no changes)");
         }
-        ToolOutput::ok(ctx.truncate_output(out))
+        ToolOutput::ok(out)
     }
 }

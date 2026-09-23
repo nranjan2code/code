@@ -19,7 +19,8 @@ pub use search::{
 };
 pub use turns::{
     Answer, Evidence, Fidelity, Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn,
-    TurnCard, TurnIndex, WorkingSetPlan, evidence_digest, evidence_shape,
+    TurnCard, TurnIndex, WorkingSetPlan, bash_digest, evidence_digest, evidence_shape,
+    transcript_result,
 };
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, CapabilityDescriptor, CapabilityInvocation,

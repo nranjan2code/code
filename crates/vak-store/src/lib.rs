@@ -267,10 +267,13 @@ impl Store {
             // (design §3) is separate future work. A TurnCard is derived,
             // never-model-visible audit data with its own in-memory BM25
             // index (`TurnIndex::search`) — not this store's concern either.
+            // An evidence body repeats a tool result the Message entry
+            // already indexes the window of; `recall` reaches the rest.
             EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::TurnCard(_) => return None,
+            | EntryPayload::TurnCard(_)
+            | EntryPayload::EvidenceBody(_) => return None,
         };
 
         match &entry.payload {
@@ -434,7 +437,8 @@ impl Store {
             EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::TurnCard(_) => None,
+            | EntryPayload::TurnCard(_)
+            | EntryPayload::EvidenceBody(_) => None,
         }
     }
 

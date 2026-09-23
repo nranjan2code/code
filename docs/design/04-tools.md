@@ -30,8 +30,15 @@ ledger like any other call.
 
 ## Output hygiene
 
-Line-level truncation marker; total-size cap keeps head+tail with an omitted
-marker and optional spill file. Models see bounded, greppable outputs.
+A tool returns its whole result and never shortens it; the only bounds are
+each tool's own capture limits (bash keeps 1 MiB, webfetch 512 KiB, read a
+line range). The agent loop records the whole result in the ledger and
+decides how much a request carries (`vak_tools::window`,
+docs/design/68-context-engine.md §3): up to 30,000 characters verbatim, and
+past that whole lines from the start and the end with one line naming the
+omitted range, its size, and the `recall` call that returns it. There is no
+spill file. A caller with no ledger (a flow node, a scheduled script) passes
+on `vak_tools::bounded`, the same window without the recall hint.
 
 ## Unsafe policy
 

@@ -21,18 +21,20 @@ pub mod sandbox;
 pub mod sandbox_events;
 pub mod webbrowse;
 pub mod webfetch;
+pub mod window;
 pub mod write;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
-pub use context::{OutputLimits, ToolContext};
+pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
 pub use recall::{RecallRequest, RecallTool, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
+pub use window::{LINE_WINDOW_CHARS, RESULT_WINDOW_CHARS, bounded, window};
 
 /// Machine classification of a tool failure, so the agent loop and the output
 /// gate can reason about it instead of re-running keyword matches against
@@ -144,10 +146,41 @@ impl ToolErrorKind {
     }
 }
 
-#[derive(Debug, Clone)]
+/// A validated card, ready to become a `Presentation` ledger entry
+/// (docs/design/68-context-engine.md §10): the canonical payload plus the
+/// schema-driven title and identity digest, and the skill that owns its type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PresentationCard {
+    pub semantic_type: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub schema_version: u32,
+    /// Canonical (key-sorted) payload.
+    pub payload: Value,
+    pub title: String,
+    pub identity_digest: String,
+}
+
+/// What a tool returns. `content` is the whole result: a tool never shortens
+/// its own output, because the calling loop records it in full and decides
+/// how much a request shows (`window`).
+#[derive(Debug, Clone, Default)]
 pub struct ToolOutput {
     pub content: String,
     pub is_error: bool,
+    /// The cards a run this call delegated to showed (a `task` worker's).
+    /// The calling loop records each as a presentation of this call, so the
+    /// user sees it and the delegating agent can recall it. In-process only:
+    /// a brokered worker's reply cannot fill it.
+    pub delegated: Option<DelegatedCards>,
+}
+
+/// The cards a delegated run validated and showed, and the session that ran
+/// it, whose ledger holds each card's original call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegatedCards {
+    pub session_id: String,
+    pub cards: Vec<PresentationCard>,
 }
 
 impl ToolOutput {
@@ -155,6 +188,7 @@ impl ToolOutput {
         ToolOutput {
             content: content.into(),
             is_error: false,
+            delegated: None,
         }
     }
 
@@ -162,6 +196,7 @@ impl ToolOutput {
         ToolOutput {
             content: content.into(),
             is_error: true,
+            delegated: None,
         }
     }
 

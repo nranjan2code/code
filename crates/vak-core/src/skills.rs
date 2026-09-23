@@ -190,7 +190,7 @@ impl vak_tools::Tool for SkillTool {
         })
     }
 
-    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(name) = args.get("name").and_then(Value::as_str) else {
             return vak_tools::ToolOutput::error(
                 r#"{"type":"invalid_arguments","capability":"skill","message":"missing required string 'name'"}"#,
@@ -208,7 +208,7 @@ impl vak_tools::Tool for SkillTool {
             ));
         };
         match skill.load() {
-            Ok(content) => vak_tools::ToolOutput::ok(ctx.truncate_output(content)),
+            Ok(content) => vak_tools::ToolOutput::ok(content),
             Err(error) => vak_tools::ToolOutput::error(error),
         }
     }
@@ -597,7 +597,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd: dir.path().to_path_buf(),
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,

@@ -260,6 +260,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
+        presentation_rebuild: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![],

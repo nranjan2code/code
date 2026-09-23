@@ -68,7 +68,8 @@ pub fn compaction_request(model: &str, transcript: &str) -> ChatRequest {
 
 /// Renders messages to a readable transcript for summarization. Tool
 /// calls carry their name+input (paths live there); results are labeled
-/// explicitly instead of masquerading as empty user turns.
+/// explicitly instead of masquerading as empty user turns, and shown as
+/// their schema-driven digest with the evidence id `recall` reopens.
 pub fn render_transcript(messages: &[Message]) -> String {
     let mut out = String::new();
     for m in messages {
@@ -89,13 +90,18 @@ pub fn render_transcript(messages: &[Message]) -> String {
                         serde_json::to_string(input).unwrap_or_default()
                     ));
                 }
-                ContentBlock::ToolResult { content, .. } => {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
                     if !wrote_header {
                         out.push_str(&format!("[{role}]\n"));
                         wrote_header = true;
                     }
-                    let preview: String = content.chars().take(600).collect();
-                    out.push_str(&format!("[tool-result]\n{preview}\n"));
+                    let digest =
+                        vak_session::transcript_result(messages, tool_use_id, content, *is_error);
+                    out.push_str(&format!("[tool-result]\n{digest}\n"));
                 }
                 _ => {}
             }

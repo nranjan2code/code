@@ -437,7 +437,6 @@ async fn run_case_with_tools(
     let verify_ctx = ToolContext {
         cwd: cwd.clone(),
         cancel: CancellationToken::new(),
-        limits: Default::default(),
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,

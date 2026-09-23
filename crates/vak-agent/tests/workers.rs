@@ -137,6 +137,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
+        presentation_rebuild: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![Arc::new(ReadTool)],

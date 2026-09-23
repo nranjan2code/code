@@ -508,7 +508,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,

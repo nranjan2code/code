@@ -431,24 +431,6 @@ pub struct PresentationNudge {
 /// inert.
 pub type RetrievalCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
-/// Everything the agent loop needs to write a `Presentation` ledger entry
-/// for a validated `emit_*_card` call (docs/design/68-context-engine.md
-/// §10), supplied by the card-shape knowledge that lives in
-/// `vak-core::presentation_tools` — this crate has no skill-registry or
-/// card-shape knowledge of its own, only the mechanics of writing the entry.
-#[derive(Debug, Clone)]
-pub struct PresentationCardInfo {
-    pub semantic_type: String,
-    pub skill_id: String,
-    pub skill_version: String,
-    pub schema_version: u32,
-    /// Canonical (key-sorted) payload — see
-    /// `vak_session::types::canonicalize_json`.
-    pub payload: serde_json::Value,
-    pub title: String,
-    pub identity_digest: String,
-}
-
 /// Re-validates a card call from its own arguments and returns the info
 /// needed to write its `Presentation` entry, or `None` if it no longer
 /// validates (unreachable in practice: `execute()` already validated it
@@ -458,7 +440,7 @@ pub struct PresentationCardInfo {
 /// session-log access itself, so the agent loop writes the entry here, at
 /// the point the tool result is appended to the session.
 pub type PresentationRebuild =
-    Arc<dyn Fn(&str, &serde_json::Value) -> Option<PresentationCardInfo> + Send + Sync>;
+    Arc<dyn Fn(&str, &serde_json::Value) -> Option<vak_tools::PresentationCard> + Send + Sync>;
 
 impl AgentConfig {
     pub fn new(system_prefix: impl Into<String>) -> Self {
@@ -955,6 +937,36 @@ fn truncate_chars(s: &str, max: usize) -> String {
 const ARGS_PREVIEW_LIMIT: usize = 400;
 const RESULT_PREVIEW_LIMIT: usize = 2000;
 
+/// What one tool call produced beyond the text its result block carries: the
+/// whole result when the block carries only a window of it
+/// (`vak_tools::window`), and the cards a run it delegated to showed. Filled
+/// where the call executes, drained where the batch's results are recorded.
+#[derive(Debug, Default)]
+struct CallYield {
+    body: Option<String>,
+    delegated: Option<vak_tools::DelegatedCards>,
+}
+
+type CallYields = Arc<StdMutex<HashMap<String, CallYield>>>;
+
+/// The text a result block carries for `content`: the content itself, or a
+/// window of it when it is over-long, with the whole kept aside for the
+/// ledger so `recall` returns it.
+fn windowed_result(id: &str, content: String, yields: &CallYields) -> String {
+    match vak_tools::window(&content, Some(id), 1) {
+        Some(window) => {
+            yields
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(id.to_string())
+                .or_default()
+                .body = Some(content);
+            window
+        }
+        None => content,
+    }
+}
+
 #[derive(Clone)]
 struct PendingToolCall {
     id: String,
@@ -970,6 +982,9 @@ pub struct Agent {
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
     /// `name + input` of every card call that displayed successfully this run.
     presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// What each call in flight produced beyond its result text, drained
+    /// when the batch's results are recorded (`CallYield`).
+    call_yields: CallYields,
     /// Active goal (Phase H): set via `set_goal`, consumed by the audit
     /// gate on completion claims.
     active_goal: Option<goal::GoalState>,
@@ -1002,6 +1017,7 @@ impl Agent {
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
+            call_yields: CallYields::default(),
             active_goal: None,
             obligations: Vec::new(),
             handoff_used: false,
@@ -2515,13 +2531,25 @@ impl Agent {
                 .collect();
             if !retrieval_tool_names.is_empty() {
                 retrieval_succeeded_this_run = true;
-                if let Some((_, ToolRunOutput::Ok(content))) = results.iter().find(|(id, out)| {
-                    matches!(out, ToolRunOutput::Ok(_))
-                        && call_names
-                            .get(id)
-                            .is_some_and(|name| retrieval_tool_names.contains(name))
-                }) {
-                    last_evidence_snippet = Some(truncate_chars(content, RESULT_PREVIEW_LIMIT));
+                // Every retrieval this batch returned, as its result block
+                // carries it: judging a card or an answer against only the
+                // first result, or the first part of one, flagged answers
+                // built from the rest.
+                let retrieved: Vec<&str> = results
+                    .iter()
+                    .filter_map(|(id, out)| match out {
+                        ToolRunOutput::Ok(content)
+                            if call_names
+                                .get(id)
+                                .is_some_and(|name| retrieval_tool_names.contains(name)) =>
+                        {
+                            Some(content.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !retrieved.is_empty() {
+                    last_evidence_snippet = Some(retrieved.join("\n\n"));
                 }
             }
             pending_grounding_check = if retrieval_tool_names.is_empty() {
@@ -2562,6 +2590,19 @@ impl Agent {
             // across the worker/broker boundary (AGENTS.md invariant 14)
             // and has no session-log access. `execute()`'s generic ack is
             // replaced with a short one carrying the new entry's id.
+            let mut yields: HashMap<String, CallYield> = {
+                let mut pending = self
+                    .call_yields
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                call_issue_order
+                    .iter()
+                    .filter_map(|id| pending.remove_entry(id))
+                    .collect()
+            };
+            self.record_delegated_cards(&call_issue_order, &mut yields, &mut results)
+                .await;
+            cards_emitted_this_run |= yields.values().any(|y| y.delegated.is_some());
             if let Some(rebuild) = self.config.presentation_rebuild.clone() {
                 let mut session = self.session.lock().await;
                 if let Some(turn_id) = session.latest_directive_entry_id() {
@@ -2703,20 +2744,31 @@ impl Agent {
                 })
                 .collect();
 
-            if let Err(e) = self
-                .session
-                .lock()
-                .await
-                .append_message(MessageRecord {
-                    message: Message {
-                        role: Role::User,
-                        content: blocks,
-                    },
-                    meta: None,
-                })
-                .map_err(|e| LlmError::Network(format!("session write failed: {e}")))
             {
-                return TurnOutcome::Failed { error: e };
+                let mut session = self.session.lock().await;
+                let appended = session
+                    .append_message(MessageRecord {
+                        message: Message {
+                            role: Role::User,
+                            content: blocks,
+                        },
+                        meta: None,
+                    })
+                    .and_then(|_| {
+                        // The whole of each windowed result, beside the
+                        // window the request carries (docs/design/68 §3).
+                        for id in &call_issue_order {
+                            if let Some(body) = yields.get_mut(id).and_then(|y| y.body.take()) {
+                                session.append_evidence_body(id, body)?;
+                            }
+                        }
+                        Ok(())
+                    });
+                if let Err(e) = appended {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(format!("session write failed: {e}")),
+                    };
+                }
             }
 
             if let Some(outcome) = reconcile_repair_budget(self, &failed_correctable).await {
@@ -2724,6 +2776,70 @@ impl Agent {
             }
 
             turn += 1;
+        }
+    }
+
+    /// Records the cards each delegated run in this batch showed (a `task`
+    /// worker's) as presentations of the call that delegated it, and lists
+    /// them in that call's result so this agent can recall one to review or
+    /// fix it. A worker's cards used to reach nobody: the parent received the
+    /// worker's final text and nothing else.
+    async fn record_delegated_cards(
+        &self,
+        call_issue_order: &[String],
+        yields: &mut HashMap<String, CallYield>,
+        results: &mut [(String, ToolRunOutput)],
+    ) {
+        let mut session = self.session.lock().await;
+        let Some(turn_id) = session.latest_directive_entry_id() else {
+            return;
+        };
+        for id in call_issue_order {
+            let Some(delegated) = yields.get(id).and_then(|y| y.delegated.clone()) else {
+                continue;
+            };
+            let mut derived_from =
+                session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+            derived_from.push(id.clone());
+            let mut listed = Vec::new();
+            for card in delegated.cards {
+                let digest = vak_session::types::payload_digest(&card.payload);
+                if session.has_presentation(&turn_id, &digest) {
+                    continue;
+                }
+                let label = format!("{} \"{}\"", card.semantic_type, card.title);
+                let record = vak_session::types::PresentationRecord {
+                    turn_id: turn_id.clone(),
+                    source: vak_session::types::PresentationSource::Delegated {
+                        tool_use_id: id.clone(),
+                        worker_session_id: delegated.session_id.clone(),
+                    },
+                    semantic_type: card.semantic_type,
+                    skill_id: card.skill_id,
+                    skill_version: card.skill_version,
+                    schema_version: card.schema_version,
+                    payload: card.payload,
+                    payload_digest: digest,
+                    derived_from: derived_from.clone(),
+                    title: card.title,
+                    identity_digest: card.identity_digest,
+                };
+                if let Ok(entry) = session.append_presentation(record) {
+                    listed.push(format!("- pres:{} {label}", entry.id));
+                }
+            }
+            if listed.is_empty() {
+                continue;
+            }
+            if let Some((_, ToolRunOutput::Ok(content) | ToolRunOutput::Err(content))) =
+                results.iter_mut().find(|(rid, _)| rid == id)
+            {
+                content.push_str(&format!(
+                    "\n\nThe worker showed the user these cards; they are on screen already. \
+                     recall {{\"presentation\": \"<id>\"}} opens one to review or fix it.\n{}",
+                    listed.join("\n")
+                ));
+            }
         }
     }
 
@@ -3636,7 +3752,7 @@ impl Agent {
                     objective: g.objective.clone(),
                     criteria: g.criteria.clone(),
                     status: vak_session::types::GoalStatus::Unverified {
-                        reason: truncate_chars(&findings, 800),
+                        reason: findings.clone(),
                     },
                 });
             }
@@ -3684,7 +3800,6 @@ impl Agent {
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: cancel.child_token(),
-            limits: Default::default(),
             sandbox: Some(sandbox),
             sandbox_sink: None,
             agent_id: None,
@@ -3700,8 +3815,7 @@ impl Agent {
             Err(_) => return Err("timed out after 120s".to_string()),
         };
         if out.is_error {
-            let tail: String = out.content.chars().rev().take(400).collect::<String>();
-            Err(tail.chars().rev().collect())
+            Err(vak_session::bash_digest(&out.content))
         } else {
             Ok(())
         }
@@ -4417,7 +4531,12 @@ impl Agent {
             .partition(|call| vak_tools::canonical_tool_name(&call.name) == "recall");
         let mut results = Vec::with_capacity(recall_calls.len());
         for call in recall_calls {
-            let output = self.resolve_recall(&call.input).await;
+            let output = match self.resolve_recall(&call.input).await {
+                ToolRunOutput::Ok(content) => {
+                    ToolRunOutput::Ok(windowed_result(&call.id, content, &self.call_yields))
+                }
+                failed => failed,
+            };
             results.push((call.id, output));
         }
         results.extend(self.execute_batch_inner(calls, cancel, events).await);
@@ -4781,6 +4900,7 @@ impl Agent {
                                 hook_recorder.as_ref(),
                                 tool_activity_recorder.as_ref(),
                                 sandbox.as_ref(),
+                                &self.call_yields,
                                 cancel,
                                 events,
                             )
@@ -4862,6 +4982,7 @@ impl Agent {
                 let hook_recorder = hook_recorder.clone();
                 let tool_activity_recorder = tool_activity_recorder.clone();
                 let agent_id = agent_id.clone();
+                let yields = self.call_yields.clone();
                 join.spawn(async move {
                     let r = execute_one(
                         call,
@@ -4874,6 +4995,7 @@ impl Agent {
                         hook_recorder.as_ref(),
                         tool_activity_recorder.as_ref(),
                         sandbox.as_ref(),
+                        &yields,
                         &cancel,
                         &events,
                     )
@@ -5574,6 +5696,7 @@ async fn execute_one(
     hook_recorder: Option<&HookRecorder>,
     tool_activity_recorder: Option<&ToolActivityRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
+    yields: &CallYields,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -5670,26 +5793,34 @@ async fn execute_one(
             let ctx = vak_tools::ToolContext {
                 cwd: cwd.to_path_buf(),
                 cancel: cancel.child_token(),
-                limits: Default::default(),
                 sandbox: sandbox.cloned(),
                 sandbox_sink: Some(sandbox_sink),
                 agent_id: agent_id.map(|s| s.to_string()),
             };
-            let result_ctx = ctx.clone();
             let tool = tool.clone();
+            // The context (and its event sender) moves into the task and is
+            // dropped when it ends, so joining the forwarder below cannot
+            // wait on a sender this function still holds.
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
-            // Close the event sender before joining the forwarder. Keeping a
-            // cloned ToolContext alive while awaiting the receiver makes the
-            // channel wait on itself forever, which hides cancellation and
-            // leaves partial-output runs stuck.
             let output = match res {
-                Ok(out) if out.is_error => {
-                    ToolRunOutput::Err(result_ctx.truncate_output(out.content))
+                Ok(out) => {
+                    if let Some(delegated) = out.delegated {
+                        yields
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .entry(call.id.clone())
+                            .or_default()
+                            .delegated = Some(delegated);
+                    }
+                    let content = windowed_result(&call.id, out.content, yields);
+                    if out.is_error {
+                        ToolRunOutput::Err(content)
+                    } else {
+                        ToolRunOutput::Ok(content)
+                    }
                 }
-                Ok(out) => ToolRunOutput::Ok(result_ctx.truncate_output(out.content)),
                 Err(join_err) => ToolRunOutput::Err(format!("tool task failed: {join_err}")),
             };
-            drop(result_ctx);
             let _ = forwarder.await;
             output
         }

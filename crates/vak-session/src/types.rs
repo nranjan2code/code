@@ -656,6 +656,14 @@ pub enum PresentationSource {
     /// Emitted as an inline ```` ```vak ```` fence in assistant text (models
     /// without tool calling).
     Fence { message_entry_id: String },
+    /// Emitted by a worker this conversation delegated to through the
+    /// `tool_use_id` call (`task`). The worker's own ledger holds the card's
+    /// original call; this entry is how the delegating conversation shows it
+    /// and recalls it. Unlike `ToolCall`, one call may carry several.
+    Delegated {
+        tool_use_id: String,
+        worker_session_id: String,
+    },
 }
 
 /// A validated `emit_*_card` (or fence) presentation, written once at the
@@ -837,6 +845,18 @@ pub enum EntryPayload {
     /// `<turns>` tail block or, promoted, through `Turn::full_record`, never
     /// through this entry directly.
     TurnCard(TurnCardRecord),
+    /// The whole result of a tool call whose request carried only a window
+    /// of it (docs/design/68-context-engine.md §3). Never model-visible raw:
+    /// the `ToolResult` block holds what the request carried, and `recall`
+    /// and the closed-turn digests read this.
+    EvidenceBody(EvidenceBodyRecord),
+}
+
+/// The whole result behind a windowed `ToolResult` block.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidenceBodyRecord {
+    pub tool_use_id: String,
+    pub content: String,
 }
 
 /// The closing record for one turn (docs/design/68-context-engine.md §10).

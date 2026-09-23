@@ -5658,11 +5658,10 @@ impl Core {
             applied.provenance.tier,
             vak_intent::Tier::LocalModel | vak_intent::Tier::CloudModel
         ) {
-            // The answer parsed but set nothing: keep an excerpt so the
-            // ledger says what the classifier actually said.
-            let excerpt: String = answer.chars().take(200).collect();
+            // The answer parsed but set nothing: keep it so the ledger says
+            // what the classifier actually said.
             applied.provenance.escalation_note = Some(format!(
-                "{}; answer: {excerpt:?}",
+                "{}; answer: {answer:?}",
                 applied
                     .provenance
                     .escalation_note
@@ -5847,7 +5846,7 @@ impl Core {
                     .and_then(presentation_tools::emit_tool_for)
                     .unwrap_or(name);
                 presentation_tools::presentation_info(resolved_name, input, &skills).map(|info| {
-                    vak_agent::PresentationCardInfo {
+                    vak_tools::PresentationCard {
                         semantic_type: info.semantic_type,
                         skill_id: info.skill_id,
                         skill_version: info.skill_version,
@@ -6267,6 +6266,7 @@ impl Core {
                 capabilities: turn_capabilities.descriptors.clone(),
                 hooks: cfg.hooks.clone(),
                 revocation_check: cfg.revocation_check.clone(),
+                presentation_rebuild: cfg.presentation_rebuild.clone(),
                 mcp_tool_index: Some(cfg.mcp_tool_index.clone()),
                 input_normalizer: cfg.input_normalizer.clone(),
                 read_only_tools,

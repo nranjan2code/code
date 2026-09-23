@@ -14,7 +14,6 @@ fn ctx_with(cwd: &std::path::Path, mode: SandboxMode) -> ToolContext {
     ToolContext {
         cwd: cwd.to_path_buf(),
         cancel: tokio_util::sync::CancellationToken::new(),
-        limits: Default::default(),
         sandbox: Some(Arc::new(Seatbelt::new(mode, cwd))),
         sandbox_sink: None,
         agent_id: None,
@@ -169,7 +168,6 @@ async fn deny_sandbox_returns_error_at_runtime() {
     let ctx = ToolContext {
         cwd: dir.path().to_path_buf(),
         cancel: tokio_util::sync::CancellationToken::new(),
-        limits: Default::default(),
         sandbox: Some(std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(
             "unavailable in this configuration",
         ))),
@@ -199,7 +197,6 @@ async fn off_mode_allows_unrestricted_writes() {
     let ctx = ToolContext {
         cwd: dir.path().to_path_buf(),
         cancel: tokio_util::sync::CancellationToken::new(),
-        limits: Default::default(),
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,

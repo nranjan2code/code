@@ -1,11 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::Path;
-use std::sync::Arc;
 
 use tempfile::tempdir;
 
-use vak_tools::context::OutputLimits;
 use vak_tools::{
     Tool, ToolContext, ToolOutput, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool,
     read::ReadTool, write::WriteTool,
@@ -15,11 +13,6 @@ async fn run(tool: &dyn Tool, dir: &Path, args: serde_json::Value) -> ToolOutput
     let ctx = ToolContext {
         cwd: dir.to_path_buf(),
         cancel: tokio_util::sync::CancellationToken::new(),
-        limits: OutputLimits {
-            max_bytes: 500,
-            max_line_chars: 100,
-            spill_to_disk: false,
-        },
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
@@ -324,66 +317,19 @@ async fn grep_matches_with_include_filter() {
 }
 
 #[tokio::test]
-async fn output_truncation_keeps_head_and_tail() {
+async fn a_tool_returns_its_whole_output() {
     let dir = tempdir().unwrap();
-    let long: String = (0..200).map(|i| format!("L{i:04}\n")).collect();
-    run(
-        &WriteTool,
-        dir.path(),
-        serde_json::json!({"path": "long.txt", "content": long}),
-    )
-    .await;
+    let long: String = (0..40_000).map(|i| format!("L{i:05}\n")).collect();
+    std::fs::write(dir.path().join("long.txt"), &long).unwrap();
     let out = run(
-        &ReadTool,
+        &BashTool,
         dir.path(),
-        serde_json::json!({"path": "long.txt"}),
+        serde_json::json!({"command": "cat long.txt"}),
     )
     .await;
-    let truncated = Arc::new(ToolContext {
-        cwd: dir.path().to_path_buf(),
-        cancel: tokio_util::sync::CancellationToken::new(),
-        limits: OutputLimits {
-            max_bytes: 300,
-            max_line_chars: 2000,
-            spill_to_disk: false,
-        },
-        sandbox: None,
-        sandbox_sink: None,
-        agent_id: None,
-    });
-    let t = truncated.truncate_output(out.content);
-    assert!(t.len() < 600);
-    assert!(t.contains("truncated"));
-    assert!(t.contains("L0000"), "head preserved");
-    assert!(t.contains("L0199"), "tail preserved");
-}
-
-#[test]
-fn truncate_output_handles_multibyte_without_overflow() {
-    let ctx = ToolContext {
-        cwd: std::env::temp_dir(),
-        cancel: tokio_util::sync::CancellationToken::new(),
-        limits: OutputLimits {
-            max_bytes: 30_000,
-            max_line_chars: 2000,
-            spill_to_disk: false,
-        },
-        sandbox: None,
-        sandbox_sink: None,
-        agent_id: None,
-    };
-    // The original underflow repro: 20k chars but 60k bytes. Byte-gating
-    // said "truncate", char math said head+tail > total => subtract
-    // overflow (debug panic). Char-gated code must return it unchanged.
-    let line: String = "あ".repeat(1000);
-    let out: String = (0..20).map(|_| format!("{line}\n")).collect();
-    let t = ctx.truncate_output(out);
-    assert_eq!(t.chars().count(), 20 * 1001);
-
-    // Real truncation on multibyte content stays correct too.
-    let big: String = "あ".repeat(40_000);
-    let t2 = ctx.truncate_output(big);
-    assert!(t2.contains("truncated"));
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.contains("L00000") && out.content.contains("L39999"));
+    assert!(out.content.chars().count() > long.chars().count());
 }
 
 #[tokio::test]

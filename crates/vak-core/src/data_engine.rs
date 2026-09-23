@@ -502,7 +502,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd: std::path::PathBuf::from("/tmp"),
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,

@@ -153,7 +153,7 @@ impl McpManager {
             .iter()
             .map(|tool| McpToolInfo {
                 name: tool.name.clone(),
-                description: self.redact(tool.description.chars().take(90).collect::<String>()),
+                description: self.redact(tool.description.clone()),
                 input_schema: self.redact_json(&tool.input_schema),
             })
             .collect();
@@ -222,32 +222,6 @@ impl McpManager {
         let mut names: Vec<String> = self.servers.keys().cloned().collect();
         names.sort();
         names
-    }
-
-    /// Persist a redacted MCP response as a workspace artifact. The model
-    /// receives only a bounded preview plus this path and can use the normal
-    /// `read` capability for exact, paged retrieval.
-    pub fn store_artifact(&self, server: &str, tool: &str, content: &str) -> Option<PathBuf> {
-        let dir = self.cwd.join(".vak").join("mcp-artifacts");
-        std::fs::create_dir_all(&dir).ok()?;
-        let safe_server: String = server
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect();
-        let safe_tool: String = tool
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect();
-        let path = dir.join(format!(
-            "{}-{}-{}.txt",
-            safe_server,
-            safe_tool,
-            uuid::Uuid::now_v7()
-        ));
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, content).ok()?;
-        std::fs::rename(&tmp, &path).ok()?;
-        Some(path)
     }
 
     async fn get(&self, server: &str) -> Result<Arc<McpClient>, McpError> {

@@ -132,7 +132,7 @@ impl vak_tools::Tool for SessionSearchTool {
         })
     }
 
-    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(query) = args.get("query").and_then(Value::as_str) else {
             return vak_tools::ToolOutput::error("missing required argument 'query'");
         };
@@ -292,7 +292,7 @@ impl vak_tools::Tool for SessionSearchTool {
                         h.snippet
                     ));
                 }
-                vak_tools::ToolOutput::ok(ctx.truncate_output(out))
+                vak_tools::ToolOutput::ok(out)
             }
             Ok(Err(e)) => vak_tools::ToolOutput::error(format!("session search failed: {e}")),
             Err(e) => vak_tools::ToolOutput::error(format!("search task failed: {e}")),
@@ -349,7 +349,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
@@ -387,7 +386,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
@@ -464,7 +462,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd: dir.path().join("workspace"),
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
@@ -514,7 +511,6 @@ mod tests {
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
-            limits: Default::default(),
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,

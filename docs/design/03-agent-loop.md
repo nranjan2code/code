@@ -162,6 +162,19 @@ The turn's reading also supplies a `stop` profile — `message`, `inspection`,
 `effect`, or `verification`. An act that changes something and produced no
 effect did not finish, whatever the final message says.
 
+## Workers and their cards
+
+A `task` worker runs its own loop and ledger. When it ends, `task` returns its
+final text and, beside it, every card the worker showed
+(`ToolOutput::delegated`). The parent loop records each card as a
+presentation of the `task` call (`PresentationSource::Delegated`, carrying the
+worker's session id) and appends the list to the call's result — `pres:<id>`,
+type and title — so the user sees the cards in the parent conversation and
+the parent can `recall` one to review or fix it. A worker that builds, reviews
+or fixes cards therefore needs no text re-encoding of them. The worker's text
+is a tool result like any other: recorded whole and windowed in the request
+when over-long (docs/design/68-context-engine.md §3).
+
 ## Later phases
 
 All three former items shipped (permission gate, `task` workers, resource-

@@ -50,8 +50,7 @@ pub struct ToolCatalogEntry {
 pub fn build_planner_prompt(task: &str, catalog: &[ToolCatalogEntry]) -> String {
     let mut p = String::from("Available execution tools:\n");
     for e in catalog {
-        let desc: String = e.description.chars().take(100).collect();
-        p.push_str(&format!("- {}: {desc}\n", e.name));
+        p.push_str(&format!("- {}: {}\n", e.name, e.description));
     }
     p.push_str(&format!(
         "\nTask:\n{task}\n\nProduce the TOML workflow now."
@@ -306,8 +305,7 @@ fn seed_with_settled(task: &str, state: &FlowState, failed_node: &str, reason: &
     s.push_str("Settled node outputs you may reuse (do not redo this work):\n");
     for (id, r) in &state.nodes {
         if r.status == crate::types::NodeStatus::Completed {
-            let out: String = r.output.chars().take(400).collect();
-            s.push_str(&format!("- {id}: {out}\n"));
+            s.push_str(&format!("- {id}: {}\n", r.output));
         } else {
             s.push_str(&format!(
                 "- {id}: {:?} — do not repeat this node\n",

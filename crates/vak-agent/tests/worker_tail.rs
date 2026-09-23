@@ -156,6 +156,7 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
+        presentation_rebuild: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![Arc::new(ReadTool)],

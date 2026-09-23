@@ -7722,7 +7722,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
- "uuid",
  "vak-config",
  "vak-tools",
 ]

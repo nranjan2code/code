@@ -58,6 +58,9 @@ pub struct Turn {
     /// Full presentation records parallel to `presentations`, kept alongside
     /// the id list so `full_record`/`build_card` never re-walk the ledger.
     presentation_records: Vec<PresentationRecord>,
+    /// The whole result behind each of this turn's windowed tool results
+    /// (`EntryPayload::EvidenceBody`), keyed by tool_use_id.
+    evidence_bodies: HashMap<String, String>,
     /// The turn's resolved intent reading, when an `Intent` entry exists.
     reading: Option<ReadingKey>,
     /// Every message after the directive, in ledger order, INCLUDING
@@ -175,6 +178,7 @@ impl TurnIndex {
                                     closed: true,
                                     behind_reset: false,
                                     presentation_records: Vec::new(),
+                                    evidence_bodies: HashMap::new(),
                                     reading: None,
                                     raw_tail: Vec::new(),
                                 });
@@ -221,6 +225,12 @@ impl TurnIndex {
                 EntryPayload::Intent(record) => {
                     if let Some(turn) = turns.last_mut() {
                         turn.reading = Some(ReadingKey::from_record(record));
+                    }
+                }
+                EntryPayload::EvidenceBody(body) => {
+                    if let Some(turn) = turns.last_mut() {
+                        turn.evidence_bodies
+                            .insert(body.tool_use_id.clone(), body.content.clone());
                     }
                 }
                 EntryPayload::Compaction(c) if c.reset_all => {
@@ -340,12 +350,17 @@ impl Turn {
             })
     }
 
+    /// A result's whole content: its evidence body when the request carried
+    /// only a window of it, else the recorded result itself.
     fn tool_result(&self, id: &str) -> Option<(&str, bool)> {
         self.steps
             .iter()
             .flat_map(|step| step.results.iter())
             .find_map(|(result_id, content, is_error)| {
-                (result_id == id).then_some((content.as_str(), *is_error))
+                (result_id == id).then(|| {
+                    let content = self.evidence_bodies.get(id).unwrap_or(content);
+                    (content.as_str(), *is_error)
+                })
             })
     }
 
@@ -367,7 +382,7 @@ impl Turn {
             .iter()
             .filter_map(|record| match &record.source {
                 PresentationSource::ToolCall { tool_use_id } => Some(tool_use_id.as_str()),
-                PresentationSource::Fence { .. } => None,
+                PresentationSource::Fence { .. } | PresentationSource::Delegated { .. } => None,
             })
             .collect()
     }
@@ -412,7 +427,7 @@ impl Turn {
                 PresentationSource::ToolCall { tool_use_id } => {
                     Some((tool_use_id.as_str(), id.as_str()))
                 }
-                PresentationSource::Fence { .. } => None,
+                PresentationSource::Fence { .. } | PresentationSource::Delegated { .. } => None,
             })
             .collect();
         let mut out = vec![self.directive.clone()];
@@ -629,6 +644,37 @@ pub fn evidence_digest(id: &str, evidence: &Evidence) -> String {
     format!("{body}\n{tag}")
 }
 
+/// A tool result as a summariser's transcript shows it (compaction,
+/// handoff): its schema-driven digest, tagged with the evidence id `recall`
+/// reopens, when the call that produced it is in `messages`; else the result
+/// itself. Never a character cut.
+pub fn transcript_result(
+    messages: &[Message],
+    tool_use_id: &str,
+    content: &str,
+    is_error: bool,
+) -> String {
+    let call = messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .find_map(|block| match block {
+            ContentBlock::ToolUse { id, name, input } if id == tool_use_id => Some((name, input)),
+            _ => None,
+        });
+    match call {
+        Some((tool, input)) => evidence_digest(
+            tool_use_id,
+            &Evidence {
+                tool: tool.clone(),
+                input: input.clone(),
+                content: content.to_string(),
+                is_error,
+            },
+        ),
+        None => content.to_string(),
+    }
+}
+
 /// The short parenthetical a `TraceLine` carries (`"8 results, 14.2k
 /// chars"`) — a summary, not the full digest.
 pub fn evidence_shape(evidence: &Evidence) -> String {
@@ -741,7 +787,9 @@ fn text_digest(content: &str) -> String {
     out
 }
 
-fn bash_digest(content: &str) -> String {
+/// Command output as its exit line and first and last ten lines, saying how
+/// many lines between them it leaves out.
+pub fn bash_digest(content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let mut out = String::new();
     if let Some(exit) = lines
@@ -755,7 +803,7 @@ fn bash_digest(content: &str) -> String {
         out.push_str(&lines.join("\n"));
     } else {
         out.push_str(&lines[..10].join("\n"));
-        out.push_str("\n...\n");
+        out.push_str(&format!("\n[{} lines omitted]\n", lines.len() - 20));
         out.push_str(&lines[lines.len() - 10..].join("\n"));
     }
     out

@@ -105,7 +105,7 @@ impl Tool for GlobTool {
             return ToolOutput::ok("no files matched");
         }
         matches.sort();
-        ToolOutput::ok(ctx.truncate_output(matches.join("\n")))
+        ToolOutput::ok(matches.join("\n"))
     }
 }
 

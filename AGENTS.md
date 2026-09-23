@@ -650,7 +650,12 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
   the tool result is only a short ack or a repairable validation error, and
   `vak-server`'s projection rebuilds the card from the call
   (`vak_core::presentation_tools::card_output_from_call`) — never from result
-  text, which the tool framework line-truncates at ~2000 characters. A
+  text, of which an over-long result's request carries only a window. A
+  worker's cards reach the conversation that delegated to it: the worker
+  records them in its own ledger, `task` hands them up beside its text
+  (`ToolOutput::delegated`), and the parent loop records each as a
+  `PresentationSource::Delegated` presentation of the `task` call and lists
+  its id in the result, so the user sees it and the parent can recall it. A
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
   `Retry`, which chat views fold away (doc 30-output-engineering). When a
   model answers in prose what the app's own signal/recipe detection says is a

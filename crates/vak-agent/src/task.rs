@@ -64,6 +64,9 @@ pub struct TaskDeps {
     pub capabilities: Vec<CapabilityDescriptor>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<crate::RevocationCheck>,
+    /// Records a worker's cards in its own ledger as they validate, so they
+    /// can be handed to the delegating conversation when the worker ends.
+    pub presentation_rebuild: Option<crate::PresentationRebuild>,
     pub mcp_tool_index: Option<McpToolIndex>,
     pub input_normalizer: Option<InputNormalizer>,
     /// Read-only subset (read/glob/grep) used when a task declares
@@ -685,6 +688,7 @@ impl TaskTool {
         cfg.tools = child_tools;
         cfg.hooks = self.deps.hooks.clone();
         cfg.revocation_check = self.deps.revocation_check.clone();
+        cfg.presentation_rebuild = self.deps.presentation_rebuild.clone();
         cfg.mcp_tool_index = self.deps.mcp_tool_index.clone().unwrap_or_default();
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
@@ -809,32 +813,61 @@ impl TaskTool {
                 .await;
         }
         let _ = pump.await;
-        match outcome {
-            crate::TurnOutcome::Completed { response } => {
-                let text = response.text_content();
-                if text.is_empty() {
-                    ToolOutput::ok(format!("worker '{session_id}' completed without output"))
+        let cards: Vec<vak_tools::PresentationCard> = agent
+            .session
+            .lock()
+            .await
+            .presentations()
+            .into_iter()
+            .map(|(_, record)| vak_tools::PresentationCard {
+                semantic_type: record.semantic_type.clone(),
+                skill_id: record.skill_id.clone(),
+                skill_version: record.skill_version.clone(),
+                schema_version: record.schema_version,
+                payload: record.payload.clone(),
+                title: record.title.clone(),
+                identity_digest: record.identity_digest.clone(),
+            })
+            .collect();
+        let mut output = worker_output(&session_id, outcome, requested_contract.is_some());
+        if !cards.is_empty() {
+            output.delegated = Some(vak_tools::DelegatedCards {
+                session_id: session_id.clone(),
+                cards,
+            });
+        }
+        output
+    }
+}
+
+/// The `task` result for a finished worker: its final text, or why there is
+/// none. The worker's cards travel beside it (`ToolOutput::delegated`).
+fn worker_output(session_id: &str, outcome: crate::TurnOutcome, contracted: bool) -> ToolOutput {
+    match outcome {
+        crate::TurnOutcome::Completed { response } => {
+            let text = response.text_content();
+            if text.is_empty() {
+                ToolOutput::ok(format!("worker '{session_id}' completed without output"))
+            } else {
+                if contracted {
+                    ToolOutput::ok(format!("worker '{session_id}' completed:\n{text}"))
                 } else {
-                    if requested_contract.is_some() {
-                        ToolOutput::ok(format!("worker '{session_id}' completed:\n{text}"))
-                    } else {
-                        ToolOutput::ok(text)
-                    }
+                    ToolOutput::ok(text)
                 }
             }
-            crate::TurnOutcome::Aborted { partial } => {
-                let text = partial.map(|p| p.text_content()).unwrap_or_default();
-                ToolOutput::error(format!(
-                    "worker '{session_id}' was cancelled. Partial output:\n{text}"
-                ))
-            }
-            crate::TurnOutcome::Failed { error } => {
-                ToolOutput::error(format!("worker '{session_id}' failed: {error}"))
-            }
-            crate::TurnOutcome::MaxTurnsReached => ToolOutput::error(format!(
-                "worker '{session_id}' hit its turn limit before finishing"
-            )),
         }
+        crate::TurnOutcome::Aborted { partial } => {
+            let text = partial.map(|p| p.text_content()).unwrap_or_default();
+            ToolOutput::error(format!(
+                "worker '{session_id}' was cancelled. Partial output:\n{text}"
+            ))
+        }
+        crate::TurnOutcome::Failed { error } => {
+            ToolOutput::error(format!("worker '{session_id}' failed: {error}"))
+        }
+        crate::TurnOutcome::MaxTurnsReached => ToolOutput::error(format!(
+            "worker '{session_id}' hit its turn limit before finishing"
+        )),
     }
 }
 

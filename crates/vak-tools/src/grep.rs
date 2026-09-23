@@ -93,7 +93,7 @@ impl Tool for GrepTool {
 
         match out {
             SearchOutcome::Empty => ToolOutput::ok("no matches"),
-            SearchOutcome::Hits(text) => ToolOutput::ok(ctx.truncate_output(text)),
+            SearchOutcome::Hits(text) => ToolOutput::ok(text),
         }
     }
 }

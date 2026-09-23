@@ -327,6 +327,24 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Presentation(record)))
     }
 
+    /// Records the whole result behind a windowed `ToolResult` block
+    /// (docs/design/68-context-engine.md §3), so `recall` and the closed-turn
+    /// digests read what the tool returned, not what the request carried.
+    pub fn append_evidence_body(
+        &mut self,
+        tool_use_id: &str,
+        content: String,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(
+            parent,
+            EntryPayload::EvidenceBody(crate::types::EvidenceBodyRecord {
+                tool_use_id: tool_use_id.to_string(),
+                content,
+            }),
+        ))
+    }
+
     /// The most recently recorded capacity profile matching `key`,
     /// reconstructed from the ledger's `CapacityProbe`/`CapacityFeedback`
     /// activities (docs/design/68-context-engine.md §1). Generic over the
@@ -382,7 +400,8 @@ impl SessionLog {
     }
 
     /// Resolves a tool_use_id to its full `Evidence` — the tool name, its
-    /// call arguments, its result content, and whether it failed — by
+    /// call arguments, its whole result content (the evidence body when the
+    /// request carried a window of it), and whether it failed — by
     /// scanning the active chain for the matching `ToolUse`/`ToolResult`
     /// pair. Works for evidence in any turn, open or closed, which is what
     /// lets `recall({ id })` reopen a result from a turn now reduced to a
@@ -409,6 +428,12 @@ impl SessionLog {
             }
         }
         let tool = tool?;
+        let body = chain.iter().find_map(|entry| match &entry.payload {
+            EntryPayload::EvidenceBody(body) if body.tool_use_id == tool_use_id => {
+                Some(body.content.clone())
+            }
+            _ => None,
+        });
         for entry in &chain {
             let EntryPayload::Message(record) = &entry.payload else {
                 continue;
@@ -424,7 +449,7 @@ impl SessionLog {
                     return Some(Evidence {
                         tool,
                         input,
-                        content: content.clone(),
+                        content: body.unwrap_or_else(|| content.clone()),
                         is_error: *is_error,
                     });
                 }
