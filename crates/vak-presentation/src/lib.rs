@@ -60,11 +60,11 @@ pub struct SpecNode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpecValue {
-    Text(String),
-    Number(f64),
-    Boolean(bool),
+    Text { value: String },
+    Number { value: f64 },
+    Boolean { value: bool },
     Binding(Binding),
-    Literal(Value),
+    Literal { value: Value },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -692,7 +692,7 @@ fn validate_node(
         return Err(PresentationError::Limit("too many nodes".into()));
     }
     for value in node.props.values() {
-        if let SpecValue::Text(text) = value
+        if let SpecValue::Text { value: text } = value
             && text.len() > MAX_TEXT
         {
             return Err(PresentationError::Limit("literal text is too long".into()));
@@ -940,13 +940,13 @@ fn compile_node(
 
 fn resolve_spec_value(value: &SpecValue, data: &Value) -> Result<Option<Value>, PresentationError> {
     match value {
-        SpecValue::Text(text) => Ok(Some(Value::String(text.clone()))),
-        SpecValue::Number(number) => serde_json::Number::from_f64(*number)
+        SpecValue::Text { value: text } => Ok(Some(Value::String(text.clone()))),
+        SpecValue::Number { value: number } => serde_json::Number::from_f64(*number)
             .map(Value::Number)
             .map(Some)
             .ok_or_else(|| PresentationError::InvalidSpec("non-finite number".into())),
-        SpecValue::Boolean(value) => Ok(Some(Value::Bool(*value))),
-        SpecValue::Literal(value) => {
+        SpecValue::Boolean { value } => Ok(Some(Value::Bool(*value))),
+        SpecValue::Literal { value } => {
             if value.to_string().len() > MAX_TEXT {
                 return Err(PresentationError::Limit(
                     "literal value is too large".into(),
@@ -1349,10 +1349,12 @@ mod tests {
     #[test]
     fn hostile_specs_fail_closed_at_parse_boundary() {
         let mut oversized = spec();
-        oversized
-            .root
-            .props
-            .insert("text".into(), SpecValue::Text("x".repeat(MAX_TEXT + 1)));
+        oversized.root.props.insert(
+            "text".into(),
+            SpecValue::Text {
+                value: "x".repeat(MAX_TEXT + 1),
+            },
+        );
         assert!(matches!(
             validate_spec(&oversized),
             Err(PresentationError::Limit(message)) if message.contains("text")
@@ -1469,7 +1471,10 @@ mod tests {
             candidate.root.children = (0..width)
                 .map(|index| SpecNode {
                     primitive: Primitive::Text,
-                    props: BTreeMap::from([(format!("p{index}"), SpecValue::Text("x".into()))]),
+                    props: BTreeMap::from([(
+                        format!("p{index}"),
+                        SpecValue::Text { value: "x".into() },
+                    )]),
                     children: Vec::new(),
                     each: None,
                     item: None,

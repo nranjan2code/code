@@ -395,7 +395,12 @@ fn audit_spec_validation() {
             for i in 0..target {
                 children.push(SpecNode {
                     primitive: Primitive::Text,
-                    props: BTreeMap::from([("text".into(), SpecValue::Text(format!("n{i}")))]),
+                    props: BTreeMap::from([(
+                        "text".into(),
+                        SpecValue::Text {
+                            value: format!("n{i}"),
+                        },
+                    )]),
                     children: vec![],
                     each: None,
                     item: None,
@@ -480,7 +485,7 @@ fn audit_spec_validation() {
         let n = n_val;
         scenarios.push(tc(&format!("non_finite_number_{n:?}"), move || {
             let mut props = BTreeMap::new();
-            props.insert("value".into(), SpecValue::Number(n));
+            props.insert("value".into(), SpecValue::Number { value: n });
             let root = SpecNode {
                 primitive: Primitive::Metric,
                 props,
@@ -1188,17 +1193,34 @@ fn audit_digests() {
         assert!(digest(&s).is_ok());
     }));
 
-    // SpecValue::Text(String) cannot be serialized under internal tagging
-    scenarios.push(tc("digest_text_variant_fails", || {
+    scenarios.push(tc("static_spec_values_round_trip", || {
         let root = SpecNode {
             primitive: Primitive::Text,
-            props: BTreeMap::from([("text".into(), SpecValue::Text("hello".into()))]),
+            props: BTreeMap::from([
+                (
+                    "text".into(),
+                    SpecValue::Text {
+                        value: "hello".into(),
+                    },
+                ),
+                ("count".into(), SpecValue::Number { value: 2.0 }),
+                ("ready".into(), SpecValue::Boolean { value: true }),
+                (
+                    "meta".into(),
+                    SpecValue::Literal {
+                        value: serde_json::json!({"source": "pack"}),
+                    },
+                ),
+            ]),
             children: vec![],
             each: None,
             item: None,
         };
-        let s = make_spec("bad_dig", 1, &["detail"], root);
-        assert!(digest(&s).is_err());
+        let s = make_spec("static_values", 1, &["detail"], root);
+        let encoded = serde_json::to_vec(&s).expect("serialize static pack values");
+        let decoded = parse_spec(&encoded).expect("parse static pack values");
+        assert_eq!(decoded, s);
+        assert!(digest(&decoded).is_ok());
     }));
 
     run("digests", scenarios);
@@ -2235,11 +2257,11 @@ fn audit_seeds() {
         );
     }));
 
-    scenarios.push(tc("seed_pack_revisions_are_3", || {
+    scenarios.push(tc("seed_pack_revisions_match_immutable_definitions", || {
         assert!(
             seeds::built_in_seed_pack()
                 .iter()
-                .all(|r| r.spec.revision == 3)
+                .all(|r| r.spec.revision == if r.spec.id == "seed.travel-options" { 7 } else { 6 })
         );
     }));
 
@@ -2269,25 +2291,9 @@ fn audit_seeds() {
         }));
     }
 
-    // Each seed compiles with generic payload
-    for record in seeds::built_in_seed_pack() {
-        let id = record.spec.id.clone();
-        let st = record.spec.accepts[0].clone();
-        scenarios.push(tc(&format!("seed_compiles_{id}"), move || {
-            let result = compile(
-                &record.spec,
-                &ci(
-                    &st,
-                    json!({"title":"T","subtitle":"S","summary":"Sum","items":["a","b"]}),
-                    "fb",
-                ),
-            );
-            assert!(
-                matches!(result, CompiledPresentation::Rich(_)),
-                "seed {id}: {result:?}"
-            );
-        }));
-    }
+    // Emitter-shaped compilation for all 75 seeds lives in the server
+    // projection conformance test. A single generic payload cannot satisfy
+    // required rows, steps, sources, and other distinct result contracts.
 
     // Seed can be activated and selected
     scenarios.push(tc("seed_activate_and_select", || {

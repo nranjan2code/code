@@ -294,6 +294,14 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         each: None,
         item: None,
     };
+    if id == "travel-options" {
+        root.props.insert(
+            "variant".into(),
+            SpecValue::Text {
+                value: "options".into(),
+            },
+        );
+    }
     let accepts: Vec<String> = match id {
         "timeline" => vec![accepts.into(), "plan.timeline".into()],
         "recipe" => vec![accepts.into(), "recipe.card".into()],
@@ -384,7 +392,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         // Seed definitions are immutable revisions. Bump this whenever the
         // declarative starter shape changes so an older persisted seed cannot
         // collide with the new digest at the same (id, revision) key.
-        revision: 6,
+        revision: if id == "travel-options" { 7 } else { 6 },
         accepts,
         root,
         fallback: FallbackSpec::default(),
@@ -457,6 +465,34 @@ mod tests {
             }
         }
         assert!(primitives.len() >= 6);
+    }
+
+    #[test]
+    fn travel_options_pack_carries_its_choice_variant_through_storage_and_compile() {
+        let record = built_in_seed_pack()
+            .into_iter()
+            .find(|record| record.spec.id == "seed.travel-options")
+            .expect("travel options pack");
+        let encoded = serde_json::to_vec(&record.spec).expect("serialize built-in pack");
+        let parsed = crate::parse_spec(&encoded).expect("parse built-in pack");
+        let result = compile(
+            &parsed,
+            &CompileInput {
+                semantic_type: "travel_options".into(),
+                payload: serde_json::json!({
+                    "title": "Saturday choices",
+                    "rows": [{"option": "Museum", "fit": "Indoor"}],
+                }),
+                fallback_text: "fallback".into(),
+            },
+        );
+        let CompiledPresentation::Rich(tree) = result else {
+            panic!("travel pack did not render: {result:?}")
+        };
+        assert_eq!(
+            tree.root.props.get("variant"),
+            Some(&serde_json::json!("options"))
+        );
     }
 
     #[test]

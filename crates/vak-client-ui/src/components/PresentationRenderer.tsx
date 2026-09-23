@@ -1364,7 +1364,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
 export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string }) {
   const root = () => {
     const node = props.tree.root;
-    if (props.tree.spec_id === "seed.travel-options" && node.primitive === "table") {
+    // Earlier saved travel trees predate the declarative options variant.
+    if (props.tree.spec_id === "seed.travel-options" && props.tree.revision < 7 && node.primitive === "table") {
       return { ...node, props: { ...node.props, variant: "options" } };
     }
     return props.tree.spec_id.startsWith("seed.") && node.primitive === "entity"
