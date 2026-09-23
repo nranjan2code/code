@@ -5,7 +5,7 @@
 // (assistantParts -> parseVakFence -> StructuredView -> STRUCTURED_RENDERERS)
 // so a regression here is a regression a real chat turn would also hit.
 import { createMemo, ErrorBoundary, For, Show, createSignal } from "solid-js";
-import { StructuredView, structuredRendererTypes } from "../components/PresentationRenderer";
+import { AdaptiveTreeView, StructuredView, structuredRendererTypes } from "../components/PresentationRenderer";
 import { assistantParts, groupAssistantParts } from "../structured";
 import {
   CATEGORY_FIXTURES,
@@ -226,6 +226,15 @@ export default function CardHarness() {
           <div class="harness-cell">
             <div class="harness-cell-head"><code>seed.metric</code><span class="harness-variant">emitted multi-reading payload</span></div>
             <GenericSpecRenderer node={{ primitive: "metric", props: { label: "Noida now", condition: "Sunny", temperature: "35.2°C", humidity: "31%" }, children: [] }} />
+          </div>
+          <div class="harness-cell">
+            <div class="harness-cell-head"><code>seed.travel-options</code><span class="harness-variant">selected table with owner choice</span></div>
+            <AdaptiveTreeView
+              tree={{ schema_version: 1, spec_id: "seed.travel-options", revision: 6, digest: "harness", root: { primitive: "table", props: { title: "Saturday choices", columns: [{ key: "option", label: "Option" }, { key: "fit", label: "Fit" }] }, children: [{ primitive: "row", props: { option: "Museum", fit: "Indoor" }, children: [] }, { primitive: "row", props: { option: "Garden", fit: "Outdoors" }, children: [] }] }, accessibility_summary: "Saturday choices", coverage: { rendered_paths: [], omitted_paths: [] } }}
+              fallback="Saturday choices"
+              sessionId="harness-session"
+              resultId="harness-result"
+            />
           </div>
         </div>
       </section>

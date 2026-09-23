@@ -860,17 +860,16 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string; 
   </section>;
 }
 
+function optionInteractionFor(sessionId?: string, resultId?: string) {
+  if (!sessionId || !resultId) return undefined;
+  return { onOptionSelect: (label: string) => {
+    setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
+    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
+  } };
+}
+
 export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
-  const optionInteraction = () => {
-    const sessionId = props.sessionId;
-    const resultId = props.resultId;
-    if (!sessionId || !resultId) return undefined;
-    return { onOptionSelect: (label: string) => {
-      setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
-      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
-    } };
-  };
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
     : <details class="tool-details"><summary>View original result</summary><pre>{props.fallback || JSON.stringify(props.output.payload, null, 2)}</pre></details>;
@@ -878,7 +877,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
-          <PresentationInteractionContext.Provider value={optionInteraction()}>
+          <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
             <StructuredRenderer output={props.output} />
           </PresentationInteractionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>
@@ -1167,7 +1166,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
-    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
+    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
         return <section class="semantic-recovery" role="status">
@@ -1362,13 +1361,21 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
   );
 }
 
-export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
-  const root = () => props.tree.spec_id.startsWith("seed.") && props.tree.root.primitive === "entity"
-    ? { ...props.tree.root, props: { ...props.tree.root.props, kind: props.tree.spec_id.slice(5).replaceAll("-", " ") } }
-    : props.tree.root;
+export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string }) {
+  const root = () => {
+    const node = props.tree.root;
+    if (props.tree.spec_id === "seed.travel-options" && node.primitive === "table") {
+      return { ...node, props: { ...node.props, variant: "options" } };
+    }
+    return props.tree.spec_id.startsWith("seed.") && node.primitive === "entity"
+      ? { ...node, props: { ...node.props, kind: props.tree.spec_id.slice(5).replaceAll("-", " ") } }
+      : node;
+  };
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      <GenericSpecRenderer node={root()} />
+      <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+        <GenericSpecRenderer node={root()} />
+      </PresentationInteractionContext.Provider>
     </section>
   );
 }
