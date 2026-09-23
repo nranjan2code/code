@@ -16,7 +16,7 @@ import Icon from "./Icon";
 import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
-import { activate } from "../App";
+import { activate, sendPrompt } from "../App";
 
 export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server";
 
@@ -138,7 +138,18 @@ export default function ArtifactCanvas() {
         await api.requestRevisionFromCandidateComment(sessionId, artifact.candidateId, saved.comment_id);
       } else {
         const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
-        await api.steer(sessionId, `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}`);
+        await sendPrompt(
+          `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}\nInspect the saved result and answer when the change is done; do not repeat a write when the file already contains the requested change.`,
+          undefined,
+          undefined,
+          sessionId,
+          { sessionId, resultId: artifact.resultId, label: subject },
+          "correction",
+          true,
+        );
+        // A new Agent turn may raise a scoped approval. Return to the
+        // conversation so its live controls and result are visible.
+        closeArtifactCanvas();
       }
       setFeedback("");
       setFeedbackState("sent");

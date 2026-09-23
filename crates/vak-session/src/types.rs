@@ -212,6 +212,10 @@ pub struct AgentIdentity {
     pub id: String,
     pub revision: u64,
     pub name: String,
+    // Older ledgers in the supported major line predate characters. An
+    // empty historical snapshot means "use the Agent's current profile";
+    // new headers always write the selected character explicitly.
+    #[serde(default)]
     pub character: String,
     pub personality: String,
     #[serde(default = "default_agent_animation")]
@@ -915,7 +919,7 @@ pub enum SessionError {
 #[cfg(test)]
 mod agent_identity_tests {
     #[test]
-    fn character_is_required_identity_data() {
+    fn character_absent_from_existing_ledger_has_neutral_default() {
         let value = serde_json::json!({
             "id": "researcher",
             "revision": 1,
@@ -923,7 +927,8 @@ mod agent_identity_tests {
             "personality": "curious",
             "behaviour": "careful"
         });
-        assert!(serde_json::from_value::<super::AgentIdentity>(value).is_err());
+        let identity = serde_json::from_value::<super::AgentIdentity>(value).unwrap();
+        assert!(identity.character.is_empty());
     }
 
     #[test]

@@ -293,7 +293,7 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
                 );
             }
         }
-        return Json(serde_json::json!({"session_id": sid, "agent": h.agent, "cwd": core.cwd()}))
+        return Json(serde_json::json!({"session_id": sid, "agent": identity, "cwd": core.cwd()}))
             .into_response();
     }
     let session = match core.start_session().await {

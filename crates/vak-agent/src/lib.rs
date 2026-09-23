@@ -5768,9 +5768,50 @@ To continue, either correct the inputs above and              re-run, or widen t
     TurnOutcome::Completed { response }
 }
 
-/// Doom-loop threshold: the Nth identical (tool, args) call in one run is
-/// re-routed through approval instead of silently repeating.
+/// Effectful repetitions reach a human at this count. An identical `read`
+/// remains inside its normal permission check for two more attempts, then
+/// fails as a tool value without asking a human to approve rereading a file.
 const DOOM_LOOP_THRESHOLD: u32 = 3;
+const READ_REPEAT_LIMIT: u32 = 5;
+
+fn repeat_guard_decision(name: &str, count: u32) -> Option<Decision> {
+    if name == "read" && count >= READ_REPEAT_LIMIT {
+        return Some(Decision::Deny {
+            reason: format!(
+                "identical read call repeated ×{count} this run; use the successful result already returned or explain why a different inspection is needed"
+            ),
+        });
+    }
+    if name != "read" && count >= DOOM_LOOP_THRESHOLD {
+        return Some(Decision::Ask {
+            reason: format!("identical {name} call repeated ×{count} this run"),
+            source: AskSource::CircuitBreaker,
+        });
+    }
+    None
+}
+
+#[cfg(test)]
+mod repeat_guard_tests {
+    use super::{AskSource, Decision, repeat_guard_decision};
+
+    #[test]
+    fn repeated_reads_stay_under_normal_permission_before_bounded_denial() {
+        assert!(repeat_guard_decision("read", 3).is_none());
+        assert!(repeat_guard_decision("read", 4).is_none());
+        assert!(matches!(
+            repeat_guard_decision("read", 5),
+            Some(Decision::Deny { .. })
+        ));
+        assert!(matches!(
+            repeat_guard_decision("write", 3),
+            Some(Decision::Ask {
+                source: AskSource::CircuitBreaker,
+                ..
+            })
+        ));
+    }
+}
 const MAX_TOOL_INPUT_CHARS: usize = 32_000;
 
 /// After this many **consecutive** turns that end with an unresolved
@@ -5854,11 +5895,8 @@ async fn authorize(
         *entry += 1;
         *entry
     };
-    let decision = if n >= DOOM_LOOP_THRESHOLD {
-        Decision::Ask {
-            reason: format!("identical {} call repeated ×{n} this run", call.name),
-            source: AskSource::CircuitBreaker,
-        }
+    let decision = if let Some(decision) = repeat_guard_decision(&call.name, n) {
+        decision
     } else if let Some(engine) = &config.permission {
         engine.evaluate(&call.name, &call.input, config.mode, cwd)
     } else {
