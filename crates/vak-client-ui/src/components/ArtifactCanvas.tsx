@@ -41,6 +41,7 @@ export default function ArtifactCanvas() {
   const [displayType, setDisplayType] = createSignal<ArtifactDisplayType>("html");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [previewWarning, setPreviewWarning] = createSignal<string | null>(null);
   const [preparationRequired, setPreparationRequired] = createSignal(false);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const [rawText, setRawText] = createSignal("");
@@ -202,6 +203,7 @@ export default function ArtifactCanvas() {
     const generation = ++request;
     setLoading(true);
     setError(null);
+    setPreviewWarning(null);
     cleanupMedia();
 
     const kind = detectType(artifact);
@@ -362,6 +364,10 @@ export default function ArtifactCanvas() {
 
       if (generation !== request) return;
       setRawText(content);
+      const parsed = new DOMParser().parseFromString(content, "text/html");
+      if (!parsed.body?.textContent?.trim() && !parsed.body?.children.length && !parsed.querySelector("script")) {
+        setPreviewWarning("This HTML has no visible page content. Open Code to inspect it or ask for a revision.");
+      }
       setHtml(prepared);
     } catch (e) {
       if (generation === request)
@@ -713,6 +719,9 @@ export default function ArtifactCanvas() {
           <Show when={!loading() && !error()}>
             {/* View Mode: Preview */}
             <Show when={viewMode() === "preview"}>
+              <Show when={previewWarning()}>{(warning) =>
+                <div class="artifact-canvas-preview-warning" role="status">{warning()}</div>
+              }</Show>
               {/* Image Preview */}
               <Show when={displayType() === "image" && mediaUrl()}>
                 <div class="artifact-canvas-image-container">

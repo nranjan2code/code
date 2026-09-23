@@ -632,6 +632,17 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-footer span { margin-right: auto; color: var(--muted); font-size: 12px; }
 @media (max-width: 900px) { .candidate-review-decision-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .candidate-review-summary { padding-inline: 16px; } .candidate-review-decision-grid { grid-template-columns: 1fr; } .candidate-review-body { grid-template-columns: 1fr; } .candidate-review-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--border-soft); } .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } .candidate-review-footer { flex-wrap: wrap; } .candidate-review-footer span { flex-basis: 100%; } }
+@media (max-width: 600px) {
+  .candidate-review-backdrop { padding: 0; }
+  .candidate-review { width: 100vw; height: 100dvh; max-height: 100dvh; overflow-y: auto; border: 0; border-radius: 0; }
+  .candidate-review-header, .candidate-review-footer { position: sticky; z-index: 2; flex: none; background: var(--surface); }
+  .candidate-review-header { top: 0; padding: 14px 16px; }
+  .candidate-review-footer { bottom: 0; padding: 12px 16px max(12px, env(safe-area-inset-bottom)); }
+  .candidate-review-summary { flex: none; }
+  .candidate-review-body { display: block; flex: none; min-height: auto; }
+  .candidate-review-files { max-height: none; overflow: visible; }
+  .candidate-review-preview { overflow: visible; }
+}
 .settings-load-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--red); border-radius: 8px; color: var(--red); font-size: 12px; }
 .composer-lookup-error { margin: 0 16px 8px; color: var(--yellow); font-size: 12px; }
 .run-revision { color: var(--text-soft); font-size: 12px; margin-left: auto; }
@@ -2741,7 +2752,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .dock {
     position: fixed;
     inset: 0 0 30px 0;
-    z-index: 45;
+    z-index: 55;
     width: 100%;
     border-left: 0;
     box-shadow: var(--shadow-lg);
@@ -5626,6 +5637,23 @@ html[data-theme="dawn"] .artifact-canvas-body {
 }
 .artifact-canvas-error .icon {
   color: var(--red);
+}
+.artifact-canvas-preview-warning {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  left: 50%;
+  width: min(420px, calc(100% - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  transform: translateX(-50%);
 }
 
 /* --- Source view --------------------------------------------------------- */
