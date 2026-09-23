@@ -628,7 +628,11 @@ export function setNotice(value: Notice | null) {
     setNotices([]);
     return;
   }
-  setNotices((prev) => [...prev.slice(-4), value]);
+  setNotices((prev) =>
+    prev.some((notice) => notice.kind === value.kind && notice.text === value.text)
+      ? prev
+      : [...prev.slice(-4), value],
+  );
 }
 
 export function dismissNotice(index: number) {

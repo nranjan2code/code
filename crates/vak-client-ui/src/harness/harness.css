@@ -22,12 +22,12 @@ html, body, #root {
 }
 .harness-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
   gap: 16px;
   margin: 16px 0 40px;
 }
 .harness-grid-wide {
-  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr));
 }
 .harness-character-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .harness-character-card { display: grid; gap: 3px; padding: 14px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface); }
@@ -55,7 +55,8 @@ html, body, #root {
   margin-bottom: 6px;
 }
 .harness-variant {
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .harness-error {
   color: #d33;
