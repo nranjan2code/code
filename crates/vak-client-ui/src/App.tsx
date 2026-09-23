@@ -528,7 +528,7 @@ export async function activate(id: string) {
 
 let openingAgent: Promise<string | null> | null = null;
 const lastSessionByAgent = new Map<string, string>();
-export async function openAgentChat(agentId = "vak"): Promise<string | null> {
+export async function openAgentChat(agentId = "vak", createNew = false): Promise<string | null> {
   while (openingAgent) {
     await openingAgent;
   }
@@ -544,7 +544,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
     const existing = remembered && sessions().some((session) => session.session_id === remembered)
       ? remembered
       : recent;
-    if (existing) {
+    if (existing && !createNew) {
       closeSplit();
       setReplyTarget(null);
       setArmedGoal(null);
@@ -553,7 +553,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
       await refreshSessions();
       return existing;
     }
-    const res = await api.openAgent(agentId);
+    const res = await api.openAgent(agentId, createNew);
     if (source !== api.backendUrl() || cwd !== backend().cwd) return null;
     recordAgentOpened(agentId);
     setActiveAgent(res.agent);
@@ -575,7 +575,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
 }
 
 export async function newSession() {
-  await openAgentChat(activeAgentId());
+  await openAgentChat(activeAgentId(), true);
   window.dispatchEvent(new CustomEvent("vak:focus-composer"));
 }
 

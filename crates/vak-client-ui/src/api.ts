@@ -394,8 +394,8 @@ export function saveAgents(agents: Agent[], scope: "user" | "workspace" = "works
   return req("/config/agents", { method: "PUT", body: JSON.stringify({ agents, scope }) });
 }
 
-export function openAgent(id: string): Promise<{session_id: string; cwd: string; agent: Agent}> {
-  return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: "{}"});
+export function openAgent(id: string, createNew = false): Promise<{session_id: string; cwd: string; agent: Agent}> {
+  return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: JSON.stringify({create_new: createNew})});
 }
 
 export interface AgentTemplate {

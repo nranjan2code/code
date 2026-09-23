@@ -11,7 +11,7 @@ import PresentationTimelineView, { StructuredView } from "./PresentationRenderer
 import { hasSettledProjection, serverTurnFor } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
-import { assistantParts, cleanAssistantText, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -113,7 +113,6 @@ function activeWorkingState(id: string | null): { executionId?: string } | null 
   if (!isRunning(id)) return null;
   const list = itemsOf(id);
   const last = list[list.length - 1];
-  if (last?.kind === "assistant" && last.streaming) return null;
   if (last?.kind === "approval" && !last.resolved) return null;
   const execution = [...list].reverse().find((item) => item.kind === "tool" && !item.done);
   return { executionId: execution?.kind === "tool" ? execution.id : undefined };
@@ -143,7 +142,7 @@ function TranscriptSkeleton() {
   );
 }
 
-function visibleItems(list: Item[]): Item[] {
+function visibleItems(list: Item[], liveTurn = false): Item[] {
   // Filter out any control scaffolding messages (e.g. <conversation_thread>,
   // <context_summary>, <intent>, <work_contract>) so they never leak into the chat canvas.
   const cleanList = list.filter((it) => {
@@ -154,7 +153,9 @@ function visibleItems(list: Item[]): Item[] {
       return stripControlScaffolding(it.text).length > 0;
     }
     if (it.kind === "assistant") {
-      if (it.streaming) return true;
+      // Model text in the active turn can be a draft that is replaced by a
+      // tool-backed result. Keep the conversation calm until the turn settles.
+      if (liveTurn || it.streaming) return false;
       const scrubbed = cleanAssistantText(it.text);
       if (!scrubbed.trim()) {
         return false;
@@ -168,11 +169,8 @@ function visibleItems(list: Item[]): Item[] {
   // through the task-scoped Details surface instead of changing the transcript.
   const d = "outcome";
   if (d === "outcome") {
-    // "Outcome" hides the working (thinking, tool-call) detail once it's
-    // done — but a run in progress must still show *something* live, or
-    // the pane reads as frozen for the entire stretch between the last
-    // settled turn and this one's reply. A streaming assistant reply
-    // (the outcome, forming) and the single most recent in-flight tool
+    // The working indicator is the live state; only settled answer content
+    // appears in the everyday conversation.
     return cleanList.filter((it, i) => {
       if (it.kind === "user") {
         return Boolean(stripControlScaffolding(it.text).trim());
@@ -192,22 +190,15 @@ function visibleItems(list: Item[]): Item[] {
       }
       if (it.kind === "approval" && !it.resolved) return true;
       if (it.kind === "assistant") {
-        if (it.streaming) return true;
         const scrubbed = cleanAssistantText(it.text);
         if (!scrubbed.trim()) return false;
-        // In outcome density, suppress earlier assistant items in the same turn
-        // ONLY if they are fleeting narration (e.g. "I'll search for that...").
-        // Substantive answers, analyses, and reports must NEVER be hidden.
-        if (isFleetingNarration(it.text)) {
-          for (let j = i + 1; j < cleanList.length; j++) {
-            const next = cleanList[j];
-            if (next.kind === "user") break;
-            if (
-              next.kind === "assistant" &&
-              (next.streaming || Boolean(cleanAssistantText(next.text).trim()))
-            ) {
-              return false;
-            }
+        // Before the durable projection arrives, show at most the latest
+        // answer from this turn. Earlier assistant messages are drafts.
+        for (let j = i + 1; j < cleanList.length; j++) {
+          const next = cleanList[j];
+          if (next.kind === "user") break;
+          if (next.kind === "assistant" && Boolean(cleanAssistantText(next.text).trim())) {
+            return false;
           }
         }
         return true;
@@ -911,11 +902,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
-              <Index each={displayedTurns()}>{(entry) =>
-                <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn)}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
-                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} />}
+              <Index each={displayedTurns()}>{(entry) => <>
+                <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
+                <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
+                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser />}
                 </Show>
-              }</Index>
+              </>}</Index>
               <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>
             </Show>
           </Show>

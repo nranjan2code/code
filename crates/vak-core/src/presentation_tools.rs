@@ -340,7 +340,7 @@ fn metric_payload_schema() -> Value {
 const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_universal_card",
-        description: "Emit a general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields.",
+        description: "Emit a static general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
         semantic_types: &[
             "map",
             "route_map",
@@ -389,7 +389,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_table_card",
-        description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows.",
+        description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
         semantic_types: &[
             "coding.benchmark",
             "coding.dependencies",

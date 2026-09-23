@@ -1165,8 +1165,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
-    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} />;
+    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
         return <section class="semantic-recovery" role="status">
@@ -1381,7 +1381,7 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
   );
 }
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean }) {
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   const turns = createMemo(() => {
     const order: string[] = [];
     const grouped = new Map<string, OutputItem[]>();
@@ -1401,6 +1401,6 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
     </details>}</Show>
-    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id)} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
+    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id && !(props.hideUser && item.role === "user"))} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
   </div>;
 }

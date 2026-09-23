@@ -265,7 +265,11 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
   const [sortAsc, setSortAsc] = createSignal<boolean>(true);
   const [copied, setCopied] = createSignal(false);
   const compact = surface === "compact";
-  const options = str(node.props, "variant") === "options";
+  const firstColumn = specColumns(node)[0];
+  const options = str(node.props, "variant") === "options" || (
+    specRows(node).length > 0 && specRows(node).length <= 8 &&
+    Boolean(firstColumn && /^(option|choice)$/i.test(firstColumn.key.trim()))
+  );
   const quiet = options || (specRows(node).length <= 5 && specColumns(node).length <= 6);
   const interaction = useContext(PresentationInteractionContext);
 

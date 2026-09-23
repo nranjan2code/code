@@ -65,6 +65,33 @@ async fn call(app: &Router, method: &str, path: &str, body: Value) -> (StatusCod
     )
 }
 
+#[tokio::test]
+async fn explicit_new_agent_conversation_gets_a_distinct_durable_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
+    core.set_sessions_home(temp.path().join("sessions-home"));
+    let app = vak_server::router(core.clone());
+    let (status, existing) = call(&app, "POST", "/agents/vak/open", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, created) = call(&app, "POST", "/agents/vak/open", json!({"create_new": true})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(created["session_id"], existing["session_id"]);
+    let created_id = created["session_id"].as_str().unwrap();
+    let ledger = SessionPath::new_session_file(&core.sessions_home(), &cwd, created_id);
+    let first = std::fs::read_to_string(ledger).unwrap();
+    let first: Entry = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+    let EntryPayload::Header(header) = first.payload else {
+        panic!("new conversation must begin with a header");
+    };
+    assert!(header.conversation.as_ref().is_some_and(|context|
+        context.conversation_id.starts_with("agent:vak:local:")));
+    let (status, resumed) = call(&app, "POST", "/agents/vak/open", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resumed["session_id"], existing["session_id"]);
+}
+
 fn profile(id: &str, name: &str) -> Value {
     json!({"id":id,"revision":1,"name":name,"character":"orb","personality":"Use the phrase identity-marker.","behaviour":"Answer concisely.","responsibilities":"Research news", "animation":"off","voice":"default"})
 }
