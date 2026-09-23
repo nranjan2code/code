@@ -2142,10 +2142,10 @@ async fn list_voice_providers() -> Json<serde_json::Value> {
     let providers: Vec<_> = registry
         .list()
         .map(|descriptor| {
-            let configured = descriptor
-                .env_var
-                .as_deref()
-                .is_some_and(|name| std::env::var(name).is_ok());
+            let has_key =
+                |name| vak_config::get_var(name).is_some_and(|value| !value.trim().is_empty());
+            let configured = descriptor.env_var.as_deref().is_some_and(has_key)
+                || (descriptor.name == "gemini-live" && has_key("GOOGLE_API_KEY"));
             // Keep credentials out of the response while making setup state
             // actionable in Settings and administration.
             serde_json::json!({

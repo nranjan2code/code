@@ -228,6 +228,9 @@ pub async fn speak(
             text.chars().count()
         )));
     }
+    if config.model.ends_with("-tts") {
+        return speak_batch(config, text, persona, voice_name, cancel).await;
+    }
     match tokio::time::timeout(
         LIVE_SESSION_TIMEOUT,
         speak_inner(config, text, persona, voice_name, cancel),
@@ -240,6 +243,60 @@ pub async fn speak(
             LIVE_SESSION_TIMEOUT.as_secs()
         ))),
     }
+}
+
+/// Generate speech with a discovered Gemini TTS model through generateContent.
+/// The Live socket path is reserved for models that actually support bidi turns.
+async fn speak_batch(
+    config: &GoogleLiveConfig,
+    text: &str,
+    persona: Option<&str>,
+    voice_name: Option<&str>,
+    cancel: &CancellationToken,
+) -> Result<Vec<u8>, LlmError> {
+    use base64::Engine as _;
+    let instruction = persona.filter(|p| !p.trim().is_empty());
+    let prompt = match instruction {
+        Some(persona) => format!("{persona}\n\nSay: {text}"),
+        None => text.to_string(),
+    };
+    let voice = voice_name
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("Kore");
+    let body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+        }
+    });
+    let url = format!(
+        "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
+        config.model
+    );
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = reqwest::Client::new().post(url).header("x-goog-api-key", &config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+    };
+    let status = response.status().as_u16();
+    let value: Value = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        result = response.json() => result.map_err(|e| LlmError::Parse(e.to_string()))?,
+    };
+    if status >= 400 {
+        return Err(map_status_error(status, &value.to_string()));
+    }
+    let encoded = value
+        .pointer("/candidates/0/content/parts/0/inlineData/data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| LlmError::Parse("TTS response contained no audio".into()))?;
+    let pcm = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| LlmError::Parse(format!("invalid TTS audio: {e}")))?;
+    if pcm.is_empty() {
+        return Err(LlmError::Parse("TTS response contained empty audio".into()));
+    }
+    Ok(wrap_wav(&pcm))
 }
 
 async fn speak_inner(

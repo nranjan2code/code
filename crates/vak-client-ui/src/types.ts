@@ -640,6 +640,7 @@ export interface VoiceProviderDescriptor {
   voices: string[];
   models: string[];
   configured?: boolean;
+  readiness?: { ready: boolean; detail: string } | null;
 }
 
 export interface VoiceProvidersResponse {
