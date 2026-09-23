@@ -33,6 +33,9 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   let audioSpeechActive = false;
   let audioSpeechMs = 0;
   let audioSilenceMs = 0;
+  let candidateFrames: Int16Array[] = [];
+  let candidateSpeechMs = 0;
+  let candidateSilenceMs = 0;
   let latestSpokenUtterance = "";
   let answerGeneration = 0;
   let voiceSessionId = "";
@@ -49,18 +52,37 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     }
     const frameMs = (pcm.length / AUDIO_SAMPLE_RATE) * 1_000;
     const hasVoice = Math.sqrt(energy / pcm.length) >= SPEECH_THRESHOLD;
-    if (hasVoice && !audioSpeechActive) {
+    if (!audioSpeechActive) {
+      if (hasVoice) {
+        candidateFrames.push(pcm);
+        candidateSpeechMs += frameMs;
+        candidateSilenceMs = 0;
+      } else if (candidateFrames.length) {
+        candidateFrames.push(pcm);
+        candidateSilenceMs += frameMs;
+        if (candidateSilenceMs >= 160) {
+          candidateFrames = [];
+          candidateSpeechMs = 0;
+          candidateSilenceMs = 0;
+        }
+      }
+      // Ignore short noise bursts; retain the candidate audio when speech starts.
+      if (candidateSpeechMs < MIN_SPEECH_MS) return;
       answerGeneration += 1;
       if (playbackSource) stopPlayback(true);
       else playbackGeneration += 1;
       utterance = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       socket.sendControl({ t: "speech_started", utterance_id: utterance });
       audioSpeechActive = true;
-      audioSpeechMs = 0;
+      audioSpeechMs = candidateSpeechMs;
       audioSilenceMs = 0;
+      for (const frame of candidateFrames) socket.sendAudio(frame);
+      candidateFrames = [];
+      candidateSpeechMs = 0;
+      candidateSilenceMs = 0;
       setStatus("Listening");
+      return;
     }
-    if (!audioSpeechActive) return;
     socket.sendAudio(pcm);
     if (hasVoice) {
       audioSpeechMs += frameMs;
@@ -91,6 +113,9 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     audioSpeechActive = false;
     audioSpeechMs = 0;
     audioSilenceMs = 0;
+    candidateFrames = [];
+    candidateSpeechMs = 0;
+    candidateSilenceMs = 0;
     answerGeneration += 1;
     voiceSessionId = "";
     setTranscript("");
