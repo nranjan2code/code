@@ -5331,6 +5331,59 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 }
 
 /* --- Media Views (Image & PDF) ------------------------------------------ */
+.artifact-canvas-table-preview {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 10px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.artifact-canvas-table-preview > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.artifact-canvas-table-scroll {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.artifact-canvas-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.artifact-canvas-table-scroll th,
+.artifact-canvas-table-scroll td {
+  max-width: 360px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.artifact-canvas-table-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  font-weight: 650;
+}
+
 .artifact-canvas-image-container {
   width: 100%;
   height: 100%;

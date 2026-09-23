@@ -5010,10 +5010,8 @@ async fn run_prompt(
                     vak_agent::TurnOutcome::Aborted { .. } => {
                         vak_session::ActivityStatus::Cancelled
                     }
-                    vak_agent::TurnOutcome::Failed { .. }
-                    | vak_agent::TurnOutcome::MaxTurnsReached => {
-                        vak_session::ActivityStatus::Failed
-                    }
+                    vak_agent::TurnOutcome::Failed { .. } => vak_session::ActivityStatus::Failed,
+                    vak_agent::TurnOutcome::MaxTurnsReached => vak_session::ActivityStatus::Partial,
                 };
                 let _ = session_log.append_activity(vak_session::ActivityRecord {
                     activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
@@ -10781,8 +10779,10 @@ async fn export_sandbox_candidate(
     }
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
         Ok(mut candidate) => {
-            candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
+            let verifiers = vak_sandbox::default_target_verifiers();
+            candidate.target_checks = verifiers.plan(&candidate);
             candidate.workspace_checks = planned_workspace_checks(&candidate);
+            let draft_checks = verifiers.verify(&candidate.source_root, &candidate.target_checks);
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
@@ -10804,6 +10804,7 @@ async fn export_sandbox_candidate(
                 candidate_digest,
                 candidate: candidate.clone(),
                 verified: true,
+                draft_checks,
                 updated_at: chrono::Utc::now().to_rfc3339(),
                 parent_candidate_id: None,
                 revision_session_id: None,
@@ -11438,9 +11439,11 @@ async fn dispatch_candidate_revision(
                     &frozen_root,
                 ) {
                     Ok(mut candidate) => {
-                        candidate.target_checks =
-                            vak_sandbox::default_target_verifiers().plan(&candidate);
+                        let verifiers = vak_sandbox::default_target_verifiers();
+                        candidate.target_checks = verifiers.plan(&candidate);
                         candidate.workspace_checks = planned_workspace_checks(&candidate);
+                        let draft_checks =
+                            verifiers.verify(&candidate.source_root, &candidate.target_checks);
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
@@ -11453,6 +11456,7 @@ async fn dispatch_candidate_revision(
                                     candidate_digest,
                                     candidate,
                                     verified: true,
+                                    draft_checks,
                                     updated_at: chrono::Utc::now().to_rfc3339(),
                                     parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
                                     revision_session_id: Some(child_session_id.clone()),
@@ -19402,6 +19406,9 @@ mod sandbox_promotion_tests {
         assert!(!candidate.result_id.is_empty());
         assert_eq!(candidate.candidate.target_checks.len(), 1);
         assert_eq!(candidate.candidate.target_checks[0].verifier, "format.json");
+        assert_eq!(candidate.draft_checks.len(), 1);
+        assert_eq!(candidate.draft_checks[0].status, "passed");
+        assert_eq!(candidate.draft_checks[0].path, "result.json");
 
         let candidate_id = candidate.candidate.candidate_id.clone();
         let response = promote_sandbox_candidate(
@@ -19448,6 +19455,36 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .len(),
             3
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_export_records_failed_html_check_without_claiming_target_success() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(
+            scratch.join("blank.html"),
+            "<!doctype html><html><head><title>Draft</head><body><main>Missing</main></body></html>",
+        )
+        .await
+        .unwrap();
+
+        let candidate = export_candidate(&state).await;
+        assert!(candidate.verified, "frozen bytes still have integrity");
+        assert_eq!(candidate.candidate.target_checks.len(), 1);
+        assert_eq!(candidate.draft_checks.len(), 1);
+        assert_eq!(candidate.draft_checks[0].verifier, "format.html.body");
+        assert_eq!(candidate.draft_checks[0].status, "failed");
+        assert!(
+            candidate.draft_checks[0]
+                .evidence
+                .contains("unclosed <title>")
         );
     }
 

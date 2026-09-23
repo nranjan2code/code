@@ -694,6 +694,7 @@ export interface SandboxCandidateRecord {
     files: Array<{ path: string; candidate_hash: string; base_hash?: string | null; bytes: number }>;
   };
   verified: boolean;
+  draft_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }>;
   updated_at: string;
 }
 

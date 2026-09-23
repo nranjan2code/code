@@ -240,8 +240,46 @@ impl TargetVerifier for JsonSyntaxVerifier {
     fn verify(&self, path: &Path) -> Result<String, String> {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         serde_json::from_slice::<serde_json::Value>(&bytes)
-            .map(|_| "JSON parsed from the applied workspace".into())
+            .map(|_| "JSON parsed".into())
             .map_err(|error| format!("JSON parse failed: {error}"))
+    }
+}
+
+/// Checks the browser-parsed document shape, not visual quality or script output.
+/// In particular, an unclosed raw-text element such as <title> can swallow the
+/// intended page while leaving the source file nonempty.
+pub struct HtmlBodyVerifier;
+
+impl TargetVerifier for HtmlBodyVerifier {
+    fn id(&self) -> &'static str {
+        "format.html.body"
+    }
+
+    fn supports(&self, path: &str) -> bool {
+        let path = path.to_ascii_lowercase();
+        path.ends_with(".html") || path.ends_with(".htm")
+    }
+
+    fn verify(&self, path: &Path) -> Result<String, String> {
+        const MAX_HTML_BYTES: u64 = 16 * 1024 * 1024;
+        let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
+        if size > MAX_HTML_BYTES {
+            return Err("HTML exceeds the 16 MiB structural check limit".into());
+        }
+        let bytes = fs::read(path).map_err(|error| error.to_string())?;
+        let source = String::from_utf8_lossy(&bytes);
+        let document = dom_query::Document::from(source.as_ref());
+        let body = document.select("body");
+        if body.is_empty() {
+            return Err("HTML parser found no body".into());
+        }
+        let has_body_text = !body.text().trim().is_empty();
+        let has_body_element = !body.select("*").is_empty();
+        let has_script = !document.select("script").is_empty();
+        if !has_body_text && !has_body_element && !has_script {
+            return Err("HTML parser found no visible body content or script; check for an unclosed <title> or other raw-text element".into());
+        }
+        Ok("HTML parsed with body content or a script; visual output was not inspected".into())
     }
 }
 
@@ -273,9 +311,7 @@ impl TargetVerifier for ImageDecodeVerifier {
         if width == 0 || height == 0 {
             return Err("decoded image has zero width or height".into());
         }
-        Ok(format!(
-            "decoded {width}×{height} image from the applied workspace"
-        ))
+        Ok(format!("decoded {width}×{height} image"))
     }
 }
 
@@ -305,7 +341,7 @@ impl TargetVerifier for PdfStructureVerifier {
             return Err("PDF has no pages".into());
         }
         Ok(format!(
-            "parsed PDF {} with {} page(s) from the applied workspace",
+            "parsed PDF {} with {} page(s)",
             document.version,
             pages.len()
         ))
@@ -447,7 +483,7 @@ impl TargetVerifier for DelimitedDataVerifier {
             rows += 1;
         }
         Ok(format!(
-            "parsed {rows} data row(s) with {columns} consistent column(s) from the applied workspace"
+            "parsed {rows} data row(s) with {columns} consistent column(s)"
         ))
     }
 }
@@ -474,7 +510,7 @@ impl TargetVerifier for SvgStructureVerifier {
                 | Ok(quick_xml::events::Event::Empty(element)) => {
                     let name = element.local_name();
                     return if name.as_ref() == b"svg" {
-                        Ok("parsed SVG root from the applied workspace".into())
+                        Ok("parsed SVG root".into())
                     } else {
                         Err(format!(
                             "XML root is {}, expected svg",
@@ -494,6 +530,7 @@ impl TargetVerifier for SvgStructureVerifier {
 pub fn default_target_verifiers() -> TargetVerifierRegistry {
     let mut registry = TargetVerifierRegistry::default();
     registry.register(JsonSyntaxVerifier);
+    registry.register(HtmlBodyVerifier);
     registry.register(ImageDecodeVerifier);
     registry.register(PdfStructureVerifier);
     registry.register(OpenXmlPackageVerifier);
@@ -599,6 +636,10 @@ pub struct CandidateRecord {
     pub candidate_digest: String,
     pub candidate: CandidateManifest,
     pub verified: bool,
+    /// Format evidence observed from the frozen draft bytes. Acceptance runs
+    /// the same planned checks again against the applied workspace state.
+    #[serde(default)]
+    pub draft_checks: Vec<TargetCheckResult>,
     pub updated_at: String,
     /// The saved version used as input for a human-requested revision.
     #[serde(default)]
@@ -1744,6 +1785,47 @@ mod tests {
         assert!(DelimitedDataVerifier.verify(&broken_csv).is_err());
         assert!(SvgStructureVerifier.verify(&svg).is_ok());
         assert!(SvgStructureVerifier.verify(&broken_svg).is_err());
+    }
+
+    #[test]
+    fn html_target_check_catches_a_page_swallowed_by_unclosed_title() {
+        let target = tempfile::tempdir().unwrap();
+        let valid = target.path().join("working.html");
+        let script_root = target.path().join("script-root.htm");
+        let swallowed = target.path().join("blank.html");
+        fs::write(&valid, "<!doctype html><html><head><title>Draft</title></head><body><main>Ready</main></body></html>").unwrap();
+        fs::write(&script_root, "<!doctype html><html><body><script>document.body.textContent = 'Ready'</script></body></html>").unwrap();
+        fs::write(&swallowed, "<!doctype html><html><head><title>Draft</head><body><main>Missing</main></body></html>").unwrap();
+
+        let candidate = CandidateManifest {
+            candidate_id: "html-check".into(),
+            source_root: target.path().into(),
+            destination_root: target.path().into(),
+            files: ["working.html", "script-root.htm", "blank.html"]
+                .into_iter()
+                .map(|path| CandidateFile {
+                    path: path.into(),
+                    candidate_hash: String::new(),
+                    base_hash: None,
+                    bytes: 0,
+                    operation: CandidateOperation::Upsert,
+                })
+                .collect(),
+            target_checks: Vec::new(),
+            workspace_checks: Vec::new(),
+        };
+        let registry = default_target_verifiers();
+        let checks = registry.plan(&candidate);
+        assert_eq!(checks.len(), 3);
+        let results = registry.verify(target.path(), &checks);
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.status.as_str())
+                .collect::<Vec<_>>(),
+            vec!["passed", "passed", "failed"]
+        );
+        assert!(results[2].evidence.contains("unclosed <title>"));
     }
     #[test]
     fn nested_artifacts_are_first_class() {

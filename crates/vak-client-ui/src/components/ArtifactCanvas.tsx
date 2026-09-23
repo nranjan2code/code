@@ -15,9 +15,10 @@ import * as api from "../api";
 import Icon from "./Icon";
 import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
+import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate } from "../App";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "code" | "server";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server";
 
 /**
  * ArtifactCanvas — immersive overlay preview for showcaseable artifacts.
@@ -31,6 +32,7 @@ export type ArtifactDisplayType = "html" | "pdf" | "image" | "code" | "server";
  * - Dev servers: live localhost port with automatic process lifecycle management
  * - PDF: native browser viewer via authenticated blob stream
  * - Images (png/jpg/webp/svg): centered responsive image inspector
+ * - CSV/TSV: bounded table preview with source available
  * - Code/Text: formatted source with copy
  *
  * Design-61 compliant: never auto-opens. Only appears on explicit user action.
@@ -45,6 +47,7 @@ export default function ArtifactCanvas() {
   const [preparationRequired, setPreparationRequired] = createSignal(false);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const [rawText, setRawText] = createSignal("");
+  const [tablePreview, setTablePreview] = createSignal<DelimitedPreview | null>(null);
   const [copied, setCopied] = createSignal(false);
   const [activeServerPort, setActiveServerPort] = createSignal<number | null>(null);
   const [reloadKey, setReloadKey] = createSignal(0);
@@ -173,6 +176,7 @@ export default function ArtifactCanvas() {
     if (artifact.serverName || artifact.serverUrl) return "server";
     const p = (artifact.artifactPath || "").toLowerCase();
     if (p.endsWith(".pdf")) return "pdf";
+    if (p.endsWith(".csv") || p.endsWith(".tsv")) return "table";
     if (
       p.endsWith(".png") ||
       p.endsWith(".jpg") ||
@@ -204,6 +208,7 @@ export default function ArtifactCanvas() {
     setLoading(true);
     setError(null);
     setPreviewWarning(null);
+    setTablePreview(null);
     cleanupMedia();
 
     const kind = detectType(artifact);
@@ -296,6 +301,21 @@ export default function ArtifactCanvas() {
       }
 
       // 4. Source / Text-only document handling
+      if (kind === "table") {
+        if (!artifact.artifactPath) throw new Error("Data artifact path is missing.");
+        const file = await readText();
+        if (file.content === undefined) throw new Error("Data file content is unavailable.");
+        if (generation !== request) return;
+        setRawText(file.content);
+        try {
+          setTablePreview(parseDelimitedPreview(file.content, artifact.artifactPath.toLowerCase().endsWith(".tsv") ? "\t" : ","));
+        } catch (cause) {
+          setPreviewWarning(cause instanceof Error ? cause.message : String(cause));
+        }
+        return;
+      }
+
+      // 5. Source / Text-only document handling
       if (kind === "code") {
         let text = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
         if (artifact.artifactPath) {
@@ -320,7 +340,7 @@ export default function ArtifactCanvas() {
         return;
       }
 
-      // 5. Static / HTML preview handling
+      // 6. Static / HTML preview handling
       let content = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
       if (artifact.artifactPath) {
         try {
@@ -383,6 +403,7 @@ export default function ArtifactCanvas() {
     if (!artifact) {
       setHtml("");
       setRawText("");
+      setTablePreview(null);
       setError(null);
       setViewMode("preview");
       setActiveServerPort(null);
@@ -567,7 +588,7 @@ export default function ArtifactCanvas() {
         <header class="artifact-canvas-header">
           <div class="artifact-canvas-title-group">
             <span class="artifact-canvas-badge">
-              {displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "server" ? "Dev Server" : "Preview"}
+              {displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Dev Server" : "Preview"}
             </span>
             <strong class="artifact-canvas-title">{title()}</strong>
             <Show when={path()}>
@@ -583,14 +604,14 @@ export default function ArtifactCanvas() {
 
           <div class="artifact-canvas-controls">
             {/* View Mode Segmented Controls (for HTML and code artifacts) */}
-            <Show when={displayType() === "html" || displayType() === "code"}>
+            <Show when={displayType() === "html" || displayType() === "code" || displayType() === "table"}>
               <div class="artifact-canvas-segmented">
                 <button
                   type="button"
                   class="artifact-canvas-seg-btn"
                   classList={{ active: viewMode() === "preview" }}
                   onClick={() => setViewMode("preview")}
-                  title="View interactive preview"
+                  title={displayType() === "table" ? "View data table" : "View interactive preview"}
                 >
                   Preview
                 </button>
@@ -599,7 +620,7 @@ export default function ArtifactCanvas() {
                   class="artifact-canvas-seg-btn"
                   classList={{ active: viewMode() === "source" }}
                   onClick={() => setViewMode("source")}
-                  title="View source markup"
+                  title="View source text"
                 >
                   Code
                 </button>
@@ -721,6 +742,17 @@ export default function ArtifactCanvas() {
             <Show when={viewMode() === "preview"}>
               <Show when={previewWarning()}>{(warning) =>
                 <div class="artifact-canvas-preview-warning" role="status">{warning()}</div>
+              }</Show>
+              <Show when={displayType() === "table" && tablePreview()}>{(table) =>
+                <div class="artifact-canvas-table-preview">
+                  <p>{table().totalRows} {table().totalRows === 1 ? "row" : "rows"} · {table().headers.length} {table().headers.length === 1 ? "column" : "columns"}{table().truncated ? ` · showing first ${table().rows.length}` : ""}</p>
+                  <div class="artifact-canvas-table-scroll">
+                    <table>
+                      <thead><tr><For each={table().headers}>{(header, index) => <th scope="col">{header || `Column ${index() + 1}`}</th>}</For></tr></thead>
+                      <tbody><For each={table().rows}>{(row) => <tr><For each={row}>{(cell) => <td>{cell}</td>}</For></tr>}</For></tbody>
+                    </table>
+                  </div>
+                </div>
               }</Show>
               {/* Image Preview */}
               <Show when={displayType() === "image" && mediaUrl()}>

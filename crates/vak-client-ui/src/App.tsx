@@ -189,6 +189,10 @@ export async function refreshSessions() {
         }
       }));
       for (const s of res.sessions) {
+        if (s.running) {
+          if (!isRunning(s.session_id)) markRunning(s.session_id, true);
+          continue;
+        }
         if (!s.running && isRunning(s.session_id)) {
           markRunning(s.session_id, false);
           if (visible.has(s.session_id)) {
@@ -251,7 +255,9 @@ async function hydrate(id: string) {
     }
     hydrateWorkbenchExecutions(id, sandbox.events, isRunning(id));
   } catch (error) {
-    if (!isRunning(id)) {
+    // The server can admit a new turn between a settled-session snapshot and
+    // transcript fetch. Its 409 is an active run, not a load failure.
+    if (!isRunning(id) && !(error instanceof Error && error.message === "run in progress")) {
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {

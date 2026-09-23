@@ -18,10 +18,11 @@ import {
   openArtifactCanvas,
   openCandidateReview,
   setReplyTarget,
+  isRunning,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import { approve } from "../App";
+import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath } from "../safeUrl";
 import * as api from "../api";
@@ -653,6 +654,9 @@ function Artifact(props: { item: OutputItem; showActions?: boolean }) {
 
 function compactFailure(text: string): { summary: string; details: string } {
   const details = text.trim();
+  if (details === "max_turns") {
+    return { summary: "Vak reached this task’s step limit before finishing. Any saved work is shown above; you can ask it to continue.", details };
+  }
   const cleaned = stripControlScaffolding(details)
     .replace(/\[working directory:[^\]]*\]\s*/gi, "")
     .replace(/\[file:[^\]]*\]\s*/gi, "")
@@ -1070,7 +1074,15 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 }
 
 
-function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
+function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean }) {
+  const continuationPrompt = () => {
+    const original = props.items.find((item) => item.role === "user" && item.content.type === "document")?.fallback_text.trim();
+    return [
+      "Continue the unfinished request in this same conversation and workspace.",
+      original ? `Original request: ${original}` : "Use the preceding user request as the objective.",
+      "Inspect saved work and receipts already present, finish only what remains, and report what you actually verified. Do not repeat completed work unless it needs correction.",
+    ].join("\n\n");
+  };
   const uniqueResultId = () => {
     const ids = new Set(props.items.map((entry) => entry.outcome?.result_id).filter((id): id is string => Boolean(id)));
     return ids.size === 1 ? [...ids][0] : undefined;
@@ -1166,6 +1178,16 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
     if (item.kind === "error") {
+      if (item.content.type === "error" && item.content.message === "max_turns") {
+        return <section class="semantic-recovery" role="status">
+          <Icon name="warning" size={15} />
+          <div>
+            <strong>Continue this task?</strong>
+            <p>Vak reached this run’s step limit. Saved work is shown above. Continuing starts another bounded turn in this conversation.</p>
+            <Show when={props.allowContinuation}><button type="button" class="button subtle" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId)}>Continue</button></Show>
+          </div>
+        </section>;
+      }
       const isRawJson = item.fallback_text.trim().startsWith("{") || item.fallback_text.includes('"type":');
       const failureText = item.content.type === "error" ? item.content.message : item.fallback_text;
       const text = !showOperatorChrome() && isRawJson ? "The operation could not be completed." : compactFailure(failureText).summary;
@@ -1209,7 +1231,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
     const flush = () => {
       if (lead.length === 0) return;
       const material = lead;
-      const anchor = material.find((entry) => entry.item.outcome?.result_id)?.item;
+      // A capped turn can produce a real file or card before the result
+      // evaluator assigns a result ID. Keep its observed file actions usable.
+      const anchor = material.find((entry) => entry.item.outcome?.result_id)?.item ?? material[0]?.item;
       out.push(<AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
@@ -1403,7 +1427,7 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
   );
 }
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string }) {
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean }) {
   const turns = createMemo(() => {
     const order: string[] = [];
     const grouped = new Map<string, OutputItem[]>();
@@ -1423,6 +1447,6 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
     </details>}</Show>
-    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id)} sessionId={props.sessionId} />}</For>
+    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id)} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
   </div>;
 }

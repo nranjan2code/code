@@ -690,8 +690,14 @@ export default function WorkbenchPanel() {
                 <div><span>Change</span><strong>{prepared().candidate.files.length === 1 ? `${fileState(prepared().candidate.files[0])}: ${prepared().candidate.files[0].path}` : `${prepared().candidate.files.length} files in this draft`}</strong></div>
                 <div><span>Destination</span><strong>{destinationLabel()}</strong><small title={prepared().candidate.destination_root}>{prepared().candidate.destination_root}</small></div>
                 <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>Frozen copy verified: {prepared().verified ? "Yes" : "No"}</small></div>
-                <div><span>Target checks</span><strong>{prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "These format checks rerun from the applied workspace." : "No registered verifier supports these files."}</small></div>
+                <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "No registered verifier supports these files."}</small></div>
               </div>
+              <Show when={(prepared().draft_checks?.length ?? 0) > 0}>
+                <div class="candidate-review-checks" aria-label="Saved draft format checks">
+                  <strong>Saved draft checks</strong>
+                  <For each={prepared().draft_checks}>{(check) => <p><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</p>}</For>
+                </div>
+              </Show>
               <Show when={(prepared().candidate.workspace_checks?.length ?? 0) > 0}>
                 <div class="candidate-review-checks">
                   <strong>Optional workspace checks after acceptance</strong>

@@ -15,6 +15,7 @@ csv = { workspace = true }
 quick-xml = { workspace = true }
 image = { workspace = true }
 lopdf = { workspace = true }
+dom_query = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

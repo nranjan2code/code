@@ -8,7 +8,7 @@ import AgentMark from "./AgentMark";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
-import { serverTurnFor } from "../turnPairing";
+import { hasSettledProjection, serverTurnFor } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
@@ -893,9 +893,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     const serverTurn = serverTurnFor(turns()[index]?.find((item) => item.kind === "user")?.entryId, timeline.items);
     if (!serverTurn) return null;
     const items = timeline.items.filter((item) => item.turn_id === serverTurn);
-    // Live frames have separate IDs. A durable turn replaces its transcript
-    // only when its assistant output is available, never at RunFinished alone.
-    if (!items.some((item) => item.role === "assistant" && ["document", "structured", "adaptive"].includes(item.content.type))) return null;
+    // A failed or capped run can still have a real file or card, plus its
+    // failure receipt, without a final assistant message. Preserve that
+    // partial work in conversation after the run settles.
+    if (!hasSettledProjection(items)) return null;
     if (index === turns().length - 1 && isRunning(sid())) return null;
     return { ...timeline, items };
   };
@@ -912,7 +913,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
               <Index each={displayedTurns()}>{(entry) =>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn)}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
-                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} />}
+                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} />}
                 </Show>
               }</Index>
               <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>

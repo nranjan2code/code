@@ -99,6 +99,7 @@ csv = "1"
 quick-xml = "0.41"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 lopdf = { version = "0.45", default-features = false }
+dom_query = "0.27"
 # checkpoint file-content encoding
 base64 = "0.22"
 # Constant-time token comparison for auth (timing-attack resistance)

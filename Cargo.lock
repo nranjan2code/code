@@ -7782,6 +7782,7 @@ name = "vak-sandbox"
 version = "3.5.1"
 dependencies = [
  "csv",
+ "dom_query",
  "image",
  "landlock",
  "lopdf",

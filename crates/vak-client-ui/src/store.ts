@@ -1314,7 +1314,9 @@ export function applyEvent(
     // as a background notification — so a visible window showed nothing at
     // all when a run died.
     if (ev.RunFinished.is_error) {
-      note(b, id, ev.RunFinished.summary);
+      note(b, id, ev.RunFinished.summary === "max_turns"
+        ? "Vak reached this run’s step limit. Saved work is available; choose Continue to finish this task."
+        : ev.RunFinished.summary);
     }
     // Short narration only -- the full summary can run long and reads
     // awkwardly aloud; a one-word cue is enough to signal completion.
