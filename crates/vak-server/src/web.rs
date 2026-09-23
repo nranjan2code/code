@@ -1176,7 +1176,7 @@ async fn drive_voice(
                         utterance_id,
                         emitted_ms,
                         interrupted,
-                    }) if interrupted => {
+                    }) => {
                         if let Some(handle) = ledger.as_ref()
                             && let Ok(mut log) = handle.session.lock()
                             && let Some(log) = log.as_mut()
@@ -1184,10 +1184,11 @@ async fn drive_voice(
                             let _ = log.append_voice_playback(
                                 format!("voice:{utterance_id}"),
                                 emitted_ms,
-                                true,
+                                interrupted,
                             );
                         }
-                        if let Some(event) = lifecycle.interrupt_playback(emitted_ms) {
+                        if interrupted && let Some(event) = lifecycle.interrupt_playback(emitted_ms)
+                        {
                             // Echo the authoritative interruption accounting so
                             // clients and channel adapters cannot disagree about
                             // how much synthesized audio was actually emitted.

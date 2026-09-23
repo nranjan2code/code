@@ -222,6 +222,22 @@ export function cleanAssistantText(text: string): string {
     .trim();
 }
 
+/** Speech uses the same visible prose as chat, never transport fences or
+ * model-authored transcript blocks. A card-only result stays visible on
+ * screen and gets a short review cue instead of reading raw JSON aloud. */
+export function spokenReplyText(text: string): string {
+  const withoutTranscript = text.replace(/<conversation>[^]*?<\/conversation>/gi, "");
+  const prose = cleanAssistantText(withoutTranscript)
+    .replace(/^[ \t]*```[^\n]*\r?\n[^]*?^[ \t]*```[^\n]*(?:\r?\n|$)/gim, "")
+    .replace(/^#{1,6}[ \t]+(?:metric|dataset|chart|table)[ \t]*$/gim, "")
+    .replace(/^#{1,6}[ \t]+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return prose || "The result is ready to review on screen.";
+}
+
 /**
  * Attempts to parse a raw JSON fragment as a valid StructuredOutput card.
  * Handles leading/trailing whitespace, surrounding markdown, and nested JSON.

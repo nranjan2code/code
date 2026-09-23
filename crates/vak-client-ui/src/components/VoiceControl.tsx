@@ -2,7 +2,8 @@ import { createEffect, createSignal, onCleanup } from "solid-js";
 import * as api from "../api";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { VoiceSessionSocket } from "../voice";
-import { setNotice, setPendingSettingsPage, setPendingSettingsSection, setSettingsOpen, stripControlScaffolding } from "../store";
+import { setNotice, setPendingSettingsPage, setPendingSettingsSection, setSettingsOpen } from "../store";
+import { spokenReplyText } from "../structured";
 import AgentMark, { type CharacterState } from "./AgentMark";
 
 /** Governed voice capture control for the composer. It only streams PCM after
@@ -77,11 +78,12 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
   }
   function stopVoice() {
     voiceGeneration += 1;
+    if (playbackSource) stopPlayback(true);
     playbackGeneration += 1;
     setActive(false);
     capture?.stop(); capture = undefined;
-    if (socket) { try { socket.sendControl({ t: "speech_stopped", utterance_id: utterance }); } catch { /* already closed */ } socket.close(); socket = undefined; }
-    playbackSource?.stop(); playbackSource = undefined;
+    socket?.close(); socket = undefined;
+    playbackSource = undefined;
     playbackUtterance = "";
     playbackStartedAt = 0;
     playbackCurrentDurationMs = 0;
@@ -156,7 +158,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     } catch (error) { failVoice((error as Error).message); }
   }
   async function speakAnswer(text: string) {
-    const answer = stripControlScaffolding(text).trim();
+    const answer = spokenReplyText(text);
     if (!answer || !active()) return;
     if (answer.startsWith("error:")) {
       setStatus("Listening");
@@ -244,6 +246,11 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       playbackStartedAt = 0;
       playbackCurrentDurationMs = 0;
       playbackSource = undefined;
+      if (playbackUtterance) {
+        try { socket?.sendControl({ t: "playback", utterance_id: playbackUtterance, emitted_ms: Math.round(playbackCompletedMs), interrupted: false }); } catch { /* closed transport */ }
+      }
+      playbackUtterance = "";
+      playbackCompletedMs = 0;
       if (active()) setStatus("Listening");
     };
     source.start();

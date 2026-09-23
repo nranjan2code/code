@@ -1917,14 +1917,6 @@ async fn voice_speak(
         // returns that encoded representation. Preserve it byte-for-byte here;
         // wrapping every response as WAV would corrupt PCM, Opus, and MP3.
         let audio = pcm;
-        if let Some(session_id) = body
-            .session_id
-            .as_deref()
-            .filter(|id| !id.trim().is_empty())
-            && let Ok(mut session) = state.core.open_session(session_id).await
-        {
-            let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
-        }
         let mut receipt = vak_llm::WorkReceipt::new(
             vak_llm::WorkPurpose::VoiceSynthesis,
             "local",
@@ -2011,15 +2003,6 @@ async fn voice_speak(
                     "pcm" => "audio/pcm",
                     _ => "audio/wav",
                 };
-                if let Some(session_id) = body
-                    .session_id
-                    .as_deref()
-                    .filter(|id| !id.trim().is_empty())
-                    && let Ok(mut session) = state.core.open_session(session_id).await
-                {
-                    let _ =
-                        session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
-                }
                 ([(axum::http::header::CONTENT_TYPE, mime)], audio).into_response()
             }
             Err(error) => (
@@ -2054,14 +2037,20 @@ async fn voice_speak(
                 .into_response();
         }
     };
-    let mut config = vak_llm::google_live::GoogleLiveConfig::new(api_key, "");
-    if let Some(model) = voice_settings
+    let Some(model) = voice_settings
         .synthesis_model
         .or(voice_settings.model)
         .filter(|m| !m.trim().is_empty())
-    {
-        config.model = model;
-    }
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Gemini voice synthesis needs a configured model in Voice settings"
+            })),
+        )
+            .into_response();
+    };
+    let config = vak_llm::google_live::GoogleLiveConfig::new(api_key, model);
     let cancel = CancellationToken::new();
     let mut receipt = vak_llm::WorkReceipt::new(
         vak_llm::WorkPurpose::VoiceSynthesis,
@@ -2080,14 +2069,6 @@ async fn voice_speak(
 
     match result {
         Ok(wav) => {
-            if let Some(session_id) = body
-                .session_id
-                .as_deref()
-                .filter(|id| !id.trim().is_empty())
-                && let Ok(mut session) = state.core.open_session(session_id).await
-            {
-                let _ = session.append_voice_playback(uuid::Uuid::now_v7().to_string(), 0, false);
-            }
             receipt.record(
                 vak_llm::AttemptReason::Initial,
                 vak_llm::FailureDomain::Unknown,
