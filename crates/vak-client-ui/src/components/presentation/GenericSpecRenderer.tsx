@@ -312,7 +312,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact, "data-grid-options": options }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">{quiet ? "Options" : "Data Grid"}</span>
+          <span class="card-badge badge-indigo">{options ? "Options" : quiet ? "Table" : "Data Grid"}</span>
           <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
           <Show when={!quiet}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
             {filteredAndSortedRows().length} of {rows().length} rows
@@ -839,9 +839,15 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
   const passedCount = createMemo(() => num(node.props, "passed") ?? tests().filter((t) => str(t, "status") === "passed").length);
   const failedCount = createMemo(() => num(node.props, "failed") ?? tests().filter((t) => str(t, "status") === "failed").length);
   const totalCount = createMemo(() => num(node.props, "total") ?? tests().length);
+  const hasReportedOutcome = createMemo(() =>
+    totalCount() > 0 && (passedCount() > 0 || failedCount() > 0 || tests().some((t) => {
+      const status = str(t, "status");
+      return status === "passed" || status === "failed" || status === "skipped";
+    })),
+  );
   const successPercent = createMemo(() => {
     const tot = totalCount();
-    if (tot === 0) return 100;
+    if (!hasReportedOutcome()) return 0;
     return Math.round((passedCount() / tot) * 100);
   });
   const filteredTests = createMemo(() =>
@@ -852,7 +858,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card test-matrix-wrap" classList={{ "test-matrix-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class={`card-badge ${failedCount() > 0 ? "badge-rose" : "badge-emerald"}`}>Test Suite</span>
+          <span class={`card-badge ${failedCount() > 0 ? "badge-rose" : hasReportedOutcome() ? "badge-emerald" : ""}`}>Test Suite</span>
           <span class="card-subtitle">
             {str(node.props, "suite_name") ?? "Test Execution"} ({num(node.props, "duration_ms") ?? 0}ms)
           </span>
@@ -881,7 +887,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
                 <path
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke="var(--emerald-bright)"
+                  stroke={hasReportedOutcome() ? "var(--emerald-bright)" : "var(--text-muted)"}
                   stroke-width="3.5"
                   stroke-dasharray={`${successPercent()}, 100`}
                   stroke-linecap="round"
@@ -890,7 +896,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
             </div>
             <div>
               <div style={{ "font-size": "14px", "font-weight": "700", color: "var(--text-main)" }}>
-                {successPercent()}% Success Rate
+                {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
               </div>
               <div style={{ "font-size": "11.5px", color: "var(--text-muted)" }}>
                 {passedCount()} of {totalCount()} tests verified
@@ -898,7 +904,9 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
             </div>
           </div>
           <div style={{ display: "flex", gap: "14px", "font-size": "12px", "font-weight": "600" }}>
-            <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
+            <Show when={hasReportedOutcome()}>
+              <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
+            </Show>
             <Show when={failedCount() > 0}>
               <span style={{ color: "var(--rose-bright)" }}>✕ {failedCount()} Failed</span>
             </Show>
