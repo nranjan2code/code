@@ -34,6 +34,7 @@ struct Doc {
 
 fn load<R: Read + Seek>(work: &mut Work<'_, R>) -> Result<Doc, EditError> {
     let part = work.main_part();
+    refuse_protected(work, &part)?;
     let bytes = work.get(&part)?;
     let tree = Tree::parse(&bytes, &part, work.limits())?;
     let Some(w) = tree.prefix_for(W).or_else(|| tree.prefix_for(W_STRICT)) else {
@@ -45,6 +46,31 @@ fn load<R: Read + Seek>(work: &mut Work<'_, R>) -> Result<Doc, EditError> {
         tree,
         w,
     })
+}
+
+/// Document protection (O8). Restricted editing that still allows tracked
+/// changes permits these ops, since every one of them is a tracked change;
+/// read-only, comments-only and forms-only protection refuse them.
+fn refuse_protected<R: Read + Seek>(work: &mut Work<'_, R>, main: &str) -> Result<(), EditError> {
+    let Some(settings) = work.related(main, "settings")? else {
+        return Ok(());
+    };
+    let bytes = work.get(&settings)?;
+    let tree = Tree::parse(&bytes, &settings, work.limits())?;
+    let Some(protection) = tree.descendants(0, "documentProtection").next() else {
+        return Ok(());
+    };
+    let element = &tree.nodes[protection].element;
+    let enforced = element
+        .attr("enforcement")
+        .is_some_and(|value| matches!(value, "1" | "true" | "on"));
+    if enforced && element.attr("edit") != Some("trackedChanges") {
+        return fail(format!(
+            "the document is protected ({} editing only); the owner must remove the protection before it can be edited",
+            element.attr("edit").unwrap_or("no")
+        ));
+    }
+    Ok(())
 }
 
 /// Paragraph anchors exactly as `read` assigns them: `p:<paraId>` when the

@@ -612,3 +612,157 @@ fn a_template_becomes_a_document_but_never_changes_macro_state() {
         "{error}"
     );
 }
+
+// ---- protection and preservation ------------------------------------------------
+
+fn with_word_settings(protection: &str) -> Vec<u8> {
+    fixtures::word_with(
+        fixtures::WORD_MAIN,
+        fixtures::MINIMAL_WORD_BODY,
+        &[(
+            "word/settings.xml",
+            format!(
+                r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{protection}</w:settings>"#
+            )
+            .as_bytes(),
+        )],
+        &[(
+            "word/settings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+        )],
+        &[],
+        &[(
+            "rId1",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+            "settings.xml",
+        )],
+    )
+}
+
+#[test]
+fn protection_is_honoured_before_any_byte_is_written() {
+    let replace = || OfficeOp::ReplaceParagraphText {
+        anchor: "p@1".into(),
+        text: "x".into(),
+    };
+    for (protection, allowed) in [
+        (
+            r#"<w:documentProtection w:edit="readOnly" w:enforcement="1"/>"#,
+            false,
+        ),
+        (
+            r#"<w:documentProtection w:edit="comments" w:enforcement="true"/>"#,
+            false,
+        ),
+        (
+            r#"<w:documentProtection w:edit="trackedChanges" w:enforcement="1"/>"#,
+            true,
+        ),
+        (
+            r#"<w:documentProtection w:edit="readOnly" w:enforcement="0"/>"#,
+            true,
+        ),
+    ] {
+        let result = apply(&with_word_settings(protection), vec![replace()]);
+        assert_eq!(result.is_ok(), allowed, "{protection}: {:?}", result.err());
+        if let Err(error) = result {
+            assert!(error.to_string().contains("is protected"), "{error}");
+        }
+    }
+    let source = fixtures::pptx();
+    let presentation = part(&source, "ppt/presentation.xml").replace(
+        "<p:sldSz",
+        r#"<p:modifyVerifier cryptProviderType="rsaAES" cryptAlgorithmClass="hash" cryptAlgorithmType="typeAny" cryptAlgorithmSid="14" spinCount="100000" saltData="AA==" hashData="AA=="/><p:sldSz"#,
+    );
+    let locked = fixtures::with_parts(
+        &source,
+        &[("ppt/presentation.xml", presentation.as_bytes())],
+    );
+    let error = apply(
+        &locked,
+        vec![OfficeOp::DeleteSlide {
+            anchor: "slide:257".into(),
+        }],
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("password to modify"), "{error}");
+}
+
+#[test]
+fn markup_vak_does_not_model_survives_inside_edited_elements() {
+    let unknown = r#"<x:keep xmlns:x="urn:vak-test" x:note="1"/>"#;
+    let document = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr>{unknown}</w:pPr><w:r><w:rPr>{unknown}</w:rPr><w:t>Old</w:t></w:r></w:p><w:p><w:r><w:t>Last</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let word = fixtures::word_with(fixtures::WORD_MAIN, &document, &[], &[], &[], &[]);
+    for op in [
+        OfficeOp::ReplaceParagraphText {
+            anchor: "p@1".into(),
+            text: "New".into(),
+        },
+        OfficeOp::DeleteParagraph {
+            anchor: "p@1".into(),
+        },
+        OfficeOp::InsertParagraphAfter {
+            anchor: "p@1".into(),
+            text: "After".into(),
+            style: None,
+        },
+    ] {
+        let name = op.name();
+        let applied = apply(&word, vec![op]).unwrap();
+        let written = part(&applied.bytes, "word/document.xml");
+        assert!(
+            written.matches(unknown).count() >= 2,
+            "{name} keeps both originals (a replacement also copies the run's formatting): {written}"
+        );
+    }
+
+    let source = fixtures::xlsx();
+    let sheet = part(&source, "xl/worksheets/sheet1.xml").replace(
+        r#"<row r="2">"#,
+        r#"<row r="2" spans="1:2" x14ac:dyDescent="0.25" xmlns:x14ac="urn:vak-test"><x:ext xmlns:x="urn:vak-test"/>"#,
+    );
+    let workbook = fixtures::with_parts(&source, &[("xl/worksheets/sheet1.xml", sheet.as_bytes())]);
+    let applied = apply(
+        &workbook,
+        vec![OfficeOp::SetCells {
+            sheet: "Budget".into(),
+            cells: BTreeMap::from([("F2".to_string(), CellValue::Number(9.0))]),
+        }],
+    )
+    .unwrap();
+    let written = part(&applied.bytes, "xl/worksheets/sheet1.xml");
+    assert!(written.contains(r#"x14ac:dyDescent="0.25""#), "{written}");
+    assert!(
+        written.contains(r#"<x:ext xmlns:x="urn:vak-test"/>"#),
+        "{written}"
+    );
+    assert!(
+        !written.contains(r#"spans="1:2""#),
+        "a stale spans hint is dropped: {written}"
+    );
+
+    let deck_source = fixtures::pptx();
+    let slide = part(&deck_source, "ppt/slides/slide1.xml")
+        .replace("<a:bodyPr/><a:lstStyle/>", "")
+        .replacen(
+            "<a:bodyPr/>",
+            r#"<a:bodyPr wrap="square"><x:keep xmlns:x="urn:vak-test"/></a:bodyPr>"#,
+            1,
+        );
+    let deck = fixtures::with_parts(&deck_source, &[("ppt/slides/slide1.xml", slide.as_bytes())]);
+    let applied = apply(
+        &deck,
+        vec![OfficeOp::SetPlaceholderText {
+            anchor: "slide:256/placeholder:title".into(),
+            text: TextValue::One("Kept".into()),
+        }],
+    )
+    .unwrap();
+    let written = part(&applied.bytes, "ppt/slides/slide1.xml");
+    assert!(
+        written.contains(r#"<a:bodyPr wrap="square"><x:keep xmlns:x="urn:vak-test"/></a:bodyPr>"#),
+        "{written}"
+    );
+}

@@ -37,6 +37,11 @@ fn deck<R2: Read + Seek>(work: &mut Work<'_, R2>) -> Result<Deck, EditError> {
     let Some(p) = tree.prefix_for(P).or_else(|| tree.prefix_for(P_STRICT)) else {
         return fail("the presentation does not declare the PresentationML namespace");
     };
+    if tree.children(0, "modifyVerifier").next().is_some() {
+        return fail(
+            "the presentation has a password to modify (O8); the owner must remove it before it can be edited",
+        );
+    }
     let r = tree
         .prefix_for(R)
         .or_else(|| tree.prefix_for(R_STRICT))
