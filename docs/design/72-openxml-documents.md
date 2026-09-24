@@ -2,6 +2,8 @@
 
 Status: **proposal with an implementation ledger. Opened 2026-09-23; scope widened the same day by owner direction.** Everything under "What exists today" is in the tree. Nothing under the phases is built until its box is checked with evidence. Vak has zero users, so nothing here carries a compatibility path (invariant 29): when a phase replaces an existing mechanism, the older one is removed in the same change (invariant 30).
 
+Review 2026-09-24: the plan was checked against the tree before P0 started. Corrections are folded in place: F1, F3 and F4 were restated from the code, F11 and F12 were added, the Excel and Word anchor stability claims were wrong and are fixed, the rule changes now land with the phase that enforces each one, and D9 (cryptography) was missing.
+
 ## Owner direction — 2026-09-23
 
 - **Full Open XML support, done the most secure way.** Design and repository rules may change to allow it. There are no users to protect from a change.
@@ -40,7 +42,7 @@ Outside the family, and reported as unsupported with an **Open with…** offer w
 O1–O10 are the area invariants. Their `AGENTS.md` form is under "Rule changes", and they land there in the same change as P0, so each rule and its enforcement arrive together.
 
 - **O1 — Lossless by default.** A part Vak did not edit is copied byte-for-byte, and its compressed ZIP entry is copied raw. An edited part keeps every element, attribute, namespace and `mc:AlternateContent` branch that Vak does not model. Edits are splices into the XML event stream, not a re-serialisation from a partial object model. Strict files stay Strict and Transitional files stay Transitional. A no-op round trip across the whole corpus must be byte-identical for every part.
-- **O2 — Packages are hostile input.** Vak parses them only inside the broker worker (invariant 14), with explicit limits on entry count, per-part and total decompressed bytes, compression ratio, XML depth, attribute count and embedded-package nesting. It refuses `DOCTYPE` and entity declarations. Part names containing `..`, absolute paths, duplicates or case-insensitive collisions are rejected. `TargetMode="External"` is never followed. DDE, OLE, ActiveX, field code, Excel 4.0 (XLM) macro sheets, external data connections and Power Query are never executed or refreshed. VBA runs only in Vak's own runtime under O10, never in Office and never natively on the host.
+- **O2 — Packages are hostile input.** Vak parses them only inside the broker worker (invariant 14), with explicit limits on entry count, per-part and total decompressed bytes, compression ratio, XML depth, attribute count and embedded-package nesting. Byte limits are enforced on the bytes actually decompressed (a bounded `Read`), never on the sizes the ZIP directory declares, because a hostile archive lies about those. It refuses `DOCTYPE` and entity declarations (`quick-xml` never expands entities, so this is an explicit refusal of markup no Office producer emits, not a patch over an expansion bug). Part names containing `..`, absolute paths, duplicates or case-insensitive collisions are rejected. `TargetMode="External"` is never followed. DDE, OLE, ActiveX, field code, Excel 4.0 (XLM) macro sheets, external data connections and Power Query are never executed or refreshed. VBA runs only in Vak's own runtime under O10, never in Office and never natively on the host.
 - **O3 — One operation vocabulary.** Agents, people in the UI, the CLI, HTTP and channels all change a document through the same typed `OfficeOp` set, applied by one engine. There is no second write path.
 - **O4 — Anchors are exact.** Every operation names its target by an anchor that Vak returned, bound to the base digest and the anchor's own revision. A stale or missing anchor produces a repairable error. The engine never guesses the "nearest" paragraph.
 - **O5 — Evidence is observed.** After an operation, the engine re-reads the written package and checks the operation's postcondition, then schema-validates the result. Both are `Observed` evidence (invariant 33). Structural, calculated and rendered checks are reported separately, and none of them stands in for another.
@@ -68,16 +70,18 @@ That is the whole Office implementation. Vak can confirm that three Office forma
 
 | # | Severity | Finding |
 |---|---|---|
-| F1 | **Bug** | `compose_prompt` in `crates/vak-server/src/gateway.rs` inlines every `document` attachment under 64 KiB with `String::from_utf8_lossy`. A `.docx` or `.xlsx` sent from Telegram or another channel therefore lands in the model-visible prompt, and in the ledger, as compressed ZIP bytes. The model sees noise, tokens are wasted, and the file itself is not kept anywhere the Agent could edit it. |
+| F1 | **Bug** | `compose_prompt` in `crates/vak-server/src/gateway.rs` inlines every `document` attachment under 64 KiB with `String::from_utf8_lossy`. Any non-text file (not only Office: PDFs, archives, images sent as files) therefore lands in the model-visible prompt, and in the ledger, as replacement-character noise. The model sees garbage, tokens are wasted, and the file itself is not kept anywhere the Agent could read or edit it. The two caps also disagree: the Telegram bridge downloads documents up to 256 KiB (`DOCUMENT_MAX_BYTES` in `surfaces/telegram.rs`), and the gateway then drops anything over 64 KiB with a message telling the sender to send an excerpt. |
 | F2 | Gap | `doc_read` (`crates/vak-core/src/doc_reader.rs`) uses `read_to_string`, so it fails on every Office file. `read` returns `[binary file]`. An Agent's only route to the contents is ad-hoc scripting in `bash` with whatever libraries the sandbox happens to have. That is ungoverned, unreproducible and not anchored. |
-| F3 | **Boundary** | `doc_read` and `data_query` are registered in-process in `Core`, not behind the worker (invariant 14). They are harmless while they only parse text, but Office parsing must not be added there. |
-| F4 | **Boundary** | Target verifiers, including the Open XML one, run inside the `vak-server` process (the `verifiers.verify` calls in `crates/vak-server/src/lib.rs`). Every candidate's package is therefore unzipped and XML-parsed in the server that holds credentials and the control plane. |
+| F3 | **Boundary** | `doc_read` is registered in-process in `Core` (`scoped_tools`), not behind the worker (invariant 14). It is harmless while it only parses text, but Office parsing must not be added there. The worker cannot simply be pointed at it: `broker::worker_main` dispatches only `vak_tools::default_tools()`, and `doc_read` lives in `vak-core`, which the worker crate cannot depend on. It has to move into `vak-tools`. `data_query` is *not* a file parser today: it takes only an inline `data` string the model supplies and never opens a path, so it stays in-process until it gains a file source (P1), and moves to the worker in that same change. |
+| F4 | **Boundary** | Target verifiers, including the Open XML one, run inside the `vak-server` process (the three `verifiers.verify` call sites in `crates/vak-server/src/lib.rs`). Every candidate's package is therefore unzipped and XML-parsed in the server that holds credentials and the control plane. Two of the three sites (candidate export and isolated-revision freeze) also run that synchronous parsing directly on the async runtime; only promotion uses `spawn_blocking`. Verifiers are not model tools, so moving them needs a verification request kind in the worker protocol, not a pseudo-tool. |
 | F5 | Hardening | The verifier locates the main part by a hard-coded path instead of the package's `officeDocument` relationship. It has no ZIP entry-count or decompression bound (the PDF verifier has one), so a ZIP bomb in a candidate is decompressed during review. It dispatches on the file extension rather than the main part's content type. It does not distinguish macro-enabled, Strict, signed or encrypted packages. Visio is not covered. |
 | F6 | Gap | Canvas `detectType` (`crates/vak-client-ui/src/components/ArtifactCanvas.tsx`) sends Office files to the `code` view, which tries to render ZIP bytes as source. |
 | F7 | Gap | Review compares files as text, so an Office candidate has no meaningful diff. Accepting it is a blind decision, which contradicts `70`'s "show the actual candidate, exact changes". |
 | F8 | Gap | The outcome evaluator can require a `.docx`, `.xlsx` or `.pptx` deliverable, but no governed tool can produce one. Office requests therefore reliably end `Unknown` or in improvised scripts. |
 | F9 | Gap | Candidate comments anchor to a file plus an optional line range. A line number means nothing in a binary package, so a comment cannot point at a cell, paragraph, slide or shape. |
-| F10 | Gap | `data_query` reads CSV, JSON and Markdown only. A worksheet cannot be queried. |
+| F10 | Gap | `data_query` accepts inline CSV, JSON or Markdown text only and has no file source at all. A worksheet cannot be queried except by the model pasting its contents into the call. |
+| F11 | Hardening | The broker worker is OS-sandboxed only in restricted permission modes. Under FullAccess it runs unsandboxed by design (invariant 13), and it has no wall-clock deadline and no memory limit (macOS has no working `RLIMIT_AS`, and `unsafe` is denied outside `bash.rs`). The worker is therefore process isolation plus in-code bounds, and O2's bounds are the primary control against hostile packages, not defence in depth. |
+| F12 | Hygiene | `zip` and `quick-xml` are in the workspace manifest with semver ranges (`"4"`, `"0.41"`), not exact pins. Once they are the hostile-input boundary they are pinned exactly. |
 
 ## Architecture
 
@@ -123,9 +127,9 @@ The display list is typed data: positioned glyph runs, paths, fills and image re
 
 | Vocabulary | Anchor | Stability |
 |---|---|---|
-| Word | `w14:paraId` when present; otherwise Vak adds a paraId in the first op that touches the paragraph. Read-only anchors are a structural path plus a content hash valid for one digest. | A paraId survives edits in Word. A path-and-hash anchor never outlives its base (O4). |
-| Excel | `Sheet!A1`, `Sheet!A1:D20`, defined names, table names | Stable by construction. The sheet is resolved by name, with `sheetId` recorded. |
-| PowerPoint | slide `p:sldId@id`, shape `p:cNvPr@id` within the slide | Stable across reordering. |
+| Word | `w14:paraId` when present; otherwise Vak adds a paraId in the first op that touches the paragraph (which also declares the `w14` namespace and lists it in the root's `mc:Ignorable`). A read never adds one: reading must leave the package byte-identical (O1). Read-only anchors are a structural path plus a content hash valid for one digest. | A paraId usually survives editing in Word, but Word may reassign one (duplicates, some paste paths). A paraId that no longer resolves after an external edit is stale (O4), never matched to the nearest paragraph. A path-and-hash anchor never outlives its base. |
+| Excel | `Sheet!A1`, `Sheet!A1:D20`, defined names, table names | **Not stable by construction:** inserting or deleting rows or columns moves every address below or to the right. The op engine rebases cell and range anchors through each structural op in the draft's op log. An external edit cannot be rebased, so anchors against the old digest become stale. Defined names and table names are the stable anchors. The sheet is resolved by name, with `sheetId` recorded so a rename is detected. |
+| PowerPoint | slide `p:sldId@id`, shape `p:cNvPr@id` within the slide | Stable across reordering. A shape id is unique only within its slide, and copy and paste can renumber it, so a shape anchor always carries its slide id. |
 | Visio | page ID, shape ID | Stable. |
 | Charts and SmartArt | the owning anchor plus the chart or diagram part relationship | Stable while the owner exists. |
 
@@ -133,7 +137,7 @@ Each anchor carries a revision counter held in the draft's op log. An op states 
 
 ### Tool surface (one way each)
 
-- **`doc_read`** (brokered) serves the whole family through the existing `summary`, `outline`, `table` and `section` views, with anchors on every unit and explicit labels for hidden content, comments, tracked changes, macros, signatures and labels.
+- **`doc_read`** (brokered) serves the whole family through the existing `text`, `summary`, `outline` and `table` views and the `section` parameter, with anchors on every unit and explicit labels for hidden content, comments, tracked changes, macros, signatures and labels.
 - **`office_apply`** (brokered, a write claim on the path, and a normal `PermissionEngine` decision) takes a base digest and ordered `OfficeOp`s. It returns the new digest, per-op postcondition results, validation results and a compact semantic diff. **Creation is the same tool:** `create: {kind, template?}` starts from a built-in blank package or a workspace template.
 - **`data_query`** (brokered) accepts worksheet ranges and tables as sources.
 - **`office_run_macro`** (brokered, `Ask` by default) runs a named macro from a file's VBA project in the Vak runtime against a draft. It returns the ops produced, the prompts shown, the run receipt, and any point where the runtime stopped because a feature is unsupported. VBA source edits go through `office_apply` as ordinary ops (`vba_set_module`, `vba_add_module`, `vba_remove_module`), so there is still one write path.
@@ -156,7 +160,7 @@ Threat model context: `24-agent-security.md`. Office files arrive from strangers
 
 | Surface | Handling |
 |---|---|
-| Parsing | Only in the broker worker, a disposable process under the sandbox, with the O2 bounds. Verifiers move there too (F4). |
+| Parsing | Only in the broker worker, a disposable process, with the O2 bounds. The worker carries the session's OS sandbox in restricted modes and none under FullAccess (F11), so the O2 bounds hold on their own. Verification runs in a worker under a dedicated read-only, network-denied sandbox rooted at the tree being verified, whatever the session's mode, with a wall-clock deadline. A verification that cannot run fails closed as a failed check. |
 | Fuzzing | `cargo-fuzz` targets for OPC reading, XML splicing, each L2 model, the op engine, the encryption container, the VBA decompressor, the formula parser and layout. They run on every change and nightly with a growing corpus. A crash is a release blocker. |
 | XML | No DTD, no entity expansion, depth and attribute bounds, namespace allowlists for the parts Vak models, and unknown parts preserved but never interpreted. |
 | External relationships | Recorded and shown (linked images, remote templates such as `attachedTemplate`, external workbook links, hyperlinks). Never fetched or resolved. A remote template is flagged as a known phishing vector. |
@@ -284,12 +288,14 @@ A quiet Files view lists the workspace's Office files with thumbnails, titles, a
 
 The owner authorised rule changes for this work. The following edits to `AGENTS.md` land in the same change as P0, so each rule arrives together with its enforcement and no invariant describes something the tree does not yet do.
 
-1. **Amend invariant 14** to name the document tools. `doc_read`, `data_query`, `office_apply`, Office projection and every target verifier execute in the broker worker. A parser of untrusted file formats never runs in the server, desktop or gateway process.
-2. **Amend invariant 38** so that `doc_read`'s format list includes the Open XML family, subject to invariant 39.
-3. **Add invariant 39 — Office documents are lossless, hostile, anchored and self-sufficient**, stating O1–O10 in `AGENTS.md` form. It includes the self-sufficiency clause (no external office application is a runtime dependency, and external tools are CI oracles only) and the macro governance clause: VBA runs only in Vak's runtime inside the worker, and VBA changes always reach a human.
-6. **Amend invariant 32's irreversible-work sentence** to name VBA source changes and new auto-run entry points explicitly as work that always reaches a human, whatever was delegated.
-4. **Amend invariant 12** so that a document password is a recipient-scoped secret, held in memory for one operation, never model-visible, and never in the ledger.
-5. **Amend the Layout map** with `crates/vak-ooxml`, `crates/vak-ooxml-calc`, `crates/vak-ooxml-layout` and `crates/vak-vba` once each exists (the map is path-checked).
+Each amendment lands with the phase that enforces it, not all at once: an invariant must never describe something the tree does not do.
+
+1. **Amend invariant 14** (P0) to name the document parsers. `doc_read` and every target verifier execute in the broker worker; `data_query`, `office_apply` and Office projection join them as each gains a file source or exists. A parser of untrusted file formats never runs in the server, desktop or gateway process.
+2. **Amend invariant 38** (P1) so that `doc_read`'s format list includes the Open XML family, subject to invariant 39.
+3. **Add invariant 39 — Office documents are lossless, hostile, anchored and self-sufficient** (P0, growing with each phase), stating O1–O10 in `AGENTS.md` form as each becomes enforceable. It includes the self-sufficiency clause (no external office application is a runtime dependency, and external tools are CI oracles only) and the macro clause: until Vak's runtime exists no macro is ever executed, and once it exists VBA runs only there, inside the worker.
+4. **Amend invariant 12** (with Agile decryption) so that a document password is a recipient-scoped secret, held in memory for one operation, never model-visible, and never in the ledger.
+5. **Amend invariant 32's irreversible-work sentence** (with VBA authoring, P9). A VBA source change is not irreversible in itself, because it lands in a draft; what it grants is future code execution. The sentence therefore names VBA source changes, new auto-run entry points and macro-enabling conversions as work that always reaches a human, whatever was delegated, alongside irreversible work.
+6. **Amend the Layout map** with `crates/vak-ooxml`, `crates/vak-ooxml-calc`, `crates/vak-ooxml-layout` and `crates/vak-vba` as each exists (the map is path-checked).
 
 ## Implementation ledger
 
@@ -326,15 +332,17 @@ This is the tracking instrument for "full support". Each cell moves from `—` t
 
 ### P0 — Foundation, security and rules
 
-- [ ] Stop inlining binary document attachments (F1). Save the file to the Agent workspace inbox and never place its bytes in a prompt. Until P1 lands, say plainly that the file was received and cannot yet be read.
-- [ ] Move `doc_read`, `data_query` and all target verifiers into the broker worker (F3, F4), with worker tests proving none is constructed in-process.
+- [ ] Stop inlining binary document attachments (F1). A document that is valid UTF-8 text keeps today's inline path. Anything else is saved to `inbox/` in the Agent workspace (so every file tool can reach it under invariant 10), under a sanitised, digest-prefixed name that can never traverse or overwrite, and the prompt carries only a note naming the saved path and the reader to use. Until P1 lands, the note says plainly that the file was received and cannot yet be read. One cap governs both the bridge and the gateway.
+- [ ] Move `doc_read` into `vak-tools` and serve it from the broker worker (F3); remove the in-process registration in the same change.
+- [ ] Add a verification request kind to the worker protocol and run every target verifier through it under a read-only sandbox with a deadline (F4, F11). Worker unavailable or timed out means every planned check fails, never passes.
 - [ ] Create `crates/vak-ooxml` L0: bounded reader (O2), relationship graph, main-part resolution through `officeDocument`, content-type validation, and detection of macro-enabled, Strict, signed, encrypted and labelled packages.
 - [ ] L0 raw-copy writer with deterministic entry order. No-op round trip byte-identical across the corpus.
 - [ ] Replace the verifier's hand-rolled logic with `vak-ooxml` (F5). Keep `format.openxml` as the verifier id and cover the whole family.
-- [ ] Fuzz targets for L0 and L1, in CI and nightly.
-- [ ] Test corpus under `crates/vak-ooxml/tests/corpus/` with a provenance manifest. Only self-authored files: Word, Excel, PowerPoint and Visio (macOS and Windows), LibreOffice, a Google Workspace export, and python-docx/openpyxl/python-pptx output, in both Strict and Transitional. An adversarial set: ZIP bombs, traversal names, `DOCTYPE` entities, external relationships and remote templates, DDE fields, a macro package renamed to `.docx`, mismatched content types, duplicate entries, deep nesting, and malformed encryption headers.
+- [ ] Fuzz targets for L0 and L1. `cargo-fuzz` needs a nightly toolchain and CI is stable-only, so fuzzing runs as its own nightly job; a deterministic mutation test in the normal suite is a smoke check, not a substitute.
+- [ ] Test corpus under `crates/vak-ooxml/tests/corpus/` with a provenance manifest. P0 lands with generated fixtures and the adversarial set; files authored in the real applications are added as they are made and are tracked by the manifest, and Preserve cells in the matrix wait for them. Only self-authored files: Word, Excel, PowerPoint and Visio (macOS and Windows), LibreOffice, a Google Workspace export, and python-docx/openpyxl/python-pptx output, in both Strict and Transitional. An adversarial set: ZIP bombs, traversal names, `DOCTYPE` entities, external relationships and remote templates, DDE fields, a macro package renamed to `.docx`, mismatched content types, duplicate entries, deep nesting, and malformed encryption headers.
 - [ ] CI oracles (developer tooling only, O7): Open XML SDK validation and a LibreOffice round-trip open over the corpus and over every op test's output, in a CI container. They never ship and are never shown to users.
-- [ ] Apply the rule changes above to `AGENTS.md`.
+- [ ] Apply the P0 rule changes above to `AGENTS.md` (1, 3 as far as enforced, 6).
+- [ ] Pin `zip` and `quick-xml` exactly (F12).
 
 ### P1 — Read (knowledge)
 
@@ -472,6 +480,7 @@ Still open (recommendation first):
 | D6 | VBA runtime: build or adopt | **Build `vak-vba` in Rust.** No embeddable, sandboxable VBA engine exists to adopt that fits O7, and the object-model emulation, which is the valuable part, is Vak-specific anyway. | Keeps execution inside the worker, with effects expressed only as ops. |
 | D7 | VBA storage library | **Evaluate the `cfb` crate** for compound files, shared with Agile encryption, and pin it. Otherwise write a bounded reader and writer. | Both encryption and VBA need MS-CFB, so one implementation serves both. |
 | D8 | Signing edited VBA projects | **Not now.** Vak drops the invalid VBA signature and says so. Re-signing with a user's certificate is a later decision. | Signing keys are high-value secrets and need their own design. |
+| D9 | Cryptography for Agile encryption and XML-DSig | **Pinned RustCrypto crates** (AES, SHA-1/SHA-512, HMAC, RSA and ECDSA verification, X.509 parsing), each pinned exactly with a one-line justification, and a bounded exclusive XML C14N written in `vak-ooxml`. Decide before the P1 security slice. | Nothing in the tree covers this: `ring` is pinned for Ed25519 verification only and has no X.509 or AES-CBC. |
 
 ## Completion bar
 
