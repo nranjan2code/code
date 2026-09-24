@@ -150,7 +150,7 @@ export default function AgentCreateWizard() {
                 {(tmpl) => (
                   <button
                     type="button"
-                    class="button subtle"
+                    class="btn"
                     style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start;"
                     onClick={() => applyTemplate(tmpl)}
                   >
@@ -161,7 +161,7 @@ export default function AgentCreateWizard() {
               </For>
               <button
                 type="button"
-                class="button subtle"
+                class="btn"
                 style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border-style: dashed;"
                 onClick={() => applyTemplate(SCRATCH)}
               >
@@ -234,8 +234,8 @@ export default function AgentCreateWizard() {
               </div>
 
               <div style="display: flex; justify-content: space-between; margin-top: 4px;">
-                <button type="button" class="button subtle" onClick={() => setStep(1)}>Back</button>
-                <button type="button" class="button primary" disabled={!canAdvanceStep2()} onClick={() => setStep(3)}>Next</button>
+                <button type="button" class="btn" onClick={() => setStep(1)}>Back</button>
+                <button type="button" class="btn primary" disabled={!canAdvanceStep2()} onClick={() => setStep(3)}>Next</button>
               </div>
             </div>
           </Show>
@@ -267,8 +267,8 @@ export default function AgentCreateWizard() {
               </div>
 
               <div style="display: flex; justify-content: space-between; margin-top: 4px;">
-                <button type="button" class="button subtle" onClick={() => setStep(2)}>Back</button>
-                <button type="button" class="button primary" disabled={creating()} onClick={() => void create()}>
+                <button type="button" class="btn" onClick={() => setStep(2)}>Back</button>
+                <button type="button" class="btn primary" disabled={creating()} onClick={() => void create()}>
                   {creating() ? "Creating…" : "Create & Launch"}
                 </button>
               </div>

@@ -1174,7 +1174,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           <div>
             <strong>Continue this task?</strong>
             <p>Vak reached this run’s step limit. Saved work is shown above. Continuing starts another bounded turn in this conversation.</p>
-            <Show when={props.allowContinuation}><button type="button" class="button subtle" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId, undefined, "follow_up")}>Continue</button></Show>
+            <Show when={props.allowContinuation}><button type="button" class="btn" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId, undefined, "follow_up")}>Continue</button></Show>
           </div>
         </section>;
       }

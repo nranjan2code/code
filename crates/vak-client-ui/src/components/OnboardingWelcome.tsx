@@ -45,10 +45,10 @@ export default function OnboardingWelcome() {
             personality, instructions, and workspace — for the things you do often.
           </p>
           <div style="display: flex; gap: 8px;">
-            <button type="button" class="button primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
+            <button type="button" class="btn primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
               <Icon name="add" size={14} /> Create your first agent
             </button>
-            <button type="button" class="button subtle" onClick={dismiss}>Start with Vak</button>
+            <button type="button" class="btn" onClick={dismiss}>Start with Vak</button>
           </div>
         </div>
       </div>
