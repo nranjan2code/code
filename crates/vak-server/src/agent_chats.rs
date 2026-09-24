@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use serde::Deserialize;
 use std::io::BufRead;
 use vak_session::types::{
     AgentIdentity, ConversationContext, ConversationOrigin, Entry, EntryPayload, SessionHeader,
@@ -197,9 +198,19 @@ pub(crate) fn resolve_agent_core(
     Ok((identity, core))
 }
 
-/// Opening an agent is idempotent across reloads and clients. The immutable
-/// header is the ownership record; browser storage has no routing authority.
-pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+#[derive(Deserialize, Default)]
+pub(crate) struct OpenAgentRequest {
+    #[serde(default)]
+    create_new: bool,
+}
+
+/// Opening an existing Agent conversation is idempotent. An explicit new
+/// conversation gets its own identity and append-only session ledger.
+pub(crate) async fn open(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<OpenAgentRequest>,
+) -> Response {
     let (identity, core) = match resolve_agent_core(&state, &id) {
         Ok(pair) => pair,
         Err(response) => return response,
@@ -209,7 +220,11 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
     // storage or a transient session id, so reopening the same Agent resumes
     // the same conversation while another Agent gets an independent ledger.
     let conversation = ConversationContext {
-        conversation_id: format!("agent:{}:local", identity.id),
+        conversation_id: if request.create_new {
+            format!("agent:{}:local:{}", identity.id, uuid::Uuid::now_v7())
+        } else {
+            format!("agent:{}:local", identity.id)
+        },
         audience_id: "local".into(),
         origin: Some(ConversationOrigin {
             surface: "desktop".into(),
@@ -293,7 +308,11 @@ pub(crate) async fn open(State(state): State<AppState>, Path(id): Path<String>) 
                 );
             }
         }
-        return Json(serde_json::json!({"session_id": sid, "agent": h.agent, "cwd": core.cwd()}))
+        // The identity frozen when the conversation was admitted, not the
+        // catalogue's current entry: editing an Agent never rewrites a
+        // conversation it already owns (AGENTS.md invariant 37).
+        let admitted = h.agent.clone().unwrap_or(identity);
+        return Json(serde_json::json!({"session_id": sid, "agent": admitted, "cwd": core.cwd()}))
             .into_response();
     }
     let session = match core.start_session().await {

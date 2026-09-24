@@ -280,7 +280,7 @@ const resyncingSessions = new Set<string>();
 function pruneStreams() {
   const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
   for (const [id, es] of streams) {
-    if (!visible.has(id) && !isRunning(id)) {
+    if (!visible.has(id)) {
       es.close();
       streams.delete(id);
       const timer = reconnectTimers.get(id);
@@ -344,7 +344,7 @@ function openStream(id: string) {
         setTimeout(() => {
           reconnectTimers.delete(id);
           const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
-          if (visible.has(id) || isRunning(id)) {
+          if (visible.has(id)) {
             openStream(id);
           }
         }, 2000),
@@ -512,13 +512,23 @@ export async function activate(id: string) {
     appendSystem(id, `could not resume this task: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
-  openStream(id);
+  if (matchedAgent) lastSessionByAgent.set(matchedAgent.id, id);
+  if (activeId() === id) {
+    const route = `#/s/${encodeURIComponent(id)}`;
+    if (window.location.hash !== route) window.history.replaceState({}, "", route);
+  }
   await hydrate(id);
+  // Load the durable conversation before opening two long-lived event
+  // connections. Browsers cap same-origin HTTP/1.1 connections; opening
+  // streams first could starve transcript/presentation requests on return
+  // to an Agent, leaving its pane stuck on "Loading task".
+  if (activeId() === id || splitId() === id) openStream(id);
   return true;
 }
 
 let openingAgent: Promise<string | null> | null = null;
-export async function openAgentChat(agentId = "vak"): Promise<string | null> {
+const lastSessionByAgent = new Map<string, string>();
+export async function openAgentChat(agentId = "vak", createNew = false): Promise<string | null> {
   while (openingAgent) {
     await openingAgent;
   }
@@ -527,7 +537,23 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
   const cwd = backend().cwd;
   openingAgent = (async () => {
   try {
-    const res = await api.openAgent(agentId);
+    // Each Agent can own several conversations. Resume the one this client
+    // last viewed; on a fresh client, choose its most recent nonempty task.
+    const remembered = lastSessionByAgent.get(agentId);
+    const recent = sessions().find((session) => session.agent?.id === agentId && session.title)?.session_id;
+    const existing = remembered && sessions().some((session) => session.session_id === remembered)
+      ? remembered
+      : recent;
+    if (existing && !createNew) {
+      closeSplit();
+      setReplyTarget(null);
+      setArmedGoal(null);
+      setDockTab(null);
+      if (await activate(existing) === false) throw new Error("The conversation could not be resumed. Try again.");
+      await refreshSessions();
+      return existing;
+    }
+    const res = await api.openAgent(agentId, createNew);
     if (source !== api.backendUrl() || cwd !== backend().cwd) return null;
     recordAgentOpened(agentId);
     setActiveAgent(res.agent);
@@ -549,7 +575,7 @@ export async function openAgentChat(agentId = "vak"): Promise<string | null> {
 }
 
 export async function newSession() {
-  await openAgentChat(activeAgentId());
+  await openAgentChat(activeAgentId(), true);
   window.dispatchEvent(new CustomEvent("vak:focus-composer"));
 }
 
@@ -605,6 +631,7 @@ export async function sendPrompt(
   targetId?: string | null,
   replyTarget?: ReplyTarget | null,
   relation?: api.RoutingEnvelope["relation"],
+  propagateError = false,
 ) {
   if (!text.trim() && !(attachments && attachments.length)) return;
   let id = targetId ?? activeId();
@@ -710,6 +737,7 @@ export async function sendPrompt(
     }
   } catch (e) {
     appendSystem(id, `error: ${e instanceof Error ? e.message : String(e)}`);
+    if (propagateError) throw e;
   }
 }
 
@@ -833,6 +861,7 @@ function ensureSideStream(id: string) {
 let backendRefreshEpoch = 0;
 
 function resetWorkspaceView() {
+  lastSessionByAgent.clear();
   closeAllStreams();
   closeAllSideStreams();
   setActiveId(null);

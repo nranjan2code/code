@@ -739,19 +739,11 @@ function ResultOutcomeSummary(props: { item: OutputItem }) {
 
 function ResultEvidence(props: { item: OutputItem }) {
   const outcome = () => props.item.outcome;
-  return <Show when={outcome()}>{(value) => {
-    const receipts = () => value().evidence_receipt_ids.length;
-    const requirements = () => value().requirement_ids.length;
-    const hasEvidence = () => receipts() > 0 || requirements() > 0 || Boolean(value().human_review && value().human_review !== "not_required");
-    return <Show when={hasEvidence() || value().status !== "succeeded"}>
-      <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
-        <Show when={value().status !== "succeeded"}><span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span></Show>
-        <Show when={receipts() > 0}><span><Icon name="check" size={12} />{receipts()} evidence {receipts() === 1 ? "receipt" : "receipts"}</span></Show>
-        <Show when={requirements() > 0}><span>{requirements()} {requirements() === 1 ? "check" : "checks"} requested{receipts() === 0 ? " · no receipt recorded" : ""}</span></Show>
-        <Show when={value().human_review && value().human_review !== "not_required"}><span>Review: {value().human_review}</span></Show>
-      </footer>
-    </Show>;
-  }}</Show>;
+  return <Show when={outcome()}>{(value) => <Show when={value().status !== "succeeded"}>
+    <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
+      <span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span>
+    </footer>
+  </Show>}</Show>;
 }
 
 function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string }) {
@@ -868,17 +860,16 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string; 
   </section>;
 }
 
+function optionInteractionFor(sessionId?: string, resultId?: string) {
+  if (!sessionId || !resultId) return undefined;
+  return { onOptionSelect: (label: string) => {
+    setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
+    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
+  } };
+}
+
 export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
-  const optionInteraction = () => {
-    const sessionId = props.sessionId;
-    const resultId = props.resultId;
-    if (!sessionId || !resultId) return undefined;
-    return { onOptionSelect: (label: string) => {
-      setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
-      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
-    } };
-  };
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
     : <details class="tool-details"><summary>View original result</summary><pre>{props.fallback || JSON.stringify(props.output.payload, null, 2)}</pre></details>;
@@ -886,7 +877,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
-          <PresentationInteractionContext.Provider value={optionInteraction()}>
+          <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
             <StructuredRenderer output={props.output} />
           </PresentationInteractionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>
@@ -1174,8 +1165,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} presentationId={item.provenance?.presentation_id ?? undefined} />;
-    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} />;
+    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
         return <section class="semantic-recovery" role="status">
@@ -1220,13 +1211,6 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
   const blocks = createMemo(() => {
     const out: JSX.Element[] = [];
     let lead: Array<{ item: OutputItem; node: JSX.Element }> = [];
-    let earlier: JSX.Element[] = [];
-    const flushEarlier = () => {
-      if (earlier.length === 0) return;
-      const drafts = earlier;
-      out.push(<details class="primary-result-earlier"><summary>{drafts.length} earlier {drafts.length === 1 ? "draft" : "drafts"} in this turn</summary>{drafts}</details>);
-      earlier = [];
-    };
     const flush = () => {
       if (lead.length === 0) return;
       const material = lead;
@@ -1245,14 +1229,50 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       lead = [];
     };
     const grouping = !showOperatorChrome();
+    const isPrimaryCard = (entry: { item: OutputItem }) => {
+      const source = entry.item.provenance?.source ?? "";
+      return ((entry.item.content.type === "structured" || entry.item.content.type === "adaptive") && source.startsWith("emit_") && source.endsWith("_card")) ||
+        (entry.item.content.type === "adaptive" && source === "adaptive_library");
+    };
+    const cardCopyText = (entry: { item: OutputItem }) => {
+      const readable = entry.item.fallback_text.replace(/```json[\s\S]*?```/g, "").trim();
+      if (readable.split("\n").filter(Boolean).length > 1 || entry.item.content.type !== "structured") return readable;
+      const payload = entry.item.content.output.payload;
+      const values = Object.entries(payload).filter(([key]) => key !== "title").map(([key, value]) =>
+        `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+      return [readable, ...values].filter(Boolean).join("\n");
+    };
     const sameResult = (left: OutputItem, right: OutputItem) => {
       const a = left.outcome?.result_id;
       const b = right.outcome?.result_id;
       return !a || !b || a === b;
     };
     const entries = visible();
+    // The Agent may emit a card, revise its draft answer, and then write the
+    // final answer. Keep the latest card of each semantic type with it.
+    let finalAnswerIndex = -1;
+    for (let i = 0; i < entries.length; i += 1) {
+      const item = entries[i].item;
+      if (item.role === "assistant" && (
+        item.content.type === "document" ||
+        (item.content.type === "outcome" && Boolean(item.content.document))
+      )) finalAnswerIndex = i;
+    }
+    const finalCards = new Map<string, { item: OutputItem; node: JSX.Element }>();
+    for (let i = 0; i < finalAnswerIndex; i += 1) {
+      const entry = entries[i];
+      const content = entry.item.content;
+      if (content.type !== "structured" && content.type !== "adaptive") continue;
+      const key = content.type === "structured" ? content.output.semantic_type : `adaptive:${content.tree.spec_id}`;
+      finalCards.set(key, entry);
+    }
+    const carriedCards = [...finalCards.values()];
     for (let index = 0; index < entries.length; index += 1) {
       const { item, node } = entries[index];
+      if (index < finalAnswerIndex && (item.content.type === "structured" || item.content.type === "adaptive")) continue;
+      if (grouping && index < finalAnswerIndex && item.role === "assistant" && (
+        item.content.type === "document" || (item.content.type === "outcome" && Boolean(item.content.document))
+      )) continue;
       const cardLike =
         item.role !== "user" &&
         (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
@@ -1269,7 +1289,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
             : undefined;
       if (grouping && answer) {
         if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
-        const material = [...lead];
+        const material = index === finalAnswerIndex ? [...carriedCards, ...lead] : [...lead];
         // Structured material can arrive on either side of the answer in
         // the ledger. Keep adjacent cards with their result in both cases.
         while (index + 1 < entries.length) {
@@ -1282,38 +1302,41 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           material.push(next);
           index += 1;
         }
-        const result = <AssistantMessage sessionId={props.sessionId} text={answer.source_markdown}>
+        const hasCard = material.some(isPrimaryCard);
+        const displayText = hasCard
+          ? [
+              ...material.filter(isPrimaryCard).map(cardCopyText),
+              answer.metadata.card_note,
+            ].filter(Boolean).join("\n\n")
+          : answer.source_markdown;
+        const result = <AssistantMessage sessionId={props.sessionId} text={displayText}>
             <article
               class="primary-result"
               data-result-id={item.outcome?.result_id ?? item.id}
               aria-label="Agent result"
             >
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-              <div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>
               <Show when={material.length > 0}>
                 <div class="primary-result-material" aria-label="Result material">
                   {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
                 </div>
               </Show>
+              <Show when={hasCard}
+                fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
+                <Show when={answer.metadata.card_note}>{(note) => <div class="primary-result-note"><MarkdownView text={note()} /></div>}</Show>
+              </Show>
               <ResultEvidence item={item} />
               <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />
             </article>
           </AssistantMessage>;
-        const laterAnswer = entries.slice(index + 1).some((entry) => entry.item.role === "assistant" && (
-          entry.item.content.type === "document" ||
-          (entry.item.content.type === "outcome" && Boolean(entry.item.content.document))
-        ));
-        if (laterAnswer) earlier.push(result);
-        else { flushEarlier(); out.push(result); }
+        out.push(result);
         lead = [];
         continue;
       }
       flush();
-      flushEarlier();
       out.push(node);
     }
     flush();
-    flushEarlier();
     return out;
   });
   return (
@@ -1338,95 +1361,27 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
   );
 }
 
-export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string }) {
-  const render = (node: import("../types").AdaptiveRenderNode): JSX.Element => {
-    const text = typeof node.props.text === "string" ? node.props.text : typeof node.props.value === "string" ? String(node.props.value) : "";
-    const label = typeof node.props.label === "string" ? node.props.label : "";
-    const title = typeof node.props.title === "string" ? node.props.title : "";
-    const content = (
-      <>
-        {title && <h4 class="adaptive-node-title">{title}</h4>}
-        {label && <strong class="adaptive-node-label">{label}</strong>}
-        {text && <span class="adaptive-node-text">{text}</span>}
-        {node.children.map(render)}
-      </>
-    );
-    switch (node.primitive.toLowerCase()) {
-      case "title":
-        return <h3 class="adaptive-node adaptive-title">{title || text}</h3>;
-      case "text":
-      case "richtext":
-        return <p class="adaptive-node adaptive-text">{text || content}</p>;
-      case "section":
-        return <section class="adaptive-node adaptive-section">{content}</section>;
-      case "stack":
-        return <div class="adaptive-node adaptive-stack">{node.children.map(render)}</div>;
-      case "row":
-        return <div class="adaptive-node adaptive-row">{node.children.map(render)}</div>;
-      case "list":
-        return <ul class="adaptive-node adaptive-list">{node.children.length ? node.children.map((child) => <li>{render(child)}</li>) : <li>{content}</li>}</ul>;
-      case "checklist":
-        return <ul class="adaptive-node adaptive-checklist">{node.children.length ? node.children.map((child) => <li class="adaptive-checklist-item"><span class="adaptive-check-marker">✓</span>{render(child)}</li>) : <li>{content}</li>}</ul>;
-      case "steps":
-        return <ol class="adaptive-node adaptive-steps">{node.children.length ? node.children.map((child) => <li>{render(child)}</li>) : <li>{content}</li>}</ol>;
-      case "timeline":
-        return (
-          <div class="adaptive-node adaptive-timeline">
-            {title && <h4 class="adaptive-timeline-title">{title}</h4>}
-            <div class="adaptive-timeline-items">
-              {node.children.map((child) => (
-                <div class="adaptive-timeline-step">
-                  <div class="adaptive-timeline-bullet" />
-                  <div class="adaptive-timeline-content">{render(child)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      case "comparison":
-        return (
-          <div class="adaptive-node adaptive-comparison">
-            {title && <h4 class="adaptive-comparison-title">{title}</h4>}
-            <div class="adaptive-comparison-grid">{node.children.map(render)}</div>
-          </div>
-        );
-      case "keyvalue":
-        return <div class="adaptive-node adaptive-keyvalue">{label && <span class="adaptive-kv-label">{label}</span>}{text && <span class="adaptive-kv-value">{text}</span>}{node.children.map(render)}</div>;
-      case "metric": {
-        const value = text || (node.props.value != null ? String(node.props.value) : "");
-        return value ? <div class="adaptive-node adaptive-metric">{label && <small>{label}</small>}<strong>{value}</strong></div> : null;
-      }
-      case "progress":
-        return <div class="adaptive-node adaptive-progress"><progress value={Number(node.props.value ?? 0)} max={Number(node.props.max ?? 100)} />{label && <span>{label}</span>}</div>;
-      case "badge":
-      case "label":
-        return <span class="adaptive-node adaptive-badge">{label || text}</span>;
-      case "callout":
-        return <aside class="adaptive-node adaptive-callout">{label && <strong>{label}</strong>}{text && <p>{text}</p>}{node.children.map(render)}</aside>;
-      case "quote":
-        return <blockquote class="adaptive-node adaptive-quote">{text || content}</blockquote>;
-      case "divider":
-        return <hr class="adaptive-node adaptive-divider" />;
-      case "disclosure":
-        return <details class="adaptive-node adaptive-disclosure"><summary>{title || label || "Details"}</summary>{content}</details>;
-      default:
-        return <div class={`adaptive-node adaptive-${node.primitive.toLowerCase()}`}>{content}</div>;
+export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string }) {
+  const root = () => {
+    const node = props.tree.root;
+    // Earlier saved travel trees predate the declarative options variant.
+    if (props.tree.spec_id === "seed.travel-options" && props.tree.revision < 7 && node.primitive === "table") {
+      return { ...node, props: { ...node.props, variant: "options" } };
     }
+    return props.tree.spec_id.startsWith("seed.") && node.primitive === "entity"
+      ? { ...node, props: { ...node.props, kind: props.tree.spec_id.slice(5).replaceAll("-", " ") } }
+      : node;
   };
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      {render(props.tree.root)}
-      <Show when={showOperatorChrome()}>
-        <details class="adaptive-fallback-toggle">
-          <summary>Show original</summary>
-          <p>{props.fallback}</p>
-        </details>
-      </Show>
+      <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+        <GenericSpecRenderer node={root()} />
+      </PresentationInteractionContext.Provider>
     </section>
   );
 }
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean }) {
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   const turns = createMemo(() => {
     const order: string[] = [];
     const grouped = new Map<string, OutputItem[]>();
@@ -1446,6 +1401,6 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
     </details>}</Show>
-    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id)} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
+    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id && !(props.hideUser && item.role === "user"))} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
   </div>;
 }

@@ -2955,6 +2955,117 @@ fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
     Ok(())
 }
 
+/// Built-in recipes are available in every build without writing a standing
+/// user preference. An explicit user or workspace activation still wins.
+fn effective_presentation_library(
+    library: &vak_presentation::PresentationLibrary,
+    workspace_owner: &str,
+) -> vak_presentation::PresentationLibrary {
+    let mut effective = library.clone();
+    for seed in vak_presentation::seeds::built_in_seed_pack() {
+        let id = seed.spec.id.clone();
+        let revision = seed.spec.revision;
+        let accepts = seed.spec.accepts.clone();
+        if library.is_suppressed(&id, vak_presentation::LibraryScope::User, "user")
+            || library.is_suppressed(
+                &id,
+                vak_presentation::LibraryScope::Workspace,
+                workspace_owner,
+            )
+        {
+            continue;
+        }
+        if let Err(error) = effective.register(seed) {
+            eprintln!("[presentation] built-in pack {id} unavailable: {error}");
+            continue;
+        }
+        if accepts.iter().any(|semantic_type| {
+            effective
+                .select_preferred(semantic_type, "user", workspace_owner)
+                .is_some_and(|selected| {
+                    selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
+                })
+        }) {
+            continue;
+        }
+        if let Err(error) = effective.activate(
+            &id,
+            revision,
+            vak_presentation::LibraryScope::Workspace,
+            workspace_owner,
+        ) {
+            eprintln!("[presentation] built-in pack {id} could not activate: {error}");
+        }
+    }
+    effective
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod built_in_presentation_tests {
+    #[test]
+    fn every_built_in_pack_is_selected_without_a_saved_activation() {
+        let library = super::effective_presentation_library(
+            &vak_presentation::PresentationLibrary::default(),
+            "/tmp/presentation-selection",
+        );
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            let selected = library
+                .select_preferred(&seed.spec.accepts[0], "user", "/tmp/presentation-selection")
+                .expect("built-in pack is selected");
+            assert_eq!(selected.spec.id, seed.spec.id, "{}", seed.spec.accepts[0]);
+        }
+    }
+
+    #[test]
+    fn deactivated_builtin_stays_off_until_explicitly_activated() {
+        let owner = "/tmp/presentation-selection";
+        let mut library = vak_presentation::PresentationLibrary::default();
+        library.deactivate(
+            "seed.timeline",
+            vak_presentation::LibraryScope::Workspace,
+            owner,
+        );
+        let effective = super::effective_presentation_library(&library, owner);
+        assert!(
+            effective
+                .select_preferred("timeline", "user", owner)
+                .is_none()
+        );
+        assert!(effective.select_preferred("table", "user", owner).is_some());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store =
+            vak_store::presentation::PresentationStore::new(dir.path().join("presentations.json"));
+        store.save(&library).expect("save suppression");
+        library = store.load().expect("reload suppression");
+        assert!(
+            super::effective_presentation_library(&library, owner)
+                .select_preferred("timeline", "user", owner)
+                .is_none()
+        );
+        let seed = vak_presentation::seeds::built_in_seed_pack()
+            .into_iter()
+            .find(|record| record.spec.id == "seed.timeline")
+            .expect("timeline seed");
+        library.register(seed).expect("register seed");
+        library
+            .activate(
+                "seed.timeline",
+                6,
+                vak_presentation::LibraryScope::Workspace,
+                owner,
+            )
+            .expect("activate seed");
+        let effective = super::effective_presentation_library(&library, owner);
+        assert_eq!(
+            effective
+                .select_preferred("timeline", "user", owner)
+                .map(|record| record.spec.id.as_str()),
+            Some("seed.timeline")
+        );
+    }
+}
+
 /// Paths that must be reachable without a token: health probe, the SPA
 /// shell (static assets carry no data), and the login endpoint itself.
 fn auth_exempt_path(path: &str) -> bool {
@@ -3516,7 +3627,10 @@ pub(crate) fn register_handle(
     );
     let mut presentation_snapshot = match adaptive_store.load() {
         Ok(library) => {
-            crate::projection::snapshot_with_planner_and_library(&id, &session, &planner, &library)
+            let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
+            crate::projection::snapshot_with_planner_and_library(
+                &id, &session, &planner, &effective,
+            )
         }
         Err(_) => crate::projection::snapshot_with_planner(&id, &session, &planner),
     };
@@ -6113,9 +6227,15 @@ async fn presentation_snapshot(
         if let Some(session) = guard.as_ref() {
             let planner = delivery::merged_presentation_planner(&handle.core);
             let mut timeline = match presentation_store(&state).load() {
-                Ok(library) => crate::projection::snapshot_with_planner_and_library(
-                    &id, session, &planner, &library,
-                ),
+                Ok(library) => {
+                    let effective = effective_presentation_library(
+                        &library,
+                        &handle.core.cwd().to_string_lossy(),
+                    );
+                    crate::projection::snapshot_with_planner_and_library(
+                        &id, session, &planner, &effective,
+                    )
+                }
                 Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
             };
             crate::projection::append_sandbox_artifacts(
@@ -6135,7 +6255,20 @@ async fn presentation_snapshot(
     }
     match open_historical_session(&state, &id) {
         Some(session) => {
-            let mut timeline = crate::projection::snapshot(&id, &session);
+            let mut timeline = match presentation_store(&state).load() {
+                Ok(library) => {
+                    let owner = session
+                        .header()
+                        .map(|header| header.contract_cwd().to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let effective = effective_presentation_library(&library, &owner);
+                    let planner = delivery::merged_presentation_planner(&state.active_core());
+                    crate::projection::snapshot_with_planner_and_library(
+                        &id, &session, &planner, &effective,
+                    )
+                }
+                Err(_) => crate::projection::snapshot(&id, &session),
+            };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
                 &state.core.sessions_home(),
@@ -6167,9 +6300,15 @@ async fn session_result(
         if let Some(session) = guard.as_ref() {
             let planner = delivery::merged_presentation_planner(&handle.core);
             match presentation_store(&state).load() {
-                Ok(library) => crate::projection::snapshot_with_planner_and_library(
-                    &id, session, &planner, &library,
-                ),
+                Ok(library) => {
+                    let effective = effective_presentation_library(
+                        &library,
+                        &handle.core.cwd().to_string_lossy(),
+                    );
+                    crate::projection::snapshot_with_planner_and_library(
+                        &id, session, &planner, &effective,
+                    )
+                }
                 Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
             }
         } else {
@@ -6180,7 +6319,20 @@ async fn session_result(
                 .clone()
         }
     } else if let Some(session) = open_historical_session(&state, &id) {
-        crate::projection::snapshot(&id, &session)
+        match presentation_store(&state).load() {
+            Ok(library) => {
+                let owner = session
+                    .header()
+                    .map(|header| header.contract_cwd().to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let effective = effective_presentation_library(&library, &owner);
+                let planner = delivery::merged_presentation_planner(&state.active_core());
+                crate::projection::snapshot_with_planner_and_library(
+                    &id, &session, &planner, &effective,
+                )
+            }
+            Err(_) => crate::projection::snapshot(&id, &session),
+        }
     } else {
         return (
             StatusCode::NOT_FOUND,
@@ -8789,7 +8941,10 @@ async fn list_presentations(State(state): State<AppState>) -> axum::response::Re
         if changed || library.definitions().count() != before {
             store.save(&library)?;
         }
-        Ok(library)
+        Ok(effective_presentation_library(
+            &library,
+            &state.active_core().cwd().to_string_lossy(),
+        ))
     }) {
         Ok(library) => Json(serde_json::json!({
             "definitions": library.definitions().collect::<Vec<_>>(),
@@ -8835,8 +8990,13 @@ async fn import_presentations(
     let result = store.load().and_then(|mut library| {
         for mut definition in pack.definitions {
             // Pack import is always a preview operation. Never trust an
-            // enabled bit from an external serialized projection.
+            // enabled bit or foreign owner from an external serialized
+            // projection. Imported definitions belong to this user's
+            // library, so they can actually be activated after review.
             definition.enabled = false;
+            definition.origin.scope = vak_presentation::LibraryScope::User;
+            definition.origin.owner = "user".into();
+            definition.origin.plugin_id = None;
             library.register(definition).map_err(|error| {
                 vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
             })?;
@@ -9088,6 +9248,11 @@ async fn activate_all_presentations(
 ) -> axum::response::Response {
     let store = presentation_store(&state);
     let result = store.load().and_then(|mut library| {
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            library.register(seed).map_err(|error| {
+                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+            })?;
+        }
         let mut latest_by_id: std::collections::BTreeMap<String, u64> =
             std::collections::BTreeMap::new();
         for def in library.definitions() {
@@ -9124,17 +9289,22 @@ async fn deactivate_all_presentations(
     let store = presentation_store(&state);
     match store.load() {
         Ok(mut library) => {
-            let before = library.activations().len();
-            let spec_ids: Vec<String> = library
-                .activations()
-                .iter()
-                .filter(|a| a.scope == body.scope && a.owner == body.owner)
-                .map(|a| a.spec_id.clone())
+            let mut spec_ids: std::collections::BTreeSet<String> = library
+                .definitions()
+                .map(|record| record.spec.id.clone())
                 .collect();
+            spec_ids.extend(
+                vak_presentation::seeds::built_in_seed_pack()
+                    .into_iter()
+                    .map(|record| record.spec.id),
+            );
+            let mut removed = 0;
             for id in spec_ids {
+                if !library.is_suppressed(&id, body.scope, &body.owner) {
+                    removed += 1;
+                }
                 library.deactivate(&id, body.scope, &body.owner);
             }
-            let removed = before.saturating_sub(library.activations().len());
             match store.save(&library) {
                 Ok(()) => Json(serde_json::json!({ "deactivated": removed })).into_response(),
                 Err(error) => (
@@ -20399,6 +20569,26 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .status(),
             StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn development_library_activates_seed_recipes_without_persisting_them() {
+        let empty = vak_presentation::PresentationLibrary::default();
+        let effective = super::effective_presentation_library(&empty, "/tmp/vak-dev-workspace");
+        assert_eq!(empty.definitions().count(), 0);
+        assert!(empty.activations().is_empty());
+        assert_eq!(effective.definitions().count(), 75);
+        assert_eq!(effective.activations().len(), 75);
+        assert!(
+            effective
+                .select_preferred("metric", "user", "/tmp/vak-dev-workspace")
+                .is_some()
+        );
+        assert!(
+            effective
+                .select_preferred("coding.diff", "user", "/tmp/vak-dev-workspace")
+                .is_some()
         );
     }
 

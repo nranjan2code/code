@@ -72,7 +72,15 @@ export default function DiffPane(props: { sessionId: string | null }) {
     if (!c || !id || !commentText().trim()) return;
     setError(null);
     try {
-      await api.steer(id, `[diff comment ${c.path}:${c.line}] ${commentText().trim()}`);
+      await sendPrompt(
+        `Please address this comment on ${c.path}:${c.line}: ${commentText().trim()}`,
+        undefined,
+        undefined,
+        id,
+        undefined,
+        "correction",
+        true,
+      );
       setSentCount((n) => n + 1);
       setComment(null);
       setCommentText("");

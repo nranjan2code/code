@@ -118,9 +118,9 @@ Structured result cards also expose generic `Use this` and `Suggest a change`
 controls. They submit arbitrary feedback through the authenticated session
 endpoint; no result domain or scenario is encoded in the client. Feedback is
 bounded, recorded as typed activity, and does not alter result truth.
-Every rich card also exposes `Show original`, which immediately restores the
-exact fallback projection without discarding the rich preview or changing the
-underlying result.
+The exact fallback projection remains in result data and inspection surfaces.
+The everyday conversation shows the useful card without a `Show original`
+debug control.
 
 The delivery adapter now has an integration test proving unactivated previews
 are not selected and activated specs compile into a bounded rich render tree.
@@ -164,6 +164,19 @@ green, including the existing voice, server, delivery, plugin, store, and
 session tests. The first P3-style generic scenario is also now
 landed as the validated `plan.timeline` semantic type and desktop/browser
 timeline card; it retains the existing exact Markdown/channel fallback.
+
+All 75 built-in definitions are registered and selected by default in every
+build. They bind the complete validated shape of their emit tool, including
+collection children where the renderer needs them. Explicit user and workspace
+activations take precedence. Deactivation records a durable scoped suppression
+so the default cannot silently reactivate a pack; activating it clears that
+suppression. A failed compilation leaves the existing structured card in place.
+The same effective library is loaded when a historical session is reopened.
+Conformance tests exercise selection and compilation for all 75 definitions
+against emitted payload shapes. Real browser review has covered timeline,
+table, research, and recipe; the remaining visual combinations still need
+human inspection. Packs can be searched, activated, deactivated, imported,
+and exported in Settings. Import remains a disabled preview until activation.
 
 This document is the implementation contract for replacing Vak's finite set of
 hard-coded rich-result cards with a safe, adaptive presentation runtime. The

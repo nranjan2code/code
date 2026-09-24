@@ -122,7 +122,15 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         .filter(|item| {
             item.turn_id == turn
                 && item.kind == OutputKind::Card
-                && matches!(item.content, OutputContent::Structured { .. })
+                && item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.source.as_deref())
+                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
+                && matches!(
+                    item.content,
+                    OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
+                )
         })
         .map(|item| item.fallback_text.trim())
         .filter(|text| !text.is_empty())
@@ -131,9 +139,9 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         return narration;
     }
     let cards = cards.join("\n\n");
-    match narration.trim() {
-        "" | "(no text)" => cards,
-        _ => format!("{cards}\n\n{narration}"),
+    match vak_delivery::supplemental_card_note(&narration) {
+        Some(note) => format!("{cards}\n\n{note}"),
+        None => cards,
     }
 }
 
@@ -762,6 +770,16 @@ fn snapshot_inner(
                                                 "user",
                                                 &workspace_owner,
                                             )
+                                            .filter(|stored| {
+                                                stored.spec.metadata.get("seed").map(String::as_str)
+                                                    != Some("true")
+                                                    || stored
+                                                        .spec
+                                                        .metadata
+                                                        .get("certified")
+                                                        .map(String::as_str)
+                                                        == Some("true")
+                                            })
                                             .map(|stored| {
                                                 (stored.spec.id.clone(), stored.spec.revision)
                                             })
@@ -1187,6 +1205,54 @@ fn snapshot_inner(
                                     if repair_armed && let Some(superseded) = previous {
                                         ids_to_remove.insert(superseded);
                                     }
+                                    let fallback_text = structured_markdown(&output);
+                                    let workspace_owner = session
+                                        .header()
+                                        .map(|header| {
+                                            header.contract_cwd().to_string_lossy().into_owned()
+                                        })
+                                        .unwrap_or_else(|| "workspace".into());
+                                    let selected = adaptive_library.and_then(|library| {
+                                        selected_presentation
+                                            .as_ref()
+                                            .and_then(|(spec_id, revision)| {
+                                                library.get(spec_id, *revision)
+                                            })
+                                            .filter(|stored| {
+                                                stored.spec.accepts.contains(&output.semantic_type)
+                                            })
+                                            .or_else(|| {
+                                                library.select_preferred(
+                                                    &output.semantic_type,
+                                                    "user",
+                                                    &workspace_owner,
+                                                )
+                                            })
+                                    });
+                                    let adaptive = selected
+                                        .filter(|stored| {
+                                            stored.spec.metadata.get("seed").map(String::as_str)
+                                                != Some("true")
+                                                || stored
+                                                    .spec
+                                                    .metadata
+                                                    .get("certified")
+                                                    .map(String::as_str)
+                                                    == Some("true")
+                                        })
+                                        .and_then(|stored| {
+                                            OutputContent::from_compiled_adaptive(
+                                                vak_presentation::compile(
+                                                    &stored.spec,
+                                                    &vak_presentation::CompileInput {
+                                                        semantic_type: output.semantic_type.clone(),
+                                                        payload: output.payload.clone(),
+                                                        fallback_text: fallback_text.clone(),
+                                                    },
+                                                ),
+                                                fallback_text.clone(),
+                                            )
+                                        });
                                     timeline.items.push(OutputItem {
                                         id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
@@ -1195,8 +1261,9 @@ fn snapshot_inner(
                                         kind: OutputKind::Card,
                                         status: OutputStatus::Succeeded,
                                         outcome: None,
-                                        fallback_text: structured_markdown(&output),
-                                        content: OutputContent::Structured { output },
+                                        fallback_text,
+                                        content: adaptive
+                                            .unwrap_or(OutputContent::Structured { output }),
                                         provenance: Some(OutputProvenance {
                                             session_id: Some(session_id.into()),
                                             entry_id: Some(entry.id.clone()),
@@ -1323,6 +1390,33 @@ fn snapshot_inner(
         deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
     deduplicate_file_artifacts(&mut deduplicated);
+    let card_turns: std::collections::HashSet<String> = deduplicated
+        .iter()
+        .filter(|item| {
+            item.kind == OutputKind::Card
+                && item
+                    .provenance
+                    .as_ref()
+                    .and_then(|p| p.source.as_deref())
+                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
+        })
+        .map(|item| item.turn_id.clone())
+        .collect();
+    for item in &mut deduplicated {
+        if !card_turns.contains(&item.turn_id) || item.role != OutputRole::Assistant {
+            continue;
+        }
+        let document = match &mut item.content {
+            OutputContent::Document { document } => Some(document),
+            OutputContent::Outcome { document, .. } => document.as_mut(),
+            _ => None,
+        };
+        if let Some(document) = document
+            && let Some(note) = vak_delivery::supplemental_card_note(&document.source_markdown)
+        {
+            document.metadata.insert("card_note".into(), note.into());
+        }
+    }
     timeline.items = deduplicated;
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -3916,6 +4010,123 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_built_in_pack_compiles_its_real_emitter_shape() {
+        let cases = vak_core::presentation_tools::conformance_cases();
+        let mut failures = Vec::new();
+        for seed in vak_presentation::seeds::built_in_seed_pack() {
+            let Some((_, semantic_type, payload)) = cases
+                .iter()
+                .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
+            else {
+                failures.push(format!("{} has no emitted semantic type", seed.spec.id));
+                continue;
+            };
+            let compiled = vak_presentation::compile(
+                &seed.spec,
+                &vak_presentation::CompileInput {
+                    semantic_type: (*semantic_type).into(),
+                    payload: payload.clone(),
+                    fallback_text: "Fallback".into(),
+                },
+            );
+            if !matches!(compiled, vak_presentation::CompiledPresentation::Rich(_)) {
+                failures.push(format!("{} ({semantic_type}): {compiled:?}", seed.spec.id));
+            } else if vak_delivery::adaptive_presentation_markdown(&compiled)
+                .trim()
+                .is_empty()
+            {
+                failures.push(format!(
+                    "{} ({semantic_type}): empty text delivery",
+                    seed.spec.id
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} unusable packs:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn selected_metric_pack_keeps_every_reading_from_an_emitted_grid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "metric-grid");
+        log.append_message(MessageRecord {
+            message: Message::user_text("How is the weather?"),
+            meta: None,
+        })
+        .expect("user");
+        let input = serde_json::json!({
+            "semantic_type": "metric",
+            "payload": {"label": "Noida now", "condition": "Sunny", "temperature": "35.2°C", "humidity": "31%"}
+        });
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "grid-call".into(),
+                name: "emit_metric_card".into(),
+                input: input.clone(),
+            }]),
+            meta: None,
+        })
+        .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "grid-call".into(),
+                    content: "Card displayed to the user (metric).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+        append_presentation_for_call(&mut log, "emit_metric_card", "grid-call", &input);
+        let library = crate::effective_presentation_library(
+            &vak_presentation::PresentationLibrary::default(),
+            "/tmp/project",
+        );
+        let planner = vak_delivery::PresentationPlanner {
+            skills: vak_delivery::built_in_skill_registry(),
+            recipes: vak_delivery::built_in_recipes(),
+        };
+        let timeline =
+            super::snapshot_with_planner_and_library("metric-grid", &log, &planner, &library);
+        let card = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Card)
+            .expect("card");
+        let OutputContent::Adaptive { tree, .. } = &card.content else {
+            panic!("selected pack should produce adaptive content");
+        };
+        assert_eq!(tree.spec_id, "seed.metric");
+        assert_eq!(
+            tree.root.props.get("condition"),
+            Some(&serde_json::json!("Sunny"))
+        );
+        assert_eq!(
+            tree.root.props.get("temperature"),
+            Some(&serde_json::json!("35.2°C"))
+        );
+        assert_eq!(
+            tree.root.props.get("humidity"),
+            Some(&serde_json::json!("31%"))
+        );
+        let lowered = vak_delivery::adaptive_presentation_markdown(
+            &vak_presentation::CompiledPresentation::Rich(tree.clone()),
+        );
+        for reading in ["Sunny", "35.2°C", "31%"] {
+            assert!(
+                lowered.contains(reading),
+                "constrained delivery lost {reading}: {lowered}"
+            );
+        }
+    }
+
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
         SessionLog::create(
             dir.path().join(format!("{name}.jsonl")),
@@ -3971,9 +4182,8 @@ mod tests {
         append_presentation_for_call(log, "emit_chart_card", id, &input);
     }
 
-    /// The bug this guards: a card emitted through a tool is not in the
-    /// model's final text, so a channel that delivered only that text sent
-    /// "the chart is shown above" with nothing above it.
+    /// Channels deliver the card as the answer and retain only explicitly
+    /// additional narration.
     #[test]
     fn a_channel_gets_the_cards_of_the_run_ahead_of_the_narration() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3989,9 +4199,37 @@ mod tests {
             text.contains("sales rise steadily"),
             "card content must reach the channel: {text}"
         );
-        assert!(
-            text.ends_with("The chart is shown above."),
-            "narration follows the card: {text}"
+        assert!(!text.contains("The chart is shown above."), "{text}");
+        let with_note = super::text_with_run_cards(&log, "Note: Check the holiday dip.".into());
+        assert!(with_note.contains("sales rise steadily"), "{with_note}");
+        assert!(with_note.ends_with("Check the holiday dip."), "{with_note}");
+    }
+
+    #[test]
+    fn card_result_projects_only_an_explicit_additional_note() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-note");
+        log.append_message(MessageRecord {
+            message: Message::user_text("chart it"),
+            meta: None,
+        })
+        .expect("user");
+        append_card_call(&mut log, "c1", "sales rise steadily");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "Note: The holiday dip needs review.",
+            )]),
+            meta: None,
+        })
+        .expect("answer");
+        let timeline = super::snapshot("card-note", &log);
+        let note = timeline.items.iter().find_map(|item| match &item.content {
+            OutputContent::Document { document } => document.metadata.get("card_note"),
+            _ => None,
+        });
+        assert_eq!(
+            note.map(String::as_str),
+            Some("The holiday dip needs review.")
         );
     }
 

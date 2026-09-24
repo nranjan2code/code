@@ -19,21 +19,14 @@ import Icon from "../Icon";
  * `vak_presentation::RenderNode` (primitive/props/children). That pipeline
  * exists end-to-end (crates/vak-presentation/src/lib.rs `compile()` ->
  * crates/vak-delivery/src/presentation.rs `OutputContent::Adaptive` ->
- * `AdaptiveTreeView` in PresentationRenderer.tsx) but is inert today because
- * built-in seeds (crates/vak-presentation/src/seeds.rs) register disabled
- * and nothing activates them by default, so `semantic_type` payloads never
- * arrive as `{ type: "adaptive" }` in practice — they arrive as raw
- * `{ type: "structured", output: { payload } }` and are matched against the
- * STRUCTURED_RENDERERS registry.
+ * PresentationRenderer.tsx). Certified active packs render real emitted
+ * cards through this component. Other semantic types retain their structured
+ * renderer until their definitions carry the complete content.
  *
  * Rather than inventing a second, parallel schema, this component consumes
  * the SAME `AdaptiveRenderNode` shape. The `buildXSpec` adapters below turn
- * today's raw, ad-hoc payloads into that shape client-side (the job a
- * server-side `compile()` call would otherwise do). When vak-server starts
- * activating built-in seeds by default (see docs/design/67-presentation-
- * renderer-guide.md), the real `{ type: "adaptive" }` items it produces can
- * be fed into this exact component with no changes — only the adapters
- * become unnecessary.
+ * raw payloads into that shape client-side for structured outputs. The server
+ * compiler emits the same node shape for selected packs.
  *
  * `surface` is the one thing that varies per rendering context (main chat
  * timeline vs. a denser panel/compact view). It is deliberately NOT part of
@@ -112,6 +105,19 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
       return renderMedia(safeNode, surface);
     case "universal_card":
       return renderUniversalCard(safeNode, surface);
+    case "map":
+    case "calendar":
+    case "board":
+    case "entity":
+    case "evidence":
+    case "graph":
+    case "form":
+    case "alert":
+    case "conversation":
+    case "transaction": {
+      const entries = Object.entries(props).filter(([key]) => !["title", "summary", "semantic_type"].includes(key));
+      return renderUniversalCard({ primitive: "universal_card", props: { ...props, kind: str(props, "kind") ?? safeNode.primitive.replaceAll("_", " "), entries }, children }, surface);
+    }
     default:
       return renderFallback(safeNode, surface);
   }
@@ -160,6 +166,13 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
 }
 
 function renderMetric(node: AdaptiveRenderNode, surface: RenderSurface) {
+  // A declarative pack may bind the whole validated metric payload to this
+  // primitive. The emit tool permits both one value and a small grid; keep
+  // the latter visible instead of showing a single-value dash.
+  if (node.props.value === undefined || node.props.value === null) {
+    const grid = buildMetricSpec(node.props);
+    if (grid.primitive === "metric_grid") return renderMetricGrid(grid, surface);
+  }
   const label = str(node.props, "label") ?? "Metric";
   const value = node.props["value"];
   const unit = str(node.props, "unit");
@@ -252,7 +265,12 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
   const [sortAsc, setSortAsc] = createSignal<boolean>(true);
   const [copied, setCopied] = createSignal(false);
   const compact = surface === "compact";
-  const options = str(node.props, "variant") === "options";
+  const firstColumn = specColumns(node)[0];
+  const options = str(node.props, "variant") === "options" || (
+    specRows(node).length > 0 && specRows(node).length <= 8 &&
+    Boolean(firstColumn && /^(option|choice)$/i.test(firstColumn.key.trim()))
+  );
+  const quiet = options || (specRows(node).length <= 5 && specColumns(node).length <= 6);
   const interaction = useContext(PresentationInteractionContext);
 
   const columns = () => specColumns(node);
@@ -305,13 +323,13 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact, "data-grid-options": options }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">{options ? "Options" : "Data Grid"}</span>
+          <span class="card-badge badge-indigo">{options ? "Options" : quiet ? "Table" : "Data Grid"}</span>
           <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
-          <Show when={!options}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
+          <Show when={!quiet}><span class="card-badge" style={{ "font-size": "11px", opacity: "0.8" }}>
             {filteredAndSortedRows().length} of {rows().length} rows
           </span></Show>
         </div>
-        <Show when={!options}><div class="card-actions">
+        <Show when={!quiet}><div class="card-actions">
           <input
             type="text"
             class="grid-search-input"
@@ -337,9 +355,11 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                     scope="col"
                     aria-sort={sortCol() === col.key ? (sortAsc() ? "ascending" : "descending") : "none"}
                   >
-                    <button type="button" onClick={() => handleSort(col.key)}>
-                      {col.label} {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
-                    </button>
+                    <Show when={!quiet} fallback={<span>{col.label}</span>}>
+                      <button type="button" onClick={() => handleSort(col.key)}>
+                        {col.label} {sortCol() === col.key ? (sortAsc() ? "↑" : "↓") : "↕"}
+                      </button>
+                    </Show>
                   </th>
                 )}
               </For>
@@ -830,9 +850,15 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
   const passedCount = createMemo(() => num(node.props, "passed") ?? tests().filter((t) => str(t, "status") === "passed").length);
   const failedCount = createMemo(() => num(node.props, "failed") ?? tests().filter((t) => str(t, "status") === "failed").length);
   const totalCount = createMemo(() => num(node.props, "total") ?? tests().length);
+  const hasReportedOutcome = createMemo(() =>
+    totalCount() > 0 && (passedCount() > 0 || failedCount() > 0 || tests().some((t) => {
+      const status = str(t, "status");
+      return status === "passed" || status === "failed" || status === "skipped";
+    })),
+  );
   const successPercent = createMemo(() => {
     const tot = totalCount();
-    if (tot === 0) return 100;
+    if (!hasReportedOutcome()) return 0;
     return Math.round((passedCount() / tot) * 100);
   });
   const filteredTests = createMemo(() =>
@@ -843,7 +869,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card test-matrix-wrap" classList={{ "test-matrix-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class={`card-badge ${failedCount() > 0 ? "badge-rose" : "badge-emerald"}`}>Test Suite</span>
+          <span class={`card-badge ${failedCount() > 0 ? "badge-rose" : hasReportedOutcome() ? "badge-emerald" : ""}`}>Test Suite</span>
           <span class="card-subtitle">
             {str(node.props, "suite_name") ?? "Test Execution"} ({num(node.props, "duration_ms") ?? 0}ms)
           </span>
@@ -872,7 +898,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
                 <path
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke="var(--emerald-bright)"
+                  stroke={hasReportedOutcome() ? "var(--emerald-bright)" : "var(--text-muted)"}
                   stroke-width="3.5"
                   stroke-dasharray={`${successPercent()}, 100`}
                   stroke-linecap="round"
@@ -881,7 +907,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
             </div>
             <div>
               <div style={{ "font-size": "14px", "font-weight": "700", color: "var(--text-main)" }}>
-                {successPercent()}% Success Rate
+                {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
               </div>
               <div style={{ "font-size": "11.5px", color: "var(--text-muted)" }}>
                 {passedCount()} of {totalCount()} tests verified
@@ -889,7 +915,9 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
             </div>
           </div>
           <div style={{ display: "flex", gap: "14px", "font-size": "12px", "font-weight": "600" }}>
-            <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
+            <Show when={hasReportedOutcome()}>
+              <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
+            </Show>
             <Show when={failedCount() > 0}>
               <span style={{ color: "var(--rose-bright)" }}>✕ {failedCount()} Failed</span>
             </Show>
@@ -1422,11 +1450,14 @@ function renderFallback(node: AdaptiveRenderNode, _surface: RenderSurface) {
   const label = str(node.props, "label");
   const title = str(node.props, "title");
   const children = Array.isArray(node.children) ? node.children : [];
+  const details = Object.entries(node.props).filter(([key]) => !["title", "summary", "text", "label", "semantic_type"].includes(key));
   return (
     <div class={`adaptive-node adaptive-${node.primitive.toLowerCase()}`}>
       {title && <h4 class="adaptive-node-title">{title}</h4>}
       {label && <strong class="adaptive-node-label">{label}</strong>}
       {text && <span class="adaptive-node-text">{text}</span>}
+      {str(node.props, "summary") && <p>{str(node.props, "summary")}</p>}
+      <Show when={details.length > 0}><dl class="universal-card-nested"><For each={details}>{([key, value]) => <div><dt>{universalFieldLabel(key)}</dt><dd><UniversalValue value={value} /></dd></div>}</For></dl></Show>
       {children.map((child) => renderNode(child, _surface))}
     </div>
   );

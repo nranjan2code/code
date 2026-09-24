@@ -340,7 +340,7 @@ fn metric_payload_schema() -> Value {
 const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_universal_card",
-        description: "Emit a general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields.",
+        description: "Emit a static general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
         semantic_types: &[
             "map",
             "route_map",
@@ -389,7 +389,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_table_card",
-        description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows.",
+        description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
         semantic_types: &[
             "coding.benchmark",
             "coding.dependencies",
@@ -680,8 +680,9 @@ impl Tool for EmitCardTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!(
-                "Card displayed to the user ({}). It is already on screen: do not restate its \
-                 data or write a `vak` fence for it; at most add one short sentence of narration.",
+                "Card displayed to the user ({}). It is already on screen. Leave final text empty \
+                 if the card answers fully. Only additional information will be shown: begin it \
+                 with `Note:` and do not repeat card data or write a `vak` fence.",
                 output.semantic_type
             )),
             Err(reason) => ToolOutput::error(format!(
@@ -747,9 +748,9 @@ pub fn presentation_check_nudge(
         text: format!(
             "[presentation-check]: Your answer reads as `{}` (signals: {}), which the app presents \
              as a card, but no card was emitted. If a card fits, call `{tool}` with \
-             semantic_type `{semantic_type}` and this content, then add at most one short sentence \
-             and do not restate the data as text. If a card genuinely does not fit, resend your \
-             answer unchanged.",
+             semantic_type `{semantic_type}` and this content, and do not restate the data as text \
+             (any text after it is shown only if it begins with `Note:`). If a card genuinely does \
+             not fit, resend your answer unchanged.",
             intended.recipe_id,
             intended.matched_signals.join(", ")
         ),

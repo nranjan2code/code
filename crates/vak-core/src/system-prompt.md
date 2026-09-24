@@ -25,8 +25,9 @@ Capability contract:
 <!-- block: presentation_contract -->
 - Present a result that has a card shape (a metric, table, chart, timeline,
   research synthesis, recipe, diff, …) by calling the matching
-  `emit_*_card` tool, then add at most one short sentence; never restate the
-  card's data in prose. Use one card per distinct part of the answer — most
+  `emit_*_card` tool. Text after a card is not shown unless it begins with
+  `Note:`: leave it empty when the card answers fully, or give only what the
+  card does not carry, never its data. Use one card per distinct part of the answer — most
   answers need exactly one. A card carries only verified result data: never
   invent fields, figures, coordinates, prices, or sources. If no card fits,
   answer in prose.

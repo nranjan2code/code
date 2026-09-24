@@ -44,11 +44,51 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
                 out.push_str(&format!("{}- {}\n", indent, value));
             }
         }
-        Primitive::KeyValue | Primitive::Metric | Primitive::Progress => {
+        Primitive::KeyValue | Primitive::Progress => {
             let label = text("label");
             let value = text("value");
             if !label.is_empty() || !value.is_empty() {
                 out.push_str(&format!("{}**{}:** {}\n", indent, label, value));
+            }
+        }
+        Primitive::Metric => {
+            let label = text("label");
+            if let Some(value) = node.props.get("value") {
+                let value = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
+                let unit = text("unit");
+                out.push_str(&format!(
+                    "{}**{}:** {}{}\n",
+                    indent,
+                    label,
+                    value,
+                    if unit.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {unit}")
+                    }
+                ));
+            } else {
+                if !label.is_empty() {
+                    out.push_str(&format!("{}**{}**\n", indent, label));
+                }
+                for (key, value) in &node.props {
+                    if matches!(key.as_str(), "label" | "title" | "semantic_type") {
+                        continue;
+                    }
+                    let value = value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string());
+                    out.push_str(&format!(
+                        "{}- {}: {}\n",
+                        indent,
+                        key.replace('_', " "),
+                        value
+                    ));
+                }
             }
         }
         Primitive::Text
@@ -93,7 +133,11 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
         | Primitive::Transaction
         | Primitive::Alert
         | Primitive::Conversation
-        | Primitive::Simulation => {
+        | Primitive::Simulation
+        | Primitive::IngredientList
+        | Primitive::StepList
+        | Primitive::TakeawayList
+        | Primitive::SourceList => {
             let value = text("text");
             if !value.is_empty() {
                 out.push_str(&format!("{}{}\n", indent, value));
@@ -168,6 +212,80 @@ fn render_node(node: &RenderNode, depth: usize) -> String {
     }
     for child in &node.children {
         out.push_str(&render_node(child, depth.saturating_add(1)));
+    }
+    // Some valid packs bind the complete payload to a primitive whose text
+    // lowering has no specialized shape (for example a universal entity or a
+    // small comparison table). Never let a rich selection erase the result on
+    // a constrained surface. Keep this structural and preserve every field.
+    if out.trim().is_empty() {
+        out.push_str(&render_bound_props(node, &indent));
+    }
+    out
+}
+
+fn inline_value(value: &Value, depth: usize) -> String {
+    if depth >= 8 {
+        return value.to_string();
+    }
+    match value {
+        Value::Null => "Unavailable".into(),
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => {
+            if *value {
+                "Yes".into()
+            } else {
+                "No".into()
+            }
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(|item| inline_value(item, depth + 1))
+            .collect::<Vec<_>>()
+            .join("; "),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "{}: {}",
+                    key.replace('_', " "),
+                    inline_value(value, depth + 1)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · "),
+    }
+}
+
+fn render_bound_props(node: &RenderNode, indent: &str) -> String {
+    let mut out = String::new();
+    for key in ["title", "summary"] {
+        if let Some(value) = node.props.get(key).and_then(Value::as_str)
+            && !value.is_empty()
+        {
+            if key == "title" {
+                out.push_str(&format!("{indent}## {value}\n"));
+            } else {
+                out.push_str(&format!("{indent}{value}\n"));
+            }
+        }
+    }
+    for (key, value) in &node.props {
+        if matches!(key.as_str(), "title" | "summary" | "semantic_type") {
+            continue;
+        }
+        let label = key.replace('_', " ");
+        if let Value::Array(items) = value {
+            out.push_str(&format!("{indent}**{label}:**\n"));
+            for item in items {
+                out.push_str(&format!("{indent}- {}\n", inline_value(item, 0)));
+            }
+        } else {
+            out.push_str(&format!(
+                "{indent}**{label}:** {}\n",
+                inline_value(value, 0)
+            ));
+        }
     }
     out
 }

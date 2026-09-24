@@ -463,7 +463,12 @@ Consequences, all enforced by tests:
   summary would otherwise say "the chart is shown above" with nothing above.
   `projection::text_with_run_cards` puts the latest turn's cards (their
   deterministic text form, from the same projection the desktop renders, so
-  retries are superseded) ahead of the narration.
+  retries are superseded) ahead of any explicit supplemental note. After a
+  successful card call, the card is the user-facing answer. Only final text
+  beginning `Note:` or `Additional note:` is shown beside it; unmarked text
+  remains in the append-only ledger but does not duplicate the card in the
+  everyday UI or channel delivery. The same parser in `vak-delivery` governs
+  both routes.
 - **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
   and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
   fails the build unless they equal the Rust lists exactly.

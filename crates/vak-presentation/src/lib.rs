@@ -60,11 +60,11 @@ pub struct SpecNode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpecValue {
-    Text(String),
-    Number(f64),
-    Boolean(bool),
+    Text { value: String },
+    Number { value: f64 },
+    Boolean { value: bool },
     Binding(Binding),
-    Literal(Value),
+    Literal { value: Value },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,10 +171,14 @@ pub enum Primitive {
     /// express the ingredient/step/timer triple without the surface guessing
     /// which column means what, so this is a distinct concept, not a shortcut.
     Recipe,
+    IngredientList,
+    StepList,
     /// A question with takeaways, sources and citations bound together. The
     /// citation-to-takeaway relationship is lost if this is flattened into a
     /// Section plus a CitationList.
     Research,
+    TakeawayList,
+    SourceList,
     /// A sandboxed preview of authored UI. The isolation contract (no ambient
     /// privileges for the previewed document) is part of the primitive, which
     /// no composition of existing primitives carries.
@@ -271,6 +275,13 @@ pub struct PresentationActivation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresentationSuppression {
+    pub spec_id: String,
+    pub scope: LibraryScope,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresentationPackManifest {
     pub schema_version: u16,
     pub pack_id: String,
@@ -286,6 +297,8 @@ pub struct PresentationPackManifest {
 pub struct PresentationLibrary {
     specs: BTreeMap<(String, u64), StoredPresentation>,
     activations: Vec<PresentationActivation>,
+    #[serde(default)]
+    suppressions: Vec<PresentationSuppression>,
 }
 
 impl PresentationLibrary {
@@ -377,6 +390,7 @@ impl PresentationLibrary {
             owner: owner.to_owned(),
             semantic_types: stored.spec.accepts.clone(),
         };
+        self.clear_suppression(id, scope, owner);
         if let Some(existing) = self
             .activations
             .iter_mut()
@@ -395,6 +409,28 @@ impl PresentationLibrary {
     pub fn deactivate(&mut self, id: &str, scope: LibraryScope, owner: &str) {
         self.activations
             .retain(|entry| !(entry.spec_id == id && entry.scope == scope && entry.owner == owner));
+        if !self.is_suppressed(id, scope, owner) {
+            self.suppressions.push(PresentationSuppression {
+                spec_id: id.to_owned(),
+                scope,
+                owner: owner.to_owned(),
+            });
+        }
+    }
+
+    pub fn is_suppressed(&self, id: &str, scope: LibraryScope, owner: &str) -> bool {
+        self.suppressions
+            .iter()
+            .any(|entry| entry.spec_id == id && entry.scope == scope && entry.owner == owner)
+    }
+
+    pub fn clear_suppression(&mut self, id: &str, scope: LibraryScope, owner: &str) {
+        self.suppressions
+            .retain(|entry| !(entry.spec_id == id && entry.scope == scope && entry.owner == owner));
+    }
+
+    pub fn suppressions(&self) -> &[PresentationSuppression] {
+        &self.suppressions
     }
 
     /// Restore the immutable original revision for a scope, or clear its
@@ -402,6 +438,7 @@ impl PresentationLibrary {
     /// and receipts remain untouched.
     pub fn reset(&mut self, id: &str, scope: LibraryScope, owner: &str) -> bool {
         self.deactivate(id, scope, owner);
+        self.clear_suppression(id, scope, owner);
         let Some(original) = self.get(id, 1) else {
             return false;
         };
@@ -457,9 +494,18 @@ impl PresentationLibrary {
         definitions: impl IntoIterator<Item = StoredPresentation>,
         activations: Vec<PresentationActivation>,
     ) -> Result<Self, PresentationError> {
+        Self::from_parts_with_suppressions(definitions, activations, Vec::new())
+    }
+
+    pub fn from_parts_with_suppressions(
+        definitions: impl IntoIterator<Item = StoredPresentation>,
+        activations: Vec<PresentationActivation>,
+        suppressions: Vec<PresentationSuppression>,
+    ) -> Result<Self, PresentationError> {
         let mut library = Self {
             specs: BTreeMap::new(),
             activations,
+            suppressions,
         };
         for definition in definitions {
             library.register(definition)?;
@@ -646,7 +692,7 @@ fn validate_node(
         return Err(PresentationError::Limit("too many nodes".into()));
     }
     for value in node.props.values() {
-        if let SpecValue::Text(text) = value
+        if let SpecValue::Text { value: text } = value
             && text.len() > MAX_TEXT
         {
             return Err(PresentationError::Limit("literal text is too long".into()));
@@ -870,7 +916,16 @@ fn compile_node(
     for (key, value) in &node.props {
         match resolve_spec_value(value, data)? {
             Some(resolved) => {
-                props.insert(key.clone(), resolved);
+                if key == "*" {
+                    let Value::Object(values) = resolved else {
+                        return Err(PresentationError::InvalidSpec(
+                            "spread binding is not an object".into(),
+                        ));
+                    };
+                    props.extend(values);
+                } else {
+                    props.insert(key.clone(), resolved);
+                }
                 coverage.rendered_paths.push(format!("{path}.{key}"));
             }
             None => coverage.omitted_paths.push(format!("{path}.{key}")),
@@ -885,13 +940,13 @@ fn compile_node(
 
 fn resolve_spec_value(value: &SpecValue, data: &Value) -> Result<Option<Value>, PresentationError> {
     match value {
-        SpecValue::Text(text) => Ok(Some(Value::String(text.clone()))),
-        SpecValue::Number(number) => serde_json::Number::from_f64(*number)
+        SpecValue::Text { value: text } => Ok(Some(Value::String(text.clone()))),
+        SpecValue::Number { value: number } => serde_json::Number::from_f64(*number)
             .map(Value::Number)
             .map(Some)
             .ok_or_else(|| PresentationError::InvalidSpec("non-finite number".into())),
-        SpecValue::Boolean(value) => Ok(Some(Value::Bool(*value))),
-        SpecValue::Literal(value) => {
+        SpecValue::Boolean { value } => Ok(Some(Value::Bool(*value))),
+        SpecValue::Literal { value } => {
             if value.to_string().len() > MAX_TEXT {
                 return Err(PresentationError::Limit(
                     "literal value is too large".into(),
@@ -1294,10 +1349,12 @@ mod tests {
     #[test]
     fn hostile_specs_fail_closed_at_parse_boundary() {
         let mut oversized = spec();
-        oversized
-            .root
-            .props
-            .insert("text".into(), SpecValue::Text("x".repeat(MAX_TEXT + 1)));
+        oversized.root.props.insert(
+            "text".into(),
+            SpecValue::Text {
+                value: "x".repeat(MAX_TEXT + 1),
+            },
+        );
         assert!(matches!(
             validate_spec(&oversized),
             Err(PresentationError::Limit(message)) if message.contains("text")
@@ -1414,7 +1471,10 @@ mod tests {
             candidate.root.children = (0..width)
                 .map(|index| SpecNode {
                     primitive: Primitive::Text,
-                    props: BTreeMap::from([(format!("p{index}"), SpecValue::Text("x".into()))]),
+                    props: BTreeMap::from([(
+                        format!("p{index}"),
+                        SpecValue::Text { value: "x".into() },
+                    )]),
                     children: Vec::new(),
                     each: None,
                     item: None,

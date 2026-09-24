@@ -171,9 +171,14 @@ export default function Settings() {
     }
     const groups = new Map<string, PresentationType[]>();
     for (const [id, entries] of byId) {
-      const versions = [...entries].sort((a, b) => b.spec.revision - a.spec.revision);
-      const latest = versions[0];
+      const storedVersions = [...entries].sort((a, b) => b.spec.revision - a.spec.revision);
+      const latest = storedVersions[0];
       const activeRevision = presentationActivation(id)?.revision ?? null;
+      // Retired built-in revisions remain stored for historical results, but
+      // they are not separate choices in the everyday pack library.
+      const versions = latest.origin.owner === "builtin"
+        ? storedVersions.filter((entry) => entry.spec.revision === latest.spec.revision || entry.spec.revision === activeRevision)
+        : storedVersions;
       const type: PresentationType = {
         id,
         label: presentationLabel(id.replace(/^seed\./, "")),
@@ -1197,7 +1202,7 @@ export default function Settings() {
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
-                <Row title="Reusable presentations" description="Validated experience-pack cards that Vak can use when rendering work. Choose only the families you want available to this scope."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationLibrary()?.definitions.length ?? 0} definitions`}</span></Row>
+                <Row title="Reusable presentations" description="Validated experience-pack cards that Vak can use when rendering work. Choose only the families you want available to this scope."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} packs`}</span></Row>
                 <Row title="Presentation packs" description="Share validated definitions without sharing task results. Imported packs stay disabled until you activate them."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
                   <section class="presentation-library" aria-label="Reusable presentations">
@@ -1220,7 +1225,7 @@ export default function Settings() {
                           const groupBusy = () => presentationBusyFor(`group:${group.key}`);
                           return <section class="presentation-group" classList={{ open: open() }}>
                             <div class="presentation-group-header">
-                              <button type="button" class="presentation-disclosure" aria-expanded={open()} onClick={() => togglePresentationGroup(group.key)}><Icon name="chevron" /><span><strong>{group.label}</strong><small>{group.types.length} pack{group.types.length === 1 ? "" : "s"} · {group.definitionCount} versions</small></span></button>
+                              <button type="button" class="presentation-disclosure" aria-expanded={open()} onClick={() => togglePresentationGroup(group.key)}><Icon name="chevron" /><span><strong>{group.label}</strong><small>{group.types.length} pack{group.types.length === 1 ? "" : "s"}{group.definitionCount > group.types.length ? ` · ${group.definitionCount} versions` : ""}</small></span></button>
                               <span class="presentation-group-count">{group.types.filter((type) => type.active).length} active</span>
                               <button type="button" class="settings-button" disabled={groupBusy()} onClick={() => void runPresentationAction(`group:${group.key}`, () => applyPresentationGroup(group))}>{groupBusy() ? "Working…" : allLatestActive() ? "Deactivate group" : "Activate latest"}</button>
                             </div>
@@ -1233,7 +1238,7 @@ export default function Settings() {
                                   const versionsOpen = () => presentationVersions().has(type.id);
                                   return <div class="presentation-type">
                                     <div class="presentation-type-main">
-                                      <div class="presentation-type-copy"><strong>{type.label}</strong><span>{type.semanticType} · {type.latest.origin.plugin_id ?? "Built-in"}</span></div>
+                                      <div class="presentation-type-copy"><strong>{type.label}</strong><span>{type.semanticType} · {type.latest.origin.owner === "builtin" ? "Built-in" : type.latest.origin.plugin_id ?? "Added by you"}</span></div>
                                       <Show when={type.active}><span class="settings-status good">v{activeRevision()} active</span></Show>
                                       <button type="button" class="settings-button" disabled={busy()} onClick={() => void runPresentationAction(type.id, () => applyPresentationType(type))}>{busy() ? "Working…" : latestActive() ? "Deactivate" : type.active ? "Use latest" : "Activate"}</button>
                                       <button type="button" class="settings-button subtle" disabled={busy()} onClick={() => void runPresentationAction(`reset:${type.id}`, () => resetPresentation(type.id))}>Reset</button>
