@@ -193,10 +193,11 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     an image that does not contain the pinned worker artifact. A parser of
     untrusted file formats never runs in the server, desktop or gateway
     process: `doc_read` and `office_apply` are worker tools, and every target
-    verifier and every Review diff of an Office file runs in a worker task
-    (`VerifyTargets`, `OfficeDiff`) under a read-only, network-denied
+    verifier and every Review of an Office file runs in a worker task
+    (`VerifyTargets`, `OfficeReview`) under a read-only, network-denied
     sandbox rooted at the files being read, whatever the session's mode,
-    within a deadline. A worker that cannot answer fails every planned check;
+    within a deadline; `OfficeNarrow`, which writes a narrower version of a
+    draft, may write only that version's fresh staging directory. A worker that cannot answer fails every planned check;
     a check never passes because verification could not run.
 15. **Unattended surfaces fail closed.** The gateway ships disabled, cannot be
     enabled by untrusted project config, and chat-driven turns auto-deny

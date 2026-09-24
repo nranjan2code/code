@@ -634,6 +634,19 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .office-redline-deleted { text-decoration: line-through; color: var(--muted); }
 .office-redline-deleted + .office-redline-inserted, .office-redline-inserted + .office-redline-deleted { margin-left: 5px; }
 .office-redline-hidden { padding: 0 3px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); }
+.office-change-where { color: var(--text-soft); }
+.office-choices { display: grid; gap: 8px; }
+.office-choice-hint { margin: 0; color: var(--muted); font-size: 12px; }
+.office-choice { display: grid; gap: 6px; padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.office-choice > .office-change { background: var(--surface-raised); }
+.office-choice-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text); }
+.office-choice-head input { flex: none; margin: 0; }
+.office-choice-head label { cursor: pointer; overflow-wrap: anywhere; }
+.office-choice-requires { margin: 0; color: var(--muted); font-size: 11px; }
+.office-choice-left-out > .office-change { opacity: .45; }
+.office-choice-left-out .office-choice-head label { color: var(--muted); text-decoration: line-through; }
+.office-choice-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; }
+.office-choice-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; }
 .candidate-review-feedback { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 18px; }
 .candidate-review-feedback label { color: var(--text-soft); font-size: 12px; font-weight: 600; }
 .candidate-review-feedback textarea { width: 100%; min-height: 70px; padding: 10px 12px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }

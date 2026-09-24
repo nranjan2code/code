@@ -21,6 +21,7 @@ import * as api from "../api";
 import Icon from "./Icon";
 import OfficeChangeList from "./OfficeChangeList";
 import { isOfficePath } from "../officeRedline";
+import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { trapFocus } from "../focusTrap";
 import { activate } from "../App";
@@ -148,7 +149,12 @@ export default function WorkbenchPanel() {
   const [undoBusy, setUndoBusy] = createSignal(false);
   const [reviewOpen, setReviewOpen] = createSignal(false);
   const [reviewedPath, setReviewedPath] = createSignal<string | null>(null);
-  const [officeDiff, setOfficeDiff] = createSignal<api.OfficeDiff | null>(null);
+  const [officeReview, setOfficeReview] = createSignal<api.OfficeReview | null>(null);
+  // Choices the person left out of the Office draft under review; Accept
+  // waits until they are made into a version or taken back.
+  const [officeExcluded, setOfficeExcluded] = createSignal<ReadonlySet<string>>(new Set());
+  const [officeNarrowBusy, setOfficeNarrowBusy] = createSignal(false);
+  const [officeNarrowError, setOfficeNarrowError] = createSignal<string | null>(null);
   const [reviewedFiles, setReviewedFiles] = createSignal<string[]>([]);
   const [inspectedFiles, setInspectedFiles] = createSignal<string[]>([]);
   const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
@@ -243,7 +249,12 @@ export default function WorkbenchPanel() {
         if (disposed) return;
         if (reviewOpen() && candidate()?.execution_id !== exec.id) return;
         const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-        const pending = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+        const undone = new Set(records.filter((record) => record.kind === "PromotionUndo").map((record) => record.record.candidate_id));
+        const versions = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id).map((record) => record.record);
+        // Versions of one result are alternatives: once one is applied (and
+        // not undone), the others are no longer waiting for review.
+        const settled = versions.some((record) => promoted.has(record.candidate.candidate_id) && !undone.has(record.candidate.candidate_id));
+        const pending = settled ? [] : versions.filter((record) => !promoted.has(record.candidate.candidate_id));
         setPendingCandidates(pending);
         if (!reviewOpen() && !pending.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) {
           if (pending.length > 0) selectCandidate(pending[pending.length - 1]);
@@ -551,13 +562,15 @@ export default function WorkbenchPanel() {
     setBeforeContent(null);
     setAfterContent(null);
     setReviewFileError(null);
-    setOfficeDiff(null);
+    setOfficeReview(null);
+    setOfficeExcluded(new Set<string>());
+    setOfficeNarrowError(null);
     const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
     if (isOfficePath(path) && reviewedFile?.operation !== "Delete") {
-      void api.readSandboxCandidateOfficeDiff(prepared.session_id, prepared.candidate.candidate_id, path)
-        .then((diff) => {
+      void api.readSandboxCandidateOfficeReview(prepared.session_id, prepared.candidate.candidate_id, path)
+        .then((review) => {
           if (disposed) return;
-          setOfficeDiff(diff);
+          setOfficeReview(review);
           setInspectedFiles((paths) => paths.includes(path) ? paths : [...paths, path]);
         })
         .catch(() => {
@@ -581,6 +594,40 @@ export default function WorkbenchPanel() {
     });
     onCleanup(() => { disposed = true; });
   });
+
+  const toggleOfficeChoice = (id: string) => {
+    const choices = officeReview()?.choices ?? [];
+    setOfficeExcluded((excluded) => excluded.has(id) ? keepChoice(choices, excluded, id) : leaveOut(choices, excluded, id));
+  };
+
+  const makeOfficeVersion = async () => {
+    const prepared = candidate();
+    const review = officeReview();
+    const path = reviewedPath();
+    if (!prepared || !review?.choices || !path || officeNarrowBusy()) return;
+    const keep = keptChoices(review.choices, officeExcluded());
+    if (keep.length === 0 || keep.length === review.choices.length) return;
+    setOfficeNarrowBusy(true);
+    setOfficeNarrowError(null);
+    try {
+      const version = await api.narrowSandboxCandidateOffice(prepared.session_id, prepared.candidate.candidate_id, path, keep);
+      setPendingCandidates((current) => [...current, version]);
+      selectCandidate(version);
+      setReviewedPath(path);
+    } catch (error) {
+      setOfficeNarrowError(`Could not make that version: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOfficeNarrowBusy(false);
+    }
+  };
+
+  const openCandidateVersion = (candidateId: string) => {
+    const path = reviewedPath();
+    const version = pendingCandidates().find((record) => record.candidate.candidate_id === candidateId);
+    if (!version) return;
+    selectCandidate(version);
+    if (path) setReviewedPath(path);
+  };
 
   const toggleReviewedFile = (path: string) => {
     setReviewedFiles((paths) => paths.includes(path) ? paths.filter((entry) => entry !== path) : [...paths, path]);
@@ -625,7 +672,7 @@ export default function WorkbenchPanel() {
 
   const promoteCandidate = async () => {
     const value = candidate();
-    if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError()) return;
+    if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError() || officeExcluded().size > 0) return;
     setCandidateBusy(true);
     try {
       const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
@@ -638,7 +685,7 @@ export default function WorkbenchPanel() {
       setAppliedWorkspaceChecks(receipt.workspace_checks ?? []);
       setWorkspaceCheckReceipts([]);
       setReviewOpen(false);
-      setPendingCandidates((current) => current.filter((record) => record.candidate.candidate_id !== value.candidate.candidate_id));
+      setPendingCandidates((current) => current.filter((record) => record.execution_id !== value.execution_id));
       setCandidate(null);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
@@ -697,7 +744,7 @@ export default function WorkbenchPanel() {
                   if (selected) selectCandidate(selected);
                 }}>
                   <For each={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id)}>{(record, index) =>
-                    <option value={record.candidate.candidate_id} selected={record.candidate.candidate_id === prepared().candidate.candidate_id}>Version {index() + 1} · {new Date(record.updated_at).toLocaleString()}</option>
+                    <option value={record.candidate.candidate_id} selected={record.candidate.candidate_id === prepared().candidate.candidate_id}>Version {index() + 1}{record.narrowed ? ` · keeps ${record.narrowed.keep.length} ${record.narrowed.keep.length === 1 ? "change" : "changes"}` : ""} · {new Date(record.updated_at).toLocaleString()}</option>
                   }</For>
                 </select>
               </Show>
@@ -774,7 +821,15 @@ export default function WorkbenchPanel() {
                 <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
-                  <Show when={officeDiff()} fallback={<p class="office-change-empty">Comparing…</p>}>{(diff) => <OfficeChangeList diff={diff()} />}</Show>
+                  <Show when={officeReview()} fallback={<p class="office-change-empty">Comparing…</p>}>{(review) => <OfficeChangeList
+                    review={review()}
+                    excluded={officeExcluded()}
+                    onToggle={toggleOfficeChoice}
+                    onMakeVersion={() => void makeOfficeVersion()}
+                    busy={officeNarrowBusy()}
+                    error={officeNarrowError()}
+                    onOpenVersion={openCandidateVersion}
+                  />}</Show>
                 </Show>
                 <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
                   <div class="candidate-review-columns">
@@ -801,9 +856,9 @@ export default function WorkbenchPanel() {
               </div>
             </div>
             <footer class="candidate-review-footer">
-              <span>Applying {reviewedFiles().length} selected {reviewedFiles().length === 1 ? "change" : "changes"} to {destinationLabel()} · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
+              <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
               <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
+              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
             </footer>
           </section>
         </div>}
