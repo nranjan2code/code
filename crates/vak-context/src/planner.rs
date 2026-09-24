@@ -62,6 +62,18 @@ fn is_anaphoric(directive: &str) -> bool {
 /// refers to.
 const MINIMAL_FULL_TURNS: usize = 2;
 
+/// When the card tier overflows, the number of turns evicted into the
+/// packet is rounded UP to a multiple of this many (item 3 fix). Without
+/// batching, a fixed budget means every new turn displaces exactly the one
+/// turn that just aged out of the card tier, so `packet_range`'s newest
+/// (`last`) boundary moves by one turn on every subsequent turn once
+/// overflow starts — and `SessionLog::packet_needs_compaction` needs an
+/// EXACT range match to reuse a stored packet, so a boundary that creeps by
+/// one turn reran the summariser on almost every turn of a long session.
+/// Rounding evicts a few turns early, leaving headroom so the boundary
+/// holds for this many turns before jumping by that many at once.
+const PACKET_BATCH_TURNS: usize = 8;
+
 /// A turn's value from recency alone: `1 / (1 + age)` where `age` is how
 /// many closed turns came after it. The most recent closed turn is worth
 /// 1.0, the one before it 0.5, and so on — a parameter-free decay that a
@@ -189,26 +201,51 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     }
 
     // 3) Card tier over everything still not Full, newest -> oldest, while
-    // it fits in what remains of `budget`. The first one that does not fit
-    // — and everything older than it — collapses into a single packet
-    // range instead (never split, never scattered).
+    // it fits in what remains of `budget`. When some (oldest) not-full
+    // turns do not fit, they collapse into a single packet range (never
+    // split, never scattered) — and the number evicted is rounded UP to a
+    // multiple of `PACKET_BATCH_TURNS` so the packet's boundary does not
+    // move on every turn (see the constant's doc comment).
+    let not_full: Vec<&vak_session::Turn> = closed
+        .iter()
+        .rev()
+        .filter(|turn| !full_ids.contains(&turn.id))
+        .copied()
+        .collect();
+    // Dry run: the minimal number of newest not-full turns that fit under
+    // `budget` at Card cost, exactly as before batching existed. This is
+    // never applied directly — only used to derive how many turns must be
+    // evicted at minimum, which then gets rounded up to a batch.
+    let mut keep_count = 0usize;
+    let mut dry_run_spent = spent;
+    for turn in &not_full {
+        let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
+        if dry_run_spent.saturating_add(cost) <= budget {
+            dry_run_spent += cost;
+            keep_count += 1;
+        } else {
+            break;
+        }
+    }
+    let evict_count = not_full.len() - keep_count;
+    let keep_count = if evict_count == 0 {
+        keep_count
+    } else {
+        let batches = evict_count.saturating_add(PACKET_BATCH_TURNS - 1) / PACKET_BATCH_TURNS;
+        let rounded_evict = batches
+            .saturating_mul(PACKET_BATCH_TURNS)
+            .min(not_full.len());
+        not_full.len() - rounded_evict
+    };
+
     let mut per_turn: Vec<(String, Fidelity)> = Vec::new();
     let mut packet_ids: Vec<String> = Vec::new();
-    let mut packet_started = false;
-    for turn in closed.iter().rev() {
-        if full_ids.contains(&turn.id) {
-            continue;
-        }
-        if packet_started {
-            packet_ids.push(turn.id.clone());
-            continue;
-        }
-        let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
-        if spent.saturating_add(cost) <= budget {
+    for (position, turn) in not_full.iter().enumerate() {
+        if position < keep_count {
+            let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
             spent += cost;
             per_turn.push((turn.id.clone(), Fidelity::Card));
         } else {
-            packet_started = true;
             packet_ids.push(turn.id.clone());
         }
     }
@@ -661,6 +698,59 @@ mod tests {
         assert_eq!(first, ids[0]);
         assert_eq!(last, ids[0]);
         assert!(result.spent <= result.budget);
+    }
+
+    /// Item 3 fix: once the card tier overflows, the packet's newest
+    /// (`last`) boundary must hold steady for `PACKET_BATCH_TURNS` turns
+    /// and then jump by that many at once — never move by one turn on
+    /// every turn, which reran the compaction summariser almost every turn
+    /// of a long session (docs/design/68-context-engine.md §4).
+    #[test]
+    fn packet_boundary_moves_in_batches_not_on_every_turn() {
+        const COST: u64 = 50;
+        const NEVER_FULL: u64 = 100_000;
+        let profile = profile(1_000); // budget == 1000 (zero prefix/tail/reserve)
+
+        // Builds a fresh session of exactly `t` equal-cost turns and
+        // returns the index (within that run's own turn order) of the
+        // packet's newest boundary, or None when nothing is packeted.
+        let last_at = |t: usize| -> Option<usize> {
+            let dir = tempfile::tempdir().unwrap();
+            let specs: Vec<(&str, u64, u64, &[&str])> = (0..t)
+                .map(|_| ("filler turn", NEVER_FULL, COST, &[][..]))
+                .collect();
+            let (log, ids) = fixture(dir.path(), &specs);
+            let index = TurnIndex::from_log(&log);
+            let result = plan(PlanInput {
+                profile: &profile,
+                index: &index,
+                directive: "unrelated",
+                reading: None,
+                prefix_tokens: 0,
+                tail_tokens: 0,
+                current_turn_tokens: 0,
+            });
+            result
+                .packet_range
+                .map(|(_, last)| ids.iter().position(|id| id == &last).unwrap())
+        };
+
+        // floor(1000/50) == 20 turns fit as Card: no packet below that.
+        assert_eq!(last_at(20), None);
+        // First overflow (turns 21-28): evict_count 1..=8 all round up to
+        // exactly one batch of 8 — the boundary is pinned at turn index 7
+        // (the 8th turn) for all eight of these turn counts, not moving by
+        // one each time.
+        assert_eq!(last_at(21), Some(7));
+        assert_eq!(last_at(24), Some(7));
+        assert_eq!(last_at(28), Some(7));
+        // One batch later (turns 29-36): the boundary jumps by a whole
+        // PACKET_BATCH_TURNS at once, to index 15 (the 16th turn) — and
+        // then holds there for the next batch.
+        assert_eq!(last_at(29), Some(15));
+        assert_eq!(last_at(36), Some(15));
+        // A third batch confirms the pattern continues, not a one-off.
+        assert_eq!(last_at(37), Some(23));
     }
 
     #[test]

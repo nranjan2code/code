@@ -18,7 +18,7 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 use vak_session::types::{
-    EntryPayload, FrozenContract, IntentRecord, MessageRecord, SessionHeader, TurnCardRecord,
+    EntryPayload, FrozenContract, MessageRecord, SessionHeader, TurnCardRecord,
 };
 use vak_session::{SessionLog, TurnIndex};
 
@@ -107,20 +107,6 @@ fn text(t: &str) -> AssistantMessage {
     }
 }
 
-fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
-    AssistantMessage {
-        content: vec![ContentBlock::ToolUse {
-            id: id.into(),
-            name: name.into(),
-            input,
-        }],
-        stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        model: "test-model".into(),
-        response_id: None,
-    }
-}
-
 fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     SessionHeader {
         agent: None,
@@ -146,95 +132,52 @@ fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     }
 }
 
-fn reading_with_domains(domains: &[&str]) -> vak_intent::Reading {
-    vak_intent::Reading {
-        domains: domains.iter().map(|d| d.to_string()).collect(),
-        ..vak_intent::Reading::general()
-    }
-}
-
-fn intent_record(reading: vak_intent::Reading) -> IntentRecord {
-    IntentRecord {
-        reading,
-        engagement: vak_intent::Engagement::general(),
-        provenance: vak_intent::Provenance::new(vak_intent::Tier::General, 1, Vec::new()),
-        outcome: None,
-        model_visible: None,
-        commitment_id: None,
-        strands: Vec::new(),
-        strand_commitments: Default::default(),
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_domain_mismatched_tool_call_fires_a_steering_nudge_and_still_completes() {
-    let dir = tempdir().unwrap();
-    let mut log =
-        SessionLog::create(dir.path().join("s.jsonl"), header("drift", dir.path())).unwrap();
-    log.append_intent(intent_record(reading_with_domains(&["cooking"])))
-        .unwrap();
-
-    let provider = Arc::new(Scripted {
-        responses: Mutex::new(VecDeque::from(vec![
-            tool_call("c1", "bash", serde_json::json!({"command": "ls"})),
-            text("done"),
-        ])),
-    });
-    let mut cfg = AgentConfig::new("sys");
-    cfg.tools = vec![Arc::new(vak_tools::bash::BashTool)];
-    cfg.tool_domains = [("bash".to_string(), vec!["code-exec".to_string()])].into();
-    let mut agent = Agent::new(provider, log, cfg);
-
-    let outcome = agent
-        .run(
-            "please poach an egg",
-            &Default::default(),
-            CancellationToken::new(),
-            mpsc::channel(64).0,
-        )
-        .await;
-    assert!(
-        matches!(outcome, TurnOutcome::Completed { .. }),
-        "got {outcome:?}"
-    );
-
-    let session = agent.session.lock().await;
-    let saw_drift_nudge = session.chain_to_root().iter().any(|e| {
-        matches!(&e.payload, EntryPayload::Message(record)
-            if record.control_kind() == Some(vak_intent::control::ControlKind::SteeringDrift))
-    });
-    assert!(
-        saw_drift_nudge,
-        "expected a [steering-drift] control message"
-    );
-}
-
+/// Three consecutive verbatim repeats of a prior turn's answer -- the one
+/// surviving drift trigger (docs/design/68-context-engine.md §7: subject
+/// domains must never drive control flow, so a tool's declared capability
+/// domain is no longer compared against the reading's domains here) -- end
+/// the turn at the third drift event without even needing a fourth
+/// scripted response.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn three_consecutive_drift_events_end_the_turn_degraded() {
     let dir = tempdir().unwrap();
     let mut log =
         SessionLog::create(dir.path().join("s.jsonl"), header("drift3", dir.path())).unwrap();
-    log.append_intent(intent_record(reading_with_domains(&["cooking"])))
+
+    let t1 = log
+        .append_message(MessageRecord {
+            message: vak_llm::Message::user_text("what is the capital of France"),
+            meta: None,
+        })
+        .unwrap()
+        .id;
+    log.append_message(MessageRecord {
+        message: vak_llm::Message::assistant(vec![ContentBlock::text("Paris is the capital.")]),
+        meta: None,
+    })
+    .unwrap();
+    let card = TurnIndex::from_log(&log)
+        .turn_by_id(&t1)
+        .unwrap()
+        .build_card("completed", "Paris is the capital.".to_string(), &|s| {
+            s.len() as u64 / 4
+        });
+    log.append_turn_card(TurnCardRecord { turn_id: t1, card })
         .unwrap();
 
-    // Every scripted step calls the same domain-mismatched tool; the loop
-    // must end the turn at the third drift event without even needing a
-    // fourth scripted response.
     let provider = Arc::new(Scripted {
         responses: Mutex::new(VecDeque::from(vec![
-            tool_call("c1", "bash", serde_json::json!({"command": "ls"})),
-            tool_call("c2", "bash", serde_json::json!({"command": "ls"})),
-            tool_call("c3", "bash", serde_json::json!({"command": "ls"})),
+            text("Paris is the capital."),
+            text("Paris is the capital."),
+            text("Paris is the capital."),
         ])),
     });
-    let mut cfg = AgentConfig::new("sys");
-    cfg.tools = vec![Arc::new(vak_tools::bash::BashTool)];
-    cfg.tool_domains = [("bash".to_string(), vec!["code-exec".to_string()])].into();
+    let cfg = AgentConfig::new("sys");
     let mut agent = Agent::new(provider, log, cfg);
 
     let outcome = agent
         .run(
-            "please poach an egg",
+            "how many people live in Tokyo",
             &Default::default(),
             CancellationToken::new(),
             mpsc::channel(64).0,

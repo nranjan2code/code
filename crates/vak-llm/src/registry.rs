@@ -103,14 +103,9 @@ impl ProviderRegistry {
 pub fn default_registry() -> ProviderRegistry {
     let registry = ProviderRegistry::new();
     registry.register("anthropic", |auth| {
-        Ok(Arc::new(AnthropicProvider::new(AnthropicConfig {
-            api_key: auth.api_key.clone(),
-            base_url: auth
-                .base_url
-                .clone()
-                .unwrap_or_else(|| DEFAULT_BASE_URL.into()),
-            model: String::new(),
-        })?))
+        Ok(Arc::new(AnthropicProvider::new(
+            anthropic_config_from_auth(auth),
+        )?))
     });
 
     use crate::openai::{OPENAI_DEFAULT_BASE_URL, OpenAiCompletionsProvider, OpenAiConfig};
@@ -186,6 +181,25 @@ pub fn default_registry() -> ProviderRegistry {
     registry
 }
 
+/// Builds an `AnthropicConfig` from generic `ProviderAuth` fields
+/// (docs/design/68-context-engine.md §11 "Anthropic" row). Standalone so it
+/// can be unit tested without constructing a live `AnthropicProvider`.
+fn anthropic_config_from_auth(auth: &ProviderAuth) -> AnthropicConfig {
+    AnthropicConfig {
+        api_key: auth.api_key.clone(),
+        base_url: auth
+            .base_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BASE_URL.into()),
+        model: String::new(),
+        fast_mode: auth
+            .options
+            .get("fast_mode")
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(false),
+    }
+}
+
 /// Builds an `OllamaConfig` from generic `ProviderAuth` fields
 /// (docs/design/68-context-engine.md §8). Standalone so it can be unit
 /// tested without constructing a live `OllamaProvider`.
@@ -235,6 +249,47 @@ mod tests {
     #[test]
     fn default_registry_names_include_ollama() {
         assert!(default_registry().names().contains(&"ollama".to_string()));
+    }
+
+    #[test]
+    fn anthropic_config_defaults_fast_mode_off() {
+        let auth = ProviderAuth {
+            api_key: "k".into(),
+            base_url: None,
+            credential_id: None,
+            options: Default::default(),
+        };
+        let config = anthropic_config_from_auth(&auth);
+        assert_eq!(config.base_url, DEFAULT_BASE_URL);
+        assert!(!config.fast_mode);
+    }
+
+    #[test]
+    fn anthropic_config_threads_fast_mode_from_options() {
+        let mut options = std::collections::BTreeMap::new();
+        options.insert("fast_mode".to_string(), "true".to_string());
+        let auth = ProviderAuth {
+            api_key: "k".into(),
+            base_url: None,
+            credential_id: None,
+            options,
+        };
+        let config = anthropic_config_from_auth(&auth);
+        assert!(config.fast_mode);
+    }
+
+    #[test]
+    fn anthropic_config_ignores_unparseable_fast_mode() {
+        let mut options = std::collections::BTreeMap::new();
+        options.insert("fast_mode".to_string(), "yes-please".to_string());
+        let auth = ProviderAuth {
+            api_key: "k".into(),
+            base_url: None,
+            credential_id: None,
+            options,
+        };
+        let config = anthropic_config_from_auth(&auth);
+        assert!(!config.fast_mode);
     }
 
     #[test]

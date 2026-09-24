@@ -152,9 +152,11 @@ async fn run(agent: &mut Agent, prompt: &str) -> TurnOutcome {
     agent.run(prompt, &steering, cancel, ev_tx).await
 }
 
-/// The tail is appended as a final text block on the last user message —
-/// never as a separate consecutive user message — and it is byte-identical
-/// across every step of the same turn.
+/// The tail is appended as a final text block on the turn's DIRECTIVE
+/// message — never re-homed onto whatever message a later step happens to
+/// end with — so the directive (tail included) stays byte-identical across
+/// every step of the same turn: an append-only request
+/// (docs/design/68-context-engine.md §6/§7).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     let dir = tempdir().unwrap();
@@ -169,13 +171,13 @@ async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     let requests = provider.requests();
     assert_eq!(requests.len(), 2, "one step per response");
 
-    // Step 1: the last user message is the directive; the tail sits BEFORE
-    // it so the user's own words are the last thing the model reads
-    // (docs/design/68-context-engine.md §6), and there is no echo because
-    // the directive itself follows.
-    let step1_last = requests[0].messages.last().expect("a message");
-    assert_eq!(step1_last.role, Role::User);
-    let texts: Vec<&str> = step1_last
+    // Step 1: only the directive exists yet, so it is also the last (and
+    // only) message; the tail sits BEFORE it so the user's own words are
+    // the last thing the model reads (docs/design/68-context-engine.md
+    // §6), and there is no echo because the directive itself follows.
+    let step1_directive = requests[0].messages.last().expect("a message").clone();
+    assert_eq!(step1_directive.role, Role::User);
+    let texts: Vec<&str> = step1_directive
         .content
         .iter()
         .filter_map(|b| match b {
@@ -192,20 +194,69 @@ async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     assert!(!tail_step_1.contains("<directive>"));
     assert_eq!(texts[1], "run the check");
 
-    // Step 2: the last user message carries the tool result; the tail rides
-    // after it (tool results stay first for every adapter), byte-identical
-    // to step 1's and with no restatement of the directive.
+    // Step 2: the tool call and its result are appended AFTER the
+    // directive. The directive -- tail included -- is byte-identical to
+    // step 1's own first message, and the tail is never re-attached to the
+    // trailing tool-result message.
+    assert_eq!(
+        requests[1].messages[0], step1_directive,
+        "the directive (with its tail) must be byte-identical across steps"
+    );
     let step2_last = requests[1].messages.last().unwrap();
     assert!(matches!(
         step2_last.content.first(),
         Some(ContentBlock::ToolResult { .. })
     ));
-    let tail_step_2 = match step2_last.content.last().unwrap() {
-        ContentBlock::Text { text } => text.clone(),
-        other => panic!("expected the tail after the result, got {other:?}"),
-    };
-    assert_eq!(tail_step_2, tail_step_1, "tail identical across steps");
-    assert!(!tail_step_2.contains("<directive>"));
+    assert!(
+        !step2_last
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { .. })),
+        "the tail must not be re-homed onto the tool-result message: {:?}",
+        step2_last.content
+    );
+}
+
+/// Append-only requests within a turn (docs/design/68-context-engine.md
+/// §7): across every step of one multi-step tool turn, a later request's
+/// `system`, `tools`, and its messages up to the length of an earlier
+/// request are byte-identical to that earlier request — nothing already
+/// sent ever silently changes shape underneath a replayed thinking block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn later_requests_in_a_turn_are_byte_identical_prefixes_of_earlier_ones() {
+    let dir = tempdir().unwrap();
+    let provider = Arc::new(Recording::new(vec![
+        bash_call("call-1", "echo one"),
+        bash_call("call-2", "echo two"),
+        bash_call("call-3", "echo three"),
+        text_msg("done"),
+    ]));
+    let mut agent = build_agent(provider.clone(), dir.path());
+    let outcome = run(&mut agent, "run three checks").await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 4, "one step per response");
+    for k in 0..requests.len() - 1 {
+        assert_eq!(
+            requests[k + 1].system,
+            requests[k].system,
+            "system prompt must not change mid-turn (step {k} -> {})",
+            k + 1
+        );
+        assert_eq!(
+            requests[k + 1].tools,
+            requests[k].tools,
+            "tools array must not change mid-turn (step {k} -> {})",
+            k + 1
+        );
+        assert_eq!(
+            requests[k + 1].messages[..requests[k].messages.len()],
+            requests[k].messages[..],
+            "request {}'s messages must carry request {k}'s as a byte-identical prefix",
+            k + 1
+        );
+    }
 }
 
 /// Cache breakpoints land after the stable prefix, after the last message of

@@ -198,6 +198,22 @@ impl Usage {
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
+
+    /// Every prompt token the provider actually processed for this
+    /// request, regardless of cache tier: `input_tokens` (never cached) +
+    /// `cache_read_input_tokens` (served from cache) +
+    /// `cache_creation_input_tokens` (written to cache). Every adapter
+    /// normalizes to that split (docs/design/68-context-engine.md §1), so
+    /// this is the number to use wherever a caller wants "how big was the
+    /// prompt" rather than "how much fresh compute did it cost" —
+    /// calibrating chars-per-token against `input_tokens` alone collapses
+    /// toward zero as cache hits grow, because a full cache hit reports
+    /// `input_tokens == 0` for a prompt that was not remotely empty.
+    pub fn prompt_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_input_tokens.unwrap_or(0)
+            + self.cache_creation_input_tokens.unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +292,31 @@ pub struct CacheHints {
     pub breakpoints: Vec<CacheBreakpoint>,
 }
 
+/// Reasoning depth on models that support `output_config.effort`
+/// (docs/design/68-context-engine.md §11 "Anthropic" row). Rendered by the
+/// Anthropic adapter only; every other adapter ignores this field entirely
+/// — none of them expose an equivalent knob today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
     pub model: String,
@@ -294,8 +335,16 @@ pub struct ChatRequest {
     /// for a direct answer (Ollama `think`), which a strict-JSON
     /// classification needs — measured live, a thinking model spent its
     /// whole output budget deliberating and returned no JSON at all.
-    /// Adapters without such a switch ignore it.
+    /// Adapters without such a switch ignore it. On Anthropic this never
+    /// disables thinking (current models reject that, or silently degrade
+    /// tool-call reliability on the ones that still accept it) — instead,
+    /// when `effort` is unset, the adapter reads `think == Some(false)` as
+    /// "spend as little as possible" and sends `effort: low`.
     pub think: Option<bool>,
+    /// Explicit reasoning depth (Anthropic `output_config.effort`). `None`
+    /// leaves the provider's default, except that the Anthropic adapter
+    /// falls back to `Low` when `think == Some(false)` (see `think`).
+    pub effort: Option<Effort>,
 }
 
 impl ChatRequest {
@@ -310,6 +359,63 @@ impl ChatRequest {
             cache: None,
             previous_response_id: None,
             think: None,
+            effort: None,
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_tokens_sums_fresh_and_both_cache_tiers() {
+        let usage = Usage {
+            input_tokens: 100,
+            cache_read_input_tokens: Some(4_000),
+            cache_creation_input_tokens: Some(300),
+            ..Default::default()
+        };
+        assert_eq!(usage.prompt_tokens(), 4_400);
+    }
+
+    #[test]
+    fn prompt_tokens_on_a_full_cache_hit_is_not_zero() {
+        // input_tokens == 0 is what a 100%-cached prompt reports; the whole
+        // point of `prompt_tokens` is that it does not collapse to zero here
+        // the way reading `input_tokens` alone would.
+        let usage = Usage {
+            input_tokens: 0,
+            cache_read_input_tokens: Some(12_000),
+            cache_creation_input_tokens: None,
+            ..Default::default()
+        };
+        assert_eq!(usage.prompt_tokens(), 12_000);
+    }
+
+    #[test]
+    fn prompt_tokens_with_no_cache_fields_equals_input_tokens() {
+        let usage = Usage {
+            input_tokens: 42,
+            ..Default::default()
+        };
+        assert_eq!(usage.prompt_tokens(), 42);
+    }
+
+    #[test]
+    fn effort_renders_the_documented_wire_strings() {
+        assert_eq!(Effort::Low.as_str(), "low");
+        assert_eq!(Effort::Medium.as_str(), "medium");
+        assert_eq!(Effort::High.as_str(), "high");
+        assert_eq!(Effort::XHigh.as_str(), "xhigh");
+        assert_eq!(Effort::Max.as_str(), "max");
+    }
+
+    #[test]
+    fn chat_request_defaults_carry_no_effort() {
+        let req = ChatRequest::new("m");
+        assert_eq!(req.effort, None);
+        assert_eq!(req.think, None);
     }
 }

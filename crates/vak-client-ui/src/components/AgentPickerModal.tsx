@@ -263,7 +263,7 @@ export default function AgentPickerModal() {
               />
               <button
                 type="button"
-                class="button primary"
+                class="btn primary"
                 style="white-space: nowrap;"
                 onClick={() => { setAgentPickerOpen(false); setAgentCreateOpen(true); }}
               >
@@ -275,9 +275,7 @@ export default function AgentPickerModal() {
                 {(f) => (
                   <button
                     type="button"
-                    class="button subtle"
-                    classList={{ active: lifecycleFilter() === f.id }}
-                    style="font-size: 11.5px; padding: 3px 9px;"
+                    class="btn sm"
                     aria-pressed={lifecycleFilter() === f.id}
                     onClick={() => setLifecycleFilter(f.id)}
                   >
@@ -303,14 +301,14 @@ export default function AgentPickerModal() {
                   const isActive = createMemo(() => activeAgentId() === agent.id);
                   return (
                     <div
-                      style="display: flex; align-items: center; justify-content: space-between; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s, transform 0.15s; cursor: pointer;"
+                      style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s, transform 0.15s; cursor: pointer;"
                       classList={{ "active-agent-card": isActive() }}
                       onClick={() => void handleSelectAgent(agent.id)}
                     >
-                      <div style="display: flex; align-items: center; gap: 12px;">
+                      <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 220px; min-width: 0;">
                         <AgentMark character={agent.character} motion={agent.animation} size={36} />
-                        <div>
-                          <div style="display: flex; align-items: center; gap: 6px;">
+                        <div style="min-width: 0;">
+                          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
                             <strong style="font-size: 14px;">{agent.name}</strong>
                             <span style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); font-family: var(--mono);">
                               {agent.id}
@@ -337,7 +335,7 @@ export default function AgentPickerModal() {
                         </div>
                       </div>
 
-                      <div style="display: flex; align-items: center; gap: 6px;">
+                      <div style="display: flex; align-items: center; gap: 6px; margin-left: auto;">
                         <Show when={agent.id !== "vak"}>
                           <button
                             type="button"
@@ -363,8 +361,7 @@ export default function AgentPickerModal() {
                           <Show when={agent.lifecycle === "paused"}>
                             <button
                               type="button"
-                              class="button subtle"
-                              style="font-size: 11.5px; padding: 3px 8px;"
+                              class="btn sm"
                               disabled={lifecycleBusy() === agent.id}
                               onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "active"); }}
                             >
@@ -386,8 +383,7 @@ export default function AgentPickerModal() {
                           <Show when={agent.lifecycle === "archived"}>
                             <button
                               type="button"
-                              class="button subtle"
-                              style="font-size: 11.5px; padding: 3px 8px;"
+                              class="btn sm"
                               disabled={lifecycleBusy() === agent.id}
                               onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "active"); }}
                             >
@@ -397,8 +393,7 @@ export default function AgentPickerModal() {
                         </Show>
                         <button
                           type="button"
-                          class="button"
-                          style="font-size: 12px; padding: 4px 10px;"
+                          class="btn sm"
                           disabled={switching() || isActive()}
                         >
                           {isActive() ? "Active" : "Switch"}
@@ -463,7 +458,7 @@ export default function AgentPickerModal() {
                 <label class="agent-identity-field"><span>Voice style</span><select value={editVoice()} onChange={(event) => setEditVoice(event.currentTarget.value)}><option value="default">Default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label>
               </div>
               <p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p>
-              <div class="agent-identity-actions"><button type="button" class="button subtle" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="button primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></div>
+              <div class="agent-identity-actions"><button type="button" class="btn" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="btn primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></div>
             </div>
           </div>
         }</Show>

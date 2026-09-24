@@ -234,16 +234,20 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
         }
         CheckpointAction::Restore { session, seq } => {
             match vak_core::checkpoints::load(&core.sessions_home(), &session, seq) {
-                Ok(cp) => match vak_core::checkpoints::restore(core.cwd(), &cp) {
-                    Ok((restored, deleted)) => {
-                        println!("restored {restored} files, removed {deleted} (checkpoint {seq})");
-                        0
+                Ok(cp) => {
+                    match vak_core::checkpoints::restore(core.cwd(), &core.sessions_home(), &cp) {
+                        Ok((restored, deleted)) => {
+                            println!(
+                                "restored {restored} files, removed {deleted} (checkpoint {seq})"
+                            );
+                            0
+                        }
+                        Err(e) => {
+                            eprintln!("error: restore failed: {e}");
+                            1
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("error: restore failed: {e}");
-                        1
-                    }
-                },
+                }
                 Err(e) => {
                     eprintln!("error: checkpoint not found: {e}");
                     2
@@ -1437,7 +1441,7 @@ async fn run_exec(
                 eprintln!("◌ compacted ~{before_tokens} → ~{after_tokens} tokens");
             }
             AgentEvent::TurnEnd { usage } => {
-                total_in += usage.input_tokens;
+                total_in += usage.prompt_tokens();
                 total_out += usage.output_tokens;
             }
             AgentEvent::Sandbox(sb_ev) => {

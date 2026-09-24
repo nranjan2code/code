@@ -145,6 +145,25 @@ use vak_session::SessionLog;
 /// long-running gateway process.
 const MAX_LIVE_SESSIONS: usize = 128;
 
+/// Test-only override so eviction can be exercised without creating 129
+/// real sessions. Zero (the default) means "use `MAX_LIVE_SESSIONS`".
+/// Process-global like `pin_test_data_home`; a test that sets it restores
+/// zero afterward so it cannot leak into an unrelated concurrent test.
+#[cfg(test)]
+static MAX_LIVE_SESSIONS_TEST_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn max_live_sessions() -> usize {
+    #[cfg(test)]
+    {
+        let over = MAX_LIVE_SESSIONS_TEST_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst);
+        if over != 0 {
+            return over;
+        }
+    }
+    MAX_LIVE_SESSIONS
+}
+
 pub(crate) struct SessionHandle {
     pub(crate) id: String,
     /// The `Core` this session runs under, resolved once at creation.
@@ -350,18 +369,24 @@ impl AppState {
     /// an evicted session from disk, so this is a cache bound, not a
     /// lifecycle.
     fn evict_idle_sessions(&self) {
+        let cap = max_live_sessions();
         let mut sessions = self
             .sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if sessions.len() <= MAX_LIVE_SESSIONS {
+        if sessions.len() <= cap {
             return;
         }
         let mut idle: Vec<(std::time::Instant, String)> = sessions
             .iter()
             .filter(|(_, handle)| {
+                // `events_tx` always carries the handle's own internal
+                // projector (`register_handle`), so `receiver_count()` can
+                // never read zero; `external_subscribers()` excludes it.
+                // `side_events_tx` has no such internal subscriber, so a
+                // plain `receiver_count()` remains correct there.
                 Arc::strong_count(handle) == 1
-                    && handle.events_tx.receiver_count() == 0
+                    && handle.events_tx.external_subscribers() == 0
                     && handle.side_events_tx.receiver_count() == 0
                     && handle.session.lock().is_ok_and(|guard| guard.is_some())
             })
@@ -371,7 +396,7 @@ impl AppState {
             })
             .collect();
         idle.sort_by_key(|(touched, _)| *touched);
-        let mut over = sessions.len().saturating_sub(MAX_LIVE_SESSIONS);
+        let mut over = sessions.len().saturating_sub(cap);
         for (_, id) in idle {
             if over == 0 {
                 break;
@@ -391,6 +416,73 @@ impl AppState {
             .values()
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod eviction_tests {
+    use super::*;
+
+    /// Restores the process-global test override on drop, so a panic mid-test
+    /// cannot leave a tiny cap active for an unrelated concurrent test.
+    struct RestoreCap;
+    impl Drop for RestoreCap {
+        fn drop(&mut self) {
+            MAX_LIVE_SESSIONS_TEST_OVERRIDE.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Finding 3: every handle's `events_tx` carries the internal projector
+    /// subscription from `register_handle`, so the old `receiver_count() ==
+    /// 0` eviction guard never held — a long-lived process kept every
+    /// session's ledger (and its exclusive file lock) in memory forever.
+    /// `external_subscribers()` fixes the guard; this proves eviction
+    /// actually runs once the live set exceeds the cap.
+    #[tokio::test]
+    async fn idle_sessions_beyond_the_cap_are_evicted() {
+        crate::pin_test_data_home();
+        MAX_LIVE_SESSIONS_TEST_OVERRIDE.store(3, std::sync::atomic::Ordering::SeqCst);
+        let _restore = RestoreCap;
+
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+
+        let mut ids = Vec::new();
+        for _ in 0..5 {
+            let session = core.start_session().await.unwrap();
+            let id = session.header().unwrap().session_id.clone();
+            // No SSE client, no run in progress, and the returned Arc is
+            // dropped immediately — exactly the "nothing references it"
+            // shape `evict_idle_sessions` looks for.
+            let _ = register_handle(
+                &state,
+                id.clone(),
+                session,
+                core.cwd().clone(),
+                core.clone(),
+            );
+            ids.push(id);
+        }
+
+        let live: Vec<String> = state.sessions.lock().unwrap().keys().cloned().collect();
+        assert_eq!(
+            live.len(),
+            3,
+            "expected eviction down to the test cap, got {live:?}"
+        );
+        // Eviction drops the least-recently-touched handles first, so the
+        // most recently created session must survive.
+        assert!(
+            live.contains(ids.last().unwrap()),
+            "the newest session must not be evicted: {live:?}"
+        );
+        assert!(
+            !live.contains(&ids[0]),
+            "the oldest session must be evicted first: {live:?}"
+        );
     }
 }
 
@@ -3678,7 +3770,10 @@ pub(crate) fn register_handle(
     let side_events_tx = events::EventBus::new();
     let presentation_snapshot = live_presentation_snapshot(&core, &id, &session);
     let presentation = Arc::new(Mutex::new(presentation_snapshot));
-    let mut presentation_rx = events_tx.subscribe();
+    // The handle's own projector, not a client: `external_subscribers()`
+    // must not count it, or "is anyone actually watching" (the /run attach
+    // wait, idle eviction) can never observe zero (finding 2/3).
+    let mut presentation_rx = events_tx.subscribe_internal();
     let presentation_state = presentation.clone();
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
     let handle = Arc::new(SessionHandle {
@@ -3922,37 +4017,16 @@ async fn ensure_session_handle(
         })
     };
     session.map(|session| {
-        let id = session
-            .header()
+        let header = session.header();
+        let id = header
             .map(|h| h.session_id.clone())
             .unwrap_or_else(|| session_id.to_owned());
-        let session_cwd = session
-            .header()
+        let session_cwd = header
             .map(|h| h.cwd.clone())
             .unwrap_or_else(|| state.core.cwd().clone());
-        let active = state.active_core();
-        let handle_core = if session_cwd == *active.cwd() {
-            active
-        } else if session_cwd == *state.core.cwd() {
-            state.core.clone()
-        } else if let Ok(c) =
-            state
-                .gateway
-                .core_pool
-                .resolve_at(&session_cwd, None, std::time::Instant::now())
-        {
-            c
-        } else {
-            // `resolve_at` failing here is not a trust decision — an
-            // unconditional `true` would let a workspace whose trust
-            // prompt an operator declined have its hooks/MCP
-            // servers/secret scope applied anyway. Recompute trust the
-            // same way `resolve_at` does rather than assuming it.
-            vak_core::Core::new_with_trust(
-                session_cwd.clone(),
-                vak_core::trust::is_trusted(&session_cwd),
-            )
-            .unwrap_or_else(|_| state.core.clone())
+        let handle_core = match header {
+            Some(header) => resolve_core_for_header(state, header),
+            None => resolve_process_core_for_cwd(state, &state.active_core(), &session_cwd),
         };
         // The header id can differ from the requested one; if that handle
         // is already live, keep it rather than replacing it.
@@ -3961,6 +4035,57 @@ async fn ensure_session_handle(
         });
         (id, handle)
     })
+}
+
+/// The one derivation of "which `Core` should this session's next turn run
+/// under," from its own recorded header (finding 6). A custom Agent's
+/// session gets the exact pins `agent_chats::resolve_agent_core` applies —
+/// permission-mode cap, sandbox backend override, provider instance
+/// override, and shared sessions_home — via `agent_chats::
+/// pinned_core_for_workspace`, keyed by the session's OWN recorded
+/// `header.cwd` rather than a workspace path re-derived from whatever
+/// happens to be the CURRENT active workspace (which can disagree once the
+/// active workspace has moved on since the session was created — see that
+/// function's doc comment). Before this, `/attach`, `/run` and the SSE
+/// endpoints resolved a plain pooled `Core` for the cwd with none of those
+/// pins, so the same session's security ceiling depended on which endpoint
+/// happened to touch it first. The built-in `vak` identity (and a
+/// pre-Agent ledger with no `agent` on its header at all) keeps the plain
+/// active/process core resolution.
+fn resolve_core_for_header(state: &AppState, header: &vak_session::types::SessionHeader) -> Core {
+    let active = state.active_core();
+    match header.agent.as_ref() {
+        Some(identity) if identity.id != "vak" => {
+            agent_chats::pinned_core_for_workspace(state, &active, identity, &header.cwd)
+                .unwrap_or_else(|_| resolve_process_core_for_cwd(state, &active, &header.cwd))
+        }
+        _ => resolve_process_core_for_cwd(state, &active, &header.cwd),
+    }
+}
+
+/// Plain cwd-keyed pooled `Core` resolution with no Agent-specific pins —
+/// the built-in `vak` identity's own path, and `resolve_core_for_header`'s
+/// fallback when a custom Agent's pinned resolution itself fails.
+fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path::Path) -> Core {
+    if cwd == active.cwd().as_path() {
+        return active.clone();
+    }
+    if cwd == state.core.cwd().as_path() {
+        return state.core.clone();
+    }
+    if let Ok(c) = state
+        .gateway
+        .core_pool
+        .resolve_at(cwd, None, std::time::Instant::now())
+    {
+        return c;
+    }
+    // `resolve_at` failing here is not a trust decision — an unconditional
+    // `true` would let a workspace whose trust prompt an operator declined
+    // have its hooks/MCP servers/secret scope applied anyway. Recompute
+    // trust the same way `resolve_at` does rather than assuming it.
+    vak_core::Core::new_with_trust(cwd.to_path_buf(), vak_core::trust::is_trusted(cwd))
+        .unwrap_or_else(|_| state.core.clone())
 }
 
 /// Sidebar projection over the persisted store: one summary per JSONL file.
@@ -4312,6 +4437,422 @@ mod provider_unavailable_tests {
     }
 }
 
+// ---- Shared turn-chain executor (invariant 30; docs/design/
+// 64-agent-owned-platform.md, "Request durability and delivery") ----------
+//
+// `run_prompt`, `send_steering`, and `gateway::execute_turn_chain` all
+// admit a prompt, run it, and — if more input arrived while the run was
+// settling — keep going rather than silently stranding it. Before this,
+// each surface implemented that loop separately: the HTTP path did not
+// implement it at all (steering queued after a run's last internal drain
+// was never picked back up), and the gateway's own version restored
+// `handle.session` before draining, leaving a race window where a
+// concurrent admission could steal the ledger. `admit_or_queue` and
+// `continue_or_release` are the one busy/idle decision, in both
+// directions; `run_turn_chain` is the one loop that runs a leg and decides
+// whether to continue, parameterized by approver and run kind so each
+// surface keeps its own settle bookkeeping (durable activity records vs.
+// reply channel + rendered text) without duplicating the loop mechanics.
+
+/// What a turn chain's FIRST leg runs. Every leg after the first is always
+/// a plain message turn: draining `handle.steering` only ever produces a
+/// `vak_llm::Message` via `SteeringQueues::merge_prompt`, never a fresh
+/// goal/managed/auto request — that is `/run`'s own admission, which a
+/// queued steering message never claims to be.
+enum TurnStart {
+    Message(vak_llm::Message),
+    Managed(String),
+    Auto(String),
+    Goal {
+        prompt: String,
+        objective: String,
+        criteria: Vec<String>,
+    },
+}
+
+impl TurnStart {
+    /// The message this leg would present — used both to seed the preview
+    /// intent before a run starts and, on the busy path, as the queued
+    /// steering entry (attachments and all; invariant 1, model-visible
+    /// input is never degraded to bare text).
+    fn preview_message(&self) -> vak_llm::Message {
+        match self {
+            TurnStart::Message(m) => m.clone(),
+            TurnStart::Managed(p) | TurnStart::Auto(p) => vak_llm::Message::user_text(p),
+            TurnStart::Goal { prompt, .. } => vak_llm::Message::user_text(prompt),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
+        self,
+        core: &Core,
+        session: SessionLog,
+        cancel: CancellationToken,
+        approver: Arc<dyn Approver>,
+        steering: Arc<SteeringQueues>,
+        events: mpsc::Sender<AgentEvent>,
+    ) -> Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError> {
+        match self {
+            TurnStart::Message(m) => {
+                core.run_turn_with_message(
+                    session,
+                    m,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Managed(prompt) => {
+                core.run_managed_turn_with(
+                    session,
+                    &prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Auto(prompt) => {
+                core.run_auto_turn_with(
+                    session,
+                    &prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Goal {
+                prompt,
+                objective,
+                criteria,
+            } => {
+                core.run_goal_turn_with(
+                    session,
+                    &prompt,
+                    &objective,
+                    criteria,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+        }
+    }
+}
+
+/// Result of admitting input at the busy boundary.
+enum Admission {
+    /// The ledger was idle; the caller now owns it and must run a chain.
+    Started(SessionLog),
+    /// Busy: `message` was pushed onto `handle.steering` durably.
+    Queued,
+    /// Busy, and this input kind (goal/managed/auto) cannot be queued.
+    RejectedBusy,
+}
+
+/// Admit input at the busy boundary shared by `/run` and `/steering`: busy
+/// input is queued durably or explicitly rejected, and a new request is
+/// never acknowledged and discarded (finding 1). Locking `handle.session`
+/// for the whole decision is what makes it safe against a chain settling in
+/// [`continue_or_release`] at the same instant — the two can never observe
+/// a window where the ledger looks idle to one caller and busy to the
+/// other.
+fn admit_or_queue(
+    handle: &SessionHandle,
+    restricted: bool,
+    message: vak_llm::Message,
+) -> Admission {
+    let mut slot = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(taken) = slot.take() {
+        return Admission::Started(taken);
+    }
+    drop(slot);
+    if restricted {
+        return Admission::RejectedBusy;
+    }
+    handle.steering.push_steering_message(message);
+    Admission::Queued
+}
+
+/// After a leg settles, atomically decide whether the chain continues.
+/// Mirrors [`admit_or_queue`]'s locking discipline from the other
+/// direction: the ledger is written back to `handle.session` (marking the
+/// session idle again) only when nothing is queued, so steering that
+/// arrives while a leg is settling either lands in THIS drain or is queued
+/// against a session that is genuinely idle once this returns — never a
+/// session that looks idle while the drain that would have picked it up
+/// already happened and is gone.
+fn continue_or_release(
+    handle: &SessionHandle,
+    ledger: SessionLog,
+) -> Option<(SessionLog, vak_llm::Message)> {
+    let mut slot = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let queued = handle.steering.drain(vak_agent::DrainMode::All);
+    match SteeringQueues::merge_prompt(queued) {
+        None => {
+            *slot = Some(ledger);
+            None
+        }
+        Some(merged) => Some((ledger, merged)),
+    }
+}
+
+/// Give an SSE consumer a moment to attach before a freshly admitted chain
+/// starts, so its terminal event is seen — but only when nobody is
+/// watching yet. `handle.subscribed` is a single-permit `Notify`: the first
+/// SSE connection's `notify_one()` satisfies exactly one `.notified()`
+/// call, so unconditionally waiting here made every leg after the first
+/// block for the full 2s even with a client already attached (finding 2).
+async fn wait_for_external_subscriber(handle: &SessionHandle) {
+    if handle.events_tx.external_subscribers() == 0 {
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
+    }
+}
+
+/// What a leg's surface-specific settle step hands back to
+/// [`run_turn_chain`]: the ledger to keep running with (`None` when a
+/// `CoreError` left nothing recoverable), and the `(summary, is_error)`
+/// pair the executor broadcasts as this leg's `RunFinished`.
+type SettleResult = (Option<SessionLog>, String, bool);
+
+/// The one turn-chain executor shared by the HTTP path (`run_prompt`,
+/// `send_steering`) and the gateway (`gateway::execute_turn_chain`).
+/// `start` runs as the first leg; `settle` performs the surface-specific
+/// bookkeeping for each leg's outcome — durable activity + presentation
+/// snapshot + hub summary for HTTP, reply channel + rendered text +
+/// reflection logging for the gateway — and returns the ledger to continue
+/// with (reflection itself stays inside `settle`, since the two surfaces
+/// react to its outcome differently; see `http_settle` and
+/// `gateway::execute_turn_chain`). After settling, steering queued in the
+/// meantime is drained and merged into a continuation leg via
+/// [`continue_or_release`] — under the same lock that decides whether the
+/// ledger goes back to `handle.session` — rather than being silently
+/// stranded once the chain looks idle again (finding 1).
+async fn run_turn_chain<F, Fut>(
+    core: Core,
+    handle: Arc<SessionHandle>,
+    mut taken: SessionLog,
+    mut start: TurnStart,
+    approver_factory: impl Fn(&str) -> Arc<dyn Approver>,
+    mut settle: F,
+) where
+    F: FnMut(&str, Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>) -> Fut,
+    Fut: std::future::Future<Output = SettleResult>,
+{
+    loop {
+        let session_id = taken
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_else(|| handle.id.clone());
+        let approver = approver_factory(&session_id);
+        let events = mpsc_to_broadcast(handle.events_tx.clone());
+        let steering = handle.steering.clone();
+        let cancel = handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let outcome = start
+            .run(&core, taken, cancel, approver, steering, events)
+            .await;
+        // Reset the token so the next leg is not born already-cancelled.
+        *handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
+
+        let (ledger, summary, is_error) = settle(&session_id, outcome).await;
+        let _ = handle
+            .events_tx
+            .send(AgentEvent::RunFinished { summary, is_error });
+
+        let Some(ledger) = ledger else {
+            return;
+        };
+
+        match continue_or_release(&handle, ledger) {
+            None => return,
+            Some((ledger, merged)) => {
+                taken = ledger;
+                start = TurnStart::Message(merged);
+            }
+        }
+    }
+}
+
+/// `run_prompt`'s per-leg settle: durable "Run finished" activity, buffered
+/// activity flush (with the same request_id admissions cleanup on BOTH the
+/// success and error path — the error path used to skip it, leaking an
+/// admissions entry for any steering that had been buffered before the
+/// failure), presentation snapshot, hub summary, and FTS indexing.
+async fn http_settle(
+    handle: Arc<SessionHandle>,
+    hub: events::EventHub,
+    admin_store: Option<vak_store::Store>,
+    sessions_home: std::path::PathBuf,
+    run_id: String,
+    outcome: Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>,
+) -> SettleResult {
+    fn flush_buffered(handle: &SessionHandle, log: &mut SessionLog) {
+        let buffered = std::mem::take(
+            &mut *handle
+                .activity_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for activity in buffered {
+            let request_id = activity.data.get("request_id").cloned();
+            let _ = log.append_activity(activity);
+            if let Some(request_id) = request_id {
+                handle
+                    .admissions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&request_id);
+            }
+        }
+    }
+
+    match outcome {
+        Ok((o, mut session_log)) => {
+            let (summary, is_error) = match &o {
+                vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
+                vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
+                vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
+                vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
+            };
+            let activity_status = match &o {
+                vak_agent::TurnOutcome::Completed { .. } => vak_session::ActivityStatus::Succeeded,
+                vak_agent::TurnOutcome::Aborted { .. } => vak_session::ActivityStatus::Cancelled,
+                vak_agent::TurnOutcome::Failed { .. } => vak_session::ActivityStatus::Failed,
+                vak_agent::TurnOutcome::MaxTurnsReached => vak_session::ActivityStatus::Partial,
+            };
+            let _ = session_log.append_activity(vak_session::ActivityRecord {
+                activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
+                turn: None,
+                kind: vak_session::ActivityKind::Run,
+                status: activity_status,
+                label: "Run finished".into(),
+                detail: Some(summary.clone()),
+                data: std::collections::BTreeMap::new(),
+            });
+            flush_buffered(&handle, &mut session_log);
+            *handle
+                .presentation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                live_presentation_snapshot(&handle.core, &run_id, &session_log);
+            hub.emit_agent_summary(&summary, Some(run_id.clone()));
+            index_session_later(admin_store, sessions_home, run_id.clone());
+            // Background reflection seam (docs/design/29 P1): after the
+            // summary is recorded and while this leg still owns the ledger
+            // (a second in-process handle cannot take the file lock).
+            // Bounded; the result is deliberately ignored — a completed run
+            // never fails on reflection.
+            if !is_error && handle.core.config().memory.reflection {
+                let _ = tokio::time::timeout(
+                    REFLECTION_CALL_TIMEOUT,
+                    handle.core.reflect_after_turn(&session_log, ""),
+                )
+                .await;
+            }
+            (Some(session_log), summary, is_error)
+        }
+        Err(e) => {
+            // Same leak class: restore from the durable ledger so the
+            // handle does not stay wedged on "run in progress".
+            let restored = reopen_ledger(&handle.core, &run_id).map(|mut restored| {
+                flush_buffered(&handle, &mut restored);
+                *handle
+                    .presentation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    live_presentation_snapshot(&handle.core, &run_id, &restored);
+                restored
+            });
+            (restored, format!("error: {e}"), true)
+        }
+    }
+}
+
+/// Spawn an HTTP-surfaced turn chain: an `HttpApprover` built fresh per leg,
+/// `http_settle` bookkeeping, and the `request_id` admissions cleanup once
+/// the WHOLE chain (every leg, not just the first) has settled. Shared by
+/// `run_prompt` and `send_steering`'s own idle-admission path (finding 1b)
+/// — a steer that lands on an idle session IS a fresh admission, not inert
+/// queued input nothing will ever look at again.
+fn spawn_http_turn_chain(
+    state: &AppState,
+    handle: Arc<SessionHandle>,
+    core: Core,
+    taken: SessionLog,
+    start: TurnStart,
+    request_id: Option<String>,
+) {
+    let hub = state.hub.clone();
+    let admin_store = state.store.clone();
+    let sessions_home = state.core.sessions_home();
+    let chain_handle = handle;
+    tokio::spawn(async move {
+        let approver_handle = chain_handle.clone();
+        let settle_handle = chain_handle.clone();
+        run_turn_chain(
+            core,
+            chain_handle.clone(),
+            taken,
+            start,
+            move |_leg_session_id: &str| -> Arc<dyn Approver> {
+                // Driven by a client that is holding the SSE stream open,
+                // so a gate raised here reaches a person.
+                Arc::new(HttpApprover {
+                    events_tx: approver_handle.events_tx.clone(),
+                    pending: approver_handle.pending.clone(),
+                    session_id: approver_handle.id.clone(),
+                    activity_buffer: approver_handle.activity_buffer.clone(),
+                    answerable: true,
+                })
+            },
+            move |leg_session_id: &str, outcome| {
+                let handle = settle_handle.clone();
+                let hub = hub.clone();
+                let admin_store = admin_store.clone();
+                let sessions_home = sessions_home.clone();
+                let run_id = leg_session_id.to_string();
+                async move {
+                    http_settle(handle, hub, admin_store, sessions_home, run_id, outcome).await
+                }
+            },
+        )
+        .await;
+
+        if let Some(request_id) = request_id {
+            chain_handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+        }
+    });
+}
+
 async fn run_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -4350,19 +4891,123 @@ async fn run_prompt(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(request_id)
     {
-        return StatusCode::ACCEPTED.into_response();
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"request_id": request_id, "state": "duplicate"})),
+        )
+            .into_response();
     }
-    let Some(mut taken) = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    else {
-        if request_id.is_some() {
-            return StatusCode::ACCEPTED.into_response();
+
+    // ---- Validate the request shape before any side effect (finding 4):
+    // no durable admission activity, no admissions-set insertion, and no
+    // synthesized `RunFinished` for input that never starts a run. ----
+    if body.goal.is_some() && !body.attachments.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "goal runs do not support attachments"})),
+        )
+            .into_response();
+    }
+    if let Some(mode) = body.work_mode.as_deref()
+        && !matches!(mode, "direct" | "managed" | "auto")
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("unknown work_mode '{mode}'")})),
+        )
+            .into_response();
+    }
+    let managed = matches!(body.work_mode.as_deref(), Some("managed"));
+    let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
+    if (managed || automatic) && !body.attachments.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "managed work currently requires text-only input"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = handle.core.provider() {
+        return provider_unavailable(e);
+    }
+
+    let expanded_prompt = body.prompt.clone();
+    let start = if let Some(objective) = body.goal.clone() {
+        TurnStart::Goal {
+            prompt: expanded_prompt.clone(),
+            objective,
+            criteria: body.criteria.clone(),
         }
-        return StatusCode::CONFLICT.into_response(); // run already active
+    } else if managed {
+        TurnStart::Managed(expanded_prompt.clone())
+    } else if automatic {
+        TurnStart::Auto(expanded_prompt.clone())
+    } else if body.attachments.is_empty() {
+        TurnStart::Message(vak_llm::Message::user_text(expanded_prompt.clone()))
+    } else {
+        let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
+        for a in &body.attachments {
+            if a.data.trim().is_empty() {
+                continue;
+            }
+            blocks.push(vak_llm::ContentBlock::image_base64(
+                a.mime.clone(),
+                a.data.trim().to_string(),
+            ));
+        }
+        TurnStart::Message(vak_llm::Message {
+            role: vak_llm::Role::User,
+            content: blocks,
+        })
     };
+    let restricted = matches!(
+        start,
+        TurnStart::Goal { .. } | TurnStart::Managed(_) | TurnStart::Auto(_)
+    );
+    let queue_message = start.preview_message();
+
+    // ---- Admit at the busy boundary (docs/design/64, "Request durability
+    // and delivery"): idle starts a chain now; busy queues durably or, for
+    // a goal/managed/auto request that cannot be queued, is rejected
+    // explicitly. Never a bare 202 that silently discards the input
+    // (finding 1). ----
+    let mut taken = match admit_or_queue(&handle, restricted, queue_message.clone()) {
+        Admission::RejectedBusy => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "a goal or managed/auto request cannot be queued while the session is busy; wait for the current run to finish"
+                })),
+            )
+                .into_response();
+        }
+        Admission::Queued => {
+            let request_id = request_id.unwrap_or_else(|| format!("run-{}", uuid::Uuid::now_v7()));
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("request_id".into(), request_id.clone());
+            if let Some(routing) = body.routing.as_ref() {
+                record_routing_data(&mut data, routing);
+            }
+            record_activity_or_buffer(
+                &handle,
+                vak_session::ActivityRecord {
+                    activity_id: format!("admission-{request_id}"),
+                    turn: None,
+                    kind: vak_session::ActivityKind::Run,
+                    status: vak_session::ActivityStatus::Pending,
+                    label: "Request queued".into(),
+                    detail: None,
+                    data,
+                },
+            );
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({"request_id": request_id, "state": "queued"})),
+            )
+                .into_response();
+        }
+        Admission::Started(taken) => taken,
+    };
+
     if taken.is_read_only() {
         match vak_session::SessionLog::open(taken.path().to_path_buf()) {
             Ok(writable) => {
@@ -4401,14 +5046,11 @@ async fn run_prompt(
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::ACCEPTED.into_response();
-    }
-    if let Err(e) = handle.core.provider() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return provider_unavailable(e);
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"request_id": request_id, "state": "duplicate"})),
+        )
+            .into_response();
     }
     if let Some(request_id) = request_id.as_deref() {
         let mut data = std::collections::BTreeMap::new();
@@ -4447,50 +5089,10 @@ async fn run_prompt(
             .insert(request_id.to_owned());
     }
 
-    // Give SSE consumers a moment to attach so terminal events are seen.
-    let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
-
-    // Driven by a client that is holding the SSE stream open, so a gate
-    // raised here reaches a person.
-    let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
-        events_tx: handle.events_tx.clone(),
-        pending: handle.pending.clone(),
-        session_id: handle.id.clone(),
-        activity_buffer: handle.activity_buffer.clone(),
-        answerable: true,
-    });
-    let events = mpsc_to_broadcast(handle.events_tx.clone());
-    let steering = handle.steering.clone();
-    let cancel = handle
-        .cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    // Preview intent so `/control-state` has something to report even
+    // before the ledger reflects a real IntentRecord entry for this leg.
     let core = handle.core.clone();
-
-    let expanded_prompt = body.prompt.clone();
-    let prompt_message = if body.attachments.is_empty() {
-        None
-    } else {
-        let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
-        for a in &body.attachments {
-            if a.data.trim().is_empty() {
-                continue;
-            }
-            blocks.push(vak_llm::ContentBlock::image_base64(
-                a.mime.clone(),
-                a.data.trim().to_string(),
-            ));
-        }
-        Some(vak_llm::Message {
-            role: vak_llm::Role::User,
-            content: blocks,
-        })
-    };
-    let preview_message = prompt_message
-        .clone()
-        .unwrap_or_else(|| vak_llm::Message::user_text(expanded_prompt.clone()));
-    let preview_intent = core.resolve_turn_intent(&taken, &preview_message);
+    let preview_intent = core.resolve_turn_intent(&taken, &queue_message);
     let mut preview_outcome =
         vak_intent::OutcomeSpec::from_intent(&expanded_prompt, &preview_intent);
     preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
@@ -4508,227 +5110,19 @@ async fn run_prompt(
             commitment_id: None,
             strand_commitments: Default::default(),
         });
-    if body.goal.is_some() && !body.attachments.is_empty() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: "failed: goal runs do not support attachments".into(),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if let Some(mode) = body.work_mode.as_deref()
-        && !matches!(mode, "direct" | "managed" | "auto")
-    {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: format!("failed: unknown work_mode '{mode}'"),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    // Goal mode (Phase H): captured before the spawn consumes `body`.
-    let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
-    let managed = matches!(body.work_mode.as_deref(), Some("managed"));
-    let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
-    if (managed || automatic) && !body.attachments.is_empty() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: "failed: managed work currently requires text-only input".into(),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let run_id = id.clone();
-    let hub = state.hub.clone();
-    let admin_store = state.store.clone();
-    let sessions_home = state.core.sessions_home();
 
-    tokio::spawn(async move {
-        let outcome = if let Some((objective, criteria)) = goal_pair {
-            core.run_goal_turn_with(
-                taken,
-                &expanded_prompt,
-                &objective,
-                criteria,
-                cancel.clone(),
-                Some(approver.clone()),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if managed {
-            core.run_managed_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if automatic {
-            core.run_auto_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if let Some(msg) = prompt_message {
-            core.run_turn_with_message(
-                taken,
-                msg,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else {
-            core.run_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        };
-        // Reset the token so the next run on this session is not born
-        // already-cancelled.
-        *handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
-        match outcome {
-            Ok((o, mut session_log)) => {
-                let (summary, is_error) = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
-                    vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
-                    vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
-                    vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
-                };
-                let activity_status = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => {
-                        vak_session::ActivityStatus::Succeeded
-                    }
-                    vak_agent::TurnOutcome::Aborted { .. } => {
-                        vak_session::ActivityStatus::Cancelled
-                    }
-                    vak_agent::TurnOutcome::Failed { .. } => vak_session::ActivityStatus::Failed,
-                    vak_agent::TurnOutcome::MaxTurnsReached => vak_session::ActivityStatus::Partial,
-                };
-                let _ = session_log.append_activity(vak_session::ActivityRecord {
-                    activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
-                    turn: None,
-                    kind: vak_session::ActivityKind::Run,
-                    status: activity_status,
-                    label: "Run finished".into(),
-                    detail: Some(summary.clone()),
-                    data: std::collections::BTreeMap::new(),
-                });
-                let buffered = std::mem::take(
-                    &mut *handle
-                        .activity_buffer
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner),
-                );
-                for activity in buffered {
-                    let request_id = activity.data.get("request_id").cloned();
-                    let _ = session_log.append_activity(activity);
-                    if let Some(request_id) = request_id {
-                        handle
-                            .admissions
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .remove(&request_id);
-                    }
-                }
-                *handle
-                    .presentation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    live_presentation_snapshot(&core, &run_id, &session_log);
-                hub.emit_agent_summary(&summary, Some(run_id.clone()));
-                let _ = handle.events_tx.send(AgentEvent::RunFinished {
-                    summary: summary.clone(),
-                    is_error,
-                });
-                index_session_later(admin_store.clone(), sessions_home.clone(), run_id.clone());
-                // Background reflection seam (docs/design/29 P1): after the
-                // summary is recorded and while this task still owns the
-                // ledger (a second in-process handle cannot take the file
-                // lock). Bounded; the result is deliberately ignored — a
-                // completed run never fails on reflection.
-                if !is_error && core.config().memory.reflection {
-                    let _ = tokio::time::timeout(
-                        REFLECTION_CALL_TIMEOUT,
-                        core.reflect_after_turn(&session_log, ""),
-                    )
-                    .await;
-                }
-                // Return the ledger so transcript stays available.
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
-            }
-            Err(e) => {
-                // Same leak class: restore from the durable ledger so the
-                // handle does not stay wedged on "run in progress".
-                if let Some(mut restored) = reopen_ledger(&core, &run_id) {
-                    for activity in std::mem::take(
-                        &mut *handle
-                            .activity_buffer
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    ) {
-                        let _ = restored.append_activity(activity);
-                    }
-                    *handle
-                        .presentation
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        live_presentation_snapshot(&core, &run_id, &restored);
-                    *handle
-                        .session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                }
-                let _ = handle.events_tx.send(AgentEvent::RunFinished {
-                    summary: format!("error: {e}"),
-                    is_error: true,
-                });
-            }
-        }
-        if let Some(request_id) = request_id {
-            handle
-                .admissions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&request_id);
-        }
-        drop(steering);
-    });
+    // Give SSE consumers a moment to attach so terminal events are seen —
+    // but only when nobody is watching yet (finding 2).
+    wait_for_external_subscriber(&handle).await;
 
-    StatusCode::ACCEPTED.into_response()
+    let response_request_id = request_id.clone();
+    spawn_http_turn_chain(&state, handle, core, taken, start, request_id);
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"request_id": response_request_id, "state": "started"})),
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -5023,8 +5417,8 @@ async fn send_steering(
         .iter()
         .filter(|a| !a.data.trim().is_empty())
         .collect();
-    if usable.is_empty() {
-        handle.steering.push_steering(body.text);
+    let message = if usable.is_empty() {
+        vak_llm::Message::user_text(body.text.clone())
     } else {
         let mut blocks = vec![vak_llm::ContentBlock::text(body.text.clone())];
         for a in usable {
@@ -5033,35 +5427,86 @@ async fn send_steering(
                 a.data.trim().to_string(),
             ));
         }
-        handle.steering.push_steering_message(vak_llm::Message {
+        vak_llm::Message {
             role: vak_llm::Role::User,
             content: blocks,
-        });
+        }
+    };
+
+    // Admit at the same busy boundary `/run` uses (docs/design/64, "Request
+    // durability and delivery"): a steer that lands on an IDLE session is a
+    // fresh admission and starts its own chain, rather than sitting in a
+    // queue nothing is left to drain (finding 1b). A steer is never a
+    // restricted (goal/managed/auto) request, so this never rejects.
+    match admit_or_queue(&handle, false, message.clone()) {
+        Admission::RejectedBusy => {
+            unreachable!("send_steering never admits a restricted request kind")
+        }
+        Admission::Queued => {
+            // The ledger was busy: the durable "Intervention queued" /
+            // "accepted" activity recorded above already covers this
+            // request. If it landed in the buffer rather than the ledger
+            // (session was busy at that check too), the busy leg's own
+            // `http_settle` flush removes this admission guard when it
+            // settles; nothing here needs to.
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "steering_queued",
+                })),
+            )
+                .into_response()
+        }
+        Admission::Started(taken) => {
+            // The activity recorded above is durable now (whether it was
+            // written straight into the ledger or is about to be, via this
+            // very chain) — the in-memory admission guard can be released.
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+            let core = handle.core.clone();
+            let preview_intent = core.resolve_turn_intent(&taken, &message);
+            let mut preview_outcome =
+                vak_intent::OutcomeSpec::from_intent(&body.text, &preview_intent);
+            preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
+            *handle
+                .intent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(vak_session::types::IntentRecord {
+                    reading: preview_intent.reading,
+                    strands: preview_intent.strands,
+                    engagement: preview_intent.engagement,
+                    provenance: preview_intent.provenance,
+                    outcome: Some(preview_outcome),
+                    model_visible: None,
+                    commitment_id: None,
+                    strand_commitments: Default::default(),
+                });
+            wait_for_external_subscriber(&handle).await;
+            spawn_http_turn_chain(
+                &state,
+                handle,
+                core,
+                taken,
+                TurnStart::Message(message),
+                None,
+            );
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "started",
+                })),
+            )
+                .into_response()
+        }
     }
-    // If the ledger was available, the activity is durable already and the
-    // in-memory guard can be released. A busy runner keeps it until its
-    // buffered activity is flushed at turn completion.
-    if handle
-        .session
-        .lock()
-        .ok()
-        .is_some_and(|guard| guard.is_some())
-    {
-        handle
-            .admissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&request_id);
-    }
-    (
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "request_id": evaluation.request.request_id,
-            "decision": evaluation.decision.as_str(),
-            "state": "steering_queued",
-        })),
-    )
-        .into_response()
 }
 
 async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
@@ -5075,10 +5520,37 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .cancel();
     record_control_activity(&handle, "Run cancelled", "cancel");
     deny_pending_approvals(&handle);
-    let _ = handle.events_tx.send(AgentEvent::RunFinished {
-        summary: "cancelled by client".into(),
-        is_error: false,
-    });
+    // A stop means stop: whatever was queued for a continuation leg is
+    // discarded rather than silently running as the "next" turn once the
+    // cancelled run unwinds (finding 1c). Input that arrives AFTER this
+    // drain but before the run actually unwinds is a fresh push into the
+    // same queue and is unaffected — it becomes the next leg of the chain,
+    // same as any other steering.
+    let discarded = handle.steering.drain(vak_agent::DrainMode::All);
+    if !discarded.is_empty() {
+        record_activity_or_buffer(
+            &handle,
+            vak_session::ActivityRecord {
+                activity_id: format!("cancel-discard-{}", uuid::Uuid::now_v7()),
+                turn: None,
+                kind: vak_session::ActivityKind::Diagnostic,
+                status: vak_session::ActivityStatus::Cancelled,
+                label: "Queued input discarded by stop".into(),
+                detail: Some(format!(
+                    "{} queued message{} discarded",
+                    discarded.len(),
+                    if discarded.len() == 1 { "" } else { "s" }
+                )),
+                data: std::collections::BTreeMap::new(),
+            },
+        );
+    }
+    // No synthesized `RunFinished` here: the run's own settle path
+    // (`run_turn_chain`) emits the terminal event once it actually stops.
+    // Broadcasting one from here raced the real one — cancel_run's
+    // synthetic event could arrive, mark the chat finished on the client,
+    // and then the run's genuine `RunFinished` landed afterward and
+    // un-terminated it.
     StatusCode::ACCEPTED
 }
 
@@ -8603,19 +9075,27 @@ async fn restore_checkpoint(
     let cwd = handle
         .map(|h| h.cwd.clone())
         .unwrap_or_else(|| core.cwd().clone());
-    let cp = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
-        .or_else(|_| vak_core::checkpoints::load(&core.shared_data_home(), &id, seq))
+    // The blob store the manifest's hashes resolve against lives under
+    // whichever home the manifest itself was found in.
+    let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
     {
-        Ok(cp) => cp,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
-            )
-                .into_response();
-        }
+        Ok(cp) => (cp, core.sessions_home()),
+        Err(_) => match vak_core::checkpoints::load(&core.shared_data_home(), &id, seq) {
+            Ok(cp) => (cp, core.shared_data_home()),
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
+                )
+                    .into_response();
+            }
+        },
     };
-    match tokio::task::spawn_blocking(move || vak_core::checkpoints::restore(&cwd, &cp)).await {
+    match tokio::task::spawn_blocking(move || {
+        vak_core::checkpoints::restore(&cwd, &checkpoints_home, &cp)
+    })
+    .await
+    {
         Ok(Ok((restored, deleted))) => Json(serde_json::json!({
             "restored": restored,
             "deleted": deleted,

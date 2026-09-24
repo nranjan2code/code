@@ -576,12 +576,17 @@ export const Markdown = MarkdownView;
 
 /**
  * One transcript row, shared by the live chat and the read-only historical
- * viewer. Items are immutable snapshots replaced by identity in the store,
- * so `<For>` re-creates a row whenever its item changes and a plain read
- * here is safe.
+ * viewer. Items are immutable snapshots replaced by identity in the store, so
+ * the row is rebuilt whenever the item's identity changes. That must happen
+ * here rather than in the caller: the chat renders turns through
+ * position-keyed `<Index>`, where the item at a position changes when the
+ * session switches or the turn window moves, and a row built once kept showing
+ * the previous conversation's message beside the new one's answer.
  */
-export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element => {
-  const item = props.item;
+export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element =>
+  <Show when={props.item} keyed>{(item) => itemBody(item, props.sessionId)}</Show>;
+
+function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
     if (!text) return null;
@@ -597,7 +602,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
       </div>
     );
   }
-  if (item.kind === "assistant") return <AssistantItem item={item} sessionId={props.sessionId} />;
+  if (item.kind === "assistant") return <AssistantItem item={item} sessionId={sessionId} />;
   if (item.kind === "thinking") {
     return (
       <details class="thinking">
@@ -613,7 +618,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     return <ToolCard item={item} />;
   }
   if (item.kind === "approval") {
-    return <ApprovalCard item={item} sessionId={props.sessionId} />;
+    return <ApprovalCard item={item} sessionId={sessionId} />;
   }
   if (item.kind === "worker") {
     return (
@@ -627,7 +632,7 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
     );
   }
   return <div class="sysnote">{item.text}</div>;
-};
+}
 
 function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sessionId?: string | null }) {
     const [content, setContent] = createStore<{ parts: ReturnType<typeof assistantParts> }>({ parts: [] });
@@ -1030,7 +1035,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
               <Index each={displayedTurns()}>{(entry) => <div class="chat-turn" data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
-                <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<For each={[it()]}>{(item) => <ItemView item={item} sessionId={sid()} />}</For>}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
+                <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
                   {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser />}
                 </Show>
               </div>}</Index>
