@@ -98,7 +98,7 @@ pub fn walk(
                     return Err(Error::TooDeep(part.to_string()));
                 }
                 saw_root = true;
-                let element = element(&start, part, limits)?;
+                let element = element_of(&start, part, limits)?;
                 if skipping.is_none() {
                     if skip_alternate(&element, &mut alternates) {
                         skipping = Some(depth);
@@ -115,7 +115,7 @@ pub fn walk(
                     return Err(Error::TooDeep(part.to_string()));
                 }
                 saw_root = true;
-                let element = element(&start, part, limits)?;
+                let element = element_of(&start, part, limits)?;
                 if skipping.is_none() && !skip_alternate(&element, &mut alternates) {
                     let name = element.name.clone();
                     visit(XmlEvent::Open(element))?;
@@ -218,7 +218,7 @@ pub fn root(bytes: &[u8], part: &str, limits: &Limits) -> Result<Element, Error>
             .read_event_into(&mut buffer)
             .map_err(|error| xml_error(part, &error.to_string()))?
         {
-            Event::Start(start) | Event::Empty(start) => return element(&start, part, limits),
+            Event::Start(start) | Event::Empty(start) => return element_of(&start, part, limits),
             Event::DocType(_) => return Err(Error::DocType(part.to_string())),
             Event::Eof => return Err(xml_error(part, "no root element")),
             _ => {}
@@ -227,7 +227,12 @@ pub fn root(bytes: &[u8], part: &str, limits: &Limits) -> Result<Element, Error>
     }
 }
 
-fn element(start: &BytesStart<'_>, part: &str, limits: &Limits) -> Result<Element, Error> {
+/// Element and attributes of a start tag, under the attribute bound.
+pub(crate) fn element_of(
+    start: &BytesStart<'_>,
+    part: &str,
+    limits: &Limits,
+) -> Result<Element, Error> {
     let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
     let mut attributes = Vec::new();
     for attribute in start.attributes() {

@@ -73,7 +73,7 @@ fn no_op_rewrite_copies_every_entry_raw() {
 fn edit_rewrite_touches_only_the_edited_part_and_is_deterministic() {
     let bytes = fixtures::docx();
     let replacement = fixtures::MINIMAL_WORD_BODY.as_bytes().to_vec();
-    let edits = BTreeMap::from([("word/document.xml".to_string(), replacement.clone())]);
+    let edits = BTreeMap::from([("word/document.xml".to_string(), Some(replacement.clone()))]);
     let first = open(&bytes)
         .unwrap()
         .rewrite(Cursor::new(Vec::new()), &edits)
@@ -109,7 +109,7 @@ fn edit_rewrite_touches_only_the_edited_part_and_is_deterministic() {
 #[test]
 fn rewrite_refuses_hostile_edit_names() {
     let mut package = open(&fixtures::docx()).unwrap();
-    let edits = BTreeMap::from([("../evil.xml".to_string(), b"x".to_vec())]);
+    let edits = BTreeMap::from([("../evil.xml".to_string(), Some(b"x".to_vec()))]);
     assert!(matches!(
         package.rewrite(Cursor::new(Vec::new()), &edits),
         Err(Error::InvalidPartName(_))
@@ -755,4 +755,18 @@ fn a_package_file_larger_than_the_total_bound_is_refused_before_parsing() {
     };
     let error = Package::open(Cursor::new(fixtures::docx()), limits).err();
     assert_eq!(error, Some(Error::TotalTooLarge));
+}
+
+#[test]
+fn rewrite_removes_parts_mapped_to_none() {
+    let bytes = fixtures::docx();
+    let edits = BTreeMap::from([("word/comments.xml".to_string(), None)]);
+    let out = open(&bytes)
+        .unwrap()
+        .rewrite(Cursor::new(Vec::new()), &edits)
+        .unwrap()
+        .into_inner();
+    let names: Vec<String> = raw_entries(&out).into_iter().map(|entry| entry.0).collect();
+    assert!(!names.contains(&"word/comments.xml".to_string()));
+    assert_eq!(names.len(), raw_entries(&bytes).len() - 1);
 }

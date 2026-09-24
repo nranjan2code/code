@@ -740,9 +740,15 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
     let mut defined_names: Vec<(String, String)> = Vec::new();
     let mut current_name: Option<String> = None;
     let mut name_text = String::new();
+    let mut recalculate_on_open = false;
     xml::walk(&bytes, &main, &limits, |event| {
         match event {
             XmlEvent::Open(element) => match element.local() {
+                "calcPr" => {
+                    recalculate_on_open = element
+                        .attr("fullCalcOnLoad")
+                        .is_some_and(|value| value == "1" || value == "true");
+                }
                 "sheet" => {
                     if let (Some(name), Some(id)) =
                         (element.attr("name"), element.attr_prefixed("id"))
@@ -810,7 +816,14 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             continue;
         }
         let bytes = package.read_part(&part)?;
-        let rows = sheet_rows(&bytes, &part, &limits, &shared, &mut formulas)?;
+        let rows = sheet_rows(
+            &bytes,
+            &part,
+            &limits,
+            &shared,
+            recalculate_on_open,
+            &mut formulas,
+        )?;
         let used: std::collections::BTreeSet<u32> = rows
             .iter()
             .flat_map(|row| row.cells.iter().map(|(column, _)| *column))
@@ -926,6 +939,7 @@ fn sheet_rows(
     part: &str,
     limits: &Limits,
     shared: &[String],
+    recalculate_on_open: bool,
     formulas: &mut usize,
 ) -> Result<Vec<SheetRow>, Error> {
     let mut rows: Vec<SheetRow> = Vec::new();
@@ -1005,10 +1019,17 @@ fn sheet_rows(
                         let rendered = match state.formula {
                             Some(formula) => {
                                 *formulas += 1;
+                                let cached = match (shown.is_empty(), recalculate_on_open) {
+                                    (true, _) => "[not calculated yet]".to_string(),
+                                    (false, true) => {
+                                        format!("[cached: {shown}, stale until recalculated]")
+                                    }
+                                    (false, false) => format!("[cached: {shown}]"),
+                                };
                                 if formula.trim().is_empty() {
-                                    format!("(shared formula) [cached: {shown}]")
+                                    format!("(shared formula) {cached}")
                                 } else {
-                                    format!("={} [cached: {shown}]", formula.trim())
+                                    format!("={} {cached}", formula.trim())
                                 }
                             }
                             None => shown,

@@ -35,6 +35,10 @@ enum WorkerTask {
         tool: String,
         args: Value,
         execution_id: String,
+        /// The Agent the call runs for: scratch paths and tracked-change
+        /// authorship depend on it.
+        #[serde(default)]
+        agent_id: Option<String>,
     },
     VerifyTargets {
         root: PathBuf,
@@ -259,6 +263,7 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
                 .as_ref()
                 .map(|sink| sink.execution_id().to_string())
                 .unwrap_or_else(|| "unidentified".into()),
+            agent_id: ctx.agent_id.clone(),
         },
     };
     let payload = match serde_json::to_vec(&request) {
@@ -404,12 +409,13 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
-    let (tool_name, args, execution_id) = match request.task {
+    let (tool_name, args, execution_id, agent_id) = match request.task {
         WorkerTask::Tool {
             tool,
             args,
             execution_id,
-        } => (tool, args, execution_id),
+            agent_id,
+        } => (tool, args, execution_id, agent_id),
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -429,7 +435,10 @@ pub async fn worker_main() -> i32 {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let (sink, mut rx) = crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
-            let ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            let mut ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            if let Some(agent_id) = agent_id {
+                ctx = ctx.with_agent_id(agent_id);
+            }
             let event_forwarder = tokio::spawn(async move {
                 let mut stderr = tokio::io::stderr();
                 while let Some(event) = rx.recv().await {

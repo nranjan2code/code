@@ -70,3 +70,46 @@ async fn core_never_runs_doc_read_in_its_own_process() {
     let read_only = core.agent_read_only_tools();
     assert!(read_only.iter().any(|tool| tool.name() == "doc_read"));
 }
+
+#[tokio::test]
+async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
+    use sha2::Digest as _;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("memo.docx");
+    std::fs::write(&file, vak_ooxml::fixtures::docx()).unwrap();
+    let digest: String = sha2::Sha256::digest(std::fs::read(&file).unwrap())
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let worker = PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker"));
+    let tool = vak_tools::brokered_default_tools(worker)
+        .into_iter()
+        .find(|tool| tool.name() == "office_apply")
+        .expect("office_apply is a built-in tool");
+    let output = tool
+        .execute(
+            &json!({
+                "path": "memo.docx",
+                "base_digest": digest,
+                "ops": [{"op": "replace_paragraph_text", "anchor": "p@11", "text": "Up."}]
+            }),
+            &ToolContext::new(dir.path().to_path_buf()).with_agent_id("mira"),
+        )
+        .await;
+    assert!(!output.is_error, "{}", output.content);
+    assert!(
+        output.content.contains("tracked changes by mira"),
+        "the worker received the calling Agent's id: {}",
+        output.content
+    );
+    let bytes = std::fs::read(&file).unwrap();
+    let document =
+        vak_ooxml::read::read(std::io::Cursor::new(bytes), vak_ooxml::Limits::default()).unwrap();
+    assert!(
+        document
+            .lines()
+            .join("\n")
+            .contains("[deleted by mira: Steady.][inserted by mira: Up.]")
+    );
+}

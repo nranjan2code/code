@@ -15,6 +15,7 @@ pub mod glob;
 pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
+pub mod office_apply;
 pub mod read;
 pub mod recall;
 pub mod retired;
@@ -308,6 +309,7 @@ pub fn default_tools() -> Vec<std::sync::Arc<dyn Tool>> {
         std::sync::Arc::new(glob::GlobTool),
         std::sync::Arc::new(grep::GrepTool),
         std::sync::Arc::new(doc_read::DocReadTool),
+        std::sync::Arc::new(office_apply::OfficeApplyTool),
     ]
 }
 

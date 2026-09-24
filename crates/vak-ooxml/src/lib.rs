@@ -14,10 +14,12 @@
 //! - [`read`]: L2 read projections with anchors and O6 labels for Word,
 //!   Excel, PowerPoint and Visio.
 
+pub mod edit;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod package;
 pub mod read;
+pub mod splice;
 pub mod xml;
 
 pub use package::{

@@ -192,7 +192,8 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     validated Bash command; never try to execute a host worker binary inside
     an image that does not contain the pinned worker artifact. A parser of
     untrusted file formats never runs in the server, desktop or gateway
-    process: `doc_read` is a worker tool, and every target verifier runs in
+    process: `doc_read` and `office_apply` are worker tools, and every target
+    verifier runs in
     the worker's `VerifyTargets` task under a read-only, network-denied
     sandbox rooted at the tree being verified, whatever the session's mode,
     within a deadline. A worker that cannot answer fails every planned check;
@@ -650,7 +651,17 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     Office, LibreOffice, .NET) is ever a runtime dependency; such tools may
     serve only as CI test oracles, and their results are never shown to users
     as checks. A non-text channel attachment never enters a prompt as bytes:
-    it is saved to `inbox/` in the Agent workspace and named.
+    it is saved to `inbox/` in the Agent workspace and named. Every change to
+    a document goes through the one `vak_ooxml::edit` engine and its typed
+    ops, and `office_apply` is its only tool: an op names an anchor from a
+    read of the exact file (`base_digest`), splices only the elements it
+    changes, and is confirmed by re-reading the written package before an
+    atomic write, or nothing is written. A Word edit to an existing document
+    is a tracked change authored by the runtime's Agent id, never a name the
+    model supplies. A changed Excel input or formula sets `fullCalcOnLoad`,
+    and cached values read as stale until Excel recalculates. An op never
+    adds, enables or strips macros: the output keeps the source's macro
+    state.
 
 ## Code rules
 
@@ -901,9 +912,11 @@ crates/vak-ooxml     the Open XML package engine, with NO vak dependencies so
                      it is testable and fuzzable alone: L0 bounded OPC reader
                      (content types, relationship graph, detection by main-
                      part content type, security inspection) and raw-copy
-                     writer; L1 bounded XML walk that refuses DOCTYPE; L2
-                     anchored read projections for Word, Excel, PowerPoint
-                     and Visio with hidden-content labels. Every vak call
+                     writer; L1 bounded XML walk that refuses DOCTYPE and a
+                     span-aware splice editor; L2 anchored read projections
+                     for Word, Excel, PowerPoint and Visio with hidden-content
+                     labels; L3 the typed op engine (`edit`) behind
+                     `office_apply`. Every vak call
                      site runs it in the broker worker (invariants 14, 39;
                      docs/design/72-openxml-documents.md)
 crates/vak-sandbox   the isolated-execution contract, deliberately ignorant

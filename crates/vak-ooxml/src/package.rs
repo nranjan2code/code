@@ -39,6 +39,16 @@ pub enum Vocabulary {
 }
 
 impl Vocabulary {
+    /// The label with its article: "an Excel workbook".
+    pub fn with_article(self) -> &'static str {
+        match self {
+            Vocabulary::Word => "a Word document",
+            Vocabulary::Excel => "an Excel workbook",
+            Vocabulary::PowerPoint => "a PowerPoint presentation",
+            Vocabulary::Visio => "a Visio drawing",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Vocabulary::Word => "Word document",
@@ -127,6 +137,83 @@ impl Format {
             kind,
             macro_enabled,
         })
+    }
+
+    /// The format a file named with `extension` has, if it is one of the
+    /// family.
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        use FormatKind::*;
+        use Vocabulary::*;
+        let (vocabulary, kind, macro_enabled) = match extension.to_ascii_lowercase().as_str() {
+            "docx" => (Word, Document, false),
+            "docm" => (Word, Document, true),
+            "dotx" => (Word, Template, false),
+            "dotm" => (Word, Template, true),
+            "xlsx" => (Excel, Document, false),
+            "xlsm" => (Excel, Document, true),
+            "xltx" => (Excel, Template, false),
+            "xltm" => (Excel, Template, true),
+            "xlam" => (Excel, AddIn, true),
+            "pptx" => (PowerPoint, Document, false),
+            "pptm" => (PowerPoint, Document, true),
+            "potx" => (PowerPoint, Template, false),
+            "potm" => (PowerPoint, Template, true),
+            "ppsx" => (PowerPoint, Slideshow, false),
+            "ppsm" => (PowerPoint, Slideshow, true),
+            "ppam" => (PowerPoint, AddIn, true),
+            "vsdx" => (Visio, Document, false),
+            "vsdm" => (Visio, Document, true),
+            "vstx" => (Visio, Template, false),
+            "vstm" => (Visio, Template, true),
+            "vssx" => (Visio, Stencil, false),
+            "vssm" => (Visio, Stencil, true),
+            _ => return None,
+        };
+        Some(Self {
+            vocabulary,
+            kind,
+            macro_enabled,
+        })
+    }
+
+    /// The main part's content type for this format.
+    pub fn main_content_type(self) -> &'static str {
+        match self.extension() {
+            "docx" => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+            }
+            "docm" => "application/vnd.ms-word.document.macroEnabled.main+xml",
+            "dotx" => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
+            }
+            "dotm" => "application/vnd.ms-word.template.macroEnabledTemplate.main+xml",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+            "xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+            "xltx" => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml"
+            }
+            "xltm" => "application/vnd.ms-excel.template.macroEnabled.main+xml",
+            "xlam" => "application/vnd.ms-excel.addin.macroEnabled.main+xml",
+            "pptx" => {
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
+            }
+            "pptm" => "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+            "potx" => {
+                "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml"
+            }
+            "potm" => "application/vnd.ms-powerpoint.template.macroEnabled.main+xml",
+            "ppsx" => {
+                "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml"
+            }
+            "ppsm" => "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
+            "ppam" => "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml",
+            "vsdx" => "application/vnd.ms-visio.drawing.main+xml",
+            "vsdm" => "application/vnd.ms-visio.drawing.macroEnabled.main+xml",
+            "vstx" => "application/vnd.ms-visio.template.main+xml",
+            "vstm" => "application/vnd.ms-visio.template.macroEnabled.main+xml",
+            "vssx" => "application/vnd.ms-visio.stencil.main+xml",
+            _ => "application/vnd.ms-visio.stencil.macroEnabled.main+xml",
+        }
     }
 
     /// The one extension that names this format.
@@ -646,17 +733,17 @@ impl<R: Read + Seek> Package<R> {
         Ok(inspection)
     }
 
-    /// Writes the package to `out`, replacing the parts named in `edits`
-    /// and copying every other entry's compressed bytes unchanged (O1).
-    /// Entries keep their archive order; edits that name no existing part
-    /// are appended in name order. Written entries carry a fixed timestamp
-    /// so the same edits always produce the same bytes.
+    /// Writes the package to `out`, replacing the parts `edits` maps to
+    /// bytes, removing the parts it maps to `None`, and copying every other
+    /// entry's compressed bytes unchanged (O1). Entries keep their archive
+    /// order; new parts are appended in name order. Written entries carry a
+    /// fixed timestamp so the same edits always produce the same bytes.
     pub fn rewrite<W: Write + Seek>(
         &mut self,
         out: W,
-        edits: &BTreeMap<String, Vec<u8>>,
+        edits: &BTreeMap<String, Option<Vec<u8>>>,
     ) -> Result<W, Error> {
-        let mut pending: BTreeMap<String, &Vec<u8>> = BTreeMap::new();
+        let mut pending: BTreeMap<String, &Option<Vec<u8>>> = BTreeMap::new();
         for (name, bytes) in edits {
             let name = name.trim_start_matches('/');
             validate_part_name(name)?;
@@ -671,7 +758,8 @@ impl<R: Read + Seek> Package<R> {
         let io = |error: zip::result::ZipError| Error::Io(error.to_string());
         for entry in self.entries.clone() {
             match pending.remove(&part_key(entry.name.trim_end_matches('/'))) {
-                Some(bytes) => {
+                Some(None) => {}
+                Some(Some(bytes)) => {
                     writer
                         .start_file(entry.name.as_str(), options)
                         .map_err(io)?;
@@ -688,7 +776,11 @@ impl<R: Read + Seek> Package<R> {
         let added: Vec<(String, &Vec<u8>)> = edits
             .iter()
             .filter(|(name, _)| pending.contains_key(&part_key(name)))
-            .map(|(name, bytes)| (name.trim_start_matches('/').to_string(), bytes))
+            .filter_map(|(name, bytes)| {
+                bytes
+                    .as_ref()
+                    .map(|bytes| (name.trim_start_matches('/').to_string(), bytes))
+            })
             .collect();
         for (name, bytes) in added {
             writer.start_file(name, options).map_err(io)?;
@@ -784,7 +876,7 @@ pub fn validate_part_name(name: &str) -> Result<(), Error> {
 /// Lookup key for a part name: no leading slash, percent-decoded (a ZIP
 /// item may hold `a%20b.xml` or `a b.xml` for the same part), ASCII
 /// case-folded (OPC part names are case-insensitive).
-fn part_key(name: &str) -> String {
+pub(crate) fn part_key(name: &str) -> String {
     let trimmed = name.trim_start_matches('/');
     percent_decode(trimmed)
         .unwrap_or_else(|| trimmed.to_string())
@@ -792,7 +884,7 @@ fn part_key(name: &str) -> String {
 }
 
 /// `word/document.xml` → `word/_rels/document.xml.rels`; `""` → `_rels/.rels`.
-fn rels_part_name(source: &str) -> String {
+pub(crate) fn rels_part_name(source: &str) -> String {
     match source.rsplit_once('/') {
         Some((directory, file)) => format!("{directory}/_rels/{file}.rels"),
         None if source.is_empty() => PACKAGE_RELS.into(),
@@ -824,7 +916,7 @@ fn rels_source(name: &str) -> Option<String> {
     })
 }
 
-fn parse_relationships(
+pub(crate) fn parse_relationships(
     bytes: &[u8],
     part: &str,
     source: &str,

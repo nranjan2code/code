@@ -129,14 +129,14 @@ Each anchor carries a revision counter held in the draft's op log. An op states 
 ### Tool surface (one way each)
 
 - **`doc_read`** (brokered, built) serves the family through the `text`, `summary`, `outline` and `table` views and the `section` parameter, with anchors, the file's digest, and labels for hidden content, comments, tracked changes and flags.
-- **`office_apply`** (brokered, P2) takes a path, the base digest and ordered ops, applies them to a draft, and returns the new digest, per-op postcondition results and a compact change summary. **Creation is the same tool:** `create: {template}` starts from a workspace template or a built-in blank package. It carries a write claim on the path and a normal `PermissionEngine` decision.
+- **`office_apply`** (brokered, built) takes `path` (the file to write), an optional `source` (the file or template to start from; defaults to `path`), `base_digest` (the sha256 `doc_read` printed for the source) and ordered ops. It returns the new digest and per-op results, each confirmed by a re-read. **Creation is the same tool:** a template as `source` and a new `path`; a template becomes a document by changing only its main part's content type. It is a path-scoped write in the `PermissionEngine`, like `write` and `edit`. Today it writes the file atomically; routing its output through a draft and candidate lands with P3 Review.
 - **`data_query`** (P1) gains worksheet ranges and tables as sources, and moves to the worker in the same change.
 
 **P2 op set, v1.** Deliberately small, so small local models use it reliably:
 
 | Vocabulary | Ops |
 |---|---|
-| Word | `replace_paragraph_text`, `insert_paragraph_after`, `delete_paragraph`, `set_table_cell`, `accept_changes`, `reject_changes` |
+| Word | `replace_paragraph_text`, `insert_paragraph_after` (style by id or name), `delete_paragraph`; `set_table_cell`, `accept_changes` and `reject_changes` move to P3 with Review |
 | Excel | `set_cells` (values or formulas over a range), `append_rows`, `add_sheet` |
 | PowerPoint | `add_slide_from_layout`, `set_placeholder_text`, `set_notes`, `delete_slide`, `move_slide` |
 | Shared | `set_title` |
@@ -221,14 +221,18 @@ Decided 2026-09-24: the gateway saves a received file into the workspace inbox w
 
 ### P2 — Edit and create
 
-- [ ] L1 splice editor: edits replace located element ranges in the event stream and keep everything else byte-identical; an unknown-markup preservation test for every op (O1).
-- [ ] `OfficeOp` v1 schema (the table above) and one apply engine with per-op postconditions checked by re-reading the written package (O5); stale or missing anchors are repairable errors (O4).
-- [ ] `office_apply`, brokered and permission-gated, writing to a draft that freezes as a candidate; errors that small local models can act on.
-- [ ] Word edits as native tracked changes under the frozen Agent identity; `accept_changes` and `reject_changes`.
-- [ ] Excel edits with `fullCalcOnLoad` and stale cached values reported as stale.
-- [ ] PowerPoint slides from the template's layouts and placeholders.
-- [ ] Creation from a workspace template (theme, styles, layouts kept) and from built-in blank packages for Word, Excel and PowerPoint.
-- [ ] O8 protection enforcement and the O10 refusals, each with a test that the refusal happens before any byte is written. `prepare_to_share`.
+*Progress 2026-09-24:* `crates/vak-ooxml/src/splice.rs` (L1), `src/edit/` (L3: `mod.rs`, `word.rs`, `sheet.rs`, `deck.rs`) and `crates/vak-tools/src/office_apply.rs`. Evidence: `crates/vak-ooxml/tests/edit.rs` (13 tests), the `splice` unit tests, `office_apply`'s tests in `vak-tools`, `crates/vak-permission/tests/document_tools.rs`, and `office_apply_edits_through_the_worker_as_the_calling_agent` in `crates/vak-server/tests/doc_read_worker.rs`, which runs the real worker. Two defects found on the way were fixed: the broker never forwarded the Agent id to the worker, so inside the worker `bash` always used the `vak` scratch directory whichever Agent ran it; and `doc_read` was missing from the permission engine's read tools, so read-only mode denied it and workspace-write asked for approval.
+
+- [ ] L1 splice editor: edits replace located element ranges in the event stream and keep everything else byte-identical; an unknown-markup preservation test for every op (O1). *Progress: built. Raw-copy identity of every untouched part is tested for Word, Excel and PowerPoint ops, and byte identity before the edited paragraph for Word. A per-op test with deliberately unknown markup inside the edited element is not written yet.*
+- [x] `OfficeOp` v1 schema and one apply engine with per-op postconditions checked by re-reading the written package (O5); stale or missing anchors are repairable errors (O4). *Evidence: `tests/edit.rs`; unknown fields are refused, every refusal names the op and the repair, and `base_digest` must match the source's sha256.*
+- [ ] `office_apply` writing to a draft that freezes as a candidate. *Progress: brokered, path-scoped write under the `PermissionEngine`, atomic write, nothing written on any failure (tested). The draft and candidate path lands with P3.*
+- [x] Word edits as native tracked changes under the runtime's Agent id (`w:ins`/`w:del` on runs and on the paragraph mark, new paragraphs with a fresh `w14:paraId`, `w14` declared when missing). *Evidence: `tests/edit.rs`, and the worker test showing the author is the calling Agent's id.*
+- [x] Excel edits keep cell styles, set `fullCalcOnLoad`, drop the calculation chain when formulas change, and report cached values as stale. *Evidence: `tests/edit.rs`.*
+- [x] PowerPoint slides from the template's layouts and placeholders, placeholder text, notes, move and delete (including section-list slide ids). *Evidence: `tests/edit.rs`.*
+- [x] Creation from a workspace template: a `.potx`/`.dotx`/`.xltx` becomes the document named by `path`, theme, styles and layouts kept. *Evidence: `a_template_becomes_a_document_but_never_changes_macro_state`, `creates_a_deck_from_a_template_with_the_agent_as_author`.*
+- [ ] Built-in blank packages for Word, Excel and PowerPoint.
+- [ ] O8 protection enforcement and the O10 refusals, each with a test that the refusal happens before any byte is written. *Progress: protected sheets, protected workbook structure and macro-state changes are refused and tested; Word document protection and PowerPoint modify passwords are not checked yet.*
+- [ ] `prepare_to_share`.
 - [ ] Journey evidence: an Agent creates a six-slide deck from a brief and the workspace's template, freezes it as a candidate, and passes Vak's verifier. The CI oracles pass on that file. A manual PowerPoint open is recorded as developer evidence, not a runtime check.
 
 ### P3 — Review

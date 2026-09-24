@@ -278,3 +278,147 @@ pub fn word_with(
 }
 
 pub const MINIMAL_WORD_BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>"#;
+
+const SLIDE_MASTER: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml";
+const SLIDE_LAYOUT: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
+
+fn layout(name: &str, kind: &str, shapes: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="{kind}" preserve="1"><p:cSld name="{name}"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"#
+    )
+}
+
+fn placeholder(id: u32, name: &str, ph: &str) -> String {
+    format!(
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>{ph}</p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>{name}</a:t></a:r></a:p></p:txBody></p:sp>"#
+    )
+}
+
+/// A deck built like a template: one slide master, a "Title Slide" and a
+/// "Title and Content" layout, and one slide using the second layout.
+pub fn pptx_template() -> Vec<u8> {
+    let presentation = r#"<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>"#;
+    let master = r#"<?xml version="1.0" encoding="UTF-8"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/><p:sldLayoutId id="2147483650" r:id="rId2"/></p:sldLayoutIdLst></p:sldMaster>"#;
+    let title_layout = layout(
+        "Title Slide",
+        "title",
+        &format!(
+            "{}{}{}",
+            placeholder(2, "Title 1", r#"<p:ph type="ctrTitle"/>"#),
+            placeholder(3, "Subtitle 2", r#"<p:ph type="subTitle" idx="1"/>"#),
+            placeholder(4, "Date 3", r#"<p:ph type="dt" sz="half" idx="10"/>"#)
+        ),
+    );
+    let content_layout = layout(
+        "Title and Content",
+        "obj",
+        &format!(
+            "{}{}",
+            placeholder(2, "Title 1", r#"<p:ph type="title"/>"#),
+            placeholder(3, "Content Placeholder 2", r#"<p:ph idx="1"/>"#)
+        ),
+    );
+    let slide = r#"<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" b="1"/><a:t>Overview</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#;
+    let presentation_rels = relationships(&[
+        (
+            "rId1",
+            &format!("{REL}/slideMaster"),
+            "slideMasters/slideMaster1.xml",
+        ),
+        ("rId2", &format!("{REL}/slide"), "slides/slide1.xml"),
+    ]);
+    let master_rels = relationships(&[
+        (
+            "rId1",
+            &format!("{REL}/slideLayout"),
+            "../slideLayouts/slideLayout1.xml",
+        ),
+        (
+            "rId2",
+            &format!("{REL}/slideLayout"),
+            "../slideLayouts/slideLayout2.xml",
+        ),
+    ]);
+    let layout_rels = relationships(&[(
+        "rId1",
+        &format!("{REL}/slideMaster"),
+        "../slideMasters/slideMaster1.xml",
+    )]);
+    let slide_rels = relationships(&[(
+        "rId1",
+        &format!("{REL}/slideLayout"),
+        "../slideLayouts/slideLayout2.xml",
+    )]);
+    let types = content_types(&[
+        ("ppt/presentation.xml", POWERPOINT_MAIN),
+        ("ppt/slideMasters/slideMaster1.xml", SLIDE_MASTER),
+        ("ppt/slideLayouts/slideLayout1.xml", SLIDE_LAYOUT),
+        ("ppt/slideLayouts/slideLayout2.xml", SLIDE_LAYOUT),
+        ("ppt/slides/slide1.xml", SLIDE),
+    ]);
+    zip(&[
+        ("[Content_Types].xml", types.as_bytes()),
+        (
+            "_rels/.rels",
+            package_rels("ppt/presentation.xml").as_bytes(),
+        ),
+        ("docProps/core.xml", core("Template").as_bytes()),
+        ("ppt/presentation.xml", presentation.as_bytes()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            presentation_rels.as_bytes(),
+        ),
+        ("ppt/slideMasters/slideMaster1.xml", master.as_bytes()),
+        (
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+            master_rels.as_bytes(),
+        ),
+        ("ppt/slideLayouts/slideLayout1.xml", title_layout.as_bytes()),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            layout_rels.as_bytes(),
+        ),
+        (
+            "ppt/slideLayouts/slideLayout2.xml",
+            content_layout.as_bytes(),
+        ),
+        (
+            "ppt/slideLayouts/_rels/slideLayout2.xml.rels",
+            layout_rels.as_bytes(),
+        ),
+        ("ppt/slides/slide1.xml", slide.as_bytes()),
+        ("ppt/slides/_rels/slide1.xml.rels", slide_rels.as_bytes()),
+    ])
+}
+
+/// Rebuilds a package with some parts replaced or added.
+pub fn with_parts(bytes: &[u8], parts: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Read;
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes.to_vec())) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    for index in 0..archive.len() {
+        let Ok(mut file) = archive.by_index(index) else {
+            return Vec::new();
+        };
+        let mut content = Vec::new();
+        if file.read_to_end(&mut content).is_err() {
+            return Vec::new();
+        }
+        entries.push((file.name().to_string(), content));
+    }
+    for (name, content) in parts {
+        match entries.iter_mut().find(|(existing, _)| existing == name) {
+            Some(entry) => entry.1 = content.to_vec(),
+            None => entries.push((name.to_string(), content.to_vec())),
+        }
+    }
+    let borrowed: Vec<(&str, &[u8])> = entries
+        .iter()
+        .map(|(name, content)| (name.as_str(), content.as_slice()))
+        .collect();
+    zip(&borrowed)
+}
