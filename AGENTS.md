@@ -1071,8 +1071,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      inline-keyboard buttons via TelegramAdapter, resolved
                      through the same verdict-text path a typed yes/no
                      uses), semantic adapter registry, Telegram document
-                     attachments inlined as text (image attachments stay
-                     vision content), Telegram/webhook transports, and
+                     attachments (small text inlined, everything else
+                     saved to the workspace inbox and named; image
+                     attachments stay vision content), Telegram/webhook
+                     transports, and
                      outbox replay
                      semantic presentation snapshots/SSE alongside legacy
                      AgentEvent and transcript endpoints

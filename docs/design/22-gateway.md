@@ -250,16 +250,24 @@ scope, never in config or flags.
 
 ### Document attachments
 
-A Telegram `document` (code, logs, CSVs, ...) up to 256 KiB downloads and
-rides alongside the text as an `InboundAttachment` with `kind = "document"`.
-The gateway has no generic-file content block, so a document is either text
-the model can read directly or it isn't included: `compose_prompt` decodes it
-and inlines it as a fenced text block (capped at a further 64 KiB — the
-inline-limit is deliberately smaller than the download cap, since a document
-that decodes to more than that is better excerpted by the sender than dumped
-whole into every turn's context) or, past either cap, appends a note telling
-the sender it wasn't attached rather than truncating it silently. Photos keep
-using the existing `kind = "image"` vision-content path.
+A Telegram `document` (code, logs, CSVs, Office files, ...) up to
+`INBOUND_DOCUMENT_MAX_BYTES` (1 MiB, the one cap the bridge and the gateway
+share; the gateway's 2 MiB JSON body limit bounds it after base64) downloads
+and rides alongside the text as an `InboundAttachment` with
+`kind = "document"`. `compose_prompt` never puts a non-text file's bytes in
+the prompt (docs/design/72-openxml-documents.md, F1):
+
+- Valid UTF-8 text up to 64 KiB is inlined as a fenced text block.
+- Anything else, including larger text, is saved to `inbox/` in the Agent
+  workspace under a digest-prefixed, sanitised name, so every file tool can
+  reach it (invariant 10). The prompt carries only a note naming the saved
+  path and the reader to use (`doc_read` for the Open XML family). The write
+  never overwrites, refuses an inbox that resolves outside the workspace, and
+  the same bytes under the same name reuse the same file.
+- Past the cap, the sender is told the file was not received rather than
+  having it truncated silently.
+
+Photos keep using the existing `kind = "image"` vision-content path.
 
 ### Inline-keyboard approvals
 

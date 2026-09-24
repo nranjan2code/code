@@ -307,10 +307,10 @@ fn http() -> reqwest::Client {
 }
 
 impl TelegramBridge {
-    /// Documents larger than this aren't inlined into the prompt (the
-    /// gateway would have to reject or truncate them anyway); the sender
-    /// is told rather than the upload silently vanishing.
-    const DOCUMENT_MAX_BYTES: usize = 256 * 1024;
+    /// The gateway's one inbound document cap; a larger upload is not
+    /// downloaded, and the sender is told rather than the upload silently
+    /// vanishing.
+    const DOCUMENT_MAX_BYTES: usize = crate::gateway::INBOUND_DOCUMENT_MAX_BYTES;
 
     /// Long-poll once, route every text through the gateway, deliver each
     /// reply. Returns the next offset even when nothing arrived.
@@ -355,8 +355,8 @@ impl TelegramBridge {
                     })),
                     Ok(None) => {
                         text = format!(
-                            "{text}\n\n[attached file '{}' exceeds the {} KiB inline limit; \
-                             not attached]",
+                            "{text}\n\n[attached file '{}' exceeds the {} KiB channel limit; \
+                             not received]",
                             doc.file_name,
                             Self::DOCUMENT_MAX_BYTES / 1024
                         );
@@ -816,9 +816,9 @@ impl TelegramBridge {
         ))
     }
 
-    /// A non-photo attachment (code, logs, CSVs, ...). `Ok(None)` means the
-    /// file was over `DOCUMENT_MAX_BYTES` and deliberately wasn't inlined —
-    /// the caller tells the sender rather than truncating it silently.
+    /// A non-photo attachment (code, logs, CSVs, Office files, ...).
+    /// `Ok(None)` means the file was over `DOCUMENT_MAX_BYTES` and was not
+    /// received; the caller tells the sender rather than truncating it.
     async fn fetch_document_base64(
         &self,
         doc: &TelegramDocument,
