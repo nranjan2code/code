@@ -78,8 +78,8 @@ Read before changing behaviour in these areas:
   `62-universal-delegation-prototype.md` (by 64),
   `63-agent-first-conversations.md` (by 64).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
-  `72-openxml-documents.md` (Office documents: current-state review and the
-  implementation ledger for read/edit/create/review/collaborate/headless).
+  `72-openxml-documents.md` (Office documents: the file-in, cite, redline,
+  review, file-out loop and its ledger; P0 and part of P1 are built).
 
 ### What is authoritative
 
@@ -644,8 +644,9 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     labelled for what it is, and external relationships are recorded, never
     followed. No macro, DDE or include field, OLE object, ActiveX control,
     Excel 4.0 macro sheet or external data connection is ever executed,
-    activated or refreshed; Vak has no macro runtime, and when one exists it
-    runs only inside the worker. No external office application (Microsoft
+    activated or refreshed; Vak has no macro runtime and does not build one:
+    macros are read, explained and flagged, and an Agent may rebuild what
+    one does as a Vak automation under review. No external office application (Microsoft
     Office, LibreOffice, .NET) is ever a runtime dependency; such tools may
     serve only as CI test oracles, and their results are never shown to users
     as checks. A non-text channel attachment never enters a prompt as bytes:
