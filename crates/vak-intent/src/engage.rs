@@ -649,9 +649,13 @@ pub fn derive(
         // Any act the reading covers, not just the primary one. "migrate …
         // and verify … before deploying" resolves `verify` as primary, and
         // gating on that alone skipped the checkpoint for a turn that plainly
-        // modifies and deploys. `requires_execution` rather than
-        // `is_effectful`: authoring a new file is a workspace mutation too,
-        // and a checkpoint is how it is reversed.
+        // modifies and deploys. `Author` is deliberately not one of the acts
+        // `requires_execution` covers (see `Act::requires_execution`): most
+        // authoring never touches the workspace, and only the request text —
+        // which this `Reading`-only derivation cannot see — says whether it
+        // names a file. `OutcomeSpec::requires_execution` covers that case
+        // once the objective text is known; a caller deciding whether to
+        // checkpoint a file-saving authoring turn needs that check too.
         checkpoint_before_effect: reading.acts().iter().any(|act| act.requires_execution())
             && reading.stakes.wants_checkpoint(),
         hil,

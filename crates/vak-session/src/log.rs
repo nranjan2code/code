@@ -1476,6 +1476,30 @@ impl SessionLog {
             .collect()
     }
 
+    /// `derive_with_plan`'s projection alongside the index within it where
+    /// the open turn's own directive sits — `messages.len()` (an
+    /// out-of-bounds sentinel, safe as a no-op) when the chain has no open
+    /// turn. What a request assembler needs to attach the per-turn tail to
+    /// the turn's directive specifically (docs/design/68-context-engine.md
+    /// §6/§7): the directive is always the first message of the open
+    /// turn's own `current_verbatim` block, which `derive_with_plan`
+    /// places last, but a step within the turn appends more messages
+    /// (tool results, control nudges) after it — the tail must ride on the
+    /// directive every step, not on whatever the last message happens to
+    /// be, or an earlier-sent message would silently change shape between
+    /// requests.
+    pub fn derive_with_plan_and_directive(&self, plan: &WorkingSetPlan) -> (Vec<Message>, usize) {
+        let messages = self.derive_with_plan(plan);
+        let index = TurnIndex::from_log(self);
+        let directive_at = index
+            .turns
+            .last()
+            .filter(|turn| !turn.closed)
+            .map(|turn| messages.len().saturating_sub(turn.current_verbatim().len()))
+            .unwrap_or(messages.len());
+        (messages, directive_at)
+    }
+
     /// Appends the packet a `WorkingSetPlan` asked for (its `packet_range`,
     /// `first_turn_id..=last_turn_id`), produced by INCREMENTAL compaction
     /// (§4): summarizing the turns' CARDS (never raw history). `model` is

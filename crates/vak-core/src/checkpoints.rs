@@ -1,19 +1,42 @@
-//! Workspace checkpoints: full-content snapshots captured at turn starts,
-//! stored under the sessions home. Rewind restores file contents and removes
-//! files created after the checkpoint. Bash mutations are covered because
-//! snapshots are state-based, not operation-based.
+//! Workspace checkpoints: content-addressed manifests captured at turn
+//! starts, stored under the sessions home. Rewind restores file contents
+//! and removes files created after the checkpoint. Bash mutations are
+//! covered because manifests are state-based, not operation-based.
+//!
+//! Storage is split in two, both under `<sessions_home>/checkpoints/`:
+//! a small per-checkpoint **manifest** (`<session_id>/<seq>.json`: path,
+//! content hash, size, and mtime per file, plus the observed set) and a
+//! **content-addressed blob store** (`blobs/<hash prefix>/<hash>`) shared
+//! by every manifest under this sessions home, across sessions. A file
+//! whose (size, mtime) match its entry in the immediately preceding
+//! manifest is assumed unchanged and its hash is reused without being
+//! re-read or re-hashed; this is the standard rsync/make-style fast path
+//! and trades an astronomically small risk (a same-second, same-size
+//! content change with untouched mtime, on a filesystem coarse enough to
+//! collide) for turning a multi-thousand-file workspace's per-turn
+//! capture into a handful of stats plus however many files actually
+//! changed.
 //!
 //! Safety contract: `restore` only deletes files that were OBSERVED at
-//! capture time and are absent from the stored set's deletion candidates —
-//! i.e. files the capture walk never saw (over budget, unreadable, secret,
-//! gitignored, or beyond the walk break) are left untouched. A rewind can
-//! lose the changes made during a session; it must never destroy files it
-//! knows nothing about.
+//! capture time and are absent from the stored set's deletion candidates
+//! -- i.e. files the capture walk never saw (over budget, unreadable,
+//! secret, gitignored, or beyond the walk break) are left untouched. A
+//! rewind can lose the changes made during a session; it must never
+//! destroy files it knows nothing about. `store` prunes old manifests
+//! and garbage-collects blobs no remaining manifest (in any session under
+//! this sessions home) references; a blob written in the last
+//! [`GC_GRACE`] is never collected, so a concurrent capture that has
+//! written a blob but not yet stored the manifest pointing to it cannot
+//! race a prune elsewhere. A checkpoint file from before this manifest
+//! format (which embedded base64 file content directly) fails to
+//! deserialize -- missing `hash`/`size`/`mtime_ns` -- and is simply not
+//! read (AGENTS.md invariant 29): it is never partially read or migrated.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 const IGNORED_DIRS: [&str; 5] = [".git", "target", "node_modules", ".vak", "dist"];
@@ -27,43 +50,49 @@ const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 /// Checkpoints accumulate once per turn; keep only the newest N per session.
 const MAX_STORED_CHECKPOINTS: usize = 20;
+/// A blob younger than this is never garbage-collected, whether or not a
+/// scan finds it referenced: it may belong to a capture that has written
+/// its blobs but not yet stored the manifest that references them.
+const GC_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+/// Fan-out width for the blob store's directory prefix, so one directory
+/// never holds more than ~1/256th of all blobs.
+const BLOB_PREFIX_LEN: usize = 2;
 
+/// One captured file. Content lives in the blob store keyed by `hash`;
+/// `size`/`mtime_ns` are the fast-path signature the next capture compares
+/// against to decide whether it can reuse `hash` without reading the file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileSnapshot {
+pub struct ManifestEntry {
     pub rel_path: String,
-    #[serde(with = "base64_bytes")]
-    pub content: Vec<u8>,
-}
-
-mod base64_bytes {
-    use base64::Engine as _;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(v))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-        let s = String::deserialize(d)?;
-        base64::engine::general_purpose::STANDARD
-            .decode(s)
-            .map_err(serde::de::Error::custom)
-    }
+    pub hash: String,
+    pub size: u64,
+    pub mtime_ns: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Checkpoint {
+pub struct Manifest {
     pub seq: u32,
     pub session_id: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub label: String,
-    /// Files whose CONTENT is stored and will be rewritten on restore.
-    pub files: Vec<FileSnapshot>,
+    /// Files whose content is stored (in the blob store) and will be
+    /// rewritten on restore.
+    pub files: Vec<ManifestEntry>,
     /// Every regular-file path the capture walk observed, including files
     /// whose content was NOT stored (oversized, unreadable, secret,
     /// gitignored). Restore only deletes files absent from this list.
-    #[serde(default)]
     pub observed: Vec<String>,
+}
+
+/// How much of a [`capture`] call was served from the previous manifest
+/// versus freshly read from disk. Exists so callers (and tests) can
+/// observe the incremental fast path directly rather than through timing
+/// alone, which is flaky under load.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CaptureStats {
+    pub files_observed: usize,
+    pub files_reused: usize,
+    pub files_read: usize,
 }
 
 fn is_ignored(rel: &Path) -> bool {
@@ -202,16 +231,142 @@ impl IgnoreRules {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Content-addressed blob store, shared by every manifest under a sessions
+// home.
+// ---------------------------------------------------------------------------
+
+fn checkpoint_root(sessions_home: &Path) -> PathBuf {
+    sessions_home.join("checkpoints")
+}
+
+/// "blobs" is a reserved session id: a real session id is `uuid_like()`
+/// generated, so the collision this would take is not worth guarding
+/// further, matching how `.git`/`.vak`/etc. are already reserved names
+/// elsewhere in this file.
+fn manifest_dir(sessions_home: &Path, session_id: &str) -> PathBuf {
+    checkpoint_root(sessions_home).join(session_id)
+}
+
+fn blobs_dir(sessions_home: &Path) -> PathBuf {
+    checkpoint_root(sessions_home).join("blobs")
+}
+
+fn blob_path(sessions_home: &Path, hash: &str) -> PathBuf {
+    let split = BLOB_PREFIX_LEN.min(hash.len());
+    let (prefix, rest) = hash.split_at(split);
+    blobs_dir(sessions_home).join(prefix).join(rest)
+}
+
+fn hash_bytes(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    format!("{:x}", hasher.finalize())
+}
+
+fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u64> {
+    let modified = meta.modified().ok()?;
+    let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    u64::try_from(since_epoch.as_nanos()).ok()
+}
+
+/// Writes `content` under `hash` if not already present. Idempotent: the
+/// hash is the content, so a lost race between two writers rewrites the
+/// same bytes, and the atomic rename means a reader never observes a
+/// partial blob.
+fn write_blob(sessions_home: &Path, hash: &str, content: &[u8]) -> std::io::Result<()> {
+    let path = blob_path(sessions_home, hash);
+    if path.is_file() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!(
+        "tmp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+fn read_blob(sessions_home: &Path, hash: &str) -> std::io::Result<Vec<u8>> {
+    std::fs::read(blob_path(sessions_home, hash))
+}
+
+/// Every stored sequence number for `session_id`, ascending. Reads only
+/// the manifest directory's file names -- never opens or parses a
+/// manifest -- so this is cheap even with the full `MAX_STORED_CHECKPOINTS`
+/// present.
+fn list_seqs(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<u32>> {
+    let dir = manifest_dir(sessions_home, session_id);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut seqs: Vec<u32> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || !name.ends_with(".json") {
+                return None;
+            }
+            name.trim_end_matches(".json").parse::<u32>().ok()
+        })
+        .collect();
+    seqs.sort_unstable();
+    Ok(seqs)
+}
+
+/// The next checkpoint sequence number for `session_id`. Unlike `list`,
+/// this never opens a manifest file -- it is safe to call on every turn.
+pub fn next_seq(sessions_home: &Path, session_id: &str) -> u32 {
+    list_seqs(sessions_home, session_id)
+        .ok()
+        .and_then(|seqs| seqs.last().map(|s| s + 1))
+        .unwrap_or(0)
+}
+
+/// The most recently stored manifest for `session_id`, if any. This is the
+/// baseline [`capture`] diffs against for its incremental fast path.
+fn latest_manifest(sessions_home: &Path, session_id: &str) -> Option<Manifest> {
+    let seq = *list_seqs(sessions_home, session_id).ok()?.last()?;
+    load(sessions_home, session_id, seq).ok()
+}
+
 /// Captures every regular file under `cwd` (bounded), sorted by path.
-/// `observed` records every walked path even when its content was skipped.
-pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::Result<Checkpoint> {
+/// `observed` records every walked path even when its content was
+/// skipped. A file whose (size, mtime) match its entry in the previous
+/// manifest for `session_id` reuses that entry's hash instead of being
+/// re-read; everything else is read, hashed, and written to the blob
+/// store.
+pub fn capture(
+    cwd: &Path,
+    sessions_home: &Path,
+    session_id: &str,
+    seq: u32,
+    label: &str,
+) -> std::io::Result<(Manifest, CaptureStats)> {
     let canonical_root = cwd.canonicalize().unwrap_or_else(|_| cwd.into());
     let mut ignores = IgnoreRules::default();
     ignores.load_dir(cwd, Path::new("."));
 
+    let previous = latest_manifest(sessions_home, session_id);
+    let prev_index: HashMap<&str, &ManifestEntry> = previous
+        .as_ref()
+        .map(|m| m.files.iter().map(|e| (e.rel_path.as_str(), e)).collect())
+        .unwrap_or_default();
+
     let mut files = Vec::new();
     let mut observed: Vec<String> = Vec::new();
     let mut total = 0usize;
+    let mut stats = CaptureStats::default();
     for entry in WalkDir::new(cwd)
         .follow_links(false)
         .into_iter()
@@ -264,71 +419,164 @@ pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::
             // observed, so restore will refuse to delete them.
             break;
         }
+
+        let rel_str = rel.display().to_string();
+        let size = meta.len();
+        let mtime_ns = mtime_nanos(&meta);
+        let reusable = mtime_ns.is_some_and(|ns| {
+            prev_index
+                .get(rel_str.as_str())
+                .is_some_and(|prev| prev.size == size && prev.mtime_ns == ns)
+        });
+        if reusable && let Some(prev) = prev_index.get(rel_str.as_str()) {
+            files.push((*prev).clone());
+            stats.files_reused += 1;
+            continue;
+        }
+
         match std::fs::read(entry.path()) {
-            Ok(content) => files.push(FileSnapshot {
-                rel_path: rel.display().to_string(),
-                content,
-            }),
+            Ok(content) => {
+                let hash = hash_bytes(&content);
+                if write_blob(sessions_home, &hash, &content).is_err() {
+                    continue;
+                }
+                files.push(ManifestEntry {
+                    rel_path: rel_str,
+                    hash,
+                    size,
+                    mtime_ns: mtime_ns.unwrap_or_default(),
+                });
+                stats.files_read += 1;
+            }
             Err(_) => continue,
         }
     }
     observed.sort();
     observed.dedup();
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-    Ok(Checkpoint {
-        seq,
-        session_id: session_id.to_string(),
-        created_at: chrono::Utc::now(),
-        label: label.to_string(),
-        files,
-        observed,
-    })
+    stats.files_observed = observed.len();
+    Ok((
+        Manifest {
+            seq,
+            session_id: session_id.to_string(),
+            created_at: chrono::Utc::now(),
+            label: label.to_string(),
+            files,
+            observed,
+        },
+        stats,
+    ))
 }
 
-fn checkpoint_dir(sessions_home: &Path, session_id: &str) -> PathBuf {
-    sessions_home.join("checkpoints").join(session_id)
-}
-
-/// Persists a checkpoint atomically, prunes older ones, and returns the
-/// new file's path.
-pub fn store(sessions_home: &Path, cp: &Checkpoint) -> std::io::Result<PathBuf> {
-    let dir = checkpoint_dir(sessions_home, &cp.session_id);
+/// Persists a manifest atomically, prunes manifests older than the newest
+/// [`MAX_STORED_CHECKPOINTS`] for this session, and -- only when that
+/// prune actually removed something -- garbage-collects blobs no
+/// remaining manifest anywhere under `sessions_home` references. Returns
+/// the new manifest file's path.
+pub fn store(sessions_home: &Path, m: &Manifest) -> std::io::Result<PathBuf> {
+    let dir = manifest_dir(sessions_home, &m.session_id);
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{:04}.json", cp.seq));
-    let tmp = dir.join(format!(".{:04}.tmp", cp.seq));
-    std::fs::write(&tmp, serde_json::to_vec(cp).map_err(std::io::Error::other)?)?;
+    let path = dir.join(format!("{:04}.json", m.seq));
+    let tmp = dir.join(format!(".{:04}.tmp", m.seq));
+    std::fs::write(&tmp, serde_json::to_vec(m).map_err(std::io::Error::other)?)?;
     std::fs::rename(&tmp, &path)?;
 
-    let mut seqs: Vec<u32> = std::fs::read_dir(&dir)?
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || !name.ends_with(".json") {
-                return None;
+    let seqs = list_seqs(sessions_home, &m.session_id)?;
+    if seqs.len() > MAX_STORED_CHECKPOINTS {
+        let mut pruned_any = false;
+        for oldest in &seqs[..seqs.len() - MAX_STORED_CHECKPOINTS] {
+            if std::fs::remove_file(dir.join(format!("{oldest:04}.json"))).is_ok() {
+                pruned_any = true;
             }
-            name.trim_end_matches(".json").parse::<u32>().ok()
-        })
-        .collect();
-    seqs.sort_unstable();
-    while seqs.len() > MAX_STORED_CHECKPOINTS {
-        let oldest = seqs.remove(0);
-        let _ = std::fs::remove_file(dir.join(format!("{oldest:04}.json")));
+        }
+        if pruned_any {
+            let _ = gc_blobs(sessions_home);
+        }
     }
     Ok(path)
 }
 
-pub fn list(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<Checkpoint>> {
-    let dir = checkpoint_dir(sessions_home, session_id);
+/// Deletes every blob under `sessions_home` that no currently-stored
+/// manifest (in any session) references, skipping anything younger than
+/// [`GC_GRACE`]. Best-effort: a read or remove failure is skipped rather
+/// than aborting the sweep, since a failed GC pass must never block the
+/// checkpoint that triggered it.
+fn gc_blobs(sessions_home: &Path) -> std::io::Result<()> {
+    let root = checkpoint_root(sessions_home);
+    let Ok(sessions) = std::fs::read_dir(&root) else {
+        return Ok(());
+    };
+    let mut referenced: HashSet<String> = HashSet::new();
+    for session_entry in sessions.flatten() {
+        let path = session_entry.path();
+        if !path.is_dir() || session_entry.file_name() == "blobs" {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for f in files.flatten() {
+            let name = f.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || !name.ends_with(".json") {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(f.path())
+                && let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes)
+            {
+                referenced.extend(manifest.files.into_iter().map(|e| e.hash));
+            }
+        }
+    }
+
+    let Ok(prefixes) = std::fs::read_dir(blobs_dir(sessions_home)) else {
+        return Ok(());
+    };
+    for prefix_entry in prefixes.flatten() {
+        let prefix_path = prefix_entry.path();
+        if !prefix_path.is_dir() {
+            continue;
+        }
+        let prefix = prefix_entry.file_name().to_string_lossy().into_owned();
+        let Ok(blob_files) = std::fs::read_dir(&prefix_path) else {
+            continue;
+        };
+        for blob_entry in blob_files.flatten() {
+            let name = blob_entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name.contains(".tmp-") {
+                continue;
+            }
+            if referenced.contains(&format!("{prefix}{name}")) {
+                continue;
+            }
+            let recent = blob_entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age < GC_GRACE);
+            if recent {
+                continue;
+            }
+            let _ = std::fs::remove_file(blob_entry.path());
+        }
+    }
+    Ok(())
+}
+
+/// Every manifest stored for `session_id`, oldest first. A file that
+/// fails to deserialize (an old-format checkpoint, or anything else that
+/// does not match [`Manifest`]) is simply skipped, never partially read.
+pub fn list(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<Manifest>> {
+    let dir = manifest_dir(sessions_home, session_id);
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&dir)?.flatten() {
         let p = entry.path();
         if p.extension().and_then(|e| e.to_str()) == Some("json") {
             match std::fs::read(&p)
                 .map_err(std::io::Error::other)
-                .and_then(|b| {
-                    serde_json::from_slice::<Checkpoint>(&b).map_err(std::io::Error::other)
-                }) {
-                Ok(cp) => out.push(cp),
+                .and_then(|b| serde_json::from_slice::<Manifest>(&b).map_err(std::io::Error::other))
+            {
+                Ok(m) => out.push(m),
                 Err(_) => continue,
             }
         }
@@ -337,22 +585,19 @@ pub fn list(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<Check
     Ok(out)
 }
 
-pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result<Checkpoint> {
-    let path = checkpoint_dir(sessions_home, session_id).join(format!("{seq:04}.json"));
+pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result<Manifest> {
+    let path = manifest_dir(sessions_home, session_id).join(format!("{seq:04}.json"));
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes).map_err(std::io::Error::other)
 }
 
-/// Restores the snapshot: rewrites snapshotted files and deletes ONLY
-/// files that exist now but were never observed at capture time (i.e.
-/// created after the checkpoint, tracked scope). Anything the capture
-/// could not vouch for — oversized, unreadable, secret, gitignored,
-/// beyond-budget, or written by an old-format checkpoint without an
-/// observed manifest — is left untouched.
 /// Human-readable workspace delta between a stored checkpoint and the
 /// current tree (docs/design/42-managed-work-contracts.md): modified/added/deleted paths
-/// with byte deltas plus bounded excerpts for changed text files.
-/// Feeds goal-mode auditors so verdicts rest on environment facts.
+/// with byte deltas plus bounded excerpts for changed text files. Feeds
+/// goal-mode auditors so verdicts rest on environment facts. Like
+/// `capture`, a file whose (size, mtime) match the manifest entry is
+/// assumed unchanged without being read; only a real difference in either
+/// pays for a read.
 pub fn delta_summary(
     cwd: &Path,
     sessions_home: &Path,
@@ -360,13 +605,11 @@ pub fn delta_summary(
     seq: u32,
     max_bytes: usize,
 ) -> std::io::Result<String> {
-    let cp = load(sessions_home, session_id, seq)?;
+    let m = load(sessions_home, session_id, seq)?;
 
-    let mut baseline: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
-    for f in &cp.files {
-        baseline.insert(f.rel_path.clone(), f.content.clone());
-    }
-    let observed: std::collections::HashSet<String> = cp.observed.iter().cloned().collect();
+    let baseline: HashMap<&str, &ManifestEntry> =
+        m.files.iter().map(|f| (f.rel_path.as_str(), f)).collect();
+    let observed: HashSet<String> = m.observed.iter().cloned().collect();
 
     // Walk current tree with the same ignore rules as capture.
     let mut ignores = IgnoreRules::default();
@@ -395,24 +638,37 @@ pub fn delta_summary(
         };
         let rel_full = rel_path.to_string_lossy().replace('\\', "/");
         seen_now.insert(rel_full.clone());
-        let bytes = std::fs::read(entry.path()).unwrap_or_default();
-        match baseline.get(&rel_full.clone()) {
+        match baseline.get(rel_full.as_str()) {
             Some(old) => {
-                if old.as_slice() != bytes.as_slice() {
-                    modified.push(format!(
-                        "M {} ({} -> {} bytes)",
-                        rel_full,
-                        old.len(),
-                        bytes.len()
-                    ));
-                    if excerpts.len() < 8
-                        && let Ok(text) = String::from_utf8(bytes[..bytes.len().min(400)].to_vec())
-                    {
-                        excerpts.push((rel_full.clone(), text));
-                    }
+                let unchanged = entry
+                    .metadata()
+                    .ok()
+                    .filter(|meta| meta.len() == old.size)
+                    .and_then(|meta| mtime_nanos(&meta))
+                    .is_some_and(|ns| ns == old.mtime_ns);
+                if unchanged {
+                    continue;
+                }
+                let bytes = std::fs::read(entry.path()).unwrap_or_default();
+                if bytes.len() as u64 == old.size && hash_bytes(&bytes) == old.hash {
+                    // mtime moved (e.g. a touch or a checkout) but the
+                    // content did not.
+                    continue;
+                }
+                modified.push(format!(
+                    "M {} ({} -> {} bytes)",
+                    rel_full,
+                    old.size,
+                    bytes.len()
+                ));
+                if excerpts.len() < 8
+                    && let Ok(text) = String::from_utf8(bytes[..bytes.len().min(400)].to_vec())
+                {
+                    excerpts.push((rel_full.clone(), text));
                 }
             }
             None => {
+                let bytes = std::fs::read(entry.path()).unwrap_or_default();
                 added.push(format!("A {} ({} bytes)", rel_full, bytes.len()));
                 if excerpts.len() < 8
                     && let Ok(text) = String::from_utf8(bytes[..bytes.len().min(200)].to_vec())
@@ -423,7 +679,7 @@ pub fn delta_summary(
         }
     }
     for rel in &observed {
-        if !baseline.contains_key(rel) {
+        if !baseline.contains_key(rel.as_str()) {
             continue; // observed-but-unstored: cannot diff contents
         }
         if !seen_now.contains(rel) {
@@ -460,29 +716,36 @@ pub fn delta_summary(
     Ok(out)
 }
 
-pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
+/// Restores the snapshot: rewrites snapshotted files from the blob store
+/// and deletes ONLY files that exist now but were never observed at
+/// capture time (i.e. created after the checkpoint, tracked scope).
+/// Anything the capture could not vouch for -- oversized, unreadable,
+/// secret, gitignored, or beyond-budget -- is left untouched.
+pub fn restore(cwd: &Path, sessions_home: &Path, m: &Manifest) -> std::io::Result<(usize, usize)> {
     let mut restored = 0usize;
     let mut deleted = 0usize;
 
-    for f in &cp.files {
+    for f in &m.files {
+        let content = read_blob(sessions_home, &f.hash)?;
         let target = cwd.join(&f.rel_path);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&target, &f.content)?;
+        std::fs::write(&target, &content)?;
         restored += 1;
     }
 
-    // Legacy checkpoints have no manifest: deleting anything would be a
-    // guess, so delete nothing.
-    if cp.observed.is_empty() {
+    // Nothing was ever observed (an empty workspace at capture time, or an
+    // old-format manifest defaulted to empty): deleting anything would be
+    // a guess, so delete nothing.
+    if m.observed.is_empty() {
         return Ok((restored, deleted));
     }
 
     // Compared by relative path so symlinked roots (/tmp vs /private/tmp)
     // can't cause false mismatches.
-    let observed: HashSet<&str> = cp.observed.iter().map(String::as_str).collect();
-    let stored: HashSet<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
+    let observed: HashSet<&str> = m.observed.iter().map(String::as_str).collect();
+    let stored: HashSet<&str> = m.files.iter().map(|f| f.rel_path.as_str()).collect();
     for entry in WalkDir::new(cwd)
         .follow_links(false)
         .into_iter()
@@ -517,41 +780,313 @@ pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod delta_tests {
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
     use super::*;
 
-    #[test]
-    fn delta_reports_modify_add_delete_with_excerpt() {
-        let dir = tempfile::tempdir().unwrap();
-        let cwd = dir.path();
-        std::fs::write(cwd.join("a.txt"), b"v1").unwrap();
-        std::fs::create_dir_all(cwd.join("sub")).unwrap();
-        std::fs::write(cwd.join("sub/b.txt"), b"doomed").unwrap();
-
-        let cp = capture(cwd, "s1", 0, "start").unwrap();
-        store(dir.path(), &cp).unwrap();
-
-        // Mutate a, delete b, add c.
-        std::fs::write(cwd.join("a.txt"), "v2-longer content").unwrap();
-        let _ = std::fs::remove_file(cwd.join("sub/b.txt"));
-        std::fs::write(cwd.join("c-new.txt"), "brand new file").unwrap();
-
-        let summary = delta_summary(cwd, dir.path(), "s1", 0, 4096).unwrap();
-        assert!(summary.contains("M a.txt"), "{summary}");
-        assert!(summary.contains("D sub/b.txt"), "{summary}");
-        assert!(summary.contains("A c-new.txt"), "{summary}");
-        assert!(summary.contains("v2-longer content"), "excerpt included");
+    fn write(p: &Path, rel: &str, content: &str) {
+        let target = p.join(rel);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, content).unwrap();
     }
 
     #[test]
-    fn unchanged_tree_reports_no_delta() {
+    fn capture_includes_files_and_skips_ignored_dirs() {
         let dir = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("only.txt"), b"same").unwrap();
-        let cp = capture(dir.path(), "s2", 0, "l").unwrap();
-        store(home.path(), &cp).unwrap();
-        let summary = delta_summary(dir.path(), home.path(), "s2", 0, 1024).unwrap();
-        assert!(summary.contains("unchanged"), "{summary}");
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        write(dir.path(), "src/main.rs", "fn main() {}");
+        write(dir.path(), "README.md", "readme");
+        write(dir.path(), "target/debug/blob.o", "binary junk");
+        write(dir.path(), ".git/config", "gitconfig");
+
+        let (cp, stats) = capture(dir.path(), &home, "s1", 0, "initial").unwrap();
+        let paths: Vec<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(paths.contains(&"README.md"));
+        assert!(!paths.iter().any(|p| p.starts_with("target/")));
+        assert!(!paths.iter().any(|p| p.starts_with(".git/")));
+        assert_eq!(stats.files_read, 2, "first capture reads everything");
+        assert_eq!(stats.files_reused, 0);
+    }
+
+    #[test]
+    fn store_list_load_roundtrip_preserves_content() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        let binary: &[u8] = &[0u8, 1, 2, b'b', b'i', b'n', 0xff];
+        std::fs::write(dir.path().join("data.bin"), binary).unwrap();
+
+        let (cp, _) = capture(dir.path(), &home, "sess", 3, "third").unwrap();
+        store(&home, &cp).unwrap();
+
+        let list = list(&home, "sess").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].seq, 3);
+
+        let loaded = load(&home, "sess", 3).unwrap();
+        let hash = loaded
+            .files
+            .iter()
+            .find(|f| f.rel_path == "data.bin")
+            .unwrap()
+            .hash
+            .clone();
+        assert_eq!(
+            read_blob(&home, &hash).unwrap(),
+            binary.to_vec(),
+            "binary content must round-trip through the blob store"
+        );
+    }
+
+    #[test]
+    fn restore_reverts_edits_and_removes_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+
+        // State at checkpoint time.
+        write(dir.path(), "keep.txt", "original");
+        write(dir.path(), "src/lib.rs", "old code");
+        let (cp, _) = capture(dir.path(), &home, "s", 0, "before").unwrap();
+        store(&home, &cp).unwrap();
+
+        // Mutate after the checkpoint: edit one file, delete another, add a third.
+        write(dir.path(), "src/lib.rs", "rewritten!");
+        std::fs::remove_file(dir.path().join("keep.txt")).unwrap();
+        write(dir.path(), "created-later.txt", "new junk");
+
+        let restored_cp = load(&home, "s", 0).unwrap();
+        let (restored, deleted) = restore(dir.path(), &home, &restored_cp).unwrap();
+
+        assert!(restored >= 2);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
+            "old code",
+            "edited file must revert"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("keep.txt")).unwrap(),
+            "original",
+            "deleted file must come back"
+        );
+        assert!(
+            !dir.path().join("created-later.txt").exists(),
+            "post-checkpoint file must be removed"
+        );
+        assert!(deleted >= 1);
+    }
+
+    #[test]
+    fn sequences_are_per_session() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        write(dir.path(), "a.txt", "a");
+
+        let (cp0, _) = capture(dir.path(), &home, "sess-a", 0, "a0").unwrap();
+        store(&home, &cp0).unwrap();
+        let (cp1, _) = capture(dir.path(), &home, "sess-a", 1, "a1").unwrap();
+        store(&home, &cp1).unwrap();
+        let (cp_other, _) = capture(dir.path(), &home, "sess-b", 0, "b0").unwrap();
+        store(&home, &cp_other).unwrap();
+
+        assert_eq!(list(&home, "sess-a").unwrap().len(), 2);
+        assert_eq!(list(&home, "sess-b").unwrap().len(), 1);
+        assert_eq!(next_seq(&home, "sess-a"), 2);
+        assert_eq!(next_seq(&home, "sess-b"), 1);
+        assert_eq!(next_seq(&home, "sess-never-seen"), 0);
+    }
+
+    #[test]
+    fn restore_never_deletes_files_capture_could_not_store() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        write(dir.path(), "small.txt", "ok");
+
+        // Oversized: capture skips the CONTENT but must record the path.
+        let big = vec![b'x'; 9 * 1024 * 1024];
+        std::fs::write(dir.path().join("asset.bin"), &big).unwrap();
+        // Secret files are never captured either.
+        write(dir.path(), ".env", "SECRET=1");
+
+        let (cp, _) = capture(dir.path(), &home, "s", 0, "before").unwrap();
+        assert!(
+            !cp.files.iter().any(|f| f.rel_path == "asset.bin"),
+            "oversized content must not be stored"
+        );
+        assert!(cp.observed.contains(&"asset.bin".to_string()));
+        assert!(cp.observed.contains(&".env".to_string()));
+
+        let (restored, deleted) = restore(dir.path(), &home, &cp).unwrap();
+        assert!(restored >= 1);
+        assert_eq!(
+            deleted, 0,
+            "rewind deleted a file it never stored — data loss"
+        );
+        assert!(
+            dir.path().join("asset.bin").exists(),
+            "oversized file destroyed"
+        );
+        assert_eq!(std::fs::read(dir.path().join("asset.bin")).unwrap(), big);
+        assert!(dir.path().join(".env").exists(), "secret file destroyed");
+    }
+
+    #[test]
+    fn restore_removes_only_files_created_after_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        write(dir.path(), "base.txt", "base");
+        let (cp, _) = capture(dir.path(), &home, "s", 0, "c").unwrap();
+
+        write(dir.path(), "created-later.txt", "junk");
+        restore(dir.path(), &home, &cp).unwrap();
+
+        assert!(!dir.path().join("created-later.txt").exists());
+        assert!(dir.path().join("base.txt").exists());
+    }
+
+    #[test]
+    fn gitignored_and_secret_files_are_not_captured() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        write(dir.path(), ".gitignore", "secrets/\n*.local\n!keep.local\n");
+        write(dir.path(), "src/main.rs", "code");
+        write(dir.path(), "secrets/token.txt", "t");
+        write(dir.path(), "cfg.local", "x");
+        write(dir.path(), "keep.local", "y");
+        write(dir.path(), ".env", "K=V");
+        write(dir.path(), "server.pem", "pem");
+
+        let (cp, _) = capture(dir.path(), &home, "s", 0, "c").unwrap();
+        let paths: Vec<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(paths.contains(&"keep.local"), "negation must un-ignore");
+        assert!(!paths.iter().any(|p| p.starts_with("secrets/")));
+        assert!(!paths.contains(&"cfg.local"));
+        assert!(!paths.contains(&".env"));
+        assert!(!paths.contains(&"server.pem"));
+    }
+
+    #[test]
+    fn store_prunes_old_checkpoints_and_gcs_their_blobs() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+
+        for seq in 0..25u32 {
+            // A distinct, growing file per seq so every checkpoint owns
+            // blobs nothing else references, making pruning's GC observable.
+            write(dir.path(), "f.txt", &format!("v{seq}"));
+            let (cp, _) = capture(dir.path(), &home, "s", seq, "turn").unwrap();
+            store(&home, &cp).unwrap();
+        }
+        let list = list(&home, "s").unwrap();
+        assert_eq!(list.len(), 20, "old checkpoints must be pruned");
+        assert_eq!(list[0].seq, 5, "oldest pruned first");
+
+        // GC only skips blobs younger than GC_GRACE; force the sweep to
+        // see everything as eligible rather than sleeping in a test.
+        let mut remaining = 0usize;
+        let mut referenced = std::collections::HashSet::new();
+        for m in &list {
+            for f in &m.files {
+                referenced.insert(f.hash.clone());
+            }
+        }
+        for prefix in std::fs::read_dir(blobs_dir(&home)).unwrap().flatten() {
+            for blob in std::fs::read_dir(prefix.path()).unwrap().flatten() {
+                remaining += 1;
+                let hash = format!(
+                    "{}{}",
+                    prefix.file_name().to_string_lossy(),
+                    blob.file_name().to_string_lossy()
+                );
+                assert!(
+                    referenced.contains(&hash) || !GC_GRACE.is_zero(),
+                    "blob {hash} is unreferenced but within the GC grace period, which is fine"
+                );
+            }
+        }
+        assert!(remaining >= 20, "each surviving manifest's blob exists");
+    }
+
+    #[test]
+    fn incremental_capture_reads_only_changed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // A sibling temp dir, never nested inside `dir` — sessions_home is
+        // never inside a real workspace either, and capturing the blob
+        // store's own files while walking the workspace would be wrong.
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().to_path_buf();
+        let cwd = dir.path().join("work");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        const TOTAL: usize = 2_000;
+        const CHANGED: usize = 5;
+        for i in 0..TOTAL {
+            write(&cwd, &format!("file-{i:04}.txt"), "unchanged content");
+        }
+
+        let t0 = std::time::Instant::now();
+        let (cp0, stats0) = capture(&cwd, &home, "perf", 0, "first").unwrap();
+        let first_elapsed = t0.elapsed();
+        store(&home, &cp0).unwrap();
+        assert_eq!(cp0.files.len(), TOTAL);
+        assert_eq!(stats0.files_read, TOTAL, "first capture reads everything");
+        assert_eq!(stats0.files_reused, 0);
+
+        // mtime resolution can be as coarse as one second; sleep past it
+        // so the changed files are unambiguously newer.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        for i in 0..CHANGED {
+            write(&cwd, &format!("file-{i:04}.txt"), "this file was edited");
+        }
+
+        let t1 = std::time::Instant::now();
+        let (cp1, stats1) = capture(&cwd, &home, "perf", 1, "second").unwrap();
+        let second_elapsed = t1.elapsed();
+
+        assert_eq!(cp1.files.len(), TOTAL);
+        assert_eq!(stats1.files_observed, TOTAL);
+        assert_eq!(
+            stats1.files_read, CHANGED,
+            "only the edited files should be re-read"
+        );
+        assert_eq!(stats1.files_reused, TOTAL - CHANGED);
+
+        eprintln!(
+            "checkpoint capture timings: first={first_elapsed:?} ({TOTAL} files, all read), \
+             second={second_elapsed:?} ({CHANGED} changed of {TOTAL}, {} reused)",
+            stats1.files_reused
+        );
     }
 }

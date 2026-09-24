@@ -256,6 +256,7 @@ async fn complete_text(
         // difference to whether the plan parsed and cost up to 5x the
         // latency.
         think: Some(false),
+        effort: None,
     };
     let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
     for attempt in 1..=PLANNER_CALL_ATTEMPTS {

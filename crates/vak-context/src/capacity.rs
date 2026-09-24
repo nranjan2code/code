@@ -183,7 +183,10 @@ pub struct CapacityProfile {
     /// The largest prompt at which the model still followed a tool
     /// instruction — the number budgeting actually uses.
     pub instruction_horizon: Horizon,
-    /// `usage.input_tokens / chars_sent`, fed by every turn's receipt.
+    /// `usage.prompt_tokens() / chars_sent`, fed by every turn's receipt —
+    /// the whole billed prompt (fresh + both cache tiers) over the whole
+    /// request the assembler actually sent (system + tools + messages), so
+    /// neither side is skewed by which bytes happened to be cache-served.
     pub tokens_per_char: Ewma,
     /// Input tokens per second of prefill, cache-miss turns only.
     pub prefill_tps: Ewma,
@@ -301,6 +304,17 @@ impl CapacityProfile {
     /// Folds one turn's real usage into the profile (§1 "Feedback").
     /// `cache_miss` gates the prefill measurement: prefill throughput is
     /// only meaningful when the provider actually re-evaluated the prefix.
+    ///
+    /// `tokens_per_char` calibrates against `usage.prompt_tokens()` — every
+    /// prompt token the provider billed, cache tiers included — never
+    /// `usage.input_tokens` alone: `chars_sent` (the assembler's char count
+    /// for the WHOLE request) counts every byte sent whether or not it hit
+    /// the cache, so the numerator has to match. Using `input_tokens` alone
+    /// collapses the ratio toward zero as cache hits grow (a full cache hit
+    /// reports `input_tokens == 0` for a request that was not remotely
+    /// empty), which is exactly backwards: the calibration exists to relate
+    /// bytes sent to tokens billed, and prompt caching does not shrink
+    /// either one.
     pub fn observe_usage(
         &mut self,
         chars_sent: u64,
@@ -308,9 +322,10 @@ impl CapacityProfile {
         first_token_latency_ms: Option<u64>,
         cache_miss: bool,
     ) {
-        if chars_sent > 0 && usage.input_tokens > 0 {
+        let prompt_tokens = usage.prompt_tokens();
+        if chars_sent > 0 && prompt_tokens > 0 {
             self.tokens_per_char
-                .observe(usage.input_tokens as f64 / chars_sent as f64);
+                .observe(prompt_tokens as f64 / chars_sent as f64);
         }
         if cache_miss && usage.input_tokens > 0 {
             // Prefer the provider's own reported prefill latency (Ollama
@@ -770,6 +785,49 @@ mod tests {
         let mut cache_hit_profile = flat_profile(10_000);
         cache_hit_profile.observe_usage(2_000, &usage, None, false);
         assert_eq!(cache_hit_profile.prefill_tps.samples, 0);
+    }
+
+    /// Item 2 fix: on a full cache hit `input_tokens` reports 0 for a
+    /// request that was not remotely empty. Calibrating against
+    /// `input_tokens` alone would either skip the observation (guard fails)
+    /// or, on a partial hit, silently drag `tokens_per_char` toward zero
+    /// over repeated turns. `prompt_tokens()` (fresh + both cache tiers)
+    /// must be what tokens_per_char calibrates against.
+    #[test]
+    fn observe_usage_calibrates_against_prompt_tokens_not_input_tokens_alone() {
+        let mut profile = flat_profile(10_000);
+        let full_cache_hit = vak_llm::Usage {
+            input_tokens: 0,
+            output_tokens: 5,
+            cache_read_input_tokens: Some(8_000),
+            ..Default::default()
+        };
+        // cache_miss=false: this IS a cache hit, but the calibration must
+        // still run — cache_miss only gates prefill_tps, never tokens/char.
+        profile.observe_usage(4_000, &full_cache_hit, None, false);
+        assert_eq!(profile.tokens_per_char.samples, 1);
+        assert!((profile.tokens_per_char.value - 2.0).abs() < 1e-9); // 8000/4000
+    }
+
+    /// A steady stream of partial cache hits must not drag the ratio toward
+    /// zero the way calibrating on `input_tokens` alone would (§1
+    /// "Feedback" bug report: repeated cache hits collapsed the EWMA).
+    #[test]
+    fn repeated_partial_cache_hits_do_not_collapse_tokens_per_char() {
+        let mut profile = flat_profile(10_000);
+        let partial_hit = vak_llm::Usage {
+            input_tokens: 50, // small fresh remainder after the prefix cache
+            output_tokens: 10,
+            cache_read_input_tokens: Some(4_950),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            profile.observe_usage(5_000, &partial_hit, None, false);
+        }
+        // 5000 prompt tokens / 5000 chars == 1.0 every time; five identical
+        // observations must leave the EWMA at 1.0, not collapse toward the
+        // 50/5000 == 0.01 that `input_tokens` alone would calibrate.
+        assert!((profile.tokens_per_char.value - 1.0).abs() < 1e-9);
     }
 
     #[test]
