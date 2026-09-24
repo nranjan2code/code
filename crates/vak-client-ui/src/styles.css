@@ -287,10 +287,17 @@ code, pre, kbd { font-family: var(--mono); }
   padding: 4px 7px; border: 1px solid var(--border-strong); border-radius: 6px;
   color: var(--text-soft); background: var(--surface-raised); box-shadow: 0 6px 18px rgba(0,0,0,.3);
   font-size: 10px; font-weight: 500; white-space: nowrap;
-  opacity: 0; pointer-events: none; transform: translate(-50%, -2px);
-  transition: opacity 100ms ease 450ms, transform 100ms ease 450ms;
+  opacity: 0; pointer-events: none; translate: -50% -2px;
+  /* A hidden tooltip is still a laid-out box and would widen every scroll
+     container around it; scale 0 collapses it to a point, and snaps back only
+     once the fade-out has finished. */
+  scale: 0;
+  transition: opacity 100ms ease 450ms, translate 100ms ease 450ms, scale 0s linear 550ms;
 }
-.has-tooltip:hover::after, .has-tooltip:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.has-tooltip:hover::after, .has-tooltip:focus-visible::after {
+  opacity: 1; translate: -50% 0; scale: 1;
+  transition: opacity 100ms ease 450ms, translate 100ms ease 450ms, scale 0s linear 450ms;
+}
 .shortcut-glyph { font-family: var(--mono); font-size: 12px; }
 .hint { color: var(--faint); font-size: 11.5px; }
 .badge { display: inline-flex; color: var(--muted); font-size: 10.5px; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }

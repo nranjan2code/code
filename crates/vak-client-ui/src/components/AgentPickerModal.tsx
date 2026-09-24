@@ -284,7 +284,7 @@ export default function AgentPickerModal() {
                 )}
               </For>
             </div>
-            <div style="max-height: 380px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px;">
+            <div style="max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
               <Show when={loading()}>
                 <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 13px;">
                   Loading agent fleet…
