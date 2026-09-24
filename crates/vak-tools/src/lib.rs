@@ -249,6 +249,14 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// A successful call delivers a file the person reviews through its own
+    /// card (an Office draft with Review), so the answer need not present it
+    /// again and the presentation check stands down for the run. Unlike
+    /// `presents_cards`, this has no bearing on permission.
+    fn delivers_file(&self) -> bool {
+        false
+    }
+
     /// A reason this call cannot succeed, decided from its arguments alone
     /// before permission is evaluated, so a person is never asked to approve
     /// a call that would only be refused (a text edit of a Word file). It

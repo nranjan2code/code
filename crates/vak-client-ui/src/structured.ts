@@ -157,7 +157,7 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
  * differ. (Whole runtime-authored messages — nudges, stop guards — are tagged
  * structurally by the server and never reach the client at all.)
  */
-export const INLINE_HINT_MARKERS = ["[repair directive]", "[recovery]", "[post-tool-use hook]"] as const;
+export const INLINE_HINT_MARKERS = ["[recovery]", "[post-tool-use hook]"] as const;
 export const CONTEXT_BLOCK_TAGS = [
   "conversation_thread",
   "context_summary",
@@ -216,7 +216,7 @@ export function cleanAssistantText(text: string): string {
     .filter((line) => !/^\s*Outcome:\s+/i.test(line))
     .filter((line) => !/^\s*contract_id:\s+/i.test(line))
     .filter((line) => !/^\s*vak\s*$/i.test(line))
-    .filter((line) => !/^\s*\[(?:stop-(?:guard|hook)|repair directive|recovery|post-tool-use hook)/i.test(line))
+    .filter((line) => !/^\s*\[(?:stop-(?:guard|hook)|recovery|post-tool-use hook)/i.test(line))
     .join("\n")
     .replace(/^\s*\n+|\n+\s*$/g, "")
     .trim();

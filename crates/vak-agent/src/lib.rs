@@ -1441,6 +1441,9 @@ impl Agent {
         // `pending_duplicate_card_check`, which only covers the last batch),
         // and the one-shot flag for the presentation check below.
         let mut cards_emitted_this_run = false;
+        // A tool delivered a file the person reviews through its own card
+        // (an Office draft): the answer need not present it again.
+        let mut file_delivered_this_run = false;
         let mut presentation_repair_attempted = false;
         // Append-only requests within a turn (docs/design/68-context-
         // engine.md §7): the working-set plan and the tools array are each
@@ -2268,6 +2271,7 @@ impl Agent {
                 // nudge; the model may decline by resending unchanged.
                 if !presentation_repair_attempted
                     && !cards_emitted_this_run
+                    && !file_delivered_this_run
                     && let Some(check) = &self.config.presentation_check
                 {
                     let text = response.text_content();
@@ -2771,6 +2775,12 @@ impl Agent {
                 })
                 .collect();
             cards_emitted_this_run |= !emitted_card_types.is_empty();
+            file_delivered_this_run |= results.iter().any(|(id, out)| {
+                matches!(out, ToolRunOutput::Ok(_))
+                    && call_names
+                        .get(id)
+                        .is_some_and(|name| self.tool_delivers_file(name))
+            });
             if !emitted_card_types.is_empty() {
                 // A card emitted alongside the retrieval is the grounded
                 // answer; its payload was validated when it was recorded.
@@ -4133,6 +4143,15 @@ impl Agent {
                 panic!("managed flow dispatcher retained the session after the agent stopped")
             }
         }
+    }
+
+    /// Whether `name` is one of this agent's tools and a successful call
+    /// delivers a reviewable file (`Tool::delivers_file`).
+    fn tool_delivers_file(&self, name: &str) -> bool {
+        self.config
+            .tools
+            .iter()
+            .any(|tool| tool.name() == name && tool.delivers_file())
     }
 
     /// Whether `name` is one of this agent's tools and it declares that a
@@ -6203,10 +6222,11 @@ async fn reconcile_repair_budget(
 async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind)]) {
     let remaining = MAX_REPAIR_TURNS.saturating_sub(agent.repair.consecutive_failed_turns - 1);
     let mut parts: Vec<String> = vec![format!(
-        "[repair directive] The run is stuck on correctable tool failures that \
+        "{} The run is stuck on correctable tool failures that \
          were not repaired across turns. Do not repeat the failing call shape; \
          re-issue with the exact arguments this tool requires. The run will \
          stop retrying after {} more failed repair turn(s).",
+        vak_intent::control::ControlKind::RepairDirective.marker(),
         remaining.max(1)
     )];
     let mut seen = std::collections::HashSet::new();
@@ -6248,13 +6268,16 @@ async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind
             ));
         }
     }
-    let _ = agent.session.lock().await.append_message(MessageRecord {
-        message: Message {
-            role: Role::User,
-            content: vec![ContentBlock::text(parts.join("\n\n"))],
-        },
-        meta: None,
-    });
+    // Runtime-authored, so tagged: it must never read as the person's words,
+    // to the model or to any client (AGENTS.md, "typed, never sniffed").
+    let _ = agent
+        .session
+        .lock()
+        .await
+        .append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::RepairDirective,
+            parts.join("\n\n"),
+        ));
 }
 
 /// Build the degraded, honest completion returned when the repair budget is

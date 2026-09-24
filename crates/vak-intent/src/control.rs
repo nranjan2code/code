@@ -57,10 +57,13 @@ pub enum ControlKind {
     /// either and would otherwise be gated for being right
     /// (docs/design/68-context-engine.md §7).
     TopicMismatchCheck,
+    /// Correctable tool failures went unrepaired across steps: the admitted
+    /// schema of each failing tool, re-surfaced with the retries left.
+    RepairDirective,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 10] = [
+    pub const ALL: [ControlKind; 11] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
@@ -71,6 +74,7 @@ impl ControlKind {
         ControlKind::EmptyStep,
         ControlKind::SteeringDrift,
         ControlKind::TopicMismatchCheck,
+        ControlKind::RepairDirective,
     ];
 
     /// The literal the message body begins with, for the model's benefit.
@@ -87,6 +91,7 @@ impl ControlKind {
             ControlKind::EmptyStep => "[empty-step]",
             ControlKind::SteeringDrift => "[steering-drift]",
             ControlKind::TopicMismatchCheck => "[topic-mismatch]",
+            ControlKind::RepairDirective => "[repair-directive]",
         }
     }
 
@@ -124,21 +129,15 @@ pub const CONTEXT_BLOCK_TAGS: [&str; 10] = [
 /// A marker line inside other text (a tool result or a stop guard's reason).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InlineHint {
-    RepairDirective,
     Recovery,
     PostToolUseHook,
 }
 
 impl InlineHint {
-    pub const ALL: [InlineHint; 3] = [
-        InlineHint::RepairDirective,
-        InlineHint::Recovery,
-        InlineHint::PostToolUseHook,
-    ];
+    pub const ALL: [InlineHint; 2] = [InlineHint::Recovery, InlineHint::PostToolUseHook];
 
     pub const fn marker(self) -> &'static str {
         match self {
-            InlineHint::RepairDirective => "[repair directive]",
             InlineHint::Recovery => "[recovery]",
             InlineHint::PostToolUseHook => "[post-tool-use hook]",
         }
@@ -148,7 +147,7 @@ impl InlineHint {
     /// body can run over several lines), as opposed to a hint that ends at
     /// "Please continue.".
     pub const fn runs_to_end(self) -> bool {
-        matches!(self, InlineHint::RepairDirective | InlineHint::Recovery)
+        matches!(self, InlineHint::Recovery)
     }
 }
 
@@ -213,11 +212,7 @@ pub fn strip_control_blocks(text: &str) -> String {
 
     // (marker, runs to the end of the text). Persisted control messages are
     // never embedded in other text, so only the inline hints appear here.
-    let embedded: [(String, bool); 3] = [
-        (
-            InlineHint::RepairDirective.marker().to_string(),
-            InlineHint::RepairDirective.runs_to_end(),
-        ),
+    let embedded: [(String, bool); 2] = [
         (
             InlineHint::Recovery.marker().to_string(),
             InlineHint::Recovery.runs_to_end(),
