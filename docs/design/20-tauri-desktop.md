@@ -299,7 +299,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
 
 - **Side chats as branches** (`/btw`, ⌘;): server runs the Q as a sibling
   branch off the current main tail (`branch_at` + append + restore), streams
-  deltas over a dedicated `GET /sessions/{id}/side/events` channel so the
+  deltas as `side` frames on the client's one `GET /stream` so the
   main transcript never sees them; after completion the branch pointer is
   restored and future main turns continue exactly where they were. Side
   entries stay in the ledger — reconstructable via their parent chain,

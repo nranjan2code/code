@@ -14,11 +14,11 @@ import {
   setDockTab,
   setNotice,
 } from "../store";
-import { openEventStream } from "../api";
+import { watchSession } from "../streamHub";
 import * as api from "../api";
 import { Markdown } from "./ChatPane";
 
-const streams = new Map<string, EventSource>();
+const streams = new Map<string, () => void>();
 
 function RunCard(props: { run: { session_id: string; branch: string } }) {
   const [verdict, setVerdict] = createSignal<"kept" | "discarded" | null>(null);
@@ -30,10 +30,10 @@ function RunCard(props: { run: { session_id: string; branch: string } }) {
   createEffect(() => {
     const id = cid();
     if (streams.has(id)) return;
-    const es = openEventStream(id, (ev) => applyEvent(id, ev, {}));
-    streams.set(id, es);
+    const stop = watchSession(id, { agent: (ev) => applyEvent(id, ev, {}) });
+    streams.set(id, stop);
     onCleanup(() => {
-      es.close();
+      stop();
       streams.delete(id);
     });
   });
@@ -105,7 +105,7 @@ function RunCard(props: { run: { session_id: string; branch: string } }) {
 export default function BestOfNDialog() {
   const runs = () => bestOfRuns();
   const close = () => {
-    for (const es of streams.values()) es.close();
+    for (const stop of streams.values()) stop();
     streams.clear();
     setBestOfOpen(false);
     setBestOfRuns(null);

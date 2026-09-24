@@ -1160,7 +1160,7 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      (/auth/login|logout|session, HttpOnly SameSite=Strict,
                      Secure only behind real TLS -- a Secure cookie over
                      plain http is silently discarded and the session then
-                     never persists); /host + /host/events standing in for
+                     never persists); /host + /stream standing in for
                      the desktop shell's backend_info; /workspaces{,/open}
                      over CorePool; /fs/dirs (folder names only, rooted at
                      [server] workspace_roots); WS /pty, off by default and

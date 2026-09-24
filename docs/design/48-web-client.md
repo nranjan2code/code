@@ -234,7 +234,7 @@ The host port absorbs the first three. The last two are real design work
 |---|---|---|
 | `/app`, `/app/*` | GET | The client bundle (auth-exempt shell + hashed assets, exactly like `/admin`) |
 | `/host` | GET | What `backend_info` returns: ready, cwd, recents, boot error, host capabilities, surface |
-| `/host/events` | GET (SSE) | Host-level changes: workspace opened, boot failed, config reloaded |
+| `/stream` | GET (SSE) | Every live subscription of a client on one connection, host-level changes included (§4.7) |
 | `/auth/login` | POST | Token → `vak_session` cookie. **Replaces `/admin/login`** |
 | `/auth/logout` | POST | Clears it. **Replaces `/admin/logout`** |
 | `/auth/session` | GET | Who am I, when does this expire, what surface |
@@ -397,6 +397,47 @@ is deliberately not what this page reads.
 
 Its design is recorded in DESIGN.md ("the landing surface's ramp",
 "Approval Gate") and `.impeccable/surfaces/`.
+
+### 4.7 One connection per browser
+
+A browser allows six HTTP/1.1 connections per host, across every tab, and
+HTTP/2 is not available on plain-http loopback. The client once held an
+EventSource per subscription — host changes, the session's agent events,
+its presentation frames, plus side chat, coworking and config streams when
+those views were open — so a tab cost three to seven connections. Measured
+live: with three tabs of `/app` open, a `GET /sessions/:id/sandbox/records`
+in the newest tab stayed pending indefinitely (the server answered it in
+4 ms to curl), and completed the moment the older tabs closed.
+
+So a client holds exactly one stream:
+
+- **`GET /stream`** multiplexes any set of subscriptions
+  (`crates/vak-server/src/stream.rs`). Each frame is a named SSE event whose
+  JSON names its session. The per-session routes are built from the same
+  per-subscription streams, so the two cannot drift.
+- **Resume** is per session through one id: every `agent` frame's id is the
+  cursor vector `<session>:<seq>,…`, so the browser's own reconnect sends it
+  back as `Last-Event-ID`. A client that reopens the stream itself — because
+  its set of sessions changed — passes the same string as `?cursor=`, and
+  only the sessions it still follows are resumed. Presentation frames stay
+  snapshot-based (§4.4).
+- **Tabs share it.** In the web build the connection lives in a
+  SharedWorker (`src/streamWorker.ts`): tabs post their interest, the worker
+  opens one stream for the union and forwards each frame only to the tabs
+  that asked for its session. A tab that joins a subscription already on the
+  wire is handed the latest presentation snapshot and host frame from the
+  worker's cache, since the server only snapshots when a stream opens. A tab
+  cannot reliably announce its own death, so each holds a Web Lock for its
+  lifetime and the worker waits on the same name: the grant is the death
+  notice, and the union narrows.
+- **Fallback.** The desktop shell, or a browser without SharedWorker or Web
+  Locks (Web Locks needs a secure context, so plain-http non-loopback
+  deployments fall here), holds one direct `/stream` per tab — still one
+  connection, not seven.
+
+Components never open an EventSource; they register a watcher with
+`src/streamHub.ts`, and the hub derives the tab's interest from the
+watchers it holds.
 
 ## 5. Workspaces in a browser
 

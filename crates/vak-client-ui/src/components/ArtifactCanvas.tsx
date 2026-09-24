@@ -12,6 +12,7 @@ import {
   type ActiveComponentPreview,
 } from "../store";
 import * as api from "../api";
+import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
@@ -106,15 +107,14 @@ export default function ArtifactCanvas() {
     const sessionId = artifact.sessionId;
     const candidateId = artifact.candidateId;
     let disposed = false;
-    const updates = api.openCoworkingUpdates(sessionId);
-    updates.addEventListener("refresh", () => {
+    const stop = watchCoworking(sessionId, () => {
       void api.listSandboxCandidateComments(sessionId, candidateId)
         .then(({ comments }) => {
           if (!disposed && canvasArtifact()?.candidateId === candidateId) setCandidateComments(comments);
         })
         .catch(() => { /* Preserve the visible comment history while offline. */ });
     });
-    onCleanup(() => { disposed = true; updates.close(); });
+    onCleanup(() => { disposed = true; stop(); });
   });
 
   const sendRevision = async () => {

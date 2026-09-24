@@ -18,6 +18,7 @@ import {
   setDockTab,
 } from "../store";
 import * as api from "../api";
+import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import OfficeChangeList from "./OfficeChangeList";
 import { isOfficePath } from "../officeRedline";
@@ -470,9 +471,8 @@ export default function WorkbenchPanel() {
         .catch(() => { /* Keep the current reviewed version while offline. */ });
     };
     refresh();
-    const updates = api.openCoworkingUpdates(sessionId);
-    updates.addEventListener("refresh", refresh);
-    onCleanup(() => { disposed = true; updates.close(); });
+    const stop = watchCoworking(sessionId, refresh);
+    onCleanup(() => { disposed = true; stop(); });
   });
 
   const reviewCandidate = async (requestedCandidateId?: string) => {
