@@ -537,6 +537,16 @@ impl<R: Read + Seek> Package<R> {
             .map(|entry| entry.name.as_str())
     }
 
+    /// Part names with their uncompressed sizes, as the archive's
+    /// directory states them, in archive order.
+    pub fn part_sizes(&self) -> Vec<(String, u64)> {
+        self.entries
+            .iter()
+            .filter(|entry| !entry.name.ends_with('/'))
+            .map(|entry| (entry.name.clone(), entry.size))
+            .collect()
+    }
+
     pub fn has_part(&self, name: &str) -> bool {
         self.entry(name).is_some()
     }
@@ -894,7 +904,7 @@ pub(crate) fn rels_part_name(source: &str) -> String {
 
 /// Inverse of [`rels_part_name`]: the source part a relationships part
 /// describes, or `None` when `name` is not a relationships part.
-fn rels_source(name: &str) -> Option<String> {
+pub(crate) fn rels_source(name: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     if !lower.ends_with(".rels") {
         return None;

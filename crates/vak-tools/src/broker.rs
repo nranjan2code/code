@@ -50,12 +50,26 @@ enum WorkerTask {
         #[serde(default)]
         lineage: Option<OfficeLineage>,
     },
+    OfficeProject {
+        path: PathBuf,
+        view: OfficeView,
+    },
     OfficeNarrow {
         lineage: OfficeLineage,
         draft: PathBuf,
         keep: Vec<String>,
         out: PathBuf,
     },
+}
+
+/// Which projection of an Office file a view asks for (docs/design/72, P4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OfficeView {
+    /// One page of units starting at `from`, with the outline.
+    Content { from: usize },
+    /// Parts, content types and relationships (U4).
+    Structure,
 }
 
 /// How an Office draft was made: the file it started from, the digest that
@@ -458,6 +472,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::OfficeProject { path, view } => {
+            let (content, is_error) = match office_project_in_worker(&path, view) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::OfficeNarrow {
             lineage,
             draft,
@@ -655,6 +682,53 @@ pub async fn office_narrow(
     let content = run_task(worker_exe, out_dir, &roots, true, task).await?;
     serde_json::from_str(&content)
         .map_err(|error| format!("worker returned an invalid answer: {error}"))
+}
+
+/// What a view draws of the Office file at `path`: a page of its content
+/// or its structure, with the file's digest so an anchor chosen in the
+/// view is bound to these exact bytes. Parsed in a worker under the
+/// read-only sandbox, like every Office read (invariant 39).
+pub async fn office_project(
+    worker_exe: &Path,
+    path: &Path,
+    view: OfficeView,
+) -> Result<Value, String> {
+    let Some(dir) = path.parent() else {
+        return Err("the file has no directory".into());
+    };
+    let task = WorkerTask::OfficeProject {
+        path: path.to_path_buf(),
+        view,
+    };
+    let content = run_task(worker_exe, dir, &[dir], false, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid projection: {error}"))
+}
+
+fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, String> {
+    let limits = vak_ooxml::Limits::default();
+    let bytes = crate::office_apply::read_bounded(path, &limits)?;
+    let sha256 = crate::office_apply::sha256_hex(&bytes);
+    let mut body = match view {
+        OfficeView::Content { from } => {
+            let document = vak_ooxml::read::read(std::io::Cursor::new(bytes), limits)
+                .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+            serde_json::to_value(vak_ooxml::projection::project(
+                &document,
+                from,
+                vak_ooxml::projection::PAGE_BYTES,
+            ))
+        }
+        OfficeView::Structure => {
+            let structure =
+                vak_ooxml::projection::structure(std::io::Cursor::new(bytes), limits)
+                    .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+            serde_json::to_value(structure)
+        }
+    }
+    .map_err(|error| error.to_string())?;
+    body["sha256"] = Value::String(sha256);
+    serde_json::to_string(&body).map_err(|error| error.to_string())
 }
 
 fn read_document(path: &Path) -> Result<vak_ooxml::read::Document, String> {
