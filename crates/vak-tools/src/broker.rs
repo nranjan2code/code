@@ -14,15 +14,60 @@ use crate::{Tool, ToolContext, ToolOutput};
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
 pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
-const PROTOCOL_VERSION: u8 = 1;
+const PROTOCOL_VERSION: u8 = 2;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
+/// Wall-clock bound on one verification worker. A hostile package that
+/// pins the CPU fails its checks instead of holding a candidate open.
+pub const VERIFY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
 struct WorkerRequest {
     version: u8,
-    tool: String,
-    args: Value,
-    execution_id: String,
+    task: WorkerTask,
+}
+
+/// What one worker process is asked to do. Verification is not a model
+/// tool, so it is its own task rather than a reserved tool name.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum WorkerTask {
+    Tool {
+        tool: String,
+        args: Value,
+        execution_id: String,
+        /// The Agent the call runs for: scratch paths and tracked-change
+        /// authorship depend on it.
+        #[serde(default)]
+        agent_id: Option<String>,
+    },
+    VerifyTargets {
+        root: PathBuf,
+        checks: Vec<vak_sandbox::TargetCheckPlan>,
+    },
+    OfficeReview {
+        before: Option<PathBuf>,
+        after: PathBuf,
+        #[serde(default)]
+        lineage: Option<OfficeLineage>,
+    },
+    OfficeNarrow {
+        lineage: OfficeLineage,
+        draft: PathBuf,
+        keep: Vec<String>,
+        out: PathBuf,
+    },
+}
+
+/// How an Office draft was made: the file it started from, the digest that
+/// file had, every op applied to it in order (across chained
+/// `office_apply` calls), and the tracked-change author. Recorded in the
+/// session ledger; the server assembles it, the worker replays it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfficeLineage {
+    pub source: PathBuf,
+    pub base_digest: String,
+    pub ops: Vec<vak_ooxml::edit::OfficeOp>,
+    pub author: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -234,13 +279,16 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
     };
     let request = WorkerRequest {
         version: PROTOCOL_VERSION,
-        tool: tool.to_string(),
-        args: request_args,
-        execution_id: ctx
-            .sandbox_sink
-            .as_ref()
-            .map(|sink| sink.execution_id().to_string())
-            .unwrap_or_else(|| "unidentified".into()),
+        task: WorkerTask::Tool {
+            tool: tool.to_string(),
+            args: request_args,
+            execution_id: ctx
+                .sandbox_sink
+                .as_ref()
+                .map(|sink| sink.execution_id().to_string())
+                .unwrap_or_else(|| "unidentified".into()),
+            agent_id: ctx.agent_id.clone(),
+        },
     };
     let payload = match serde_json::to_vec(&request) {
         Ok(payload) => payload,
@@ -385,15 +433,72 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
+    let (tool_name, args, execution_id, agent_id) = match request.task {
+        WorkerTask::Tool {
+            tool,
+            args,
+            execution_id,
+            agent_id,
+        } => (tool, args, execution_id, agent_id),
+        WorkerTask::OfficeReview {
+            before,
+            after,
+            lineage,
+        } => {
+            let (content, is_error) =
+                match office_review_in_worker(before.as_deref(), &after, lineage.as_ref()) {
+                    Ok(content) => (content, false),
+                    Err(error) => (error, true),
+                };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::OfficeNarrow {
+            lineage,
+            draft,
+            keep,
+            out,
+        } => {
+            let (content, is_error) = match office_narrow_in_worker(&lineage, &draft, &keep, &out) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::VerifyTargets { root, checks } => {
+            let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
+            let content = serde_json::to_string(&results).unwrap_or_default();
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error: false,
+                events: Vec::new(),
+            })
+            .await;
+        }
+    };
     let tool = crate::default_tools()
         .into_iter()
-        .find(|candidate| candidate.name() == request.tool);
+        .find(|candidate| candidate.name() == tool_name);
     let (output, events) = match tool {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let (sink, mut rx) =
-                crate::sandbox_events::SandboxEventSink::new_with_id(request.execution_id);
-            let ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            let (sink, mut rx) = crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
+            let mut ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            if let Some(agent_id) = agent_id {
+                ctx = ctx.with_agent_id(agent_id);
+            }
             let event_forwarder = tokio::spawn(async move {
                 let mut stderr = tokio::io::stderr();
                 while let Some(event) = rx.recv().await {
@@ -409,31 +514,391 @@ pub async fn worker_main() -> i32 {
                     let _ = stderr.flush().await;
                 }
             });
-            let output = tool.execute(&request.args, &ctx).await;
+            let output = tool.execute(&args, &ctx).await;
             drop(ctx.sandbox_sink);
             let _ = event_forwarder.await;
             (output, Vec::new())
         }
         None => (
-            ToolOutput::error(format!("worker does not expose tool '{}'", request.tool)),
+            ToolOutput::error(format!("worker does not expose tool '{tool_name}'")),
             Vec::new(),
         ),
     };
-    let response = WorkerResponse {
+    write_response(WorkerResponse {
         version: PROTOCOL_VERSION,
         content: output.content,
         is_error: output.is_error,
         events,
-    };
+    })
+    .await
+}
+
+async fn write_response(response: WorkerResponse) -> i32 {
     let payload = match serde_json::to_vec(&response) {
         Ok(payload) if payload.len() as u64 <= MAX_PROTOCOL_BYTES => payload,
-        _ => return 125,
+        Ok(payload) => {
+            let refusal = WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content: format!(
+                    "the result is {} bytes, over the {} byte worker protocol limit; request a smaller range",
+                    payload.len(),
+                    MAX_PROTOCOL_BYTES
+                ),
+                is_error: true,
+                events: Vec::new(),
+            };
+            match serde_json::to_vec(&refusal) {
+                Ok(payload) => payload,
+                Err(_) => return 125,
+            }
+        }
+        Err(_) => return 125,
     };
     let mut stdout = tokio::io::stdout();
     if stdout.write_all(&payload).await.is_err() || stdout.flush().await.is_err() {
         return 125;
     }
     0
+}
+
+/// Runs the registered target verifiers over `checks` under `root` in a
+/// worker process (docs/design/72-openxml-documents.md, F4). The worker runs
+/// under a read-only, network-denied sandbox rooted at `root` whatever the
+/// session's permission mode, and within [`VERIFY_DEADLINE`]. Anything that
+/// stops the worker from answering fails every planned check; a check never
+/// passes because verification could not run.
+pub async fn verify_targets(
+    worker_exe: &Path,
+    root: &Path,
+    checks: &[vak_sandbox::TargetCheckPlan],
+) -> Vec<vak_sandbox::TargetCheckResult> {
+    if checks.is_empty() {
+        return Vec::new();
+    }
+    let failed = |reason: String| {
+        checks
+            .iter()
+            .map(|check| vak_sandbox::TargetCheckResult {
+                verifier: check.verifier.clone(),
+                path: check.path.clone(),
+                status: "failed".into(),
+                evidence: format!("verification did not run: {reason}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    let task = WorkerTask::VerifyTargets {
+        root: root.to_path_buf(),
+        checks: checks.to_vec(),
+    };
+    let content = match run_task(worker_exe, root, &[root], false, task).await {
+        Ok(content) => content,
+        Err(reason) => return failed(reason),
+    };
+    match serde_json::from_str::<Vec<vak_sandbox::TargetCheckResult>>(&content) {
+        Ok(results) if results.len() == checks.len() => results,
+        Ok(_) => failed("worker answered a different number of checks".into()),
+        Err(error) => failed(format!("worker returned invalid results: {error}")),
+    }
+}
+
+/// What an Office draft (`after`) changes compared with the file it would
+/// replace (`before`, absent for a new file), computed in a worker under the
+/// same read-only sandbox and deadline as verification, because every file
+/// involved is hostile input (invariant 39). With the draft's `lineage`, the
+/// answer also carries the choices a person can keep or leave out
+/// (`vak_ooxml::review`), or the reason the draft can only be taken whole.
+pub async fn office_review(
+    worker_exe: &Path,
+    before: Option<&Path>,
+    after: &Path,
+    lineage: Option<&OfficeLineage>,
+) -> Result<Value, String> {
+    let Some(after_dir) = after.parent() else {
+        return Err("the draft has no directory".into());
+    };
+    let mut roots = vec![after_dir];
+    roots.extend(before.and_then(Path::parent));
+    roots.extend(lineage.and_then(|lineage| lineage.source.parent()));
+    let task = WorkerTask::OfficeReview {
+        before: before.map(Path::to_path_buf),
+        after: after.to_path_buf(),
+        lineage: lineage.cloned(),
+    };
+    let content = run_task(worker_exe, after_dir, &roots, false, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid review: {error}"))
+}
+
+/// Replays the choices in `keep` from `lineage` and writes the narrower
+/// version of `draft` to `out`, refusing a draft the lineage does not
+/// reproduce. The worker can write only `out`'s directory, which must
+/// exist, and read only the lineage's source and the draft.
+pub async fn office_narrow(
+    worker_exe: &Path,
+    lineage: &OfficeLineage,
+    draft: &Path,
+    keep: &[String],
+    out: &Path,
+) -> Result<Value, String> {
+    let Some(out_dir) = out.parent() else {
+        return Err("the output has no directory".into());
+    };
+    let mut roots = vec![out_dir];
+    roots.extend(lineage.source.parent());
+    roots.extend(draft.parent());
+    let task = WorkerTask::OfficeNarrow {
+        lineage: lineage.clone(),
+        draft: draft.to_path_buf(),
+        keep: keep.to_vec(),
+        out: out.to_path_buf(),
+    };
+    let content = run_task(worker_exe, out_dir, &roots, true, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid answer: {error}"))
+}
+
+fn read_document(path: &Path) -> Result<vak_ooxml::read::Document, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    vak_ooxml::read::read(file, vak_ooxml::Limits::default())
+        .map_err(|error| format!("{} could not be read: {error}", path.display()))
+}
+
+/// The lineage's source, refused unless it still has the digest the draft
+/// was made against.
+fn lineage_source(lineage: &OfficeLineage) -> Result<Vec<u8>, String> {
+    let limits = vak_ooxml::Limits::default();
+    let bytes = crate::office_apply::read_bounded(&lineage.source, &limits)?;
+    let digest = crate::office_apply::sha256_hex(&bytes);
+    let expected = lineage
+        .base_digest
+        .trim()
+        .trim_end_matches('…')
+        .to_ascii_lowercase();
+    if expected.len() < 16 || !digest.starts_with(&expected) {
+        return Err(format!(
+            "{} changed after the draft was made from it",
+            lineage.source.display()
+        ));
+    }
+    Ok(bytes)
+}
+
+fn lineage_context(lineage: &OfficeLineage) -> vak_ooxml::edit::EditContext {
+    vak_ooxml::edit::EditContext {
+        author: lineage.author.clone(),
+        date: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    }
+}
+
+fn target_of(path: &Path) -> Option<vak_ooxml::Format> {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(vak_ooxml::Format::from_extension)
+}
+
+fn office_review_in_worker(
+    before: Option<&Path>,
+    after: &Path,
+    lineage: Option<&OfficeLineage>,
+) -> Result<String, String> {
+    let current = before.map(read_document).transpose()?;
+    let draft = read_document(after)?;
+    let diff = vak_ooxml::diff::diff(current.as_ref(), &draft);
+    let mut body = serde_json::json!({
+        "summary": diff.summary,
+        "changes": diff.changes,
+        "flags": draft.inspection.flags(),
+        "impact": vak_ooxml::diff::impact(current.as_ref(), &draft),
+    });
+    let choices = match lineage {
+        None => Err("the draft was not made by office_apply in this conversation".to_string()),
+        Some(lineage) => lineage_source(lineage).and_then(|source| {
+            vak_ooxml::review::choices(
+                &source,
+                &lineage.ops,
+                &lineage_context(lineage),
+                vak_ooxml::Limits::default(),
+                target_of(after),
+                &draft,
+            )
+        }),
+    };
+    match choices {
+        Ok(choices) => body["choices"] = serde_json::json!(choices),
+        Err(reason) => body["choices_unavailable"] = Value::String(reason),
+    }
+    serde_json::to_string(&body).map_err(|error| error.to_string())
+}
+
+fn office_narrow_in_worker(
+    lineage: &OfficeLineage,
+    draft: &Path,
+    keep: &[String],
+    out: &Path,
+) -> Result<String, String> {
+    let source = lineage_source(lineage)?;
+    let draft = read_document(draft)?;
+    let applied = vak_ooxml::review::narrow(
+        &source,
+        &lineage.ops,
+        keep,
+        &lineage_context(lineage),
+        vak_ooxml::Limits::default(),
+        target_of(out),
+        &draft,
+    )
+    .map_err(|error| format!("nothing was written: {error}"))?;
+    crate::office_apply::write_atomically(out, &applied.bytes)?;
+    serde_json::to_string(&serde_json::json!({
+        "results": applied.results,
+        "sha256": crate::office_apply::sha256_hex(&applied.bytes),
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Spawns one worker for `task` under a network-denied sandbox that can
+/// read `roots` and write nothing, or only `roots[0]` when `writes_first`,
+/// and returns its answer's content. Every failure, including the deadline,
+/// is an error; nothing is guessed.
+async fn run_task(
+    worker_exe: &Path,
+    cwd: &Path,
+    roots: &[&Path],
+    writes_first: bool,
+    task: WorkerTask,
+) -> Result<String, String> {
+    if !worker_exe.is_file() {
+        return Err(format!(
+            "worker executable not found: {}",
+            worker_exe.display()
+        ));
+    }
+    let request = WorkerRequest {
+        version: PROTOCOL_VERSION,
+        task,
+    };
+    let payload =
+        serde_json::to_vec(&request).map_err(|error| format!("request encode failed: {error}"))?;
+    let worker_command = format!(
+        "{} {}",
+        shell_quote(&worker_exe.display().to_string()),
+        WORKER_SUBCOMMAND
+    );
+    let effective = match verification_sandbox(roots, writes_first, worker_exe) {
+        Some(sandbox) => sandbox.wrap(&worker_command),
+        None => worker_command,
+    };
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(effective)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    crate::bash::scrub_environment(&mut command);
+    command.env(WORKER_ENV, "1");
+    crate::bash::isolate_process_group(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("worker spawn failed: {error}"))?;
+    let pid = child.id();
+    let Some(mut stdin) = child.stdin.take() else {
+        crate::bash::kill_process_group(&pid);
+        return Err("worker has no stdin".into());
+    };
+    if let Err(error) = stdin.write_all(&payload).await {
+        crate::bash::kill_process_group(&pid);
+        return Err(format!("worker request failed: {error}"));
+    }
+    drop(stdin);
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        crate::bash::kill_process_group(&pid);
+        return Err("worker has no output pipes".into());
+    };
+    let stdout_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout
+            .take(MAX_PROTOCOL_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await;
+        bytes
+    });
+    let stderr_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stderr.take(64 * 1024).read_to_end(&mut bytes).await;
+        bytes
+    });
+    let status = match tokio::time::timeout(VERIFY_DEADLINE, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => return Err(format!("worker wait failed: {error}")),
+        Err(_) => {
+            crate::bash::kill_process_group(&pid);
+            let _ = child.wait().await;
+            return Err(format!(
+                "worker exceeded the {}s deadline",
+                VERIFY_DEADLINE.as_secs()
+            ));
+        }
+    };
+    let stdout = stdout_reader.await.unwrap_or_default();
+    let stderr = stderr_reader.await.unwrap_or_default();
+    if !status.success() {
+        return Err(format!(
+            "worker exited with {}: {}",
+            status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    if stdout.len() as u64 > MAX_PROTOCOL_BYTES {
+        return Err("worker output exceeded the protocol limit".into());
+    }
+    let response: WorkerResponse = serde_json::from_slice(&stdout)
+        .map_err(|error| format!("worker returned invalid protocol: {error}"))?;
+    if response.version != PROTOCOL_VERSION || response.is_error {
+        return Err(format!("worker refused the request: {}", response.content));
+    }
+    Ok(response.content)
+}
+
+/// Network-denied, able to read `roots` and the worker executable, and to
+/// write `roots[0]` only when `writes_first`. `None` where no OS backend
+/// exists; the in-code bounds of each reader then stand alone.
+fn verification_sandbox(
+    roots: &[&Path],
+    writes_first: bool,
+    worker_exe: &Path,
+) -> Option<Arc<dyn crate::sandbox::Sandbox>> {
+    let (first, rest) = roots.split_first()?;
+    let mut extra: Vec<PathBuf> = rest
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect();
+    extra.extend(worker_exe.parent().map(Path::to_path_buf));
+    let mode = if writes_first {
+        crate::sandbox::SandboxMode::WorkspaceWrite
+    } else {
+        crate::sandbox::SandboxMode::ReadOnly
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let mut sandbox = crate::sandbox::Seatbelt::task_copy(mode, first);
+        sandbox.read_paths.extend(extra);
+        Some(Arc::new(sandbox))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut sandbox = crate::landlock::Landlock::task_copy(mode, first);
+        sandbox.read_paths.extend(extra);
+        Some(Arc::new(sandbox))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (first, extra, mode);
+        None
+    }
 }
 
 fn shell_quote(value: &str) -> String {

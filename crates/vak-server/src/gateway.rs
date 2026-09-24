@@ -22,7 +22,7 @@ use axum::response::IntoResponse;
 use axum::{Json, Router};
 use tokio::sync::oneshot;
 
-use vak_agent::{AgentEvent, AutoDeny, SteeringQueues};
+use vak_agent::{AgentEvent, AutoDeny};
 use vak_core::Core;
 use vak_delivery::{
     AnswerDraft, ApprovalPayload, DeliveryAction, DeliveryContent, DeliveryKind, DeliveryPacket,
@@ -1787,9 +1787,8 @@ struct InboundAttachment {
     /// Original filename, when the channel knows it (documents only).
     #[serde(default)]
     filename: Option<String>,
-    /// "image" (default, vision content) or "document" (inlined as text —
-    /// there is no generic-file content block, so a document is either
-    /// text the model can read directly or it isn't included at all).
+    /// "image" (default, vision content) or "document": small text is
+    /// inlined, anything else is saved to the workspace inbox and named.
     #[serde(default = "default_attachment_kind")]
     kind: String,
     #[serde(default)]
@@ -1804,15 +1803,29 @@ fn default_attachment_kind() -> String {
     "image".into()
 }
 
-/// A document attachment inlined as text is capped well under typical
-/// context budgets — large uploads are meant to be summarized by the
-/// sender or excerpted, not dumped whole into every turn's prompt.
+/// The largest document a channel may hand the gateway, shared by every
+/// bridge so a file is never downloaded by one side and dropped by the
+/// other. The gateway's JSON body limit (2 MiB, base64 inflates by a third)
+/// bounds it.
+pub(crate) const INBOUND_DOCUMENT_MAX_BYTES: usize = 1024 * 1024;
+
+/// Text documents at or under this size are inlined in the prompt; larger
+/// text, and every non-text file, is saved to the workspace inbox instead.
 const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
 
-/// Compose the prompt message: text, vision blocks, and inlined document
-/// attachments. The ledger stores exactly what the model will see
-/// (invariant 1).
-fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Message {
+/// Workspace-relative directory for files received on a channel, so every
+/// file tool reaches them under invariant 10.
+const INBOX_DIR: &str = "inbox";
+
+/// Compose the prompt message: text, vision blocks, inlined text documents,
+/// and a note for each document saved to the inbox. A document's bytes
+/// never enter the prompt unless they are text (docs/design/72, F1). The
+/// ledger stores exactly what the model will see (invariant 1).
+fn compose_prompt(
+    text: &str,
+    attachments: &[InboundAttachment],
+    workspace: &std::path::Path,
+) -> vak_llm::Message {
     let mut blocks = Vec::new();
     if !text.is_empty() {
         blocks.push(vak_llm::ContentBlock::text(text));
@@ -1822,27 +1835,7 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
             continue;
         }
         if a.kind == "document" {
-            let filename = a.filename.as_deref().unwrap_or("file");
-            use base64::Engine as _;
-            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(a.data.trim()) else {
-                blocks.push(vak_llm::ContentBlock::text(format!(
-                    "[attached file '{filename}' could not be decoded; not included]"
-                )));
-                continue;
-            };
-            if bytes.len() > DOCUMENT_INLINE_MAX_BYTES {
-                blocks.push(vak_llm::ContentBlock::text(format!(
-                    "[attached file '{filename}' ({} bytes) exceeds the {} KiB inline limit; \
-                     not included — send an excerpt instead]",
-                    bytes.len(),
-                    DOCUMENT_INLINE_MAX_BYTES / 1024
-                )));
-                continue;
-            }
-            let content = String::from_utf8_lossy(&bytes);
-            blocks.push(vak_llm::ContentBlock::text(format!(
-                "Attached file `{filename}`:\n```\n{content}\n```"
-            )));
+            blocks.push(vak_llm::ContentBlock::text(document_block(a, workspace)));
             continue;
         }
         // A voice note reaches the model as its transcript (or the reason
@@ -1861,8 +1854,138 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
     }
 }
 
+fn document_block(attachment: &InboundAttachment, workspace: &std::path::Path) -> String {
+    use base64::Engine as _;
+    let filename = attachment.filename.as_deref().unwrap_or("file");
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(attachment.data.trim()) else {
+        return format!("[attached file '{filename}' could not be decoded; not included]");
+    };
+    if bytes.len() > INBOUND_DOCUMENT_MAX_BYTES {
+        return format!(
+            "[attached file '{filename}' ({} KiB) exceeds the {} KiB channel limit; not received]",
+            bytes.len() / 1024,
+            INBOUND_DOCUMENT_MAX_BYTES / 1024
+        );
+    }
+    let text = std::str::from_utf8(&bytes)
+        .ok()
+        .filter(|text| !text.contains('\0'));
+    if let Some(content) = text
+        && bytes.len() <= DOCUMENT_INLINE_MAX_BYTES
+    {
+        return format!("Attached file `{filename}`:\n```\n{content}\n```");
+    }
+    let saved = match save_to_inbox(workspace, filename, &bytes) {
+        Ok(saved) => saved,
+        Err(error) => {
+            return format!(
+                "[attached file '{filename}' could not be saved ({error}); not included]"
+            );
+        }
+    };
+    let size = format!("{} KiB", bytes.len().div_ceil(1024));
+    if vak_ooxml::is_openxml_path(&saved) {
+        format!(
+            "[attached file '{filename}' ({size}) saved to {saved}; read it with doc_read. Its contents are not in this message.]"
+        )
+    } else if text.is_some() {
+        format!(
+            "[attached text file '{filename}' ({size}) saved to {saved}; read it with read or doc_read. Its contents are not in this message.]"
+        )
+    } else {
+        format!(
+            "[attached file '{filename}' ({size}) saved to {saved}. It is not a text or Open XML file, so no reader here understands it yet; its bytes are not in this message.]"
+        )
+    }
+}
+
+/// Saves received bytes under `<workspace>/inbox/` with a digest-prefixed,
+/// sanitised name. Returns the workspace-relative path. Never overwrites,
+/// never follows a planted symlink out of the workspace, and saving the
+/// same bytes under the same name twice yields the same file.
+fn save_to_inbox(
+    workspace: &std::path::Path,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    use sha2::Digest as _;
+    use std::io::Write as _;
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|error| format!("workspace unavailable: {error}"))?;
+    let inbox = workspace.join(INBOX_DIR);
+    std::fs::create_dir_all(&inbox).map_err(|error| format!("inbox: {error}"))?;
+    let inbox = inbox
+        .canonicalize()
+        .map_err(|error| format!("inbox: {error}"))?;
+    if !inbox.starts_with(&workspace) {
+        return Err("inbox resolves outside the workspace".into());
+    }
+    let digest = sha2::Sha256::digest(bytes);
+    let prefix: String = digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let name = format!("{prefix}-{}", sanitize_filename(filename));
+    let path = inbox.join(&name);
+    let relative = format!("{INBOX_DIR}/{name}");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            file.write_all(bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(|error| format!("write failed: {error}"))?;
+            Ok(relative)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing =
+                std::fs::symlink_metadata(&path).map_err(|error| format!("inbox: {error}"))?;
+            if existing.file_type().is_file() && std::fs::read(&path).ok().as_deref() == Some(bytes)
+            {
+                Ok(relative)
+            } else {
+                Err("a different file already has that name".into())
+            }
+        }
+        Err(error) => Err(format!("create failed: {error}")),
+    }
+}
+
+/// The last path component, with anything outside a conservative
+/// character set replaced, no leading dots, and a bounded length.
+fn sanitize_filename(filename: &str) -> String {
+    let last = filename.rsplit(['/', '\\']).next().unwrap_or_default();
+    let cleaned: String = last
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '.' | '-' | '_' | ' ') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_start_matches('.').trim();
+    let mut name: String = cleaned
+        .chars()
+        .rev()
+        .take(120)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if name.is_empty() {
+        name = "file".into();
+    }
+    name
+}
+
 pub(crate) fn compose_voice_prompt(text: &str) -> vak_llm::Message {
-    compose_prompt(text, &[])
+    compose_prompt(text, &[], std::path::Path::new("."))
 }
 
 // ---- Approval forwarding (G2) ----------------------------------------------
@@ -2384,9 +2507,11 @@ async fn gateway_inbound(
             Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
             _ => expanded_text.clone(),
         };
-        handle
-            .steering
-            .push_steering_message(compose_prompt(&attributed, &body.attachments));
+        handle.steering.push_steering_message(compose_prompt(
+            &attributed,
+            &body.attachments,
+            core.cwd(),
+        ));
         return (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
@@ -2412,7 +2537,7 @@ async fn gateway_inbound(
         Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
         _ => expanded_text,
     };
-    let prompt = compose_prompt(&attributed, &body.attachments);
+    let prompt = compose_prompt(&attributed, &body.attachments, core.cwd());
     // Each heard voice note is a durable transcript activity on the
     // append-only ledger, the same evidence the web voice socket records.
     for note in &voice_notes {
@@ -2843,8 +2968,12 @@ async fn resolve_session(
 // ---- Turn execution ---------------------------------------------------------
 
 /// Run a turn chain: prompt, then any steering left queued by concurrent
-/// inbound messages, until the queue is dry. Sends one synthesized
-/// `RunFinished` per turn so SSE consumers see normal terminal markers.
+/// inbound messages, until the queue is dry. Sends one `RunFinished` per
+/// leg so SSE consumers see normal terminal markers. The loop/lock
+/// mechanics (run a leg, decide whether to continue) are
+/// `crate::run_turn_chain` — the ONE executor also used by the HTTP `/run`
+/// and `/steering` endpoints (invariant 30); only the approver construction
+/// and the per-leg settle bookkeeping below are gateway-specific.
 fn start_turn_chain(
     state: &AppState,
     core: &Core,
@@ -2879,35 +3008,33 @@ async fn execute_turn_chain(
     core: Core,
     gw: Arc<GatewayState>,
     handle: Arc<SessionHandle>,
-    mut prompt: vak_llm::Message,
+    prompt: vak_llm::Message,
     mut reply: Option<oneshot::Sender<String>>,
 ) {
-    loop {
-        let taken = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let Some(taken) = taken else {
-            // Lost the race with another writer mid-chain; hand our full
-            // prompt (text + images) to the winner as steering instead of
-            // dropping it.
-            handle.steering.push_steering_message(prompt.clone());
-            return;
-        };
-        let session_id = taken
-            .header()
-            .map(|h| h.session_id.clone())
-            .unwrap_or_default();
+    let taken = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let Some(taken) = taken else {
+        // Lost the race with another writer; hand our full prompt (text +
+        // images) to the winner as steering instead of dropping it.
+        handle.steering.push_steering_message(prompt);
+        return;
+    };
 
+    let approver_gw = gw.clone();
+    let approver_core = core.clone();
+    let approver_handle = handle.clone();
+    let approver_factory = move |session_id: &str| -> Arc<dyn vak_agent::Approver> {
         // Forward mode is the human-in-the-loop gate (AGENTS rule 16). Under
         // FullAccess the engine returns `Allow` for bash/read/write, so no
         // Ask is ever raised and the approver is never invoked — the gate is
         // silently hollow. Warn once; keep going so legitimate setups still
         // run, but make the bypass unmistakable.
-        if gw.forward_mode()
+        if approver_gw.forward_mode()
             && matches!(
-                core.effective_permission_mode(),
+                approver_core.effective_permission_mode(),
                 vak_config::PermissionMode::FullAccess
             )
             && FORWARD_FULLACCESS_WARNED
@@ -2931,115 +3058,96 @@ async fn execute_turn_chain(
         }
         // Unattended policy: deny by default, forward to the approver
         // surface when configured (G2).
-        let approver: Arc<dyn vak_agent::Approver> = if gw.forward_mode() {
+        if approver_gw.forward_mode() {
             Arc::new(GatewayApprover {
-                events_tx: handle.events_tx.clone(),
-                state: gw.clone(),
-                core: core.clone(),
-                session_id: session_id.clone(),
+                events_tx: approver_handle.events_tx.clone(),
+                state: approver_gw.clone(),
+                core: approver_core.clone(),
+                session_id: session_id.to_string(),
             })
         } else {
             Arc::new(AutoDeny)
-        };
-        let events = crate::mpsc_to_broadcast(handle.events_tx.clone());
-        let steering = handle.steering.clone();
-        let cancel = handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-
-        let outcome = core
-            .run_turn_with_message(
-                taken,
-                prompt.clone(),
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await;
-
-        *handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            tokio_util::sync::CancellationToken::new();
-
-        let (reply_text, is_error, ledger) = match outcome {
-            Ok((o, log)) => {
-                let err = outcome_is_error(&o);
-                let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
-                (text, err, Some(log))
-            }
-            Err(e) => {
-                vak_core::security_events::record(
-                    &core.sessions_home(),
-                    vak_core::security_events::EventKind::ExecutionError,
-                    "inbound turn failed",
-                    &format!("session_id={session_id} error={e}"),
-                    None,
-                );
-                recover_ledger(&core, handle.clone(), &session_id).await;
-                (format!("error: {e}"), true, None)
-            }
-        };
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: short_summary(&reply_text),
-            is_error,
-        });
-
-        if let Some(tx) = reply.take() {
-            let _ = tx.send(reply_text.clone());
         }
+    };
 
-        // Background reflection seam (docs/design/29 P1): the shared
-        // best-effort pass over the just-finished turn. It runs strictly
-        // after the reply above was handed over so delivery never waits on
-        // it, and while this chain still owns the ledger — a second
-        // in-process handle cannot take the file lock. Bounded; failures
-        // collapse into the outcome envelope.
-        if let Some(log) = ledger {
-            if !is_error && core.config().memory.reflection {
-                let pass = tokio::time::timeout(
-                    REFLECTION_CALL_TIMEOUT,
-                    core.reflect_after_turn(&log, ""),
-                )
-                .await;
-                match pass {
-                    Ok(outcome) => log_gateway_reflection(outcome),
-                    Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
+    let settle_core = core.clone();
+    let settle = move |session_id: &str,
+                       outcome: Result<
+        (vak_agent::TurnOutcome, vak_session::SessionLog),
+        vak_core::CoreError,
+    >| {
+        let core = settle_core.clone();
+        let reply_tx = reply.take();
+        let session_id = session_id.to_string();
+        async move {
+            match outcome {
+                Ok((o, log)) => {
+                    let err = outcome_is_error(&o);
+                    let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
+                    if let Some(tx) = reply_tx {
+                        let _ = tx.send(text.clone());
+                    }
+                    // Background reflection seam (docs/design/29 P1): the
+                    // shared best-effort pass over the just-settled leg. It
+                    // runs strictly after the reply above was handed over so
+                    // delivery never waits on it, and while this chain still
+                    // owns the ledger — a second in-process handle cannot
+                    // take the file lock. Bounded; failures collapse into
+                    // the outcome envelope.
+                    if !err && core.config().memory.reflection {
+                        let pass = tokio::time::timeout(
+                            REFLECTION_CALL_TIMEOUT,
+                            core.reflect_after_turn(&log, ""),
+                        )
+                        .await;
+                        match pass {
+                            Ok(outcome) => log_gateway_reflection(outcome),
+                            Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
+                        }
+                    }
+                    (Some(log), short_summary(&text), err)
+                }
+                Err(e) => {
+                    vak_core::security_events::record(
+                        &core.sessions_home(),
+                        vak_core::security_events::EventKind::ExecutionError,
+                        "inbound turn failed",
+                        &format!("session_id={session_id} error={e}"),
+                        None,
+                    );
+                    let recovered = recover_ledger(&core, &session_id).await;
+                    let text = format!("error: {e}");
+                    if let Some(tx) = reply_tx {
+                        let _ = tx.send(text.clone());
+                    }
+                    (recovered, short_summary(&text), true)
                 }
             }
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
         }
+    };
 
-        let queued = steering.drain(vak_agent::DrainMode::All);
-        match SteeringQueues::merge_prompt(queued) {
-            None => return,
-            Some(merged) => prompt = merged,
-        }
-    }
+    crate::run_turn_chain(
+        core,
+        handle,
+        taken,
+        crate::TurnStart::Message(prompt),
+        approver_factory,
+        settle,
+    )
+    .await;
 }
 
 /// A `CoreError` loses the ledger handle (the agent consumed it); reopen the
-/// JSONL so the session stays usable in this long-lived process.
-async fn recover_ledger(core: &Core, handle: Arc<SessionHandle>, session_id: &str) -> bool {
+/// JSONL so the session stays usable in this long-lived process. `None`
+/// when `session_id` is empty or the reopen itself fails — the caller (the
+/// settle closure above) treats that as "nothing to continue with" and lets
+/// `run_turn_chain` end the chain, exactly like `recover_ledger` returning
+/// `false` used to leave `handle.session` untouched.
+async fn recover_ledger(core: &Core, session_id: &str) -> Option<vak_session::SessionLog> {
     if session_id.is_empty() {
-        return false;
+        return None;
     }
-    if let Ok(log) = core.open_session(session_id).await {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
-        return true;
-    }
-    false
+    core.open_session(session_id).await.ok()
 }
 
 fn outcome_text(o: &vak_agent::TurnOutcome) -> String {
@@ -3329,6 +3437,7 @@ mod tests {
                 filename: Some("voice.ogg".into()),
                 error: None,
             }],
+            std::path::Path::new("."),
         );
         assert_eq!(prompt.content.len(), 1);
         assert!(matches!(
@@ -3495,42 +3604,161 @@ mod tests {
         assert_eq!(parse_verdict("approved!"), None);
     }
 
-    fn document_attachment(data: &str) -> InboundAttachment {
+    fn document(name: &str, bytes: &[u8]) -> InboundAttachment {
+        use base64::Engine as _;
         InboundAttachment {
-            mime: "text/plain".into(),
-            data: data.into(),
-            filename: Some("notes.py".into()),
+            mime: "application/octet-stream".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            filename: Some(name.into()),
             kind: "document".into(),
             error: None,
         }
     }
 
-    #[test]
-    fn small_document_is_inlined_as_a_fenced_text_block() {
-        use base64::Engine as _;
-        let encoded = base64::engine::general_purpose::STANDARD.encode("print('hi')");
-        let msg = compose_prompt("check this", &[document_attachment(&encoded)]);
+    fn note(msg: &vak_llm::Message) -> &str {
         let vak_llm::ContentBlock::Text { text } = &msg.content[1] else {
             unreachable!("expected a text block for a document attachment");
         };
-        assert!(text.contains("Attached file `notes.py`"));
-        assert!(text.contains("print('hi')"));
+        text
     }
 
     #[test]
-    fn oversized_document_is_not_inlined() {
-        use base64::Engine as _;
+    fn small_text_document_is_inlined_as_a_fenced_text_block() {
+        let workspace = tempfile::tempdir().unwrap();
+        let msg = compose_prompt(
+            "check this",
+            &[document("notes.py", b"print('hi')")],
+            workspace.path(),
+        );
+        let text = note(&msg);
+        assert!(text.contains("Attached file `notes.py`"));
+        assert!(text.contains("print('hi')"));
+        assert!(
+            !workspace.path().join(INBOX_DIR).exists(),
+            "inlined text is not saved"
+        );
+    }
+
+    #[test]
+    fn large_text_is_saved_to_the_inbox_not_inlined() {
+        let workspace = tempfile::tempdir().unwrap();
         let huge = "x".repeat(DOCUMENT_INLINE_MAX_BYTES + 1);
-        let encoded = base64::engine::general_purpose::STANDARD.encode(huge);
-        let msg = compose_prompt("check this", &[document_attachment(&encoded)]);
-        let vak_llm::ContentBlock::Text { text } = &msg.content[1] else {
-            unreachable!("expected a text block noting the oversized document");
-        };
-        assert!(text.contains("exceeds"));
+        let msg = compose_prompt(
+            "check this",
+            &[document("notes.py", huge.as_bytes())],
+            workspace.path(),
+        );
+        let text = note(&msg);
         assert!(
             !text.contains("xxxx"),
             "the raw content must not be inlined"
         );
+        let saved = text
+            .split_whitespace()
+            .find(|word| word.starts_with("inbox/"))
+            .unwrap()
+            .trim_end_matches(';');
+        assert!(saved.ends_with("-notes.py"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join(saved)).unwrap(),
+            huge
+        );
+    }
+
+    #[test]
+    fn an_office_file_is_saved_and_named_never_inlined() {
+        let workspace = tempfile::tempdir().unwrap();
+        let bytes = vak_ooxml::fixtures::docx();
+        let msg = compose_prompt(
+            "summarise",
+            &[document("Q3 report.docx", &bytes)],
+            workspace.path(),
+        );
+        let text = note(&msg);
+        assert!(text.contains("read it with doc_read"), "{text}");
+        assert!(text.contains("-Q3 report.docx"), "{text}");
+        assert!(
+            !text.contains("PK"),
+            "no package bytes in the prompt: {text}"
+        );
+        let inbox = workspace.path().join(INBOX_DIR);
+        let entries: Vec<_> = std::fs::read_dir(&inbox).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        let path = entries[0].as_ref().unwrap().path();
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+
+        // The same bytes again are the same file, not a second copy.
+        let again = compose_prompt(
+            "again",
+            &[document("Q3 report.docx", &bytes)],
+            workspace.path(),
+        );
+        assert_eq!(
+            note(&again).replace("again", ""),
+            text.replace("summarise", "")
+        );
+        assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn other_binary_files_are_saved_and_described_honestly() {
+        let workspace = tempfile::tempdir().unwrap();
+        let msg = compose_prompt(
+            "look",
+            &[document("scan.pdf", b"%PDF-1.7\x00\xff\xfe binary")],
+            workspace.path(),
+        );
+        let text = note(&msg);
+        assert!(text.contains("not a text or Open XML file"), "{text}");
+        assert!(!text.contains("%PDF"), "{text}");
+    }
+
+    #[test]
+    fn hostile_filenames_stay_in_the_inbox() {
+        let workspace = tempfile::tempdir().unwrap();
+        for name in [
+            "../../etc/passwd",
+            "..\\..\\boot.ini",
+            "...",
+            "a/b/.hidden",
+            "sub\x00dir",
+        ] {
+            let msg = compose_prompt("x", &[document(name, b"\x00binary")], workspace.path());
+            let text = note(&msg);
+            let saved = text
+                .split_whitespace()
+                .find(|word| word.starts_with("inbox/"))
+                .unwrap_or_else(|| panic!("{name}: {text}"))
+                .trim_end_matches('.');
+            assert!(
+                !saved[6..].contains('/') && !saved.contains(".."),
+                "{name} -> {saved}"
+            );
+            assert!(workspace.path().join(saved).is_file(), "{name} -> {saved}");
+        }
+        assert_eq!(sanitize_filename("../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_filename("..."), "file");
+        assert_eq!(sanitize_filename(".hidden"), "hidden");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_inbox_symlink_cannot_redirect_the_write() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), workspace.path().join(INBOX_DIR)).unwrap();
+        let msg = compose_prompt("x", &[document("a.bin", b"\x00")], workspace.path());
+        assert!(note(&msg).contains("could not be saved"), "{}", note(&msg));
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_document_over_the_channel_cap_is_not_received() {
+        let workspace = tempfile::tempdir().unwrap();
+        let big = vec![0u8; INBOUND_DOCUMENT_MAX_BYTES + 1];
+        let msg = compose_prompt("x", &[document("big.bin", &big)], workspace.path());
+        assert!(note(&msg).contains("channel limit; not received"));
+        assert!(!workspace.path().join(INBOX_DIR).exists());
     }
 
     #[test]
@@ -3544,6 +3772,7 @@ mod tests {
                 kind: "image".into(),
                 error: None,
             }],
+            std::path::Path::new("."),
         );
         assert!(matches!(
             msg.content[1],

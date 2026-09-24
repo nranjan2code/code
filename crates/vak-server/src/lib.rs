@@ -146,6 +146,25 @@ use vak_session::SessionLog;
 /// long-running gateway process.
 const MAX_LIVE_SESSIONS: usize = 128;
 
+/// Test-only override so eviction can be exercised without creating 129
+/// real sessions. Zero (the default) means "use `MAX_LIVE_SESSIONS`".
+/// Process-global like `pin_test_data_home`; a test that sets it restores
+/// zero afterward so it cannot leak into an unrelated concurrent test.
+#[cfg(test)]
+static MAX_LIVE_SESSIONS_TEST_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn max_live_sessions() -> usize {
+    #[cfg(test)]
+    {
+        let over = MAX_LIVE_SESSIONS_TEST_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst);
+        if over != 0 {
+            return over;
+        }
+    }
+    MAX_LIVE_SESSIONS
+}
+
 pub(crate) struct SessionHandle {
     pub(crate) id: String,
     /// The `Core` this session runs under, resolved once at creation.
@@ -351,18 +370,24 @@ impl AppState {
     /// an evicted session from disk, so this is a cache bound, not a
     /// lifecycle.
     fn evict_idle_sessions(&self) {
+        let cap = max_live_sessions();
         let mut sessions = self
             .sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if sessions.len() <= MAX_LIVE_SESSIONS {
+        if sessions.len() <= cap {
             return;
         }
         let mut idle: Vec<(std::time::Instant, String)> = sessions
             .iter()
             .filter(|(_, handle)| {
+                // `events_tx` always carries the handle's own internal
+                // projector (`register_handle`), so `receiver_count()` can
+                // never read zero; `external_subscribers()` excludes it.
+                // `side_events_tx` has no such internal subscriber, so a
+                // plain `receiver_count()` remains correct there.
                 Arc::strong_count(handle) == 1
-                    && handle.events_tx.receiver_count() == 0
+                    && handle.events_tx.external_subscribers() == 0
                     && handle.side_events_tx.receiver_count() == 0
                     && handle.session.lock().is_ok_and(|guard| guard.is_some())
             })
@@ -372,7 +397,7 @@ impl AppState {
             })
             .collect();
         idle.sort_by_key(|(touched, _)| *touched);
-        let mut over = sessions.len().saturating_sub(MAX_LIVE_SESSIONS);
+        let mut over = sessions.len().saturating_sub(cap);
         for (_, id) in idle {
             if over == 0 {
                 break;
@@ -392,6 +417,73 @@ impl AppState {
             .values()
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod eviction_tests {
+    use super::*;
+
+    /// Restores the process-global test override on drop, so a panic mid-test
+    /// cannot leave a tiny cap active for an unrelated concurrent test.
+    struct RestoreCap;
+    impl Drop for RestoreCap {
+        fn drop(&mut self) {
+            MAX_LIVE_SESSIONS_TEST_OVERRIDE.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Finding 3: every handle's `events_tx` carries the internal projector
+    /// subscription from `register_handle`, so the old `receiver_count() ==
+    /// 0` eviction guard never held — a long-lived process kept every
+    /// session's ledger (and its exclusive file lock) in memory forever.
+    /// `external_subscribers()` fixes the guard; this proves eviction
+    /// actually runs once the live set exceeds the cap.
+    #[tokio::test]
+    async fn idle_sessions_beyond_the_cap_are_evicted() {
+        crate::pin_test_data_home();
+        MAX_LIVE_SESSIONS_TEST_OVERRIDE.store(3, std::sync::atomic::Ordering::SeqCst);
+        let _restore = RestoreCap;
+
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+
+        let mut ids = Vec::new();
+        for _ in 0..5 {
+            let session = core.start_session().await.unwrap();
+            let id = session.header().unwrap().session_id.clone();
+            // No SSE client, no run in progress, and the returned Arc is
+            // dropped immediately — exactly the "nothing references it"
+            // shape `evict_idle_sessions` looks for.
+            let _ = register_handle(
+                &state,
+                id.clone(),
+                session,
+                core.cwd().clone(),
+                core.clone(),
+            );
+            ids.push(id);
+        }
+
+        let live: Vec<String> = state.sessions.lock().unwrap().keys().cloned().collect();
+        assert_eq!(
+            live.len(),
+            3,
+            "expected eviction down to the test cap, got {live:?}"
+        );
+        // Eviction drops the least-recently-touched handles first, so the
+        // most recently created session must survive.
+        assert!(
+            live.contains(ids.last().unwrap()),
+            "the newest session must not be evicted: {live:?}"
+        );
+        assert!(
+            !live.contains(&ids[0]),
+            "the oldest session must be evicted first: {live:?}"
+        );
     }
 }
 
@@ -761,6 +853,14 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/files/raw",
             get(read_sandbox_candidate_file_raw),
+        )
+        .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-review",
+            get(read_sandbox_candidate_office_review),
+        )
+        .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-narrow",
+            post(narrow_sandbox_candidate_office),
         )
         .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
@@ -3333,6 +3433,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "records"]
             | ["sandbox", "candidates", _, "files"]
             | ["sandbox", "candidates", _, "files", "raw"]
+            | ["sandbox", "candidates", _, "office-review"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
@@ -3669,7 +3770,10 @@ pub(crate) fn register_handle(
     let side_events_tx = events::EventBus::new();
     let presentation_snapshot = live_presentation_snapshot(&core, &id, &session);
     let presentation = Arc::new(Mutex::new(presentation_snapshot));
-    let mut presentation_rx = events_tx.subscribe();
+    // The handle's own projector, not a client: `external_subscribers()`
+    // must not count it, or "is anyone actually watching" (the /run attach
+    // wait, idle eviction) can never observe zero (finding 2/3).
+    let mut presentation_rx = events_tx.subscribe_internal();
     let presentation_state = presentation.clone();
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
     let handle = Arc::new(SessionHandle {
@@ -3913,37 +4017,16 @@ async fn ensure_session_handle(
         })
     };
     session.map(|session| {
-        let id = session
-            .header()
+        let header = session.header();
+        let id = header
             .map(|h| h.session_id.clone())
             .unwrap_or_else(|| session_id.to_owned());
-        let session_cwd = session
-            .header()
+        let session_cwd = header
             .map(|h| h.cwd.clone())
             .unwrap_or_else(|| state.core.cwd().clone());
-        let active = state.active_core();
-        let handle_core = if session_cwd == *active.cwd() {
-            active
-        } else if session_cwd == *state.core.cwd() {
-            state.core.clone()
-        } else if let Ok(c) =
-            state
-                .gateway
-                .core_pool
-                .resolve_at(&session_cwd, None, std::time::Instant::now())
-        {
-            c
-        } else {
-            // `resolve_at` failing here is not a trust decision — an
-            // unconditional `true` would let a workspace whose trust
-            // prompt an operator declined have its hooks/MCP
-            // servers/secret scope applied anyway. Recompute trust the
-            // same way `resolve_at` does rather than assuming it.
-            vak_core::Core::new_with_trust(
-                session_cwd.clone(),
-                vak_core::trust::is_trusted(&session_cwd),
-            )
-            .unwrap_or_else(|_| state.core.clone())
+        let handle_core = match header {
+            Some(header) => resolve_core_for_header(state, header),
+            None => resolve_process_core_for_cwd(state, &state.active_core(), &session_cwd),
         };
         // The header id can differ from the requested one; if that handle
         // is already live, keep it rather than replacing it.
@@ -3952,6 +4035,57 @@ async fn ensure_session_handle(
         });
         (id, handle)
     })
+}
+
+/// The one derivation of "which `Core` should this session's next turn run
+/// under," from its own recorded header (finding 6). A custom Agent's
+/// session gets the exact pins `agent_chats::resolve_agent_core` applies —
+/// permission-mode cap, sandbox backend override, provider instance
+/// override, and shared sessions_home — via `agent_chats::
+/// pinned_core_for_workspace`, keyed by the session's OWN recorded
+/// `header.cwd` rather than a workspace path re-derived from whatever
+/// happens to be the CURRENT active workspace (which can disagree once the
+/// active workspace has moved on since the session was created — see that
+/// function's doc comment). Before this, `/attach`, `/run` and the SSE
+/// endpoints resolved a plain pooled `Core` for the cwd with none of those
+/// pins, so the same session's security ceiling depended on which endpoint
+/// happened to touch it first. The built-in `vak` identity (and a
+/// pre-Agent ledger with no `agent` on its header at all) keeps the plain
+/// active/process core resolution.
+fn resolve_core_for_header(state: &AppState, header: &vak_session::types::SessionHeader) -> Core {
+    let active = state.active_core();
+    match header.agent.as_ref() {
+        Some(identity) if identity.id != "vak" => {
+            agent_chats::pinned_core_for_workspace(state, &active, identity, &header.cwd)
+                .unwrap_or_else(|_| resolve_process_core_for_cwd(state, &active, &header.cwd))
+        }
+        _ => resolve_process_core_for_cwd(state, &active, &header.cwd),
+    }
+}
+
+/// Plain cwd-keyed pooled `Core` resolution with no Agent-specific pins —
+/// the built-in `vak` identity's own path, and `resolve_core_for_header`'s
+/// fallback when a custom Agent's pinned resolution itself fails.
+fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path::Path) -> Core {
+    if cwd == active.cwd().as_path() {
+        return active.clone();
+    }
+    if cwd == state.core.cwd().as_path() {
+        return state.core.clone();
+    }
+    if let Ok(c) = state
+        .gateway
+        .core_pool
+        .resolve_at(cwd, None, std::time::Instant::now())
+    {
+        return c;
+    }
+    // `resolve_at` failing here is not a trust decision — an unconditional
+    // `true` would let a workspace whose trust prompt an operator declined
+    // have its hooks/MCP servers/secret scope applied anyway. Recompute
+    // trust the same way `resolve_at` does rather than assuming it.
+    vak_core::Core::new_with_trust(cwd.to_path_buf(), vak_core::trust::is_trusted(cwd))
+        .unwrap_or_else(|_| state.core.clone())
 }
 
 /// Sidebar projection over the persisted store: one summary per JSONL file.
@@ -4303,6 +4437,422 @@ mod provider_unavailable_tests {
     }
 }
 
+// ---- Shared turn-chain executor (invariant 30; docs/design/
+// 64-agent-owned-platform.md, "Request durability and delivery") ----------
+//
+// `run_prompt`, `send_steering`, and `gateway::execute_turn_chain` all
+// admit a prompt, run it, and — if more input arrived while the run was
+// settling — keep going rather than silently stranding it. Before this,
+// each surface implemented that loop separately: the HTTP path did not
+// implement it at all (steering queued after a run's last internal drain
+// was never picked back up), and the gateway's own version restored
+// `handle.session` before draining, leaving a race window where a
+// concurrent admission could steal the ledger. `admit_or_queue` and
+// `continue_or_release` are the one busy/idle decision, in both
+// directions; `run_turn_chain` is the one loop that runs a leg and decides
+// whether to continue, parameterized by approver and run kind so each
+// surface keeps its own settle bookkeeping (durable activity records vs.
+// reply channel + rendered text) without duplicating the loop mechanics.
+
+/// What a turn chain's FIRST leg runs. Every leg after the first is always
+/// a plain message turn: draining `handle.steering` only ever produces a
+/// `vak_llm::Message` via `SteeringQueues::merge_prompt`, never a fresh
+/// goal/managed/auto request — that is `/run`'s own admission, which a
+/// queued steering message never claims to be.
+enum TurnStart {
+    Message(vak_llm::Message),
+    Managed(String),
+    Auto(String),
+    Goal {
+        prompt: String,
+        objective: String,
+        criteria: Vec<String>,
+    },
+}
+
+impl TurnStart {
+    /// The message this leg would present — used both to seed the preview
+    /// intent before a run starts and, on the busy path, as the queued
+    /// steering entry (attachments and all; invariant 1, model-visible
+    /// input is never degraded to bare text).
+    fn preview_message(&self) -> vak_llm::Message {
+        match self {
+            TurnStart::Message(m) => m.clone(),
+            TurnStart::Managed(p) | TurnStart::Auto(p) => vak_llm::Message::user_text(p),
+            TurnStart::Goal { prompt, .. } => vak_llm::Message::user_text(prompt),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
+        self,
+        core: &Core,
+        session: SessionLog,
+        cancel: CancellationToken,
+        approver: Arc<dyn Approver>,
+        steering: Arc<SteeringQueues>,
+        events: mpsc::Sender<AgentEvent>,
+    ) -> Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError> {
+        match self {
+            TurnStart::Message(m) => {
+                core.run_turn_with_message(
+                    session,
+                    m,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Managed(prompt) => {
+                core.run_managed_turn_with(
+                    session,
+                    &prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Auto(prompt) => {
+                core.run_auto_turn_with(
+                    session,
+                    &prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+            TurnStart::Goal {
+                prompt,
+                objective,
+                criteria,
+            } => {
+                core.run_goal_turn_with(
+                    session,
+                    &prompt,
+                    &objective,
+                    criteria,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    events,
+                )
+                .await
+            }
+        }
+    }
+}
+
+/// Result of admitting input at the busy boundary.
+enum Admission {
+    /// The ledger was idle; the caller now owns it and must run a chain.
+    Started(SessionLog),
+    /// Busy: `message` was pushed onto `handle.steering` durably.
+    Queued,
+    /// Busy, and this input kind (goal/managed/auto) cannot be queued.
+    RejectedBusy,
+}
+
+/// Admit input at the busy boundary shared by `/run` and `/steering`: busy
+/// input is queued durably or explicitly rejected, and a new request is
+/// never acknowledged and discarded (finding 1). Locking `handle.session`
+/// for the whole decision is what makes it safe against a chain settling in
+/// [`continue_or_release`] at the same instant — the two can never observe
+/// a window where the ledger looks idle to one caller and busy to the
+/// other.
+fn admit_or_queue(
+    handle: &SessionHandle,
+    restricted: bool,
+    message: vak_llm::Message,
+) -> Admission {
+    let mut slot = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(taken) = slot.take() {
+        return Admission::Started(taken);
+    }
+    drop(slot);
+    if restricted {
+        return Admission::RejectedBusy;
+    }
+    handle.steering.push_steering_message(message);
+    Admission::Queued
+}
+
+/// After a leg settles, atomically decide whether the chain continues.
+/// Mirrors [`admit_or_queue`]'s locking discipline from the other
+/// direction: the ledger is written back to `handle.session` (marking the
+/// session idle again) only when nothing is queued, so steering that
+/// arrives while a leg is settling either lands in THIS drain or is queued
+/// against a session that is genuinely idle once this returns — never a
+/// session that looks idle while the drain that would have picked it up
+/// already happened and is gone.
+fn continue_or_release(
+    handle: &SessionHandle,
+    ledger: SessionLog,
+) -> Option<(SessionLog, vak_llm::Message)> {
+    let mut slot = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let queued = handle.steering.drain(vak_agent::DrainMode::All);
+    match SteeringQueues::merge_prompt(queued) {
+        None => {
+            *slot = Some(ledger);
+            None
+        }
+        Some(merged) => Some((ledger, merged)),
+    }
+}
+
+/// Give an SSE consumer a moment to attach before a freshly admitted chain
+/// starts, so its terminal event is seen — but only when nobody is
+/// watching yet. `handle.subscribed` is a single-permit `Notify`: the first
+/// SSE connection's `notify_one()` satisfies exactly one `.notified()`
+/// call, so unconditionally waiting here made every leg after the first
+/// block for the full 2s even with a client already attached (finding 2).
+async fn wait_for_external_subscriber(handle: &SessionHandle) {
+    if handle.events_tx.external_subscribers() == 0 {
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
+    }
+}
+
+/// What a leg's surface-specific settle step hands back to
+/// [`run_turn_chain`]: the ledger to keep running with (`None` when a
+/// `CoreError` left nothing recoverable), and the `(summary, is_error)`
+/// pair the executor broadcasts as this leg's `RunFinished`.
+type SettleResult = (Option<SessionLog>, String, bool);
+
+/// The one turn-chain executor shared by the HTTP path (`run_prompt`,
+/// `send_steering`) and the gateway (`gateway::execute_turn_chain`).
+/// `start` runs as the first leg; `settle` performs the surface-specific
+/// bookkeeping for each leg's outcome — durable activity + presentation
+/// snapshot + hub summary for HTTP, reply channel + rendered text +
+/// reflection logging for the gateway — and returns the ledger to continue
+/// with (reflection itself stays inside `settle`, since the two surfaces
+/// react to its outcome differently; see `http_settle` and
+/// `gateway::execute_turn_chain`). After settling, steering queued in the
+/// meantime is drained and merged into a continuation leg via
+/// [`continue_or_release`] — under the same lock that decides whether the
+/// ledger goes back to `handle.session` — rather than being silently
+/// stranded once the chain looks idle again (finding 1).
+async fn run_turn_chain<F, Fut>(
+    core: Core,
+    handle: Arc<SessionHandle>,
+    mut taken: SessionLog,
+    mut start: TurnStart,
+    approver_factory: impl Fn(&str) -> Arc<dyn Approver>,
+    mut settle: F,
+) where
+    F: FnMut(&str, Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>) -> Fut,
+    Fut: std::future::Future<Output = SettleResult>,
+{
+    loop {
+        let session_id = taken
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_else(|| handle.id.clone());
+        let approver = approver_factory(&session_id);
+        let events = mpsc_to_broadcast(handle.events_tx.clone());
+        let steering = handle.steering.clone();
+        let cancel = handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let outcome = start
+            .run(&core, taken, cancel, approver, steering, events)
+            .await;
+        // Reset the token so the next leg is not born already-cancelled.
+        *handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
+
+        let (ledger, summary, is_error) = settle(&session_id, outcome).await;
+        let _ = handle
+            .events_tx
+            .send(AgentEvent::RunFinished { summary, is_error });
+
+        let Some(ledger) = ledger else {
+            return;
+        };
+
+        match continue_or_release(&handle, ledger) {
+            None => return,
+            Some((ledger, merged)) => {
+                taken = ledger;
+                start = TurnStart::Message(merged);
+            }
+        }
+    }
+}
+
+/// `run_prompt`'s per-leg settle: durable "Run finished" activity, buffered
+/// activity flush (with the same request_id admissions cleanup on BOTH the
+/// success and error path — the error path used to skip it, leaking an
+/// admissions entry for any steering that had been buffered before the
+/// failure), presentation snapshot, hub summary, and FTS indexing.
+async fn http_settle(
+    handle: Arc<SessionHandle>,
+    hub: events::EventHub,
+    admin_store: Option<vak_store::Store>,
+    sessions_home: std::path::PathBuf,
+    run_id: String,
+    outcome: Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>,
+) -> SettleResult {
+    fn flush_buffered(handle: &SessionHandle, log: &mut SessionLog) {
+        let buffered = std::mem::take(
+            &mut *handle
+                .activity_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for activity in buffered {
+            let request_id = activity.data.get("request_id").cloned();
+            let _ = log.append_activity(activity);
+            if let Some(request_id) = request_id {
+                handle
+                    .admissions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&request_id);
+            }
+        }
+    }
+
+    match outcome {
+        Ok((o, mut session_log)) => {
+            let (summary, is_error) = match &o {
+                vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
+                vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
+                vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
+                vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
+            };
+            let activity_status = match &o {
+                vak_agent::TurnOutcome::Completed { .. } => vak_session::ActivityStatus::Succeeded,
+                vak_agent::TurnOutcome::Aborted { .. } => vak_session::ActivityStatus::Cancelled,
+                vak_agent::TurnOutcome::Failed { .. } => vak_session::ActivityStatus::Failed,
+                vak_agent::TurnOutcome::MaxTurnsReached => vak_session::ActivityStatus::Partial,
+            };
+            let _ = session_log.append_activity(vak_session::ActivityRecord {
+                activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
+                turn: None,
+                kind: vak_session::ActivityKind::Run,
+                status: activity_status,
+                label: "Run finished".into(),
+                detail: Some(summary.clone()),
+                data: std::collections::BTreeMap::new(),
+            });
+            flush_buffered(&handle, &mut session_log);
+            *handle
+                .presentation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                live_presentation_snapshot(&handle.core, &run_id, &session_log);
+            hub.emit_agent_summary(&summary, Some(run_id.clone()));
+            index_session_later(admin_store, sessions_home, run_id.clone());
+            // Background reflection seam (docs/design/29 P1): after the
+            // summary is recorded and while this leg still owns the ledger
+            // (a second in-process handle cannot take the file lock).
+            // Bounded; the result is deliberately ignored — a completed run
+            // never fails on reflection.
+            if !is_error && handle.core.config().memory.reflection {
+                let _ = tokio::time::timeout(
+                    REFLECTION_CALL_TIMEOUT,
+                    handle.core.reflect_after_turn(&session_log, ""),
+                )
+                .await;
+            }
+            (Some(session_log), summary, is_error)
+        }
+        Err(e) => {
+            // Same leak class: restore from the durable ledger so the
+            // handle does not stay wedged on "run in progress".
+            let restored = reopen_ledger(&handle.core, &run_id).map(|mut restored| {
+                flush_buffered(&handle, &mut restored);
+                *handle
+                    .presentation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    live_presentation_snapshot(&handle.core, &run_id, &restored);
+                restored
+            });
+            (restored, format!("error: {e}"), true)
+        }
+    }
+}
+
+/// Spawn an HTTP-surfaced turn chain: an `HttpApprover` built fresh per leg,
+/// `http_settle` bookkeeping, and the `request_id` admissions cleanup once
+/// the WHOLE chain (every leg, not just the first) has settled. Shared by
+/// `run_prompt` and `send_steering`'s own idle-admission path (finding 1b)
+/// — a steer that lands on an idle session IS a fresh admission, not inert
+/// queued input nothing will ever look at again.
+fn spawn_http_turn_chain(
+    state: &AppState,
+    handle: Arc<SessionHandle>,
+    core: Core,
+    taken: SessionLog,
+    start: TurnStart,
+    request_id: Option<String>,
+) {
+    let hub = state.hub.clone();
+    let admin_store = state.store.clone();
+    let sessions_home = state.core.sessions_home();
+    let chain_handle = handle;
+    tokio::spawn(async move {
+        let approver_handle = chain_handle.clone();
+        let settle_handle = chain_handle.clone();
+        run_turn_chain(
+            core,
+            chain_handle.clone(),
+            taken,
+            start,
+            move |_leg_session_id: &str| -> Arc<dyn Approver> {
+                // Driven by a client that is holding the SSE stream open,
+                // so a gate raised here reaches a person.
+                Arc::new(HttpApprover {
+                    events_tx: approver_handle.events_tx.clone(),
+                    pending: approver_handle.pending.clone(),
+                    session_id: approver_handle.id.clone(),
+                    activity_buffer: approver_handle.activity_buffer.clone(),
+                    answerable: true,
+                })
+            },
+            move |leg_session_id: &str, outcome| {
+                let handle = settle_handle.clone();
+                let hub = hub.clone();
+                let admin_store = admin_store.clone();
+                let sessions_home = sessions_home.clone();
+                let run_id = leg_session_id.to_string();
+                async move {
+                    http_settle(handle, hub, admin_store, sessions_home, run_id, outcome).await
+                }
+            },
+        )
+        .await;
+
+        if let Some(request_id) = request_id {
+            chain_handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+        }
+    });
+}
+
 async fn run_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -4341,19 +4891,123 @@ async fn run_prompt(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(request_id)
     {
-        return StatusCode::ACCEPTED.into_response();
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"request_id": request_id, "state": "duplicate"})),
+        )
+            .into_response();
     }
-    let Some(mut taken) = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    else {
-        if request_id.is_some() {
-            return StatusCode::ACCEPTED.into_response();
+
+    // ---- Validate the request shape before any side effect (finding 4):
+    // no durable admission activity, no admissions-set insertion, and no
+    // synthesized `RunFinished` for input that never starts a run. ----
+    if body.goal.is_some() && !body.attachments.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "goal runs do not support attachments"})),
+        )
+            .into_response();
+    }
+    if let Some(mode) = body.work_mode.as_deref()
+        && !matches!(mode, "direct" | "managed" | "auto")
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("unknown work_mode '{mode}'")})),
+        )
+            .into_response();
+    }
+    let managed = matches!(body.work_mode.as_deref(), Some("managed"));
+    let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
+    if (managed || automatic) && !body.attachments.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "managed work currently requires text-only input"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = handle.core.provider() {
+        return provider_unavailable(e);
+    }
+
+    let expanded_prompt = body.prompt.clone();
+    let start = if let Some(objective) = body.goal.clone() {
+        TurnStart::Goal {
+            prompt: expanded_prompt.clone(),
+            objective,
+            criteria: body.criteria.clone(),
         }
-        return StatusCode::CONFLICT.into_response(); // run already active
+    } else if managed {
+        TurnStart::Managed(expanded_prompt.clone())
+    } else if automatic {
+        TurnStart::Auto(expanded_prompt.clone())
+    } else if body.attachments.is_empty() {
+        TurnStart::Message(vak_llm::Message::user_text(expanded_prompt.clone()))
+    } else {
+        let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
+        for a in &body.attachments {
+            if a.data.trim().is_empty() {
+                continue;
+            }
+            blocks.push(vak_llm::ContentBlock::image_base64(
+                a.mime.clone(),
+                a.data.trim().to_string(),
+            ));
+        }
+        TurnStart::Message(vak_llm::Message {
+            role: vak_llm::Role::User,
+            content: blocks,
+        })
     };
+    let restricted = matches!(
+        start,
+        TurnStart::Goal { .. } | TurnStart::Managed(_) | TurnStart::Auto(_)
+    );
+    let queue_message = start.preview_message();
+
+    // ---- Admit at the busy boundary (docs/design/64, "Request durability
+    // and delivery"): idle starts a chain now; busy queues durably or, for
+    // a goal/managed/auto request that cannot be queued, is rejected
+    // explicitly. Never a bare 202 that silently discards the input
+    // (finding 1). ----
+    let mut taken = match admit_or_queue(&handle, restricted, queue_message.clone()) {
+        Admission::RejectedBusy => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "a goal or managed/auto request cannot be queued while the session is busy; wait for the current run to finish"
+                })),
+            )
+                .into_response();
+        }
+        Admission::Queued => {
+            let request_id = request_id.unwrap_or_else(|| format!("run-{}", uuid::Uuid::now_v7()));
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("request_id".into(), request_id.clone());
+            if let Some(routing) = body.routing.as_ref() {
+                record_routing_data(&mut data, routing);
+            }
+            record_activity_or_buffer(
+                &handle,
+                vak_session::ActivityRecord {
+                    activity_id: format!("admission-{request_id}"),
+                    turn: None,
+                    kind: vak_session::ActivityKind::Run,
+                    status: vak_session::ActivityStatus::Pending,
+                    label: "Request queued".into(),
+                    detail: None,
+                    data,
+                },
+            );
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({"request_id": request_id, "state": "queued"})),
+            )
+                .into_response();
+        }
+        Admission::Started(taken) => taken,
+    };
+
     if taken.is_read_only() {
         match vak_session::SessionLog::open(taken.path().to_path_buf()) {
             Ok(writable) => {
@@ -4392,14 +5046,11 @@ async fn run_prompt(
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::ACCEPTED.into_response();
-    }
-    if let Err(e) = handle.core.provider() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return provider_unavailable(e);
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"request_id": request_id, "state": "duplicate"})),
+        )
+            .into_response();
     }
     if let Some(request_id) = request_id.as_deref() {
         let mut data = std::collections::BTreeMap::new();
@@ -4438,56 +5089,10 @@ async fn run_prompt(
             .insert(request_id.to_owned());
     }
 
-    // Give SSE consumers a moment to attach so terminal events are seen. A
-    // stream that is already attached (the client holds one per followed
-    // session for its whole life) needs no wait; waiting on it anyway cost
-    // every turn after the first the full two seconds, because the one
-    // stored permit was spent by the first.
-    if handle.events_tx.receiver_count() == 0 {
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
-    }
-
-    // Driven by a client that is holding the SSE stream open, so a gate
-    // raised here reaches a person.
-    let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
-        events_tx: handle.events_tx.clone(),
-        pending: handle.pending.clone(),
-        session_id: handle.id.clone(),
-        activity_buffer: handle.activity_buffer.clone(),
-        answerable: true,
-    });
-    let events = mpsc_to_broadcast(handle.events_tx.clone());
-    let steering = handle.steering.clone();
-    let cancel = handle
-        .cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    // Preview intent so `/control-state` has something to report even
+    // before the ledger reflects a real IntentRecord entry for this leg.
     let core = handle.core.clone();
-
-    let expanded_prompt = body.prompt.clone();
-    let prompt_message = if body.attachments.is_empty() {
-        None
-    } else {
-        let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
-        for a in &body.attachments {
-            if a.data.trim().is_empty() {
-                continue;
-            }
-            blocks.push(vak_llm::ContentBlock::image_base64(
-                a.mime.clone(),
-                a.data.trim().to_string(),
-            ));
-        }
-        Some(vak_llm::Message {
-            role: vak_llm::Role::User,
-            content: blocks,
-        })
-    };
-    let preview_message = prompt_message
-        .clone()
-        .unwrap_or_else(|| vak_llm::Message::user_text(expanded_prompt.clone()));
-    let preview_intent = core.resolve_turn_intent(&taken, &preview_message);
+    let preview_intent = core.resolve_turn_intent(&taken, &queue_message);
     let mut preview_outcome =
         vak_intent::OutcomeSpec::from_intent(&expanded_prompt, &preview_intent);
     preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
@@ -4505,227 +5110,19 @@ async fn run_prompt(
             commitment_id: None,
             strand_commitments: Default::default(),
         });
-    if body.goal.is_some() && !body.attachments.is_empty() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: "failed: goal runs do not support attachments".into(),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if let Some(mode) = body.work_mode.as_deref()
-        && !matches!(mode, "direct" | "managed" | "auto")
-    {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: format!("failed: unknown work_mode '{mode}'"),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    // Goal mode (Phase H): captured before the spawn consumes `body`.
-    let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
-    let managed = matches!(body.work_mode.as_deref(), Some("managed"));
-    let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
-    if (managed || automatic) && !body.attachments.is_empty() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: "failed: managed work currently requires text-only input".into(),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let run_id = id.clone();
-    let hub = state.hub.clone();
-    let admin_store = state.store.clone();
-    let sessions_home = state.core.sessions_home();
 
-    tokio::spawn(async move {
-        let outcome = if let Some((objective, criteria)) = goal_pair {
-            core.run_goal_turn_with(
-                taken,
-                &expanded_prompt,
-                &objective,
-                criteria,
-                cancel.clone(),
-                Some(approver.clone()),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if managed {
-            core.run_managed_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if automatic {
-            core.run_auto_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if let Some(msg) = prompt_message {
-            core.run_turn_with_message(
-                taken,
-                msg,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else {
-            core.run_turn_with(
-                taken,
-                &expanded_prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        };
-        // Reset the token so the next run on this session is not born
-        // already-cancelled.
-        *handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
-        match outcome {
-            Ok((o, mut session_log)) => {
-                let (summary, is_error) = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
-                    vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
-                    vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
-                    vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
-                };
-                let activity_status = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => {
-                        vak_session::ActivityStatus::Succeeded
-                    }
-                    vak_agent::TurnOutcome::Aborted { .. } => {
-                        vak_session::ActivityStatus::Cancelled
-                    }
-                    vak_agent::TurnOutcome::Failed { .. } => vak_session::ActivityStatus::Failed,
-                    vak_agent::TurnOutcome::MaxTurnsReached => vak_session::ActivityStatus::Partial,
-                };
-                let _ = session_log.append_activity(vak_session::ActivityRecord {
-                    activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
-                    turn: None,
-                    kind: vak_session::ActivityKind::Run,
-                    status: activity_status,
-                    label: "Run finished".into(),
-                    detail: Some(summary.clone()),
-                    data: std::collections::BTreeMap::new(),
-                });
-                let buffered = std::mem::take(
-                    &mut *handle
-                        .activity_buffer
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner),
-                );
-                for activity in buffered {
-                    let request_id = activity.data.get("request_id").cloned();
-                    let _ = session_log.append_activity(activity);
-                    if let Some(request_id) = request_id {
-                        handle
-                            .admissions
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .remove(&request_id);
-                    }
-                }
-                *handle
-                    .presentation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    live_presentation_snapshot(&core, &run_id, &session_log);
-                hub.emit_agent_summary(&summary, Some(run_id.clone()));
-                let _ = handle.events_tx.send(AgentEvent::RunFinished {
-                    summary: summary.clone(),
-                    is_error,
-                });
-                index_session_later(admin_store.clone(), sessions_home.clone(), run_id.clone());
-                // Background reflection seam (docs/design/29 P1): after the
-                // summary is recorded and while this task still owns the
-                // ledger (a second in-process handle cannot take the file
-                // lock). Bounded; the result is deliberately ignored — a
-                // completed run never fails on reflection.
-                if !is_error && core.config().memory.reflection {
-                    let _ = tokio::time::timeout(
-                        REFLECTION_CALL_TIMEOUT,
-                        core.reflect_after_turn(&session_log, ""),
-                    )
-                    .await;
-                }
-                // Return the ledger so transcript stays available.
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
-            }
-            Err(e) => {
-                // Same leak class: restore from the durable ledger so the
-                // handle does not stay wedged on "run in progress".
-                if let Some(mut restored) = reopen_ledger(&core, &run_id) {
-                    for activity in std::mem::take(
-                        &mut *handle
-                            .activity_buffer
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    ) {
-                        let _ = restored.append_activity(activity);
-                    }
-                    *handle
-                        .presentation
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        live_presentation_snapshot(&core, &run_id, &restored);
-                    *handle
-                        .session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                }
-                let _ = handle.events_tx.send(AgentEvent::RunFinished {
-                    summary: format!("error: {e}"),
-                    is_error: true,
-                });
-            }
-        }
-        if let Some(request_id) = request_id {
-            handle
-                .admissions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&request_id);
-        }
-        drop(steering);
-    });
+    // Give SSE consumers a moment to attach so terminal events are seen —
+    // but only when nobody is watching yet (finding 2).
+    wait_for_external_subscriber(&handle).await;
 
-    StatusCode::ACCEPTED.into_response()
+    let response_request_id = request_id.clone();
+    spawn_http_turn_chain(&state, handle, core, taken, start, request_id);
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"request_id": response_request_id, "state": "started"})),
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -5020,8 +5417,8 @@ async fn send_steering(
         .iter()
         .filter(|a| !a.data.trim().is_empty())
         .collect();
-    if usable.is_empty() {
-        handle.steering.push_steering(body.text);
+    let message = if usable.is_empty() {
+        vak_llm::Message::user_text(body.text.clone())
     } else {
         let mut blocks = vec![vak_llm::ContentBlock::text(body.text.clone())];
         for a in usable {
@@ -5030,35 +5427,86 @@ async fn send_steering(
                 a.data.trim().to_string(),
             ));
         }
-        handle.steering.push_steering_message(vak_llm::Message {
+        vak_llm::Message {
             role: vak_llm::Role::User,
             content: blocks,
-        });
+        }
+    };
+
+    // Admit at the same busy boundary `/run` uses (docs/design/64, "Request
+    // durability and delivery"): a steer that lands on an IDLE session is a
+    // fresh admission and starts its own chain, rather than sitting in a
+    // queue nothing is left to drain (finding 1b). A steer is never a
+    // restricted (goal/managed/auto) request, so this never rejects.
+    match admit_or_queue(&handle, false, message.clone()) {
+        Admission::RejectedBusy => {
+            unreachable!("send_steering never admits a restricted request kind")
+        }
+        Admission::Queued => {
+            // The ledger was busy: the durable "Intervention queued" /
+            // "accepted" activity recorded above already covers this
+            // request. If it landed in the buffer rather than the ledger
+            // (session was busy at that check too), the busy leg's own
+            // `http_settle` flush removes this admission guard when it
+            // settles; nothing here needs to.
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "steering_queued",
+                })),
+            )
+                .into_response()
+        }
+        Admission::Started(taken) => {
+            // The activity recorded above is durable now (whether it was
+            // written straight into the ledger or is about to be, via this
+            // very chain) — the in-memory admission guard can be released.
+            handle
+                .admissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request_id);
+            let core = handle.core.clone();
+            let preview_intent = core.resolve_turn_intent(&taken, &message);
+            let mut preview_outcome =
+                vak_intent::OutcomeSpec::from_intent(&body.text, &preview_intent);
+            preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
+            *handle
+                .intent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(vak_session::types::IntentRecord {
+                    reading: preview_intent.reading,
+                    strands: preview_intent.strands,
+                    engagement: preview_intent.engagement,
+                    provenance: preview_intent.provenance,
+                    outcome: Some(preview_outcome),
+                    model_visible: None,
+                    commitment_id: None,
+                    strand_commitments: Default::default(),
+                });
+            wait_for_external_subscriber(&handle).await;
+            spawn_http_turn_chain(
+                &state,
+                handle,
+                core,
+                taken,
+                TurnStart::Message(message),
+                None,
+            );
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "request_id": evaluation.request.request_id,
+                    "decision": evaluation.decision.as_str(),
+                    "state": "started",
+                })),
+            )
+                .into_response()
+        }
     }
-    // If the ledger was available, the activity is durable already and the
-    // in-memory guard can be released. A busy runner keeps it until its
-    // buffered activity is flushed at turn completion.
-    if handle
-        .session
-        .lock()
-        .ok()
-        .is_some_and(|guard| guard.is_some())
-    {
-        handle
-            .admissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&request_id);
-    }
-    (
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "request_id": evaluation.request.request_id,
-            "decision": evaluation.decision.as_str(),
-            "state": "steering_queued",
-        })),
-    )
-        .into_response()
 }
 
 async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
@@ -5072,10 +5520,37 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .cancel();
     record_control_activity(&handle, "Run cancelled", "cancel");
     deny_pending_approvals(&handle);
-    let _ = handle.events_tx.send(AgentEvent::RunFinished {
-        summary: "cancelled by client".into(),
-        is_error: false,
-    });
+    // A stop means stop: whatever was queued for a continuation leg is
+    // discarded rather than silently running as the "next" turn once the
+    // cancelled run unwinds (finding 1c). Input that arrives AFTER this
+    // drain but before the run actually unwinds is a fresh push into the
+    // same queue and is unaffected — it becomes the next leg of the chain,
+    // same as any other steering.
+    let discarded = handle.steering.drain(vak_agent::DrainMode::All);
+    if !discarded.is_empty() {
+        record_activity_or_buffer(
+            &handle,
+            vak_session::ActivityRecord {
+                activity_id: format!("cancel-discard-{}", uuid::Uuid::now_v7()),
+                turn: None,
+                kind: vak_session::ActivityKind::Diagnostic,
+                status: vak_session::ActivityStatus::Cancelled,
+                label: "Queued input discarded by stop".into(),
+                detail: Some(format!(
+                    "{} queued message{} discarded",
+                    discarded.len(),
+                    if discarded.len() == 1 { "" } else { "s" }
+                )),
+                data: std::collections::BTreeMap::new(),
+            },
+        );
+    }
+    // No synthesized `RunFinished` here: the run's own settle path
+    // (`run_turn_chain`) emits the terminal event once it actually stops.
+    // Broadcasting one from here raced the real one — cancel_run's
+    // synthetic event could arrive, mark the chat finished on the client,
+    // and then the run's genuine `RunFinished` landed afterward and
+    // un-terminated it.
     StatusCode::ACCEPTED
 }
 
@@ -8435,19 +8910,27 @@ async fn restore_checkpoint(
     let cwd = handle
         .map(|h| h.cwd.clone())
         .unwrap_or_else(|| core.cwd().clone());
-    let cp = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
-        .or_else(|_| vak_core::checkpoints::load(&core.shared_data_home(), &id, seq))
+    // The blob store the manifest's hashes resolve against lives under
+    // whichever home the manifest itself was found in.
+    let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
     {
-        Ok(cp) => cp,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
-            )
-                .into_response();
-        }
+        Ok(cp) => (cp, core.sessions_home()),
+        Err(_) => match vak_core::checkpoints::load(&core.shared_data_home(), &id, seq) {
+            Ok(cp) => (cp, core.shared_data_home()),
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
+                )
+                    .into_response();
+            }
+        },
     };
-    match tokio::task::spawn_blocking(move || vak_core::checkpoints::restore(&cwd, &cp)).await {
+    match tokio::task::spawn_blocking(move || {
+        vak_core::checkpoints::restore(&cwd, &checkpoints_home, &cp)
+    })
+    .await
+    {
         Ok(Ok((restored, deleted))) => Json(serde_json::json!({
             "restored": restored,
             "deleted": deleted,
@@ -10332,10 +10815,14 @@ async fn export_sandbox_candidate(
     }
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
         Ok(mut candidate) => {
-            let verifiers = vak_sandbox::default_target_verifiers();
-            candidate.target_checks = verifiers.plan(&candidate);
+            candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
             candidate.workspace_checks = planned_workspace_checks(&candidate);
-            let draft_checks = verifiers.verify(&candidate.source_root, &candidate.target_checks);
+            let draft_checks = vak_tools::broker::verify_targets(
+                &state.core.tool_worker_exe(),
+                &candidate.source_root,
+                &candidate.target_checks,
+            )
+            .await;
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
@@ -10361,6 +10848,7 @@ async fn export_sandbox_candidate(
                 updated_at: chrono::Utc::now().to_rfc3339(),
                 parent_candidate_id: None,
                 revision_session_id: None,
+                narrowed: None,
             });
             match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
                 Ok(()) => Json(record).into_response(),
@@ -10426,6 +10914,412 @@ async fn sandbox_candidate_file_bytes(
     Ok(bytes)
 }
 
+fn saved_candidate(
+    state: &AppState,
+    session_id: &str,
+    candidate_id: &str,
+) -> Result<vak_sandbox::CandidateRecord, StatusCode> {
+    let records = vak_sandbox::load_records(&sandbox_records_path(state))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    records
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            vak_sandbox::DurableRecord::Candidate(saved)
+                if saved.session_id == session_id
+                    && saved.candidate.candidate_id == candidate_id =>
+            {
+                Some(saved)
+            }
+            _ => None,
+        })
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// How the Office draft `path` of execution `execution_id` was made: the
+/// `office_apply` calls in this session's ledger, followed back through
+/// each call whose source was an earlier draft to the file the chain
+/// started from (docs/design/72, P3). Only successful calls count; the
+/// worker then refuses a lineage that does not reproduce the draft.
+fn office_lineage(
+    state: &AppState,
+    session_id: &str,
+    execution_id: &str,
+    path: &str,
+) -> Result<vak_tools::broker::OfficeLineage, String> {
+    let workspace = sandbox_session_workspace(state, session_id).ok_or("unknown session")?;
+    let root = workspace
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the workspace: {error}"))?;
+    let collect = |log: &vak_session::SessionLog| {
+        let mut calls = std::collections::HashMap::new();
+        let mut succeeded = std::collections::HashSet::new();
+        for (_, message) in log.message_chain() {
+            for block in &message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, input }
+                        if name == "office_apply" =>
+                    {
+                        calls.insert(id.clone(), input.clone());
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error: false,
+                        ..
+                    } => {
+                        succeeded.insert(tool_use_id.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        calls.retain(|id, _| succeeded.contains(id));
+        let agent = log
+            .header()
+            .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
+        (calls, agent)
+    };
+    let live = state.get(session_id).and_then(|handle| {
+        handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(collect)
+    });
+    let (calls, agent) = match live {
+        Some(found) => found,
+        None => open_historical_session(state, session_id)
+            .map(|log| collect(&log))
+            .ok_or("the session ledger cannot be read")?,
+    };
+    let relative = |value: &str| -> Option<std::path::PathBuf> {
+        confined_path(&root, value)?
+            .strip_prefix(&root)
+            .ok()
+            .map(std::path::Path::to_path_buf)
+    };
+    let mut ops = Vec::new();
+    let mut call_id = execution_id.to_string();
+    let mut wanted = std::path::PathBuf::from(path);
+    for _ in 0..64 {
+        let Some(args) = calls.get(&call_id) else {
+            return Err(
+                "the draft was not made by a successful office_apply call in this conversation"
+                    .into(),
+            );
+        };
+        let target = args
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(relative);
+        if target.as_deref() != Some(wanted.as_path()) {
+            return Err(format!(
+                "office_apply {call_id} did not write {}",
+                wanted.display()
+            ));
+        }
+        let mut call_ops: Vec<vak_ooxml::edit::OfficeOp> = args
+            .get("ops")
+            .cloned()
+            .and_then(|ops| serde_json::from_value(ops).ok())
+            .ok_or("a recorded office_apply call has ops this version cannot read")?;
+        call_ops.append(&mut ops);
+        ops = call_ops;
+        let source_text = args
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|source| !source.is_empty())
+            .or_else(|| args.get("path").and_then(serde_json::Value::as_str))
+            .unwrap_or_default();
+        let source = relative(source_text).ok_or("a draft's source is outside the workspace")?;
+        let parts: Vec<String> = source
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        match parts.as_slice() {
+            [vak, scratch, _agent, earlier, rest @ ..] if vak == ".vak" && scratch == "scratch" => {
+                call_id = earlier.clone();
+                wanted = rest.iter().collect();
+            }
+            [vak, ..] if vak == ".vak" => {
+                return Err("a draft's source is inside .vak but not an earlier draft".into());
+            }
+            _ => {
+                let base_digest = args
+                    .get("base_digest")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                return Ok(vak_tools::broker::OfficeLineage {
+                    source: root.join(source),
+                    base_digest,
+                    ops,
+                    author: vak_tools::office_apply::tracked_change_author(
+                        agent.as_deref().unwrap_or("vak"),
+                    ),
+                });
+            }
+        }
+    }
+    Err("the chain of drafts is too long to follow".into())
+}
+
+/// What an Office file in a candidate changes, compared with the workspace
+/// file it would replace, and the changes a person can keep or leave out
+/// (docs/design/72, P3). Every package is parsed in a worker, never in the
+/// server (invariant 39).
+async fn read_sandbox_candidate_office_review(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !vak_ooxml::is_openxml_path(&q.path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file",
+        )
+            .into_response();
+    }
+    if let Err(status) =
+        sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await
+    {
+        return status.into_response();
+    }
+    let saved = match saved_candidate(&state, &session_id, &candidate_id) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
+    };
+    let candidate = &saved.candidate;
+    let (Some(draft), Some(current)) = (
+        confined_path(&candidate.source_root, &q.path),
+        confined_path(&candidate.destination_root, &q.path),
+    ) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let (lineage, whole_reason) = if let Some(narrowed) = &saved.narrowed {
+        (
+            None,
+            Some(format!(
+                "This version keeps {} of the draft's changes. To choose differently, go back to the full draft.",
+                narrowed.keep.len()
+            )),
+        )
+    } else if saved.revision_session_id.is_some() {
+        (
+            None,
+            Some(
+                "This version was made by a revision, so it is accepted or rejected whole."
+                    .to_string(),
+            ),
+        )
+    } else {
+        match office_lineage(&state, &session_id, &saved.execution_id, &q.path) {
+            Ok(lineage) => (Some(lineage), None),
+            Err(reason) => (None, Some(reason)),
+        }
+    };
+    let before = current.is_file().then_some(current.as_path());
+    match vak_tools::broker::office_review(
+        &state.core.tool_worker_exe(),
+        before,
+        &draft,
+        lineage.as_ref(),
+    )
+    .await
+    {
+        Ok(mut body) => {
+            body["path"] = serde_json::Value::String(q.path.clone());
+            body["compared_with"] = serde_json::Value::String(
+                if before.is_some() {
+                    "workspace"
+                } else {
+                    "nothing (new file)"
+                }
+                .into(),
+            );
+            if let Some(reason) = whole_reason {
+                body["choices_unavailable"] = serde_json::Value::String(reason);
+            }
+            if let Some(narrowed) = &saved.narrowed {
+                body["narrowed_from"] = serde_json::json!({
+                    "candidate_id": saved.parent_candidate_id,
+                    "keep": narrowed.keep,
+                });
+            }
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OfficeNarrowBody {
+    path: String,
+    keep: Vec<String>,
+}
+
+/// A new version of a candidate that keeps only the chosen changes of one
+/// Office draft, replayed from its lineage in a worker that can write only
+/// the new version's staging directory (docs/design/72, P3). The full draft
+/// stays as it was; the new version is reviewed and accepted like any other.
+async fn narrow_sandbox_candidate_office(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    Json(body): Json<OfficeNarrowBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let refuse = |status: StatusCode, message: String| {
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
+    };
+    if !vak_ooxml::is_openxml_path(&body.path) {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file".into(),
+        );
+    }
+    if body.keep.is_empty() {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "no change was kept; reject the draft instead".into(),
+        );
+    }
+    if let Err(status) =
+        sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &body.path).await
+    {
+        return status.into_response();
+    }
+    let saved = match saved_candidate(&state, &session_id, &candidate_id) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
+    };
+    if saved.narrowed.is_some() || saved.revision_session_id.is_some() {
+        return refuse(
+            StatusCode::CONFLICT,
+            "choose changes from the full draft, not from a version made from it".into(),
+        );
+    }
+    let applied = vak_sandbox::load_records(&sandbox_records_path(&state))
+        .map(|records| {
+            records.iter().any(|record| {
+                matches!(record, vak_sandbox::DurableRecord::Promotion(promoted)
+                    if promoted.candidate_id == candidate_id)
+            })
+        })
+        .unwrap_or(true);
+    if applied {
+        return refuse(StatusCode::CONFLICT, "the draft was already applied".into());
+    }
+    let lineage = match office_lineage(&state, &session_id, &saved.execution_id, &body.path) {
+        Ok(lineage) => lineage,
+        Err(reason) => return refuse(StatusCode::CONFLICT, reason),
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    let staging = state
+        .core
+        .sessions_home()
+        .join("sandbox")
+        .join("staging")
+        .join(&id);
+    let prepared = (|| -> Result<std::path::PathBuf, String> {
+        for file in &saved.candidate.files {
+            if file.operation != vak_sandbox::CandidateOperation::Upsert || file.path == body.path {
+                continue;
+            }
+            let from = confined_path(&saved.candidate.source_root, &file.path)
+                .ok_or("a candidate file is outside its root")?;
+            let to = staging.join(&file.path);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::copy(&from, &to).map_err(|error| error.to_string())?;
+        }
+        let out = staging.join(&body.path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        Ok(out)
+    })();
+    let out = match prepared {
+        Ok(out) => out,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, error);
+        }
+    };
+    let Some(draft) = confined_path(&saved.candidate.source_root, &body.path) else {
+        let _ = std::fs::remove_dir_all(&staging);
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let narrowed = vak_tools::broker::office_narrow(
+        &state.core.tool_worker_exe(),
+        &lineage,
+        &draft,
+        &body.keep,
+        &out,
+    )
+    .await;
+    if let Err(error) = narrowed {
+        let _ = std::fs::remove_dir_all(&staging);
+        return refuse(StatusCode::UNPROCESSABLE_ENTITY, error);
+    }
+    let frozen_root = sandbox_candidates_root(&state).join(&id);
+    let frozen =
+        vak_sandbox::freeze_revision_candidate(&id, &staging, &saved.candidate, &frozen_root);
+    let _ = std::fs::remove_dir_all(&staging);
+    let mut candidate = match frozen {
+        Ok(candidate) => candidate,
+        Err(error) => return refuse(StatusCode::CONFLICT, error.to_string()),
+    };
+    candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
+    candidate.workspace_checks = planned_workspace_checks(&candidate);
+    let draft_checks = vak_tools::broker::verify_targets(
+        &state.core.tool_worker_exe(),
+        &candidate.source_root,
+        &candidate.target_checks,
+    )
+    .await;
+    let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
+        Ok(digest) => digest,
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+        }
+    };
+    let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+        record_id: format!("candidate-{id}"),
+        session_id: saved.session_id.clone(),
+        turn_id: saved.turn_id.clone(),
+        result_id: saved.result_id.clone(),
+        execution_id: saved.execution_id.clone(),
+        environment_id: saved.environment_id.clone(),
+        candidate_digest,
+        candidate,
+        verified: true,
+        draft_checks,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        parent_candidate_id: Some(candidate_id),
+        revision_session_id: None,
+        narrowed: Some(vak_sandbox::NarrowedDraft {
+            path: body.path,
+            keep: body.keep,
+        }),
+    });
+    match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+        Ok(()) => Json(record).into_response(),
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+            refuse(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+        }
+    }
+}
+
 async fn read_sandbox_candidate_file(
     State(state): State<AppState>,
     Path((session_id, candidate_id)): Path<(String, String)>,
@@ -10478,6 +11372,11 @@ struct CandidateCommentBody {
     line_start: Option<u32>,
     #[serde(default)]
     line_end: Option<u32>,
+    /// Where in an Office file the comment points (`Budget!B4`,
+    /// `p:1A2B3C4D`, `slide:256/shape:3`), in place of line numbers, which
+    /// mean nothing in a package (docs/design/72, F9).
+    #[serde(default)]
+    anchor: Option<String>,
     #[serde(default)]
     request_id: Option<String>,
 }
@@ -10514,6 +11413,7 @@ async fn list_sandbox_candidate_comments(
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
                     "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "anchor": activity.data.get("anchor"),
                     "created_at": timestamp.to_rfc3339(),
                 }));
             }
@@ -10537,6 +11437,7 @@ async fn list_sandbox_candidate_comments(
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
                     "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "anchor": activity.data.get("anchor"),
                     "created_at": serde_json::Value::Null,
                 }));
             }
@@ -10598,6 +11499,35 @@ async fn comment_on_sandbox_candidate(
         )
             .into_response();
     }
+    let anchor = body
+        .anchor
+        .as_deref()
+        .map(str::trim)
+        .filter(|anchor| !anchor.is_empty());
+    let office = path.is_some_and(vak_ooxml::is_openxml_path);
+    if office && body.line_start.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "line numbers mean nothing in an Office file; point at a cell, paragraph or slide with anchor",
+        )
+            .into_response();
+    }
+    if let Some(anchor) = anchor {
+        if !office {
+            return (
+                StatusCode::BAD_REQUEST,
+                "anchor requires an Office file path; use line numbers for text files",
+            )
+                .into_response();
+        }
+        if !vak_ooxml::is_anchor(anchor) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "anchor is not a cell, paragraph, slide or shape anchor",
+            )
+                .into_response();
+        }
+    }
     let Some(handle) = state.get(&session_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -10639,6 +11569,9 @@ async fn comment_on_sandbox_candidate(
     }
     if let Some(line) = body.line_end {
         data.insert("line_end".into(), line.to_string());
+    }
+    if let Some(anchor) = anchor {
+        data.insert("anchor".into(), anchor.to_string());
     }
     data.insert("comment".into(), text.to_string());
     let comment = vak_session::ActivityRecord {
@@ -10992,11 +11925,15 @@ async fn dispatch_candidate_revision(
                     &frozen_root,
                 ) {
                     Ok(mut candidate) => {
-                        let verifiers = vak_sandbox::default_target_verifiers();
-                        candidate.target_checks = verifiers.plan(&candidate);
+                        candidate.target_checks =
+                            vak_sandbox::default_target_verifiers().plan(&candidate);
                         candidate.workspace_checks = planned_workspace_checks(&candidate);
-                        let draft_checks =
-                            verifiers.verify(&candidate.source_root, &candidate.target_checks);
+                        let draft_checks = vak_tools::broker::verify_targets(
+                            &state.core.tool_worker_exe(),
+                            &candidate.source_root,
+                            &candidate.target_checks,
+                        )
+                        .await;
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
@@ -11013,6 +11950,7 @@ async fn dispatch_candidate_revision(
                                     updated_at: chrono::Utc::now().to_rfc3339(),
                                     parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
                                     revision_session_id: Some(child_session_id.clone()),
+                                    narrowed: None,
                                 };
                                 match vak_sandbox::append_record(
                                     &records_path,
@@ -11156,22 +12094,30 @@ async fn request_revision_from_candidate_comment(
     let Some(body) = comment.data.get("comment") else {
         return StatusCode::CONFLICT.into_response();
     };
-    let location = match (
-        comment.data.get("path"),
-        comment.data.get("line_start"),
-        comment.data.get("line_end"),
-    ) {
-        (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
-        (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
-        (Some(path), _, _) => format!(" file {path}"),
-        _ => String::new(),
-    };
+    let location = comment_location(&comment.data);
     dispatch_candidate_revision(
         state,
         saved.clone(),
         comment_id.clone(),
         format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
     ).await
+}
+
+/// Where a candidate comment points, as the revision request states it: an
+/// Office anchor (`Budget!B4`) or a line range, after the file.
+fn comment_location(data: &std::collections::BTreeMap<String, String>) -> String {
+    match (
+        data.get("path"),
+        data.get("anchor"),
+        data.get("line_start"),
+        data.get("line_end"),
+    ) {
+        (Some(path), Some(anchor), _, _) => format!(" file {path}, at {anchor}"),
+        (Some(path), None, Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
+        (Some(path), None, Some(start), None) => format!(" file {path}, line {start}"),
+        (Some(path), None, None, _) => format!(" file {path}"),
+        _ => String::new(),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -11260,22 +12206,10 @@ async fn promote_sandbox_candidate(
     }
     let promotion_root = sandbox_promotions_root(&state);
     let selected_workspace_checks = planned_workspace_checks(&candidate);
-    let receipt = match tokio::task::spawn_blocking(move || {
-        let mut receipt = vak_sandbox::promote_recoverable(&candidate, &promotion_root)?;
-        let checks = vak_sandbox::default_target_verifiers()
-            .verify(&candidate.destination_root, &candidate.target_checks);
-        if !checks.is_empty() {
-            let failed = checks.iter().any(|check| check.status == "failed");
-            receipt.integration.target_checks_status =
-                if failed { "failed" } else { "passed" }.into();
-            receipt.integration.evidence = format!(
-                "{} registered target format check(s) ran against applied state {}",
-                checks.len(),
-                receipt.integration.applied_state_digest
-            );
-            receipt.integration.target_checks = checks;
-        }
-        Ok::<_, vak_sandbox::Error>(receipt)
+    let applied_root = candidate.destination_root.clone();
+    let planned_checks = candidate.target_checks.clone();
+    let mut receipt = match tokio::task::spawn_blocking(move || {
+        vak_sandbox::promote_recoverable(&candidate, &promotion_root)
     })
     .await
     {
@@ -11295,6 +12229,22 @@ async fn promote_sandbox_candidate(
                 .into_response();
         }
     };
+    let checks = vak_tools::broker::verify_targets(
+        &state.core.tool_worker_exe(),
+        &applied_root,
+        &planned_checks,
+    )
+    .await;
+    if !checks.is_empty() {
+        let failed = checks.iter().any(|check| check.status == "failed");
+        receipt.integration.target_checks_status = if failed { "failed" } else { "passed" }.into();
+        receipt.integration.evidence = format!(
+            "{} registered target format check(s) ran against applied state {}",
+            checks.len(),
+            receipt.integration.applied_state_digest
+        );
+        receipt.integration.target_checks = checks;
+    }
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
         record_id: format!("promotion-{}", receipt.candidate_id),
         session_id,
@@ -18804,7 +19754,25 @@ mod sandbox_promotion_tests {
         .unwrap();
     }
 
+    /// Target verification runs in the broker worker, so a test that
+    /// freezes or promotes a candidate needs the real worker binary.
+    fn pin_test_tool_worker(core: &Core) {
+        let worker = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("vak-tool-worker");
+        assert!(
+            worker.is_file(),
+            "build vak-tool-worker (cargo build -p vak-server --bins) to run candidate verification"
+        );
+        core.set_tool_worker_exe(worker);
+    }
+
     async fn export_candidate(state: &AppState) -> vak_sandbox::CandidateRecord {
+        pin_test_tool_worker(&state.core);
         append_session_sandbox_event(
             &state.core.sessions_home(),
             "session-1",
@@ -18838,6 +19806,461 @@ mod sandbox_promotion_tests {
             panic!("candidate response")
         };
         record
+    }
+
+    /// A ledger in which the Agent made `calls` (`office_apply` id and
+    /// arguments), each succeeding, then answered.
+    fn seed_office_calls(core: &Core, session_id: &str, calls: &[(&str, serde_json::Value)]) {
+        seed_bound_result(core, session_id, "unused");
+        let path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(format!("{session_id}.jsonl"));
+        let mut log = vak_session::SessionLog::open(path).unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Update the budget"),
+            meta: None,
+        })
+        .unwrap();
+        for (id, input) in calls {
+            log.append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                    id: (*id).into(),
+                    name: "office_apply".into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .unwrap();
+            log.append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message {
+                    role: vak_llm::Role::User,
+                    content: vec![vak_llm::ContentBlock::ToolResult {
+                        tool_use_id: (*id).into(),
+                        content: "Draft written.".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .unwrap();
+        }
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
+                "The draft is ready for review.",
+            )]),
+            meta: None,
+        })
+        .unwrap();
+    }
+
+    async fn body_json(response: axum::response::Response) -> serde_json::Value {
+        serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn sha256_prefix(bytes: &[u8]) -> String {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_office_draft_is_reviewed_by_meaning_narrowed_and_accepted_through_promotion() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let workbook = dir.path().join("budget.xlsx");
+        tokio::fs::write(&workbook, vak_ooxml::fixtures::xlsx())
+            .await
+            .unwrap();
+        let first_draft = ".vak/scratch/vak/exec-1/budget.xlsx";
+        let first = serde_json::json!({
+            "path": "budget.xlsx",
+            "base_digest": sha256_prefix(&vak_ooxml::fixtures::xlsx()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
+        });
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        let tool = vak_tools::brokered_default_tools(state.core.tool_worker_exe())
+            .into_iter()
+            .find(|tool| tool.name() == "office_apply")
+            .unwrap();
+        let run = |id: &'static str, args: serde_json::Value| {
+            let tool = &tool;
+            let cwd = dir.path().to_path_buf();
+            async move {
+                let (sink, _events) = vak_tools::SandboxEventSink::new_with_id(id.into());
+                tool.execute(
+                    &args,
+                    &vak_tools::ToolContext::new(cwd).with_sandbox_sink(sink),
+                )
+                .await
+            }
+        };
+        let output = run("exec-1", first.clone()).await;
+        assert!(!output.is_error, "{}", output.content);
+        // The Agent keeps editing its own draft: a second call, whose source
+        // is the first draft, so the lineage spans both calls.
+        let second = serde_json::json!({
+            "path": "budget.xlsx",
+            "source": first_draft,
+            "base_digest": sha256_prefix(&tokio::fs::read(dir.path().join(first_draft)).await.unwrap()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B3": 70}}]
+        });
+        let output = run("exec-2", second.clone()).await;
+        assert!(!output.is_error, "{}", output.content);
+        assert_eq!(
+            tokio::fs::read(&workbook).await.unwrap(),
+            vak_ooxml::fixtures::xlsx(),
+            "the workspace file is untouched until review"
+        );
+        seed_office_calls(
+            &state.core,
+            "session-1",
+            &[("exec-1", first), ("exec-2", second)],
+        );
+
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-2".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: ".vak/scratch/vak/exec-2".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-2".into(),
+                source: ".vak/scratch/vak/exec-2".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(candidate.draft_checks.len(), 1);
+        assert_eq!(candidate.draft_checks[0].verifier, "format.openxml");
+        assert_eq!(
+            candidate.draft_checks[0].status, "passed",
+            "{}",
+            candidate.draft_checks[0].evidence
+        );
+        let candidate_id = candidate.candidate.candidate_id.clone();
+        let review = |id: String| {
+            let state = state.clone();
+            async move {
+                read_sandbox_candidate_office_review(
+                    State(state),
+                    Path(("session-1".into(), id)),
+                    axum::extract::Query(FileQuery {
+                        path: "budget.xlsx".into(),
+                    }),
+                )
+                .await
+            }
+        };
+
+        let response = review(candidate_id.clone()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let diff = body_json(response).await;
+        assert_eq!(diff["summary"], serde_json::json!(["Budget: 2 changed"]));
+        assert_eq!(diff["changes"][0]["anchor"], "Budget!B2");
+        assert_eq!(diff["changes"][0]["before"], "100");
+        assert_eq!(diff["changes"][0]["after"], "150");
+        assert_eq!(diff["compared_with"], "workspace");
+        assert_eq!(
+            diff["impact"],
+            serde_json::json!([]),
+            "unsigned and unlabelled"
+        );
+        assert!(diff.get("choices_unavailable").is_none(), "{diff}");
+        let ids: Vec<&str> = diff["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|choice| choice["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["0", "1"], "one choice per call's op, oldest first");
+        assert_eq!(diff["choices"][1]["label"], "Set Budget!B3");
+        assert_eq!(diff["choices"][1]["changes"][0]["after"], "70");
+
+        let narrow = |id: String, keep: Vec<&'static str>| {
+            let state = state.clone();
+            async move {
+                narrow_sandbox_candidate_office(
+                    State(state),
+                    Path(("session-1".into(), id)),
+                    Json(OfficeNarrowBody {
+                        path: "budget.xlsx".into(),
+                        keep: keep.into_iter().map(str::to_string).collect(),
+                    }),
+                )
+                .await
+            }
+        };
+        let response = narrow(candidate_id.clone(), vec!["1"]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(narrowed) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(
+            narrowed.parent_candidate_id.as_deref(),
+            Some(candidate_id.as_str())
+        );
+        assert_eq!(narrowed.draft_checks[0].status, "passed");
+        let narrowed_id = narrowed.candidate.candidate_id.clone();
+
+        let diff = body_json(review(narrowed_id.clone()).await).await;
+        assert_eq!(diff["summary"], serde_json::json!(["Budget: 1 changed"]));
+        assert_eq!(diff["changes"][0]["anchor"], "Budget!B3");
+        assert_eq!(diff["narrowed_from"]["candidate_id"], candidate_id.as_str());
+        assert!(
+            diff["choices_unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("keeps 1 of the draft's changes")
+        );
+
+        // A comment on an Office draft points at a cell, not a line.
+        let ledger = find_session_on_disk(&state.core, "session-1").unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            ledger,
+            state.core.cwd().to_path_buf(),
+            state.core.clone(),
+        );
+        let comment = |anchor: Option<&str>, line: Option<u32>| {
+            let state = state.clone();
+            let candidate_id = candidate_id.clone();
+            let anchor = anchor.map(str::to_string);
+            async move {
+                comment_on_sandbox_candidate(
+                    State(state),
+                    Path(("session-1".into(), candidate_id)),
+                    axum::Extension(AuthenticatedPrincipal::Operator),
+                    Json(CandidateCommentBody {
+                        text: "Keep the old figure here".into(),
+                        path: Some("budget.xlsx".into()),
+                        line_start: line,
+                        line_end: None,
+                        anchor,
+                        request_id: None,
+                    }),
+                )
+                .await
+                .status()
+            }
+        };
+        assert_eq!(comment(Some("Budget!B2"), None).await, StatusCode::CREATED);
+        assert_eq!(
+            comment(Some("Budget B2"), None).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            comment(None, Some(4)).await,
+            StatusCode::BAD_REQUEST,
+            "line numbers mean nothing in a package"
+        );
+        let listed = body_json(
+            list_sandbox_candidate_comments(
+                State(state.clone()),
+                Path(("session-1".into(), candidate_id.clone())),
+            )
+            .await,
+        )
+        .await;
+        let anchored: Vec<&serde_json::Value> = listed["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|comment| comment["anchor"] == "Budget!B2")
+            .collect();
+        assert_eq!(anchored.len(), 1, "{listed}");
+        assert_eq!(anchored[0]["path"], "budget.xlsx");
+
+        let response = narrow(narrowed_id.clone(), vec!["1"]).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let response = narrow(candidate_id.clone(), vec![]).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = narrow(candidate_id.clone(), vec!["7"]).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: narrowed_id,
+                files: vec!["budget.xlsx".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let promoted = tokio::fs::read(&workbook).await.unwrap();
+        let text =
+            vak_ooxml::read::read(std::io::Cursor::new(promoted), vak_ooxml::Limits::default())
+                .unwrap()
+                .lines()
+                .join("\n");
+        assert!(text.contains("B3: 70"), "{text}");
+        assert!(
+            text.contains("B2: 100"),
+            "the left-out change is not applied: {text}"
+        );
+    }
+
+    #[test]
+    fn a_revision_request_names_the_cell_or_lines_a_comment_points_at() {
+        let data = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        assert_eq!(
+            comment_location(&data(&[
+                ("path", "budget.xlsx"),
+                ("anchor", "'Q4 plan'!B4")
+            ])),
+            " file budget.xlsx, at 'Q4 plan'!B4"
+        );
+        assert_eq!(
+            comment_location(&data(&[
+                ("path", "a.txt"),
+                ("line_start", "3"),
+                ("line_end", "5")
+            ])),
+            " file a.txt, lines 3-5"
+        );
+        assert_eq!(
+            comment_location(&data(&[("path", "a.txt"), ("line_start", "3")])),
+            " file a.txt, line 3"
+        );
+        assert_eq!(comment_location(&data(&[("path", "a.txt")])), " file a.txt");
+        assert_eq!(comment_location(&data(&[])), "");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_draft_changed_after_office_apply_is_offered_only_whole() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        tokio::fs::write(dir.path().join("budget.xlsx"), vak_ooxml::fixtures::xlsx())
+            .await
+            .unwrap();
+        let args = serde_json::json!({
+            "path": "budget.xlsx",
+            "base_digest": sha256_prefix(&vak_ooxml::fixtures::xlsx()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150, "B3": 70}}]
+        });
+        seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
+        // A draft that no office_apply call produced: a command wrote it.
+        let scratch = dir.path().join(".vak/scratch/vak/exec-1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        let other = vak_ooxml::edit::apply(
+            &vak_ooxml::fixtures::xlsx(),
+            &[vak_ooxml::edit::OfficeOp::SetCells {
+                sheet: "Budget".into(),
+                cells: std::collections::BTreeMap::from([(
+                    "B2".to_string(),
+                    vak_ooxml::edit::CellValue::Number(999.0),
+                )]),
+            }],
+            &vak_ooxml::edit::EditContext {
+                author: "Vak".into(),
+                date: "2026-09-24T10:00:00Z".into(),
+            },
+            vak_ooxml::Limits::default(),
+            None,
+        )
+        .unwrap();
+        tokio::fs::write(scratch.join("budget.xlsx"), &other.bytes)
+            .await
+            .unwrap();
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-1".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-1".into(),
+                source: ".vak/scratch/vak/exec-1".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        let response = read_sandbox_candidate_office_review(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "budget.xlsx".into(),
+            }),
+        )
+        .await;
+        let diff = body_json(response).await;
+        assert!(diff.get("choices").is_none(), "{diff}");
+        assert!(
+            diff["choices_unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("not what its recorded edits produce"),
+            "{diff}"
+        );
+        assert_eq!(diff["changes"][0]["after"], "999");
+        let response = narrow_sandbox_candidate_office(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id)),
+            Json(OfficeNarrowBody {
+                path: "budget.xlsx".into(),
+                keep: vec!["0:B2".into()],
+            }),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "narrowing replays and would silently drop the hand edit, so the worker's integrity check must refuse it too"
+        );
     }
 
     #[tokio::test]
@@ -19117,6 +20540,7 @@ mod sandbox_promotion_tests {
                 path: Some("not-reviewed.txt".into()),
                 line_start: None,
                 line_end: None,
+                anchor: None,
                 request_id: Some("invalid-comment".into()),
             }),
         )
@@ -19131,11 +20555,31 @@ mod sandbox_promotion_tests {
                 path: Some("result.txt".into()),
                 line_start: None,
                 line_end: Some(2),
+                anchor: None,
                 request_id: Some("invalid-range".into()),
             }),
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
+        let anchor_on_text = comment_on_sandbox_candidate(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
+            Json(CandidateCommentBody {
+                text: "Change this cell".into(),
+                path: Some("result.txt".into()),
+                line_start: None,
+                line_end: None,
+                anchor: Some("Budget!B2".into()),
+                request_id: Some("anchor-on-text".into()),
+            }),
+        )
+        .await;
+        assert_eq!(
+            anchor_on_text.status(),
+            StatusCode::BAD_REQUEST,
+            "a text file is commented on by line"
+        );
         let ledger_path = find_session_on_disk(&state.core, "session-1")
             .unwrap()
             .path()
@@ -19708,6 +21152,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/records",
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
+            "/sessions/session-1/sandbox/candidates/candidate-1/office-review",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",

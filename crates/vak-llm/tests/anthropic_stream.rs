@@ -34,7 +34,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_serialization_matches_anthropic_shape() {
-    let body = build_body(&sample_request()).unwrap();
+    let body = build_body(&sample_request(), true, false).unwrap();
     assert_eq!(body["model"], "claude-sonnet-4-5");
     assert_eq!(body["max_tokens"], 8192);
     assert_eq!(body["stream"], true);
@@ -58,7 +58,10 @@ fn body_rejects_misplaced_blocks() {
         role: Role::Assistant,
         content: vec![ContentBlock::tool_result("x", "y")],
     }];
-    assert!(matches!(build_body(&req), Err(LlmError::InvalidRequest(_))));
+    assert!(matches!(
+        build_body(&req, true, false),
+        Err(LlmError::InvalidRequest(_))
+    ));
 }
 
 #[test]
@@ -117,6 +120,7 @@ async fn full_stream_conversion_accumulates_snapshot() {
         api_key: "k".into(),
         base_url: mock_server_url(FIXTURE_STREAM).await,
         model: String::new(),
+        fast_mode: false,
     })
     .unwrap();
 
@@ -161,6 +165,47 @@ async fn full_stream_conversion_accumulates_snapshot() {
     }
 }
 
+// Realistic cache-bearing usage (docs/design/68-context-engine.md §1):
+// Anthropic already reports `input_tokens` as the non-cached remainder,
+// with `cache_read_input_tokens`/`cache_creation_input_tokens` carried
+// alongside it — this fixture pins that shape, and that `message_delta`
+// (which only ever carries `output_tokens`) never disturbs it.
+const FIXTURE_CACHED_USAGE: &str = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":50,\"output_tokens\":0,\"cache_read_input_tokens\":9000,\"cache_creation_input_tokens\":300}}}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":15}}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\
+\n";
+
+#[tokio::test]
+async fn cache_read_and_creation_tokens_survive_message_delta_untouched() {
+    let provider = AnthropicProvider::new(AnthropicConfig {
+        api_key: "k".into(),
+        base_url: mock_server_url(FIXTURE_CACHED_USAGE).await,
+        model: String::new(),
+        fast_mode: false,
+    })
+    .unwrap();
+    let mut es = provider
+        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+
+    assert_eq!(msg.usage.input_tokens, 50);
+    assert_eq!(msg.usage.cache_read_input_tokens, Some(9_000));
+    assert_eq!(msg.usage.cache_creation_input_tokens, Some(300));
+    // message_delta only ever carries output_tokens on this wire; the
+    // input/cache figures set at message_start must be untouched by it.
+    assert_eq!(msg.usage.output_tokens, 15);
+    assert_eq!(msg.usage.prompt_tokens(), 9_350);
+}
+
 #[tokio::test]
 async fn abort_preserves_partial_output() {
     let part1 = "\
@@ -179,6 +224,7 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
         api_key: "k".into(),
         base_url: url,
         model: String::new(),
+        fast_mode: false,
     })
     .unwrap();
 
@@ -214,6 +260,7 @@ async fn http_error_maps_to_typed_value() {
         api_key: "bad".into(),
         base_url: url,
         model: String::new(),
+        fast_mode: false,
     })
     .unwrap();
     let err = provider

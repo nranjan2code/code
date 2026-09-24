@@ -47,8 +47,10 @@ pub struct Turn {
     pub presentations: Vec<String>,
     /// The turn's closing card, once written (`EntryPayload::TurnCard`).
     pub card: Option<TurnCard>,
-    /// `false` only for the last turn when the chain ends without a final
-    /// assistant text after the directive.
+    /// `false` only for the last turn when the chain's raw tail does not
+    /// end in an assistant message without `tool_use` — a text-only draft
+    /// is not enough once a control nudge or tool result follows it; only
+    /// a fresh final answer with nothing after it closes the turn.
     pub closed: bool,
     /// `true` when a reset-with-handoff entry (docs/design/42) follows this
     /// turn on the chain: the turn is invisible to the model, so it is
@@ -252,10 +254,23 @@ impl TurnIndex {
 
         // Only the last turn can be open: every earlier turn already saw a
         // later directive, which cannot happen unless the run ended it one
-        // way or another. The last turn is open exactly when it never
-        // produced a final text-only answer.
+        // way or another. The last turn is open exactly when its RAW
+        // ledger tail — not merely whether a text-only answer was ever
+        // produced — does not end in an assistant message without
+        // `tool_use`. `final_answer` records the latest such message the
+        // turn has seen, but a gate can append a control nudge (or a tool
+        // result) after it while asking for a redo; until a fresh final
+        // answer follows, the turn is still open, or the nudge itself
+        // would be dropped from the next request the moment `full_record`
+        // replaced `current_verbatim` (a text-only draft the ledger holds
+        // is not the same thing as an accepted answer).
         if let Some(last) = turns.last_mut() {
-            last.closed = last.final_answer.is_some();
+            let last_message = last.raw_tail.last().unwrap_or(&last.directive);
+            last.closed = last_message.role == Role::Assistant
+                && !last_message
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
         }
 
         let by_id: HashMap<String, usize> = turns
@@ -1395,6 +1410,60 @@ mod tests {
         let turn = index.turn_by_id(&t1).unwrap();
         assert_eq!(turn.steps.len(), 1, "the nudge must not become a step");
         assert!(turn.closed);
+    }
+
+    /// A gate that redoes a text-only draft appends a control nudge AFTER
+    /// it without any further assistant reply yet: the turn must stay open
+    /// (never rendered as a closed `full_record`, which would drop the
+    /// nudge entirely) and `current_verbatim` must end with the nudge, so
+    /// the next request's last message is a real user-role message rather
+    /// than the assistant's own draft (invariant: current Claude models
+    /// reject a request with no trailing user turn).
+    #[test]
+    fn a_draft_followed_by_a_control_nudge_with_no_reply_yet_stays_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let t1 = log.append_message(user_text("do a thing")).unwrap().id;
+        log.append_message(assistant_text("draft answer")).unwrap();
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::StopHook,
+            "[stop-hook]: keep going",
+        ))
+        .unwrap();
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.turns.len(), 1);
+        let turn = index.turn_by_id(&t1).unwrap();
+        assert!(
+            !turn.closed,
+            "a nudge with no reply after it must keep the turn open"
+        );
+        let verbatim = turn.current_verbatim();
+        let last = verbatim.last().expect("at least the directive");
+        assert_eq!(
+            last.text_content(),
+            "[stop-hook]: keep going",
+            "the nudge must be the last message so it reaches the model"
+        );
+        assert_eq!(last.role, R::User);
+    }
+
+    /// The same shape, but a tool result (rather than a nudge) is the last
+    /// thing appended after the draft: also open, for the same reason.
+    #[test]
+    fn a_draft_followed_by_a_tool_result_with_no_reply_yet_stays_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let t1 = log.append_message(user_text("do a thing")).unwrap().id;
+        log.append_message(assistant_tool_call(
+            "c1",
+            "bash",
+            serde_json::json!({"command": "ls"}),
+        ))
+        .unwrap();
+        log.append_message(tool_result("c1", "ok")).unwrap();
+        let index = TurnIndex::from_log(&log);
+        let turn = index.turn_by_id(&t1).unwrap();
+        assert!(!turn.closed, "a fresh tool result must keep the turn open");
     }
 
     #[test]

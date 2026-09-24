@@ -339,6 +339,14 @@ pub struct EventBus {
     tx: broadcast::Sender<SeqEvent>,
     ring: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<SeqEvent>>>,
     next: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Count of subscribers created via [`Self::subscribe_internal`] — the
+    /// handle's own in-process projector, never a real client. Held for the
+    /// handle's whole lifetime, so it only ever grows; [`Self::
+    /// external_subscribers`] subtracts it from `receiver_count()` so
+    /// "is anyone actually watching" (the 2s attach wait, idle eviction)
+    /// answers about real clients instead of being permanently pinned above
+    /// zero by the projector that is always there.
+    internal_subscribers: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl EventBus {
@@ -352,6 +360,7 @@ impl EventBus {
                 std::collections::VecDeque::with_capacity(Self::CAPACITY),
             )),
             next: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            internal_subscribers: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -380,8 +389,35 @@ impl EventBus {
         self.tx.subscribe()
     }
 
+    /// Subscribe as the handle's own in-process projector rather than an
+    /// external client. The receiver behaves identically — this only marks
+    /// it so [`Self::external_subscribers`] can tell the two apart; the
+    /// subscription still counts toward `receiver_count()`, and toward
+    /// keeping `send` from silently landing on zero receivers.
+    pub fn subscribe_internal(&self) -> broadcast::Receiver<SeqEvent> {
+        self.internal_subscribers
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.tx.subscribe()
+    }
+
     pub fn receiver_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    /// Subscribers that are real clients (SSE connections), excluding the
+    /// handle's own always-on internal projector.
+    ///
+    /// `receiver_count()` alone can never observe zero once
+    /// [`Self::subscribe_internal`] has been called once, which made two
+    /// callers that actually mean "is anyone external watching" — the 2s
+    /// attach wait in `run_prompt` and idle-session eviction — permanently
+    /// unable to see "no external subscribers" once the projector attached
+    /// at handle creation.
+    pub fn external_subscribers(&self) -> usize {
+        self.receiver_count().saturating_sub(
+            self.internal_subscribers
+                .load(std::sync::atomic::Ordering::SeqCst),
+        )
     }
 
     /// Events strictly after `seq`, oldest first.
@@ -473,5 +509,33 @@ mod bus_tests {
         let bus = EventBus::new();
         bus.send(note(1));
         assert_eq!(bus.replay_after(u64::MAX).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn internal_subscriber_is_excluded_from_external_subscribers() {
+        let bus = EventBus::new();
+        assert_eq!(bus.external_subscribers(), 0);
+        let _internal = bus.subscribe_internal();
+        assert_eq!(bus.receiver_count(), 1);
+        assert_eq!(
+            bus.external_subscribers(),
+            0,
+            "the always-on internal projector must never look like a real client"
+        );
+        let external = bus.subscribe();
+        assert_eq!(bus.receiver_count(), 2);
+        assert_eq!(bus.external_subscribers(), 1);
+        drop(external);
+        // tokio::broadcast decrements receiver_count synchronously on drop.
+        assert_eq!(bus.external_subscribers(), 0);
+    }
+
+    #[test]
+    fn multiple_external_subscribers_all_count() {
+        let bus = EventBus::new();
+        let _internal = bus.subscribe_internal();
+        let _a = bus.subscribe();
+        let _b = bus.subscribe();
+        assert_eq!(bus.external_subscribers(), 2);
     }
 }

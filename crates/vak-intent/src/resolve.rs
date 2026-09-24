@@ -701,6 +701,13 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
     let attendance = declared.attendance.unwrap_or(extraction.attendance);
 
     let mut domains: BTreeSet<String> = extraction.domains.iter().cloned().collect();
+    // Environment-derived domains (a git repository) apply only to effectful
+    // acts, the same rule `stakes_from_environment` follows just above: a
+    // repository mid-edit does not make answering a question an engineering
+    // task.
+    if act.is_effectful() {
+        domains.extend(extraction.domains_from_environment.iter().cloned());
+    }
     domains.extend(declared.domains.iter().cloned());
 
     let axis_confidence = Confidences {

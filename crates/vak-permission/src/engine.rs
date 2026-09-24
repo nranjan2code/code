@@ -32,8 +32,9 @@ pub struct PermissionEngine {
     presenting: Vec<String>,
 }
 
-const READ_TOOLS: [&str; 7] = [
+const READ_TOOLS: [&str; 8] = [
     "read",
+    "doc_read",
     "glob",
     "grep",
     "ls",
@@ -41,8 +42,8 @@ const READ_TOOLS: [&str; 7] = [
     "session_search",
     "skill",
 ];
-const PATH_SCOPED_READ_TOOLS: [&str; 4] = ["read", "glob", "grep", "ls"];
-const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
+const PATH_SCOPED_READ_TOOLS: [&str; 5] = ["read", "doc_read", "glob", "grep", "ls"];
+const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];
 /// Learning-loop journaling into vak's own per-workspace store
 /// (docs/design/26-learning.md): sanctioned under workspace-write, still
 /// denied by read-only's default arm below.
@@ -290,7 +291,7 @@ fn describe(tool: &str, args: &Value) -> String {
                 format!("bash `{preview}`")
             })
             .unwrap_or_else(|| "bash".into()),
-        "write" | "edit" | "read" => args
+        "write" | "edit" | "read" | "doc_read" | "office_apply" => args
             .get("path")
             .and_then(|p| p.as_str())
             .map(|p| format!("{tool} {p}"))

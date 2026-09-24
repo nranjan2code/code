@@ -938,7 +938,7 @@ export function writeFile(path: string, content: string): Promise<unknown> {
 
 export type WorkspaceCheckPlan = { id: string; label: string; command: string };
 export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number; operation?: "Upsert" | "Delete" }>; target_checks?: Array<{ verifier: string; path: string }>; workspace_checks?: WorkspaceCheckPlan[] };
-export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; draft_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }>; updated_at: string; parent_candidate_id?: string; revision_session_id?: string };
+export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; draft_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }>; updated_at: string; parent_candidate_id?: string; revision_session_id?: string; narrowed?: { path: string; keep: string[] } };
 export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { verification?: Array<{ path: string; status: string; evidence: string }>; deleted?: string[]; integration?: { applied_state_digest: string; workspace_state_status: string; target_checks_status: string; evidence: string; target_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }> } }; workspace_checks?: WorkspaceCheckPlan[]; updated_at: string };
 export type SandboxPromotionUndoRecord = { record_id: string; session_id: string; candidate_id: string; receipt: { restored: string[]; verification: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
 export type SandboxWorkspaceCheckRecord = { record_id: string; session_id: string; candidate_id: string; applied_state_digest: string; check: WorkspaceCheckPlan; status: "passed" | "failed"; evidence: string; updated_at: string };
@@ -957,13 +957,68 @@ export function readSandboxCandidateFile(sessionId: string, candidateId: string,
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
 }
 
+export type OfficeChange = {
+  section: string;
+  anchor: string;
+  kind: "added" | "removed" | "changed" | "moved";
+  before?: string | null;
+  after?: string | null;
+};
+
+/** One change a person can keep or leave out: one edit the Agent made, or
+ *  one cell of it. `requires` names choices it cannot be kept without. */
+export type OfficeChoice = {
+  id: string;
+  label: string;
+  requires: string[];
+  changes: OfficeChange[];
+};
+
+/** What accepting does beyond the visible changes: to digital signatures
+ *  and sensitivity labels. `warning` when it removes or weakens one. */
+export type OfficeImpact = { kind: "signature" | "label"; message: string; warning: boolean };
+
+export type OfficeReview = {
+  path: string;
+  compared_with: "workspace" | "nothing (new file)";
+  summary: string[];
+  changes: OfficeChange[];
+  flags: string[];
+  impact?: OfficeImpact[];
+  /** Present when the draft's recorded edits reproduce it exactly. */
+  choices?: OfficeChoice[];
+  /** Why the draft can only be accepted or rejected whole. */
+  choices_unavailable?: string;
+  /** Set on a version that keeps some of an earlier draft's changes. */
+  narrowed_from?: { candidate_id: string; keep: string[] };
+};
+
+/** The semantic change list for an Office file in a draft, and the changes
+ *  a person can choose among, computed by the server in its document
+ *  worker (docs/design/72, P3). */
+export function readSandboxCandidateOfficeReview(sessionId: string, candidateId: string, path: string): Promise<OfficeReview> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/office-review?path=${encodeURIComponent(path)}`);
+}
+
+/** A new version of the draft that keeps only `keep` (choice ids). The full
+ *  draft stays; the new version is reviewed and accepted like any other. */
+export async function narrowSandboxCandidateOffice(sessionId: string, candidateId: string, path: string, keep: string[]): Promise<SandboxCandidateRecord> {
+  const response = await req<{ kind: "Candidate"; record: SandboxCandidateRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/office-narrow`, {
+    method: "POST",
+    body: JSON.stringify({ path, keep }),
+  });
+  return response.record;
+}
+
 export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
   const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return URL.createObjectURL(await response.blob());
 }
 
-export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number }): Promise<{ comment_id: string; intervention: boolean }> {
+/** `anchor.anchor` points into an Office file (`Budget!B4`, `p:1A2B3C4D`,
+ *  `slide:256/shape:3`); line numbers are for text files only. */
+export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number; anchor?: string }): Promise<{ comment_id: string; intervention: boolean }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`, {
     method: "POST",
     body: JSON.stringify({
@@ -971,12 +1026,13 @@ export function commentOnSandboxCandidate(sessionId: string, candidateId: string
       path: anchor?.path,
       line_start: anchor?.lineStart,
       line_end: anchor?.lineEnd,
+      anchor: anchor?.anchor,
       request_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     }),
   });
 }
 
-export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; created_at?: string };
+export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; anchor?: string; created_at?: string };
 
 export function listSandboxCandidateComments(sessionId: string, candidateId: string): Promise<{ comments: SandboxCandidateComment[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);

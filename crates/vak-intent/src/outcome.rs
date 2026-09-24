@@ -1070,8 +1070,14 @@ impl OutcomeSpec {
     }
 
     /// Whether this outcome requires execution or file modifications.
+    ///
+    /// True when an act genuinely needs one (`Act::requires_execution`:
+    /// `Modify`/`Operate`/`Govern`/`Verify`), or when the request names a
+    /// file deliverable outright (`expects_saved_file`) — the only case
+    /// where authoring content also demands a receipt, since `Act` alone has
+    /// no view of the request text.
     pub fn requires_execution(&self) -> bool {
-        self.acts.iter().any(|act| act.requires_execution())
+        self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution())
     }
 
     /// Whether this outcome requires inspection, search, or enumeration.
@@ -1081,8 +1087,8 @@ impl OutcomeSpec {
 
     /// Whether this outcome requires real tool execution or evidence receipts.
     pub fn requires_tool(&self) -> bool {
-        self.requires_execution()
-            || self.requires_inspection()
+        self.expects_saved_file()
+            || self.acts.iter().any(|act| act.requires_tool())
             || self
                 .requirements
                 .iter()

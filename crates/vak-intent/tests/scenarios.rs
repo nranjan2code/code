@@ -2372,8 +2372,42 @@ fn edge_repo_detection_adds_domain() {
         0,
     ));
     assert!(
-        extraction.domains.contains(&"engineering".to_string()),
-        "repo should add 'engineering' domain"
+        extraction
+            .domains_from_environment
+            .contains(&"engineering".to_string()),
+        "repo should add 'engineering' as an environment-derived domain"
+    );
+}
+
+/// Environment signals apply only to effectful acts (docs/design/
+/// 47-commitment-kernel.md, "a repository mid-edit does not make answering
+/// a question risky"). A git repository says nothing about the subject of a
+/// non-effectful request asked inside it, so `engineering` must not reach
+/// the resolved reading for a poem just because the workspace is a repo.
+#[test]
+fn a_git_repo_does_not_tag_engineering_on_a_non_effectful_request() {
+    let intent = resolve(
+        &req_full(
+            "write a short poem about the sea",
+            Surface::Cli,
+            true,
+            false,
+            None,
+            false,
+            0,
+        ),
+        &Declared::default(),
+        &Authority::default(),
+        &ResolverConfig::default(),
+        now(),
+    )
+    .intent();
+    assert_eq!(intent.reading.act, Act::Author);
+    assert!(!intent.reading.act.is_effectful());
+    assert!(
+        !intent.reading.domains.contains("engineering"),
+        "domains: {:?}",
+        intent.reading.domains
     );
 }
 
@@ -2838,6 +2872,88 @@ fn outcome_extension_requirements_validation() {
     );
 }
 
+/// The live bug: every writing request tripped the agent's stop gate,
+/// because `OutcomeSpec::requires_execution` returned true for any
+/// `Act::Author` reading and `vak-agent`'s stop policy reads
+/// `spec.stop == StopProfile::Effect || spec.requires_execution()`.
+/// Authoring content — a poem, an email, a summary, a plan, prose of any
+/// length — must not demand a bash or file-modification receipt, and its
+/// stop profile must not be `Effect` or `Verification`.
+#[test]
+fn authoring_prose_does_not_require_an_execution_receipt() {
+    for prompt in [
+        "write a short poem about the sea",
+        "draft an email to my landlord asking to fix the heater",
+        "write a summary of this article",
+        "Write a lot.",
+    ] {
+        let intent = resolve_text(prompt);
+        let spec = OutcomeSpec::from_intent(prompt, &intent);
+        assert!(
+            !spec.requires_execution(),
+            "{prompt:?}: acts={:?} expects_saved_file={} should not require execution",
+            spec.acts,
+            spec.expects_saved_file()
+        );
+        assert_ne!(
+            spec.stop,
+            StopProfile::Effect,
+            "{prompt:?}: stop profile should not be Effect"
+        );
+        assert_ne!(
+            spec.stop,
+            StopProfile::Verification,
+            "{prompt:?}: stop profile should not be Verification"
+        );
+    }
+}
+
+/// The one case authoring genuinely needs a receipt: the request names a
+/// file deliverable outright. `Act` alone cannot see this — only
+/// `OutcomeSpec`, which has the request text via `expects_saved_file`.
+#[test]
+fn authoring_with_a_named_file_target_requires_an_execution_receipt() {
+    let prompt = "write a Python script that parses logs and save it as parse.py";
+    let intent = resolve_text(prompt);
+    let spec = OutcomeSpec::from_intent(prompt, &intent);
+    assert!(spec.expects_saved_file(), "acts={:?}", spec.acts);
+    assert!(spec.requires_execution());
+}
+
+/// Genuinely effectful work and verification are unaffected by the
+/// authoring fix: they must keep demanding an execution receipt.
+#[test]
+fn effectful_and_verification_requests_still_require_execution() {
+    for prompt in [
+        "fix the failing test",
+        "deploy the billing service to production",
+        "rename the config key in settings.toml",
+    ] {
+        let intent = resolve_text(prompt);
+        let spec = OutcomeSpec::from_intent(prompt, &intent);
+        assert!(
+            spec.requires_execution(),
+            "{prompt:?}: acts={:?} should still require execution",
+            spec.acts
+        );
+    }
+}
+
+/// `Orchestrate` mirrors `Author`: dispatching a worker is proven by a tool
+/// call, not a shell command or a file write, so it must not demand an
+/// execution receipt — but unlike a plain answer it still must demand *some*
+/// tool call, or a claimed delegation with nothing dispatched would pass.
+#[test]
+fn orchestrate_requires_a_tool_but_not_an_execution_receipt() {
+    let reading = Reading {
+        act: Act::Orchestrate,
+        ..Reading::general()
+    };
+    let spec = OutcomeSpec::from_reading("delegate this across three workers", &reading, 1);
+    assert!(!spec.requires_execution());
+    assert!(spec.requires_tool());
+}
+
 // ================================================================
 // Part 16: Resolution determinism and reproducibility
 // ================================================================
@@ -3027,6 +3143,41 @@ fn act_is_effectful_classification() {
     assert!(!Act::Verify.is_effectful());
     assert!(!Act::Orchestrate.is_effectful());
     assert!(!Act::Author.is_effectful());
+}
+
+/// `requires_execution` is the bash-or-file-receipt gate the stop policy
+/// reads (`spec.requires_execution()` in `vak-agent/src/stop_policy.rs`).
+/// `Author` producing prose is proven by the response itself, so it is
+/// absent; `Orchestrate` dispatching a worker is proven by a tool call
+/// rather than a shell command or a file write, so it is absent too and
+/// lives under `requires_tool` instead. `Verify` has no other way to be
+/// proven than running the check, so it stays alongside the effectful acts.
+#[test]
+fn act_requires_execution_and_requires_tool_classification() {
+    for act in [Act::Modify, Act::Operate, Act::Govern, Act::Verify] {
+        assert!(act.requires_execution(), "{act:?} should require execution");
+        assert!(act.requires_tool(), "{act:?} should require a tool");
+    }
+    for act in [
+        Act::Converse,
+        Act::Answer,
+        Act::Locate,
+        Act::Analyze,
+        Act::Author,
+        Act::Orchestrate,
+    ] {
+        assert!(
+            !act.requires_execution(),
+            "{act:?} should not require an execution/file receipt"
+        );
+    }
+    // Orchestrate still needs proof that a worker or flow actually ran —
+    // just not specifically a shell command or a file write.
+    assert!(Act::Orchestrate.requires_tool());
+    for act in [Act::Converse, Act::Answer, Act::Analyze, Act::Author] {
+        assert!(!act.requires_tool(), "{act:?} should not require a tool");
+    }
+    assert!(Act::Locate.requires_tool());
 }
 
 #[test]

@@ -12,7 +12,6 @@ pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
-pub mod doc_reader;
 pub mod entities;
 pub mod files;
 pub mod finops;
@@ -510,9 +509,24 @@ struct CoreInner {
     /// cached briefly too, so an unavailable metadata endpoint cannot stall
     /// every turn.
     model_context_cache: ModelContextCache,
+    /// Keys with a background metadata refresh in flight, so a stale hit
+    /// spawns at most one refresh task per key rather than one per caller.
+    model_context_refreshing: std::sync::Mutex<std::collections::HashSet<(String, String, String)>>,
     /// Measured capacity profiles, one per bound `(provider, model,
     /// quantisation)` this process has seen (docs/design/68 §1).
     capacity_cache: CapacityCache,
+    /// One background horizon-ladder probe slot per profile key
+    /// (docs/design/68 §1): the token cancels an in-flight probe when a
+    /// real turn starts for the same model, and presence is the
+    /// single-flight guard. Probes run only after a turn completes, never
+    /// on a turn's own critical path.
+    capacity_probes:
+        Arc<std::sync::Mutex<HashMap<vak_context::capacity::ProfileKey, CancellationToken>>>,
+    /// Wall-clock time the most recent background probe attempt for a key
+    /// started, so a key that keeps getting cancelled by real turns is not
+    /// respawned more than once per [`Core::CAPACITY_PROBE_MIN_INTERVAL`].
+    capacity_probe_attempted:
+        Arc<std::sync::Mutex<HashMap<vak_context::capacity::ProfileKey, std::time::Instant>>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -1295,7 +1309,10 @@ impl Core {
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 model_context_cache: std::sync::Mutex::new(HashMap::new()),
+                model_context_refreshing: std::sync::Mutex::new(std::collections::HashSet::new()),
                 capacity_cache: std::sync::Mutex::new(HashMap::new()),
+                capacity_probes: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                capacity_probe_attempted: Arc::new(std::sync::Mutex::new(HashMap::new())),
                 mcp_override: std::sync::Mutex::new(None),
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
@@ -3534,7 +3551,6 @@ impl Core {
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
-        tools.push(Arc::new(doc_reader::DocReaderTool));
         for emit_tool in presentation_tools::EmitCardTool::all() {
             tools.push(Arc::new(emit_tool));
         }
@@ -4435,48 +4451,100 @@ impl Core {
         Ok(vak_llm::provider_status::inspect(provider, &auth).await?)
     }
 
+    /// Long TTL for provider-reported model metadata (context window,
+    /// output max): it changes only when the model itself does, so once a
+    /// value is cached a turn should virtually never wait on it again.
+    /// `route_context_limits` and `capacity_profile_for` are the only two
+    /// callers and now share this one cache and this one TTL.
+    const MODEL_METADATA_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    /// Provider metadata for `(provider, model, credential_id)`, served
+    /// from `self.inner.model_context_cache`. A fresh hit returns with no
+    /// I/O. A stale hit still returns immediately — the stale value — and
+    /// kicks off a single-flighted background refresh so the *next* call
+    /// sees a fresh one; the caller that found it stale never waits on the
+    /// network. Only a cold key (nothing cached yet) is fetched inline,
+    /// since there is nothing else to serve.
+    async fn model_context_cached(
+        &self,
+        provider: &str,
+        model: &str,
+        credential_id: Option<&str>,
+    ) -> Option<vak_llm::models::ModelContext> {
+        let cache_key = (
+            provider.to_string(),
+            model.to_string(),
+            credential_id.unwrap_or_default().to_string(),
+        );
+        let cached = self
+            .inner
+            .model_context_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&cache_key).cloned());
+        if let Some((fetched_at, value)) = cached {
+            if fetched_at.elapsed() < Self::MODEL_METADATA_TTL {
+                return value;
+            }
+            let should_spawn = self
+                .inner
+                .model_context_refreshing
+                .lock()
+                .is_ok_and(|mut refreshing| refreshing.insert(cache_key.clone()));
+            if should_spawn {
+                let core = self.clone();
+                let refresh_key = cache_key.clone();
+                tokio::spawn(async move {
+                    let (provider, model, credential_id) = refresh_key.clone();
+                    let fresh = match core.provider_auth_for_leg(
+                        &provider,
+                        (!credential_id.is_empty()).then_some(credential_id.as_str()),
+                    ) {
+                        Ok(auth) => vak_llm::models::model_context(&provider, &auth, &model)
+                            .await
+                            .ok()
+                            .flatten(),
+                        Err(_) => None,
+                    };
+                    if let Ok(mut cache) = core.inner.model_context_cache.lock() {
+                        cache.insert(refresh_key.clone(), (std::time::Instant::now(), fresh));
+                    }
+                    if let Ok(mut refreshing) = core.inner.model_context_refreshing.lock() {
+                        refreshing.remove(&refresh_key);
+                    }
+                });
+            }
+            return value;
+        }
+
+        // Cold: nothing cached yet, so this call is the one that populates it.
+        let value = match self.provider_auth_for_leg(provider, credential_id) {
+            Ok(auth) => vak_llm::models::model_context(provider, &auth, model)
+                .await
+                .ok()
+                .flatten(),
+            Err(_) => None,
+        };
+        if let Ok(mut cache) = self.inner.model_context_cache.lock() {
+            cache.insert(cache_key, (std::time::Instant::now(), value.clone()));
+        }
+        value
+    }
+
     async fn route_context_limits(
         &self,
         primary: &vak_llm::RouteLeg,
         fallback: &[vak_llm::RouteLeg],
     ) -> (u64, u64) {
-        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
         let mut legs = Vec::with_capacity(1 + fallback.len());
         legs.push(primary.clone());
         legs.extend(fallback.iter().cloned());
         let mut context_window = self.inner.config.context_window;
         let mut max_output = u64::from(self.inner.config.max_tokens);
         for leg in legs {
-            let provider = leg.provider;
-            let model = leg.model;
-            let credential_id = leg.credential_id.unwrap_or_default();
-            let cache_key = (provider.clone(), model.clone(), credential_id.clone());
-            let cached = self
-                .inner
-                .model_context_cache
-                .lock()
-                .ok()
-                .and_then(|cache| cache.get(&cache_key).cloned())
-                .filter(|(at, _)| at.elapsed() < TTL)
-                .map(|(_, value)| value);
-            let metadata = if let Some(value) = cached {
-                value
-            } else {
-                let value = match self.provider_auth_for_leg(
-                    &provider,
-                    (!credential_id.is_empty()).then_some(credential_id.as_str()),
-                ) {
-                    Ok(auth) => vak_llm::models::model_context(&provider, &auth, &model)
-                        .await
-                        .ok()
-                        .flatten(),
-                    Err(_) => None,
-                };
-                if let Ok(mut cache) = self.inner.model_context_cache.lock() {
-                    cache.insert(cache_key, (std::time::Instant::now(), value.clone()));
-                }
-                value
-            };
+            let metadata = self
+                .model_context_cached(&leg.provider, &leg.model, leg.credential_id.as_deref())
+                .await;
             if let Some(metadata) = metadata {
                 context_window = context_window.min(metadata.input_tokens);
                 if let Some(output) = metadata.output_tokens {
@@ -4505,57 +4573,88 @@ impl Core {
             .is_some_and(is_loopback_host)
     }
 
+    /// A background probe on a key repeatedly interrupted by real turns is
+    /// spaced out rather than respawned on every single turn completion.
+    const CAPACITY_PROBE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    /// Bounds any single probe rung request: a hung provider must not stall
+    /// the background probe indefinitely.
+    const PROBE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    /// A rung whose expected prefill time (its token target divided by the
+    /// measured prefill throughput so far) exceeds this is skipped rather
+    /// than sent — every larger rung would be even slower, so the ladder
+    /// stops there and reports what it already confirmed.
+    const PROBE_MAX_RUNG_SECS: f64 = 45.0;
+
     /// The measured capacity profile for `leg` (docs/design/68-context-engine.md
-    /// §1): served from the per-process cache when fresh, otherwise rebuilt
-    /// from provider metadata and — for a local provider, or a hosted one
-    /// with `[probe] hosted = "full"` — a bind-time horizon-ladder probe
-    /// run against the live provider client `Core` already builds for this
-    /// leg. A freshly built profile (probe or metadata-only) is recorded to
-    /// `session` as a `CapacityProbe` activity before being cached; a cache
-    /// hit records nothing. Never runs more than one probe per key per
-    /// process unless the cached profile is stale or `needs_reprobe`.
+    /// §1), bound immediately from what is already known — the ledger's or
+    /// process cache's last profile for this key (even if stale: stale
+    /// beats blocking), or a metadata-only profile on a cold key. Never
+    /// runs the horizon-ladder probe itself: that never belongs on a
+    /// turn's critical path. When the bound profile is missing, stale, or
+    /// `needs_reprobe`, this cancels any in-flight background probe for
+    /// the same key (a real turn now wants the model) and leaves it to
+    /// `maybe_start_capacity_probe`, called once this turn is done, to
+    /// (re)start the ladder in the background. A freshly bound profile not
+    /// already in this session's ledger is recorded as a `CapacityProbe`
+    /// activity — this is also how a session catches up on a profile a
+    /// background probe delivered since it last bound this key.
     async fn capacity_profile_for(
         &self,
         leg: &vak_llm::RouteLeg,
         session: &mut SessionLog,
-        cancel: &CancellationToken,
     ) -> vak_context::capacity::CapacityProfile {
         let now = std::time::SystemTime::now();
-        let local = self.is_local_provider(leg);
 
         // Metadata must be fetched before the key is built: Ollama's
         // `/api/show` reports the running quantisation, and a requantised
         // model must key its own profile rather than inheriting a stale one
-        // (docs/design/68-context-engine.md §1).
-        let auth = self
-            .provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
-            .ok();
-        let metadata = match &auth {
-            Some(auth) => vak_llm::models::model_context(&leg.provider, auth, &leg.model)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
+        // (docs/design/68-context-engine.md §1). Served from the shared,
+        // stale-while-revalidate cache (`model_context_cached`) rather than
+        // a fresh network call every turn.
+        let metadata = self
+            .model_context_cached(&leg.provider, &leg.model, leg.credential_id.as_deref())
+            .await;
         let key = vak_context::capacity::ProfileKey {
             provider: leg.provider.clone(),
             model: leg.model.clone(),
             quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
         };
 
-        // The ledger's latest record for this key wins over the in-process
-        // cache: it carries every feedback update the turn loop wrote
-        // (tightened horizons, calibrated tokens/char), which the cache
-        // never sees, and it survives a restart.
-        let cached = session
-            .latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key)
-            .or_else(|| {
-                self.inner
-                    .capacity_cache
-                    .lock()
-                    .ok()
-                    .and_then(|cache| cache.get(&key).cloned())
-            });
+        // A real turn is about to use this model: a background probe for
+        // the same key would only compete with it for the same compute.
+        // The probe restarts its ladder on its next background attempt
+        // rather than resuming mid-rung — simpler and race-free, and cheap
+        // to redo ("the probe is free apart from time", §1).
+        if let Ok(mut probes) = self.inner.capacity_probes.lock()
+            && let Some(token) = probes.remove(&key)
+        {
+            token.cancel();
+        }
+
+        // The more recently probed of the ledger's latest record and the
+        // in-process cache wins: the ledger carries every feedback update
+        // the turn loop wrote (tightened horizons, calibrated tokens/char)
+        // and survives a restart, but a background probe (§1: "only while
+        // that model is idle") updates only the process cache, so it can
+        // now be strictly newer than what this session has ever logged.
+        let from_session =
+            session.latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key);
+        let from_cache = self
+            .inner
+            .capacity_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+        let cached = match (from_session, from_cache) {
+            (Some(a), Some(b)) => Some(if b.provenance.probed_at > a.provenance.probed_at {
+                b
+            } else {
+                a
+            }),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
         let declared_window = metadata
             .as_ref()
             .map(|m| m.input_tokens)
@@ -4566,76 +4665,162 @@ impl Core {
             .unwrap_or(u64::from(self.inner.config.max_tokens));
         let metadata_digest = format!("{declared_window}:{output_reserve}");
 
-        if let Some(profile) = &cached
-            && !profile.needs_reprobe
-            && profile.provenance.metadata_digest == metadata_digest
-            && !profile.is_stale(now, local)
-        {
-            return profile.clone();
-        }
-
-        let run_full_probe = local || self.inner.config.probe.hosted == "full";
-        let provider_client = if run_full_probe {
-            auth.as_ref().and_then(|auth| {
-                self.inner
-                    .registry
-                    .get(&adapter_name_for_leg(leg), auth)
-                    .ok()
-            })
-        } else {
-            None
-        };
-
-        let profile = if let Some(provider_client) = provider_client {
-            self.run_capacity_probe(
-                leg,
-                provider_client,
-                ProbeMetadata {
-                    declared_window,
-                    output_reserve,
-                    metadata_digest,
-                    probed_at: now,
-                },
-                cancel,
-            )
-            .await
-        } else {
-            vak_context::capacity::CapacityProfile::from_metadata_only(
+        let mut profile = match cached {
+            Some(profile) => profile,
+            None => vak_context::capacity::CapacityProfile::from_metadata_only(
                 declared_window,
                 output_reserve,
                 metadata_digest,
                 now,
-            )
+            ),
         };
-
-        let mut profile = profile;
         profile.provenance.quantisation = key.quantisation.clone();
+
         if let Ok(mut cache) = self.inner.capacity_cache.lock() {
             cache.insert(key.clone(), profile.clone());
         }
 
-        let mut data = std::collections::BTreeMap::new();
-        if let Ok(key_json) = serde_json::to_string(&key) {
-            data.insert("key".into(), key_json);
+        let already_logged = session
+            .latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key)
+            .is_some_and(|logged| logged.provenance.probed_at == profile.provenance.probed_at);
+        if !already_logged {
+            let mut data = std::collections::BTreeMap::new();
+            if let Ok(key_json) = serde_json::to_string(&key) {
+                data.insert("key".into(), key_json);
+            }
+            if let Ok(profile_json) = serde_json::to_string(&profile) {
+                data.insert("profile".into(), profile_json);
+            }
+            let activity_id = now
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| format!("activity-{}", d.as_nanos()))
+                .unwrap_or_else(|_| format!("activity-{}", uuid_like()));
+            let _ = session.append_activity(vak_session::ActivityRecord {
+                activity_id,
+                turn: None,
+                kind: vak_session::ActivityKind::CapacityProbe,
+                status: vak_session::ActivityStatus::Succeeded,
+                label: format!("Capacity profile bound for {}/{}", leg.provider, leg.model),
+                detail: None,
+                data,
+            });
         }
-        if let Ok(profile_json) = serde_json::to_string(&profile) {
-            data.insert("profile".into(), profile_json);
-        }
-        let activity_id = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| format!("activity-{}", d.as_nanos()))
-            .unwrap_or_else(|_| format!("activity-{}", uuid_like()));
-        let _ = session.append_activity(vak_session::ActivityRecord {
-            activity_id,
-            turn: None,
-            kind: vak_session::ActivityKind::CapacityProbe,
-            status: vak_session::ActivityStatus::Succeeded,
-            label: format!("Capacity profile bound for {}/{}", leg.provider, leg.model),
-            detail: None,
-            data,
-        });
 
         profile
+    }
+
+    /// Starts a background horizon-ladder probe for `leg`'s profile key,
+    /// but only when warranted: this leg is eligible for a full probe
+    /// (local, or hosted with `[probe] hosted = "full"`), the cached
+    /// profile is missing/stale/`needs_reprobe`, no probe for this key is
+    /// already running (single-flight), and the key was not attempted
+    /// within `CAPACITY_PROBE_MIN_INTERVAL`. Called only once a turn is
+    /// done (docs/design/68 §1: "only while that model is idle") — never
+    /// from a turn's own critical path. The task updates the Core cache on
+    /// completion; the session ledger catches up at the *next* bind
+    /// (`capacity_profile_for`), since the ledger belongs to the running
+    /// turn, not to this detached task.
+    async fn maybe_start_capacity_probe(&self, leg: &vak_llm::RouteLeg) {
+        let local = self.is_local_provider(leg);
+        if !(local || self.inner.config.probe.hosted == "full") {
+            return;
+        }
+        let metadata = self
+            .model_context_cached(&leg.provider, &leg.model, leg.credential_id.as_deref())
+            .await;
+        let key = vak_context::capacity::ProfileKey {
+            provider: leg.provider.clone(),
+            model: leg.model.clone(),
+            quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
+        };
+        let now = std::time::SystemTime::now();
+        let declared_window = metadata
+            .as_ref()
+            .map(|m| m.input_tokens)
+            .unwrap_or(self.inner.config.context_window);
+        let output_reserve = metadata
+            .as_ref()
+            .and_then(|m| m.output_tokens)
+            .unwrap_or(u64::from(self.inner.config.max_tokens));
+        let metadata_digest = format!("{declared_window}:{output_reserve}");
+
+        let fresh = self
+            .inner
+            .capacity_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned())
+            .is_some_and(|profile| {
+                // A metadata-only profile (no rungs) is a placeholder, not
+                // a satisfied probe: this leg is eligible for the full
+                // ladder, so only an actual probe result counts as fresh.
+                !profile.provenance.rungs.is_empty()
+                    && !profile.needs_reprobe
+                    && profile.provenance.metadata_digest == metadata_digest
+                    && !profile.is_stale(now, local)
+            });
+        if fresh {
+            return;
+        }
+        if self
+            .inner
+            .capacity_probes
+            .lock()
+            .is_ok_and(|probes| probes.contains_key(&key))
+        {
+            return;
+        }
+        if self
+            .inner
+            .capacity_probe_attempted
+            .lock()
+            .ok()
+            .and_then(|attempts| attempts.get(&key).copied())
+            .is_some_and(|at| at.elapsed() < Self::CAPACITY_PROBE_MIN_INTERVAL)
+        {
+            return;
+        }
+        let Ok(auth) = self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
+        else {
+            return;
+        };
+        let Ok(provider_client) = self.inner.registry.get(&adapter_name_for_leg(leg), &auth) else {
+            return;
+        };
+
+        let token = CancellationToken::new();
+        if let Ok(mut probes) = self.inner.capacity_probes.lock() {
+            probes.insert(key.clone(), token.clone());
+        }
+        if let Ok(mut attempts) = self.inner.capacity_probe_attempted.lock() {
+            attempts.insert(key.clone(), std::time::Instant::now());
+        }
+
+        let core = self.clone();
+        let leg = leg.clone();
+        let probe_key = key.clone();
+        tokio::spawn(async move {
+            let mut profile = core
+                .run_capacity_probe(
+                    &leg,
+                    provider_client,
+                    ProbeMetadata {
+                        declared_window,
+                        output_reserve,
+                        metadata_digest,
+                        probed_at: now,
+                    },
+                    &token,
+                )
+                .await;
+            profile.provenance.quantisation = probe_key.quantisation.clone();
+            if let Ok(mut cache) = core.inner.capacity_cache.lock() {
+                cache.insert(probe_key.clone(), profile);
+            }
+            if let Ok(mut probes) = core.inner.capacity_probes.lock() {
+                probes.remove(&probe_key);
+            }
+        });
     }
 
     /// Runs the horizon-ladder probe (docs/design/68 §1 "Horizon ladder")
@@ -4663,10 +4848,23 @@ impl Core {
         // Refined as soon as one rung reports real usage, so later rungs
         // land closer to their token target on a real tokenizer.
         let mut tokens_per_char_hint = 0.25_f64;
+        // Refined from each rung's measured prefill time; 0 means unknown
+        // (no rung has reported one yet), in which case no rung is skipped.
+        let mut prefill_tps_hint = 0.0_f64;
 
         while let Some(target) = ladder.next_rung() {
             if cancel.is_cancelled() {
                 signals.push("probe cancelled before convergence".into());
+                break;
+            }
+            if prefill_tps_hint > 0.0
+                && target as f64 / prefill_tps_hint > Self::PROBE_MAX_RUNG_SECS
+            {
+                signals.push(format!(
+                    "rung {target} skipped: expected prefill ~{:.0}s exceeds the {:.0}s bound",
+                    target as f64 / prefill_tps_hint,
+                    Self::PROBE_MAX_RUNG_SECS
+                ));
                 break;
             }
             let request =
@@ -4691,21 +4889,33 @@ impl Core {
                 if cancel.is_cancelled() {
                     break;
                 }
-                let outcome = match provider_client
-                    .stream(request.clone(), cancel.clone())
-                    .await
+                let outcome = match tokio::time::timeout(
+                    Self::PROBE_REQUEST_TIMEOUT,
+                    provider_client.stream(request.clone(), cancel.clone()),
+                )
+                .await
                 {
-                    Ok(stream) => stream.result().await,
-                    Err(e) => Err(e),
+                    Ok(Ok(stream)) => stream.result().await,
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err(vak_llm::LlmError::Network(format!(
+                        "probe rung {target} exceeded its {:?} timeout",
+                        Self::PROBE_REQUEST_TIMEOUT
+                    ))),
                 };
                 match outcome {
                     Ok(message) => {
                         if sent_chars > 0 && message.usage.input_tokens > 0 {
                             tokens_per_char_hint =
-                                message.usage.input_tokens as f64 / sent_chars as f64;
+                                message.usage.prompt_tokens() as f64 / sent_chars as f64;
                         }
                         if first_prefill_ms.is_none() {
                             first_prefill_ms = message.usage.prefill_ms;
+                        }
+                        if let Some(ms) = message.usage.prefill_ms
+                            && ms > 0
+                        {
+                            prefill_tps_hint =
+                                message.usage.input_tokens as f64 / (ms as f64 / 1000.0);
                         }
                         if vak_context::capacity::followed(&message) {
                             passes += 1;
@@ -5557,7 +5767,7 @@ impl Core {
         if let Err(denied) = gate
             .authorize(&vak_agent::SpendCheck {
                 model: &model,
-                provider: provider.name(),
+                provider: &provider_name,
                 session_id: &session_id,
                 est_input_tokens: planned.input_tokens,
                 planned_output_tokens: planned.output_tokens,
@@ -5573,7 +5783,7 @@ impl Core {
             std::time::Duration::from_secs(self.inner.config.intent.classify_timeout_secs);
         let started = std::time::Instant::now();
         let mut receipt =
-            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Classify, provider.name(), &model);
+            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Classify, &provider_name, &model);
         let child = cancel.child_token();
         let outcome = tokio::time::timeout(watchdog, async {
             provider.stream(request, child).await?.result().await
@@ -5590,7 +5800,7 @@ impl Core {
                     None,
                 );
                 gate.record_settled_with_latency(
-                    provider.name(),
+                    &provider_name,
                     &model,
                     &session_id,
                     &message.usage,
@@ -5962,15 +6172,25 @@ impl Core {
             .provider_auth_for_leg(&self.effective_provider(), None)
             .ok()
             .and_then(|auth| auth.credential_id);
+        // An injected provider instance serves the turn itself, so it is the
+        // identity routing and receipts record; otherwise the configured one.
+        let turn_primary_provider = if self.provider_instance_override().is_some() {
+            provider.name().to_string()
+        } else {
+            self.effective_provider()
+        };
         let turn_primary_leg = vak_llm::RouteLeg {
-            provider: provider.name().to_string(),
+            provider: turn_primary_provider.clone(),
             model: model.clone(),
+            // The dialect names the wire the turn is actually served on,
+            // which is the adapter's, not the configured provider's.
             dialect: vak_llm::EndpointDialect::for_provider(
                 provider.name(),
                 needs_tools || engagement.posture.demand.reasoning_required,
             ),
             credential_id: turn_primary_credential_id,
         };
+        cfg.provider_name = Some(turn_primary_provider.clone());
         let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
         // The engagement's ladder prefix (a greeting does not need a deep
@@ -6017,13 +6237,15 @@ impl Core {
         cfg.declared_window = context_window;
         cfg.max_output = max_output;
         // Measured capacity (docs/design/68-context-engine.md §1): bound
-        // once per process per profile key (cached, TTL'd, re-probed on
-        // contradiction), never blocking this turn on more than one probe
-        // ladder run. `session` is the same ledger this turn is about to
-        // append to, so a fresh probe's Activity lands before the turn's
-        // own messages.
+        // immediately from what is already known (cache, ledger, or a
+        // metadata-only profile) — never from a live probe. The ladder
+        // itself, when this key needs one, runs in the background after
+        // this turn completes (see the `maybe_start_capacity_probe` call
+        // near this function's return). `session` is the same ledger this
+        // turn is about to append to, so the bind's Activity lands before
+        // the turn's own messages.
         let capacity = self
-            .capacity_profile_for(&turn_primary_leg, &mut session, &cancel)
+            .capacity_profile_for(&turn_primary_leg, &mut session)
             .await;
         cfg.capacity_key = Some(vak_context::capacity::ProfileKey {
             provider: turn_primary_leg.provider.clone(),
@@ -6416,10 +6638,6 @@ impl Core {
                 }
             }
         }
-        // Model-drift detection (docs/design/68-context-engine.md §7) reads
-        // this from the agent loop's own config, mirroring the ledger's
-        // `TurnCapabilitiesBound.tool_domains` below.
-        cfg.tool_domains = tool_domains.clone();
         if let Err(error) =
             session.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
                 epoch: cap_set.epoch,
@@ -6553,11 +6771,7 @@ impl Core {
             || !resolved_intent
                 .reading
                 .may_slice_capabilities(self.inner.config.intent.accept_confidence)
-            || resolved_intent
-                .reading
-                .acts()
-                .iter()
-                .any(|act| act.requires_execution());
+            || admitted_outcome.requires_execution();
         if let Some(h) = session.header() {
             let seq = self.next_checkpoint_seq(&h.session_id);
             // The session's first checkpoint is always taken: it is the
@@ -6567,8 +6781,9 @@ impl Core {
             if !expects_effect && !first_of_session {
                 // Nothing will be executed or written; skip the capture.
             } else {
-                if let Ok(cp) = checkpoints::capture(
+                if let Ok((cp, _stats)) = checkpoints::capture(
                     &self.inner.cwd,
+                    &self.sessions_home(),
                     &h.session_id,
                     seq,
                     &format!("turn: {}", prompt.text_content()),
@@ -7138,13 +7353,16 @@ impl Core {
             }
         }
 
+        // The model is idle now that this turn is done: this is the only
+        // place a horizon-ladder probe may start (docs/design/68 §1), and
+        // it never blocks the return below.
+        self.maybe_start_capacity_probe(&turn_primary_leg).await;
+
         Ok((outcome, session))
     }
 
     fn next_checkpoint_seq(&self, session_id: &str) -> u32 {
-        checkpoints::list(&self.sessions_home(), session_id)
-            .map(|list| list.last().map(|c| c.seq + 1).unwrap_or(0))
-            .unwrap_or(0)
+        checkpoints::next_seq(&self.sessions_home(), session_id)
     }
 
     /// User-invoked compaction (`/compact`): summarize older turns into a
@@ -7205,8 +7423,11 @@ impl Core {
         let req = vak_context::assemble::compaction_request(&model, &transcript);
 
         let started = std::time::Instant::now();
-        let mut receipt =
-            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Summarize, provider.name(), &model);
+        let mut receipt = vak_llm::WorkReceipt::new(
+            vak_llm::WorkPurpose::Summarize,
+            self.effective_provider(),
+            &model,
+        );
         let summary = match provider.stream(req, cancel).await {
             Ok(stream) => match stream.result().await {
                 Ok(msg) => {
@@ -10065,7 +10286,7 @@ mod spend_gate_persistence_tests {
 /// the point being tested is "no probe without opt-in", not credential
 /// plumbing.
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod capacity_probe_tests {
     use super::Core;
     use std::sync::Arc;
@@ -10111,6 +10332,31 @@ mod capacity_probe_tests {
             .await;
             Ok(rx)
         }
+    }
+
+    /// Polls the process capacity cache until `maybe_start_capacity_probe`'s
+    /// detached task has recorded a converged profile (at least one rung),
+    /// or panics after a generous bound. Fake providers in this module
+    /// answer in-process with no real I/O, so convergence is normally a
+    /// handful of scheduler ticks.
+    async fn wait_for_capacity_probe(
+        core: &Core,
+        key: &vak_context::capacity::ProfileKey,
+    ) -> vak_context::capacity::CapacityProfile {
+        for _ in 0..200 {
+            if let Some(profile) = core
+                .inner
+                .capacity_cache
+                .lock()
+                .ok()
+                .and_then(|cache| cache.get(key).cloned())
+                && !profile.provenance.rungs.is_empty()
+            {
+                return profile;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("background capacity probe did not converge in time");
     }
 
     fn header() -> SessionHeader {
@@ -10176,16 +10422,26 @@ mod capacity_probe_tests {
 
         let session_path = dir.path().join("probe-session.jsonl");
         let mut session = SessionLog::create(session_path, header()).unwrap();
-        let cancel = CancellationToken::new();
-        let probed = core
-            .capacity_profile_for(&loopback_leg, &mut session, &cancel)
-            .await;
-
-        assert_eq!(
-            probed.declared_window, 8_192,
-            "the ollama metadata fallback"
+        // `capacity_profile_for` never blocks on a probe: the very first
+        // bind returns a metadata-only profile immediately.
+        let bound = core.capacity_profile_for(&loopback_leg, &mut session).await;
+        assert_eq!(bound.declared_window, 8_192, "the ollama metadata fallback");
+        assert_eq!(bound.output_reserve, 4_096);
+        assert!(
+            bound.provenance.rungs.is_empty(),
+            "no ladder rung may run on the turn's own critical path"
         );
-        assert_eq!(probed.output_reserve, 4_096);
+
+        // The ladder only runs once `maybe_start_capacity_probe` is called
+        // (docs/design/68 §1: "only while that model is idle: start after
+        // a turn completes") — never inside `capacity_profile_for` itself.
+        let key = vak_context::capacity::ProfileKey {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            quantisation: None,
+        };
+        core.maybe_start_capacity_probe(&loopback_leg).await;
+        let probed = wait_for_capacity_probe(&core, &key).await;
         assert_eq!(
             probed.instruction_horizon.tokens, 4_000,
             "the single rung under declared_window * 0.9 that the fake provider followed"
@@ -10195,12 +10451,13 @@ mod capacity_probe_tests {
         assert!(probed.provenance.rungs[0].accepted);
         assert_eq!(probed.provenance.rungs[0].followed_instruction, Some(true));
 
+        // The next bind catches the session's ledger up on what the
+        // background probe delivered (the ledger belongs to the turn, the
+        // detached task has none).
+        let caught_up = core.capacity_profile_for(&loopback_leg, &mut session).await;
+        assert_eq!(caught_up.instruction_horizon.tokens, 4_000);
         let recorded: vak_context::capacity::CapacityProfile = session
-            .latest_capacity_profile(&vak_context::capacity::ProfileKey {
-                provider: "ollama".into(),
-                model: "fake-ollama-model".into(),
-                quantisation: None,
-            })
+            .latest_capacity_profile(&key)
             .expect("the probe must be recorded as a ledger activity");
         assert_eq!(recorded.instruction_horizon.tokens, 4_000);
 
@@ -10221,8 +10478,9 @@ mod capacity_probe_tests {
         let hosted_session_path = dir.path().join("hosted-session.jsonl");
         let mut hosted_session = SessionLog::create(hosted_session_path, header()).unwrap();
         let hosted_profile = core
-            .capacity_profile_for(&hosted_leg, &mut hosted_session, &cancel)
+            .capacity_profile_for(&hosted_leg, &mut hosted_session)
             .await;
+        core.maybe_start_capacity_probe(&hosted_leg).await;
 
         assert!(
             hosted_profile.provenance.rungs.is_empty(),
@@ -10319,10 +10577,14 @@ mod capacity_probe_tests {
         };
         let session_path = dir.path().join("cache-rung-session.jsonl");
         let mut session = SessionLog::create(session_path, header()).unwrap();
-        let cancel = CancellationToken::new();
-        let probed = core
-            .capacity_profile_for(&loopback_leg, &mut session, &cancel)
-            .await;
+        let _ = core.capacity_profile_for(&loopback_leg, &mut session).await;
+        core.maybe_start_capacity_probe(&loopback_leg).await;
+        let key = vak_context::capacity::ProfileKey {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            quantisation: None,
+        };
+        let probed = wait_for_capacity_probe(&core, &key).await;
 
         assert_eq!(
             probed.cache,

@@ -7727,6 +7727,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-ooxml"
+version = "4.0.2"
+dependencies = [
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "vak-ooxml",
+ "zip",
+]
+
+[[package]]
 name = "vak-ops"
 version = "4.0.2"
 dependencies = [
@@ -7791,8 +7802,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "vak-ooxml",
  "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -7834,6 +7845,7 @@ dependencies = [
  "vak-hooks",
  "vak-intent",
  "vak-llm",
+ "vak-ooxml",
  "vak-ops",
  "vak-permission",
  "vak-plugin",
@@ -7901,18 +7913,22 @@ name = "vak-tools"
 version = "4.0.2"
 dependencies = [
  "async-trait",
+ "chrono",
  "globset",
  "libc",
  "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "similar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "toml 0.8.2",
  "vak-llm",
+ "vak-ooxml",
  "vak-sandbox",
  "walkdir",
 ]

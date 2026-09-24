@@ -136,6 +136,33 @@ async fn full_stream_accumulates_text_and_function_calls() {
     assert_eq!(sigs, vec![Some("test_sig_value")]);
 }
 
+// Realistic cache-bearing usage (docs/design/68-context-engine.md §1):
+// `promptTokenCount` is the whole prompt, `cachedContentTokenCount` a
+// SUBSET of it, not an addition.
+const FIXTURE_CACHED_USAGE: &str = "\
+data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":8000,\"candidatesTokenCount\":40,\"cachedContentTokenCount\":7500}}\n\
+\n";
+
+#[tokio::test]
+async fn cached_tokens_are_split_out_of_prompt_token_count_not_added_on_top() {
+    let provider = GoogleProvider::new(GoogleConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_CACHED_USAGE).await,
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.usage.input_tokens, 500);
+    assert_eq!(msg.usage.cache_read_input_tokens, Some(7500));
+    assert_eq!(msg.usage.prompt_tokens(), 8000);
+}
+
 const FIXTURE_STOP: &str = "\
 data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"done\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":1}}\n\
 \n";

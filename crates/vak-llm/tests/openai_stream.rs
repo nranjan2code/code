@@ -163,6 +163,43 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     }
 }
 
+// Realistic cache-bearing usage payload (docs/design/68-context-engine.md
+// §1): OpenAI's `prompt_tokens` is the whole prompt, cache hits included —
+// `prompt_tokens_details.cached_tokens` is a SUBSET of it, not an addition.
+const FIXTURE_CACHED_USAGE_STREAM: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\
+\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5000,\"completion_tokens\":120,\"prompt_tokens_details\":{\"cached_tokens\":4800}}}\n\
+\n\
+data: [DONE]\n\
+\n";
+
+#[tokio::test]
+async fn cached_tokens_are_split_out_of_prompt_tokens_not_added_on_top() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_CACHED_USAGE_STREAM).await,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut es = provider
+        .stream(sample_request(), CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+
+    // 5000 total, 4800 of it served from cache: normalized input_tokens is
+    // only the 200 fresh tokens, never the full 5000.
+    assert_eq!(msg.usage.input_tokens, 200);
+    assert_eq!(msg.usage.cache_read_input_tokens, Some(4800));
+    assert_eq!(msg.usage.output_tokens, 120);
+    // The original provider total is reconstructible from the split.
+    assert_eq!(msg.usage.prompt_tokens(), 5000);
+}
+
 const FIXTURE_STOP_STREAM: &str = "\
 data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\
 \n\

@@ -393,6 +393,143 @@ pub async fn model_context(
     Ok(context_from_json(provider, &read_json(response).await?))
 }
 
+/// Anthropic per-model capability flags this build conditions behaviour on
+/// (docs/design/68-context-engine.md §11 "Anthropic" row). The Models API's
+/// `capabilities` object carries many more fields; these are the ones an
+/// adapter actually reads before it decides to send an optional parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AnthropicCapabilities {
+    pub effort: bool,
+    /// Best-effort key name — Anthropic's public docs describe the
+    /// `capabilities` tree's `effort`/`thinking`/`image_input` members but
+    /// do not (yet) enumerate a fast-mode entry. Absent or unrecognized
+    /// shapes read as `false`, which only ever means "do not try fast mode
+    /// for this model" — never a hard failure (invariant 9: unknown stays
+    /// explicitly unavailable, it is never guessed into `true`).
+    pub fast_mode: bool,
+}
+
+fn capability_supported(json: &serde_json::Value, name: &str) -> bool {
+    json.pointer(&format!("/capabilities/{name}/supported"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Fetches one Anthropic model's capability flags from `GET /v1/models/{id}`
+/// (invariant 9: discovered, never hardcoded — a static per-model-id table
+/// would drift the moment a new model shipped or an old key lost access to
+/// one). Meaningful for the `anthropic` provider only; other providers do
+/// not publish this shape yet.
+pub async fn anthropic_model_capabilities(
+    auth: &ProviderAuth,
+    model: &str,
+) -> Result<AnthropicCapabilities, LlmError> {
+    let base = auth
+        .base_url
+        .as_deref()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| default_base_url("anthropic"))
+        .ok_or_else(|| LlmError::InvalidRequest("no base url for 'anthropic'".into()))?
+        .trim_end_matches('/')
+        .to_string();
+    let url = if base.ends_with("/v1") {
+        format!("{base}/models/{model}")
+    } else {
+        format!("{base}/v1/models/{model}")
+    };
+    let response = http()?
+        .get(&url)
+        .header("x-api-key", &auth.api_key)
+        .header("anthropic-version", crate::anthropic::ANTHROPIC_VERSION)
+        .send()
+        .await
+        .map_err(|e| LlmError::Network(e.to_string()))?;
+    let json = read_json(response).await?;
+    Ok(AnthropicCapabilities {
+        effort: capability_supported(&json, "effort"),
+        fast_mode: capability_supported(&json, "fast_mode"),
+    })
+}
+
+/// In-process memory of what this run has learned about each Anthropic
+/// model's `effort`/fast-mode support — never persisted, never shared
+/// across processes, and only ever narrows what the adapter attempts next
+/// (docs/design/68-context-engine.md §11). Two different policies live
+/// behind the same shape because the two features start from opposite
+/// priors: `effort` is GA on every current-generation model, so a model not
+/// yet seen defaults to "try it" and a live 400 naming the parameter is
+/// what teaches the cache `false`; fast mode is a narrow, opt-in research
+/// preview, so a model not yet seen defaults to "do not try it" until an
+/// explicit capability fetch has said otherwise.
+#[derive(Default)]
+struct AnthropicCapabilityCache {
+    effort: std::collections::HashMap<String, bool>,
+    fast_mode: std::collections::HashMap<String, bool>,
+}
+
+fn anthropic_capability_cache() -> &'static std::sync::Mutex<AnthropicCapabilityCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<AnthropicCapabilityCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(AnthropicCapabilityCache::default()))
+}
+
+/// Whether the adapter should attempt `output_config.effort` for `model`.
+/// Defaults to `true` (unknown models are worth trying) until
+/// [`mark_anthropic_effort_unsupported`] narrows it.
+pub fn anthropic_effort_allowed(model: &str) -> bool {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .effort
+        .get(model)
+        .copied()
+        .unwrap_or(true)
+}
+
+/// Records that `model` rejected `output_config.effort` (a live 400 naming
+/// the parameter): every later request in this process skips sending it.
+pub fn mark_anthropic_effort_unsupported(model: &str) {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .effort
+        .insert(model.to_string(), false);
+}
+
+/// Whether the adapter should attempt `speed: "fast"` for `model`. Defaults
+/// to `false` (an unknown model is never assumed to support a research
+/// preview) until [`record_anthropic_capabilities`] has looked it up.
+pub fn anthropic_fast_mode_allowed(model: &str) -> bool {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .fast_mode
+        .get(model)
+        .copied()
+        .unwrap_or(false)
+}
+
+/// Whether `model`'s fast-mode support has already been learned one way or
+/// the other, so a caller can skip a redundant discovery fetch.
+pub fn anthropic_fast_mode_known(model: &str) -> bool {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .fast_mode
+        .contains_key(model)
+}
+
+/// Records a freshly discovered capability set
+/// ([`anthropic_model_capabilities`]) so later requests for `model` skip
+/// both the network round trip and the conservative first-attempt default.
+pub fn record_anthropic_capabilities(model: &str, caps: AnthropicCapabilities) {
+    let mut cache = anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.effort.insert(model.to_string(), caps.effort);
+    cache.fast_mode.insert(model.to_string(), caps.fast_mode);
+}
+
 /// The provider's documented API host, for callers that never set an
 /// override. These are endpoints, not a model catalogue — the model list
 /// itself always comes off the wire.
@@ -545,6 +682,67 @@ mod tests {
         assert!(matches!(
             status_error(401, "bad key".into()),
             LlmError::Auth(_)
+        ));
+    }
+
+    #[test]
+    fn capability_supported_reads_the_nested_flag() {
+        let json = serde_json::json!({
+            "capabilities": {
+                "effort": {"supported": true},
+                "thinking": {"supported": false},
+            }
+        });
+        assert!(capability_supported(&json, "effort"));
+        assert!(!capability_supported(&json, "thinking"));
+        // Absent / unrecognized keys read as false, never guessed true.
+        assert!(!capability_supported(&json, "fast_mode"));
+        assert!(!capability_supported(&serde_json::json!({}), "effort"));
+    }
+
+    // Each test below uses its own unique model id: the capability cache is
+    // a process-wide static, and tests in this module run concurrently.
+    #[test]
+    fn effort_defaults_to_allowed_for_an_unseen_model() {
+        assert!(anthropic_effort_allowed("test-model-effort-unseen-1"));
+    }
+
+    #[test]
+    fn marking_effort_unsupported_narrows_it_for_that_model_only() {
+        anthropic_effort_allowed("test-model-effort-sibling-2"); // establish baseline
+        mark_anthropic_effort_unsupported("test-model-effort-marked-2");
+        assert!(!anthropic_effort_allowed("test-model-effort-marked-2"));
+        assert!(anthropic_effort_allowed("test-model-effort-sibling-2"));
+    }
+
+    #[test]
+    fn fast_mode_defaults_to_not_allowed_and_not_known_for_an_unseen_model() {
+        assert!(!anthropic_fast_mode_allowed("test-model-fast-unseen-3"));
+        assert!(!anthropic_fast_mode_known("test-model-fast-unseen-3"));
+    }
+
+    #[test]
+    fn recording_discovered_capabilities_makes_fast_mode_known_and_gates_on_the_flag() {
+        record_anthropic_capabilities(
+            "test-model-fast-supported-4",
+            AnthropicCapabilities {
+                effort: true,
+                fast_mode: true,
+            },
+        );
+        assert!(anthropic_fast_mode_known("test-model-fast-supported-4"));
+        assert!(anthropic_fast_mode_allowed("test-model-fast-supported-4"));
+
+        record_anthropic_capabilities(
+            "test-model-fast-unsupported-5",
+            AnthropicCapabilities {
+                effort: true,
+                fast_mode: false,
+            },
+        );
+        assert!(anthropic_fast_mode_known("test-model-fast-unsupported-5"));
+        assert!(!anthropic_fast_mode_allowed(
+            "test-model-fast-unsupported-5"
         ));
     }
 }

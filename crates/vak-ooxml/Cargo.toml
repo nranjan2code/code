@@ -1,0 +1,22 @@
+[package]
+name = "vak-ooxml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bounded, lossless Open XML package reader and writer (docs/design/72-openxml-documents.md)"
+
+[dependencies]
+quick-xml = { workspace = true }
+serde = { workspace = true }
+zip = { workspace = true }
+
+[features]
+# Synthetic test packages (src/fixtures.rs); never enabled in a shipped build.
+fixtures = []
+
+[dev-dependencies]
+serde_json = { workspace = true }
+vak-ooxml = { path = ".", features = ["fixtures"] }
+
+[lints]
+workspace = true

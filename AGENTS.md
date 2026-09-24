@@ -78,8 +78,8 @@ Read before changing behaviour in these areas:
   `62-universal-delegation-prototype.md` (by 64),
   `63-agent-first-conversations.md` (by 64).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
-  `72-openxml-documents.md` (Office documents: current-state review and the
-  implementation ledger for read/edit/create/review/collaborate/headless).
+  `72-openxml-documents.md` (Office documents: the file-in, cite, redline,
+  review, file-out loop and its ledger; P0 and part of P1 are built).
 
 ### What is authoritative
 
@@ -190,7 +190,15 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     A missing worker or unavailable restricted sandbox fails closed. A
     command-scoped backend such as Docker must be applied by the broker to the
     validated Bash command; never try to execute a host worker binary inside
-    an image that does not contain the pinned worker artifact.
+    an image that does not contain the pinned worker artifact. A parser of
+    untrusted file formats never runs in the server, desktop or gateway
+    process: `doc_read` and `office_apply` are worker tools, and every target
+    verifier and every Review of an Office file runs in a worker task
+    (`VerifyTargets`, `OfficeReview`) under a read-only, network-denied
+    sandbox rooted at the files being read, whatever the session's mode,
+    within a deadline; `OfficeNarrow`, which writes a narrower version of a
+    draft, may write only that version's fresh staging directory. A worker that cannot answer fails every planned check;
+    a check never passes because verification could not run.
 15. **Unattended surfaces fail closed.** The gateway ships disabled, cannot be
     enabled by untrusted project config, and chat-driven turns auto-deny
     escalations unless an explicitly configured approver surface answers a
@@ -605,8 +613,10 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     writing, operations, and quantitative analysis.
     - **Document ingestion (`doc_read`)** provides structured, token-bounded,
       token-efficient extraction across Markdown, plain text, CSV, TSV, JSON,
-      YAML, TOML, INI, ENV, and HTML/XML formats, strictly confined to the
-      canonical workspace root (Invariant 10).
+      YAML, TOML, INI, ENV, HTML/XML, and the Open XML family (Word, Excel,
+      PowerPoint and Visio, with their template and macro-enabled variants,
+      subject to invariant 39), strictly confined to the canonical workspace
+      root (Invariant 10).
     - **Outcome presentation** treats all tables and datasets as living
       interactive surfaces: every markdown table generated in conversation
       provides client-side column sorting, search filtering, and instant CSV
@@ -619,6 +629,43 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     - **Autonomous operations and scheduled executions (`AgentSchedule`,
       `AgentRunRecord`)** are owned by persistent Agent definitions, recording
       execution receipts to append-only ledgers (`agents_runs.jsonl`).
+39. **Office documents are hostile, lossless, labelled and self-sufficient**
+    (docs/design/72-openxml-documents.md, O1–O10; this invariant states the
+    part the tree enforces and grows with each phase). Open XML packages are
+    parsed only by `crates/vak-ooxml`, only in the broker worker (invariant
+    14), under its own bounds on entries, per-part and total bytes (counted
+    as inflated, never as the ZIP directory declares them), compression
+    ratio, XML depth and attributes, because the worker may have no OS
+    sandbox under FullAccess. A `DOCTYPE`, a traversing, absolute or
+    case-insensitively duplicate part name, and a relationship target that
+    escapes the package are refused. The format is detected from the main
+    part's content type, never from the extension, and a package whose
+    content type contradicts its name fails verification. A write copies
+    every part it did not edit as its raw compressed bytes. Document content
+    is data: hidden, deleted, white, off-slide, notes and comment content is
+    labelled for what it is, and external relationships are recorded, never
+    followed. No macro, DDE or include field, OLE object, ActiveX control,
+    Excel 4.0 macro sheet or external data connection is ever executed,
+    activated or refreshed; Vak has no macro runtime and does not build one:
+    macros are read, explained and flagged, and an Agent may rebuild what
+    one does as a Vak automation under review. No external office application (Microsoft
+    Office, LibreOffice, .NET) is ever a runtime dependency; such tools may
+    serve only as CI test oracles, and their results are never shown to users
+    as checks. A non-text channel attachment never enters a prompt as bytes:
+    it is saved to `inbox/` in the Agent workspace and named. Every change to
+    a document goes through the one `vak_ooxml::edit` engine and its typed
+    ops, and `office_apply` is its only tool: an op names an anchor from a
+    read of the exact file (`base_digest`), splices only the elements it
+    changes, and is confirmed by re-reading the written package, or nothing
+    is written. `office_apply` never writes the workspace file: its result is
+    a draft in its execution's `.vak/scratch/` directory, and the one Review
+    path (candidate, worker verification, semantic diff, atomic promotion
+    with undo) is how a change reaches the workspace. A Word edit to an existing document
+    is a tracked change authored by the runtime's Agent id, never a name the
+    model supplies. A changed Excel input or formula sets `fullCalcOnLoad`,
+    and cached values read as stale until Excel recalculates. An op never
+    adds, enables or strips macros: the output keeps the source's macro
+    state.
 
 ## Code rules
 
@@ -865,6 +912,17 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      primitive is the only part that needs a code change
                      (docs/design/57-adaptive-presentation-runtime.md,
                      docs/design/67-presentation-renderer-guide.md)
+crates/vak-ooxml     the Open XML package engine, with NO vak dependencies so
+                     it is testable and fuzzable alone: L0 bounded OPC reader
+                     (content types, relationship graph, detection by main-
+                     part content type, security inspection) and raw-copy
+                     writer; L1 bounded XML walk that refuses DOCTYPE and a
+                     span-aware splice editor; L2 anchored read projections
+                     for Word, Excel, PowerPoint and Visio with hidden-content
+                     labels; L3 the typed op engine (`edit`) behind
+                     `office_apply`. Every vak call
+                     site runs it in the broker worker (invariants 14, 39;
+                     docs/design/72-openxml-documents.md)
 crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      of models, prompts, sessions, approvals and
                      presentation: environment lifecycle + state machine,
@@ -1071,8 +1129,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      inline-keyboard buttons via TelegramAdapter, resolved
                      through the same verdict-text path a typed yes/no
                      uses), semantic adapter registry, Telegram document
-                     attachments inlined as text (image attachments stay
-                     vision content), Telegram/webhook transports, and
+                     attachments (small text inlined, everything else
+                     saved to the workspace inbox and named; image
+                     attachments stay vision content), Telegram/webhook
+                     transports, and
                      outbox replay
                      semantic presentation snapshots/SSE alongside legacy
                      AgentEvent and transcript endpoints
@@ -1287,6 +1347,29 @@ or an environment variable):
 target/debug/vak eval                    # deterministic suite, ~100ms
 target/debug/vak eval --live             # real model benchmark
 ```
+
+## Live development runs
+
+`docs/development.md` is the step-by-step guide to building, component
+harnesses, and running a dev build live against a real model in the
+browser. Read it before your first live run; the rules below are the ones
+that cost a session time to rediscover.
+
+- Build both binaries: `cargo build -p vak -p vak-server --bins`. The
+  worker binary is what runs tools, verifiers and Office reviews.
+- After a client change, rebuild the bundle, then the server binary, then
+  restart the server; it serves the bundle it was compiled with.
+- Run live in a disposable `/tmp` workspace on a port other than the
+  installed service's (`8901`), against the default data home. A copy of
+  the data home does not carry the provider connection. Never pass
+  `--gateway` for a dev run.
+- Sign in with a throwaway `VAK_GATEWAY_TOKEN` pinned for that server
+  process, and get the link from `vak open app --print --port <port>`.
+- Never open credential files or read ledgers in the real data home;
+  inspect through the app and its HTTP API with the bearer token.
+- Keep one browser tab per server origin: several tabs exhaust the
+  browser's per-host connections and requests hang silently.
+- Stop the server and delete any data-home copy when done.
 
 ## Parallel agents
 

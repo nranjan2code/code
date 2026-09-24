@@ -127,9 +127,14 @@ fn drain_events(h: &mut Harness) -> Vec<AgentEvent> {
 }
 
 // Raw ledger, not the model-visible projection: a stop-guard nudge is
-// mid-turn scaffolding and is dropped once the turn closes
-// (docs/design/68-context-engine.md §10) — this checks it was recorded
-// (and thus reached the model) at all.
+// mid-turn scaffolding, dropped once the turn actually closes
+// (docs/design/68-context-engine.md §10). This only checks the nudge was
+// RECORDED — being recorded does not by itself mean it reached the model;
+// that depends on the still-open turn projecting verbatim rather than
+// being (incorrectly) treated as already closed. See
+// `TurnIndex::from_log`'s `closed` derivation and
+// `a_draft_followed_by_a_control_nudge_with_no_reply_yet_stays_open` in
+// vak-session/src/turns.rs for the actual delivery guarantee.
 async fn guard_messages(h: &mut Harness) -> Vec<String> {
     let agent = h.agent.take().expect("guard_messages consumes the agent");
     let session = agent.into_session().await;
@@ -194,6 +199,68 @@ async fn truncated_plan_gets_one_continuation_then_completes() {
     assert!(
         users.iter().any(|u| u.starts_with("[stop-guard]:")),
         "ledger must contain the guard nudge: {users:?}"
+    );
+}
+
+/// The regression this file's `guard_messages` alone could not catch: being
+/// recorded in the ledger is not the same as reaching the model. This
+/// inspects the actual second `ChatRequest` the provider received and
+/// checks both halves of the delivery guarantee — the nudge text is
+/// present verbatim, and the request ends on a user-role message (current
+/// Claude models reject a request with no trailing user turn — invariant
+/// covered by `TurnIndex::from_log`'s `closed` derivation in
+/// vak-session/src/turns.rs).
+#[tokio::test]
+async fn the_stop_guard_nudge_reaches_the_actual_next_request() {
+    let mut h = harness(
+        Some(StopPolicy {
+            marker_gate: true,
+            verify_gate: false,
+            max_blocks: 2,
+        }),
+        vec![
+            ScriptedResponse::Message(text_msg("Fixing both:")),
+            ScriptedResponse::Message(text_msg("All done — both fixed, tests green.")),
+        ],
+    );
+    let outcome = h
+        .agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "fix the two bugs",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let requests = h.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "model must be re-called after the guard");
+    let redo_request = &requests[1];
+
+    let last = redo_request
+        .messages
+        .last()
+        .expect("the redo request must carry at least one message");
+    assert_eq!(
+        last.role,
+        vak_llm::Role::User,
+        "the request must not end on the assistant's own draft: {:?}",
+        redo_request.messages
+    );
+
+    let carries_nudge = redo_request.messages.iter().any(|m| {
+        m.content.iter().any(|b| match b {
+            ContentBlock::Text { text } => text.starts_with("[stop-guard]:"),
+            _ => false,
+        })
+    });
+    assert!(
+        carries_nudge,
+        "the redo request must carry the [stop-guard] nudge verbatim: {:?}",
+        redo_request.messages
     );
 }
 
@@ -332,19 +399,16 @@ async fn disabled_policy_never_blocks() {
 }
 
 #[tokio::test]
-async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard_nudge() {
+async fn authored_prose_without_a_file_target_completes_without_a_guard() {
     let mut h = harness(
         Some(StopPolicy {
             marker_gate: false,
             verify_gate: true,
             max_blocks: 1,
         }),
-        vec![
-            ScriptedResponse::Message(text_msg(
-                "Here is your React animation in a markdown fence.",
-            )),
-            ScriptedResponse::Message(text_msg("Created files and verified in sandbox.")),
-        ],
+        vec![ScriptedResponse::Message(text_msg(
+            "Here is the component, explained step by step.",
+        ))],
     );
 
     let mut reading = vak_intent::Reading::general();
@@ -365,26 +429,15 @@ async fn outcome_execution_requirement_blocks_prose_only_and_persists_stop_guard
         )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
-    assert_eq!(h.requests.lock().unwrap().len(), 2);
-
-    let guards: Vec<String> = drain_events(&mut h)
-        .into_iter()
-        .filter_map(|e| match e {
-            AgentEvent::StopHookContinuation { reason } => Some(reason),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(guards.len(), 1);
-    assert!(
-        guards[0].contains("author") || guards[0].contains("execution"),
-        "reason: {}",
-        guards[0]
+    assert_eq!(
+        h.requests.lock().unwrap().len(),
+        1,
+        "authoring is not an effect"
     );
-
-    let messages = guard_messages(&mut h).await;
     assert!(
-        messages.iter().any(|u| u.starts_with("[stop-guard]:")),
-        "ledger must record model-visible stop-guard nudge: {messages:?}"
+        drain_events(&mut h)
+            .iter()
+            .all(|e| !matches!(e, AgentEvent::StopHookContinuation { .. }))
     );
 }
 

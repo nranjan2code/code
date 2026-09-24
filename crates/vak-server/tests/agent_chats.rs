@@ -102,6 +102,40 @@ async fn explicit_new_agent_conversation_gets_a_distinct_durable_identity() {
     assert_eq!(resumed["session_id"], existing["session_id"]);
 }
 
+/// Finding 5: `/agents/{id}/open`'s directory scan used to read every
+/// `.jsonl` sibling's header unconditionally and fail the WHOLE request
+/// with 500 the moment any one of them could not be parsed — even a file
+/// that would never have matched this conversation's own filter. It must
+/// now skip an unreadable ledger and keep going.
+#[tokio::test]
+async fn agent_open_skips_a_corrupt_sibling_ledger() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
+    let sessions_home = temp.path().join("sessions-home");
+    core.set_sessions_home(sessions_home.clone());
+    let app = vak_server::router(core.clone());
+
+    let dir = SessionPath::sessions_dir(&sessions_home, &cwd);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("corrupt.jsonl"), "not valid json at all\n").unwrap();
+
+    let (status, body) = call(&app, "POST", "/agents/vak/open", json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a corrupt sibling ledger must not fail the open: {body}"
+    );
+    assert!(body["session_id"].as_str().is_some_and(|s| !s.is_empty()));
+
+    // Reopening still resolves to the same conversation with the corrupt
+    // file still present.
+    let (status2, body2) = call(&app, "POST", "/agents/vak/open", json!({})).await;
+    assert_eq!(status2, StatusCode::OK);
+    assert_eq!(body2["session_id"], body["session_id"]);
+}
+
 fn profile(id: &str, name: &str) -> Value {
     json!({"id":id,"revision":1,"name":name,"character":"vak","personality":"Use the phrase identity-marker.","behaviour":"Answer concisely.","responsibilities":"Research news", "animation":"off","voice":"default"})
 }
@@ -608,7 +642,7 @@ async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
     std::fs::create_dir_all(&newsy_cwd).unwrap();
     let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
     let sid = "closed-newsy-session";
-    let cp = vak_core::checkpoints::capture(&newsy_cwd, sid, 1, "seed").unwrap();
+    let (cp, _) = vak_core::checkpoints::capture(&newsy_cwd, &newsy_home, sid, 1, "seed").unwrap();
     vak_core::checkpoints::store(&newsy_home, &cp).unwrap();
 
     let (status, newsy_checkpoints) = call(

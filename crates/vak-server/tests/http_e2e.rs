@@ -542,7 +542,7 @@ async fn cancel_endpoint_stops_a_running_session() {
             _r: ChatRequest,
             cancel: CancellationToken,
         ) -> Result<EventStream, LlmError> {
-            let (sink, rx) = stream::channel(8);
+            let (mut sink, rx) = stream::channel(8);
             sink.push(stream::StreamEvent::Start {
                 partial: AssistantMessage::empty("m"),
             });
@@ -585,7 +585,11 @@ async fn cancel_endpoint_stops_a_running_session() {
         while std::time::Instant::now() < deadline {
             if let Some(Ok(chunk)) = events.next().await {
                 let text = String::from_utf8_lossy(&chunk);
-                if text.contains("RunFinished") && text.contains("cancelled") {
+                // `cancel_run` no longer synthesizes its own `RunFinished`
+                // (it raced the real one); the terminal event now comes
+                // from the run itself unwinding as `TurnOutcome::Aborted`,
+                // which `run_prompt`/`http_settle` summarize as "aborted".
+                if text.contains("RunFinished") && text.contains("aborted") {
                     saw_cancelled = true;
                     break;
                 }
@@ -614,7 +618,7 @@ async fn cancel_endpoint_stops_a_running_session() {
         .await
         .expect("reader timed out")
         .unwrap();
-    assert!(saw, "RunFinished(cancelled) must be observed after /cancel");
+    assert!(saw, "RunFinished(aborted) must be observed after /cancel");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -662,4 +666,426 @@ async fn worker_endpoints_scope_and_wire() {
             .unwrap();
         assert_eq!(res.status(), 404, "{path}");
     }
+}
+
+/// Responds after a fixed delay, so a caller has a window to observe the
+/// session as busy before the leg settles.
+struct DelayedThenScripted {
+    responses: Mutex<VecDeque<AssistantMessage>>,
+    delay: Duration,
+}
+
+#[async_trait::async_trait]
+impl Provider for DelayedThenScripted {
+    fn name(&self) -> &str {
+        "delayed"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        tokio::time::sleep(self.delay).await;
+        let next = self.responses.lock().unwrap().pop_front();
+        let (mut sink, rx) = stream::channel(64);
+        match next {
+            Some(m) => {
+                sink.push(stream::StreamEvent::Start { partial: m.clone() });
+                sink.close_message(m).await;
+            }
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
+        }
+        Ok(rx)
+    }
+}
+
+async fn poll_transcript_contains(
+    client: &reqwest::Client,
+    base: &str,
+    sid: &str,
+    needle: &str,
+    deadline: std::time::Instant,
+) -> String {
+    let mut raw = String::new();
+    while std::time::Instant::now() < deadline {
+        if let Ok(res) = client
+            .get(format!("{base}/sessions/{sid}/transcript"))
+            .send()
+            .await
+        {
+            let t: serde_json::Value = res.json().await.unwrap_or_default();
+            raw = serde_json::to_string(&t).unwrap_or_default();
+            if raw.contains(needle) {
+                return raw;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    raw
+}
+
+/// Finding 1: `/run` on a busy session used to return a bare 202 with the
+/// prompt silently dropped (invariant 30 / docs/design/64, "Request
+/// durability and delivery" — busy input is queued durably, never
+/// discarded). It must now be queued and actually run as the chain's next
+/// leg once the first run settles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn busy_run_is_queued_and_runs_as_a_continuation_leg() {
+    let provider = Arc::new(DelayedThenScripted {
+        responses: Mutex::new(VecDeque::from(vec![
+            text("first done"),
+            text("second done"),
+        ])),
+        delay: Duration::from_millis(400),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let first = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "first", "request_id": "run-first"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 202);
+    let first_body: serde_json::Value = first.json().await.unwrap();
+    assert_eq!(first_body["state"], "started");
+
+    // The provider is still asleep, so this lands while busy.
+    let second = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "second", "request_id": "run-second"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 202);
+    let second_body: serde_json::Value = second.json().await.unwrap();
+    assert_eq!(
+        second_body["state"], "queued",
+        "a busy /run must be queued, not silently dropped: {second_body}"
+    );
+    assert_eq!(second_body["request_id"], "run-second");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let raw = poll_transcript_contains(&client, &base, &session_id, "second done", deadline).await;
+    assert!(raw.contains("first done"), "first leg missing: {raw}");
+    assert!(
+        raw.contains("second"),
+        "queued prompt must reach the model as the next leg: {raw}"
+    );
+    assert!(
+        raw.contains("second done"),
+        "queued run must actually execute as a continuation leg: {raw}"
+    );
+}
+
+/// Same fix, the `/steering` admission path: a steer that arrives while
+/// busy must be queued and drained into a continuation leg — never
+/// acknowledged and left in the queue with nothing left to drain it
+/// (finding 1b).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn busy_steering_is_queued_and_runs_as_a_continuation_leg() {
+    let provider = Arc::new(DelayedThenScripted {
+        responses: Mutex::new(VecDeque::from(vec![
+            text("first done"),
+            text("steered done"),
+        ])),
+        delay: Duration::from_millis(400),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let run = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "first"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(run.status(), 202);
+
+    let steer = client
+        .post(format!("{base}/sessions/{session_id}/steering"))
+        .json(&serde_json::json!({"text": "please continue with this"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(steer.status(), 202);
+    let steer_body: serde_json::Value = steer.json().await.unwrap();
+    assert_eq!(steer_body["state"], "steering_queued");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let raw = poll_transcript_contains(&client, &base, &session_id, "steered done", deadline).await;
+    assert!(raw.contains("first done"), "first leg missing: {raw}");
+    assert!(
+        raw.contains("please continue with this"),
+        "queued steering text must reach the model: {raw}"
+    );
+    assert!(
+        raw.contains("steered done"),
+        "queued steering must actually execute as a continuation leg: {raw}"
+    );
+}
+
+/// Hangs on its first call (until cancelled), then answers normally on any
+/// later call — models a run that gets stopped and immediately resent.
+struct HungOnceThenScripted {
+    hung_once: std::sync::atomic::AtomicBool,
+    responses: Mutex<VecDeque<AssistantMessage>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for HungOnceThenScripted {
+    fn name(&self) -> &str {
+        "hung-once"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        if !self
+            .hung_once
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let (mut sink, rx) = stream::channel(8);
+            sink.push(stream::StreamEvent::Start {
+                partial: AssistantMessage::empty("m"),
+            });
+            tokio::spawn(async move {
+                let _keep = sink;
+                tokio::select! {
+                    _ = cancel.cancelled() => {}
+                    _ = std::future::pending::<()>() => {}
+                }
+            });
+            return Ok(rx);
+        }
+        let next = self.responses.lock().unwrap().pop_front();
+        let (mut sink, rx) = stream::channel(64);
+        match next {
+            Some(m) => {
+                sink.push(stream::StreamEvent::Start { partial: m.clone() });
+                sink.close_message(m).await;
+            }
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
+        }
+        Ok(rx)
+    }
+}
+
+/// Finding 1c: `cancel_run` no longer synthesizes its own `RunFinished`, and
+/// input arriving after the stop but before the run unwinds is queued and
+/// runs as the next leg of the chain — a stop must never eat the resend
+/// that follows it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stop_then_resend_runs_the_resend() {
+    let provider = Arc::new(HungOnceThenScripted {
+        hung_once: std::sync::atomic::AtomicBool::new(false),
+        responses: Mutex::new(VecDeque::from(vec![text("resend done")])),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "hang forever"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Give the hung leg a moment to actually take the ledger.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let cancelled = client
+        .post(format!("{base}/sessions/{session_id}/cancel"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status(), 202);
+
+    // Resend immediately — this may land while the cancelled leg is still
+    // unwinding (queued) or just after (started); both must eventually run.
+    let resend = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "resend", "request_id": "resend-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resend.status(), 202);
+    let resend_body: serde_json::Value = resend.json().await.unwrap();
+    assert!(
+        matches!(
+            resend_body["state"].as_str(),
+            Some("started") | Some("queued")
+        ),
+        "resend must be admitted, not rejected: {resend_body}"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let raw = poll_transcript_contains(&client, &base, &session_id, "resend done", deadline).await;
+    assert!(
+        raw.contains("resend done"),
+        "a resend right after stop must actually run: {raw}"
+    );
+}
+
+/// Finding 2: `run_prompt` used to wait up to 2s on `handle.subscribed`
+/// unconditionally, but `Notify`'s single permit only ever satisfies the
+/// FIRST run — every later run paid the full timeout even with a client
+/// already attached. With an SSE consumer already connected, `/run` must
+/// return promptly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn no_wait_when_an_sse_subscriber_is_already_attached() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text("fast reply")])),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Attach and confirm the stream is open before timing the run.
+    let sse_url = format!("{base}/sessions/{session_id}/events");
+    let (opened_tx, opened_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut opened_tx = Some(opened_tx);
+    let _sse_task = tokio::spawn(async move {
+        let res = reqwest::get(&sse_url).await.unwrap();
+        use futures::StreamExt;
+        let mut stream = res.bytes_stream();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if let Some(Ok(chunk)) = stream.next().await {
+                let text = String::from_utf8_lossy(&chunk).into_owned();
+                if text.contains("StreamOpened") {
+                    if let Some(t) = opened_tx.take() {
+                        let _ = t.send(());
+                    }
+                    break;
+                }
+            }
+        }
+    });
+    let _ = tokio::time::timeout(Duration::from_secs(5), opened_rx).await;
+
+    let start = std::time::Instant::now();
+    let res = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "go"}))
+        .send()
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+    assert_eq!(res.status(), 202);
+    assert!(
+        elapsed < Duration::from_millis(1500),
+        "an already-attached subscriber must skip the 2s attach wait entirely, took {elapsed:?}"
+    );
+}
+
+/// Finding 4: validation must happen BEFORE any side effect — a rejected
+/// request must never write a durable admission activity, insert into the
+/// admissions set, or broadcast a synthesized `RunFinished` for a run that
+/// never started.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_request_writes_no_durable_admission() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Goal mode explicitly refuses attachments; this must be rejected
+    // before any admission is ever recorded.
+    let res = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({
+            "prompt": "do a thing",
+            "request_id": "rejected-1",
+            "goal": "finish the thing",
+            "attachments": [{"mime": "image/png", "data": "AAAA"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 400);
+
+    let transcript: serde_json::Value = client
+        .get(format!("{base}/sessions/{session_id}/transcript"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        transcript["count"].as_u64(),
+        Some(0),
+        "a rejected request must leave no durable entry behind: {transcript}"
+    );
+
+    // The same request_id must be admittable afterward — nothing was
+    // parked in the in-memory admissions guard either.
+    let retry = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "do a thing", "request_id": "rejected-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 202);
+    let retry_body: serde_json::Value = retry.json().await.unwrap();
+    assert_eq!(retry_body["state"], "started");
 }

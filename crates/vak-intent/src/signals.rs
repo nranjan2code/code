@@ -646,6 +646,13 @@ pub struct Extraction {
     pub output_modalities: Vec<Modality>,
     pub attendance: Attendance,
     pub domains: Vec<String>,
+    /// Domains implied by the *environment* rather than by the request's own
+    /// words. Kept separate for the same reason as `stakes_from_environment`:
+    /// a git repository says nothing about the subject of a question asked
+    /// inside it, and folding this in unconditionally tagged "write a poem
+    /// about the sea" as `engineering` merely because the workspace happened
+    /// to be a repo.
+    pub domains_from_environment: Vec<String>,
     /// The clause points at something it does not contain ("it", "that").
     pub deictic: bool,
 }
@@ -1112,7 +1119,8 @@ pub fn extract(request: &Request<'_>) -> Extraction {
 
     // --- workspace -----------------------------------------------------
     if request.workspace.is_repo {
-        out.domains.push("engineering".into());
+        // Applied only to effectful acts; see `domains_from_environment`.
+        out.domains_from_environment.push("engineering".into());
         out.signals.push(Signal::new(
             SignalKind::Workspace,
             "git-repo",

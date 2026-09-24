@@ -112,9 +112,14 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     // A function_call item means the model wants tools — the loop must
     // continue even though response.completed arrived.
     assert_eq!(msg.stop_reason, StopReason::ToolUse);
-    assert_eq!(msg.usage.input_tokens, 33);
+    // The fixture's `input_tokens: 33` already includes the 4 cached
+    // tokens (Responses API semantics), so the normalized, non-cached
+    // `input_tokens` is 29 — the split, not the raw total.
+    assert_eq!(msg.usage.input_tokens, 29);
     assert_eq!(msg.usage.output_tokens, 9);
     assert_eq!(msg.usage.cache_read_input_tokens, Some(4));
+    // The provider's original total is reconstructible from the split.
+    assert_eq!(msg.usage.prompt_tokens(), 33);
     assert_eq!(msg.response_id, Some("resp_123".to_string()));
 
     let calls: Vec<&ContentBlock> = msg
@@ -130,6 +135,32 @@ async fn full_stream_accumulates_text_and_tool_calls() {
     } else {
         unreachable!()
     }
+}
+
+const FIXTURE_FULL_CACHE_HIT: &str = "\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_456\",\"usage\":{\"input_tokens\":12000,\"output_tokens\":50,\"input_tokens_details\":{\"cached_tokens\":12000}}}}\n\
+\n";
+
+#[tokio::test]
+async fn a_full_cache_hit_reports_zero_fresh_input_tokens_not_the_raw_total() {
+    let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_FULL_CACHE_HIT).await,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.usage.input_tokens, 0);
+    assert_eq!(msg.usage.cache_read_input_tokens, Some(12_000));
+    assert_eq!(msg.usage.prompt_tokens(), 12_000);
 }
 
 const FIXTURE_INCOMPLETE: &str = "\

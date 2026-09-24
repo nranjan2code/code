@@ -130,7 +130,7 @@ pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
             }
             out
         }
-        "write" | "edit" | "read" | "glob" | "grep" => args
+        "write" | "edit" | "read" | "doc_read" | "office_apply" | "glob" | "grep" => args
             .get("path")
             .and_then(|p| p.as_str())
             .map(|p| vec![p.to_string()])

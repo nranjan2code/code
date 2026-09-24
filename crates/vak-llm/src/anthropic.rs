@@ -8,7 +8,9 @@ use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventSink, EventStream, StreamEvent, channel};
 use crate::turn::{current_turn_boundary, strip_thinking};
-use crate::types::{AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, Usage};
+use crate::types::{
+    AssistantMessage, ChatRequest, ContentBlock, Effort, Message, Role, StopReason, Usage,
+};
 
 /// Anthropic accepts at most 4 `cache_control` breakpoints per request. The
 /// stable system prompt always claims one when present, leaving the rest
@@ -20,6 +22,12 @@ const MAX_CACHE_BREAKPOINTS: usize = 4;
 /// model can discover a deferred schema without it ever entering the prefix.
 const TOOL_SEARCH_TOOL: &str = "tool_search_tool_regex_20251119";
 
+/// Beta flag for the opt-in fast-mode research preview (docs/design/68 §11
+/// "Anthropic" row / the Anthropic API "Fast Mode" quick reference): sent
+/// only alongside `"speed": "fast"`, and only for a model the capability
+/// cache has confirmed supports it.
+const FAST_MODE_BETA: &str = "fast-mode-2026-02-01";
+
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 
@@ -28,6 +36,13 @@ pub struct AnthropicConfig {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    /// Opt-in fast-mode research preview (config key under
+    /// `[providers.anthropic]`, default off): premium pricing, its own
+    /// rate-limit bucket, and restricted to specific models — the adapter
+    /// only ever sends `speed: "fast"` when this is true AND the model's
+    /// discovered capabilities confirm support
+    /// (`models::anthropic_fast_mode_allowed`).
+    pub fast_mode: bool,
 }
 
 #[derive(Clone)]
@@ -51,7 +66,14 @@ impl AnthropicProvider {
     }
 }
 
-pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
+/// `effort_allowed` and `fast_mode` are resolved by the caller (`stream`)
+/// from the in-process capability cache (`models.rs`) before this is
+/// called, so building the body stays a pure function of its inputs.
+pub fn build_body(
+    request: &ChatRequest,
+    effort_allowed: bool,
+    fast_mode: bool,
+) -> Result<Value, LlmError> {
     let boundary = current_turn_boundary(&request.messages);
     let system_takes_a_slot = request.system.is_some();
     let message_breakpoints = select_message_breakpoints(
@@ -120,6 +142,25 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
             tools.push(tool);
         }
         body["tools"] = Value::Array(tools);
+    }
+    // Reasoning depth, never thinking on/off (docs/design/68 §11): current
+    // models either reject an explicit `{"type":"disabled"}`/`budget_tokens`
+    // outright or silently degrade tool-call reliability under it, so this
+    // adapter never sends either — `thinking` is simply omitted, which runs
+    // adaptive on every current model. `effort` is the one supported dial,
+    // and `think == Some(false)` (a side-dispatch that wants a fast, cheap
+    // answer) maps onto its lowest level only when the caller has not
+    // already asked for a specific one.
+    if fast_mode {
+        body["speed"] = serde_json::json!("fast");
+    }
+    if effort_allowed {
+        let effort = request
+            .effort
+            .or_else(|| (request.think == Some(false)).then_some(Effort::Low));
+        if let Some(effort) = effort {
+            body["output_config"] = serde_json::json!({ "effort": effort.as_str() });
+        }
     }
     Ok(body)
 }
@@ -206,6 +247,15 @@ fn validate_message(m: &Message) -> Result<(), LlmError> {
         }
     }
     Ok(())
+}
+
+/// Provider phrasing that identifies a 400 as caused specifically by the
+/// `output_config.effort` parameter, distinct from an unrelated validation
+/// failure — same "key off the provider's own wording" approach as
+/// `LlmError::classify_400`'s over-length markers.
+fn rejects_effort(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("effort") || normalized.contains("output_config")
 }
 
 pub fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
@@ -512,30 +562,63 @@ impl Provider for AnthropicProvider {
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
-        let url = format!("{}/v1/messages", self.config.base_url.trim_end_matches('/'));
-        let body = build_body(&request)?;
-        let send_fut = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-            r = send_fut => match r {
-                Ok(r) => r,
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            },
-        };
+
+        // Fast mode is an opt-in, model-restricted research preview
+        // (docs/design/68 §11): discover support once per model id in the
+        // background — never blocking this request — so a later request
+        // for the same model has an answer cached. This request itself
+        // conservatively skips fast mode until that lookup lands.
+        if self.config.fast_mode && !crate::models::anthropic_fast_mode_known(&request.model) {
+            let auth = crate::registry::ProviderAuth {
+                api_key: self.config.api_key.clone(),
+                base_url: Some(self.config.base_url.clone()),
+                ..Default::default()
+            };
+            let model = request.model.clone();
+            tokio::spawn(async move {
+                if let Ok(caps) = crate::models::anthropic_model_capabilities(&auth, &model).await {
+                    crate::models::record_anthropic_capabilities(&model, caps);
+                }
+            });
+        }
+
+        let mut effort_allowed = crate::models::anthropic_effort_allowed(&request.model);
+        let mut fast_mode =
+            self.config.fast_mode && crate::models::anthropic_fast_mode_allowed(&request.model);
+        let mut response = self
+            .send_once(&request, effort_allowed, fast_mode, &cancel)
+            .await?;
+
+        // One narrow, same-turn retry per failure class (docs/design/68
+        // §11): an unsupported `output_config.effort` 400s naming the
+        // parameter, and fast mode has its own rate-limit bucket that can
+        // 429 while standard speed would not. Each retry strips exactly the
+        // feature that failed and resends once; a second failure is final.
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            if status == 400 && effort_allowed {
+                let retry_after = retry_after_header(&response);
+                let text = response.text().await.unwrap_or_default();
+                if rejects_effort(&text) {
+                    crate::models::mark_anthropic_effort_unsupported(&request.model);
+                    effort_allowed = false;
+                    response = self
+                        .send_once(&request, effort_allowed, fast_mode, &cancel)
+                        .await?;
+                } else {
+                    return Err(map_status_error(status, &text, retry_after));
+                }
+            } else if status == 429 && fast_mode {
+                fast_mode = false;
+                response = self
+                    .send_once(&request, effort_allowed, fast_mode, &cancel)
+                    .await?;
+            }
+        }
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok());
+            let retry_after = retry_after_header(&response);
             let text = response.text().await.unwrap_or_default();
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
@@ -552,6 +635,40 @@ impl Provider for AnthropicProvider {
 
         Ok(stream_rx.with_guard(provider_permit))
     }
+}
+
+impl AnthropicProvider {
+    async fn send_once(
+        &self,
+        request: &ChatRequest,
+        effort_allowed: bool,
+        fast_mode: bool,
+        cancel: &CancellationToken,
+    ) -> Result<reqwest::Response, LlmError> {
+        let url = format!("{}/v1/messages", self.config.base_url.trim_end_matches('/'));
+        let body = build_body(request, effort_allowed, fast_mode)?;
+        let mut req = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION);
+        if fast_mode {
+            req = req.header("anthropic-beta", FAST_MODE_BETA);
+        }
+        let send_fut = req.json(&body).send();
+        tokio::select! {
+            _ = cancel.cancelled() => Err(LlmError::Aborted { partial: None }),
+            r = send_fut => r.map_err(|e| LlmError::Network(e.to_string())),
+        }
+    }
+}
+
+fn retry_after_header(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
 }
 
 async fn drive_stream<S>(
@@ -632,7 +749,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-sonnet-4-5");
         req.system = Some("be helpful".into());
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert!(body["messages"][0].get("cache_control").is_none());
     }
@@ -652,7 +769,7 @@ mod build_body_tests {
                 after_message: Some(1),
             }],
         });
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs[1]["content"][0]["cache_control"]["type"], "ephemeral");
         assert!(msgs[0].get("cache_control").is_none());
@@ -674,7 +791,7 @@ mod build_body_tests {
                 })
                 .collect(),
         });
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         let cached: Vec<usize> = (0..6)
             .filter(|&i| msgs[i]["content"][0].get("cache_control").is_some())
@@ -693,7 +810,7 @@ mod build_body_tests {
             Message::user_text("second, a fresh directive"),
             message_with_thinking("second answer"),
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // Turn 1 (indices 0-1) is closed: thinking must not survive.
         assert!(
@@ -734,7 +851,7 @@ mod build_body_tests {
                 content: vec![ContentBlock::tool_result("t1", "result")],
             },
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // The whole exchange is one turn (the tool-result message is not a
         // fresh directive), so thinking in message 1 must still be present.
@@ -755,7 +872,7 @@ mod build_body_tests {
             ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
             ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools[0]["type"], "tool_search_tool_regex_20251119");
         let core = tools.iter().find(|t| t["name"] == "core_tool").unwrap();
@@ -778,7 +895,7 @@ mod build_body_tests {
             "always visible",
             serde_json::json!({}),
         )];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "core_tool");
@@ -797,7 +914,7 @@ mod build_body_tests {
             kind: "server_tool_use".into(),
             raw: raw.clone(),
         }])];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, true, false).unwrap();
         let sent = &body["messages"][0]["content"][0];
         assert_eq!(sent, &raw, "a provider block must round-trip unchanged");
         assert_ne!(sent["type"], "provider");
@@ -845,5 +962,90 @@ mod build_body_tests {
         assert_eq!(kind, "server_tool_use");
         assert_eq!(raw["input"]["pattern"], "weather");
         assert_eq!(raw["type"], "server_tool_use");
+    }
+
+    #[test]
+    fn explicit_effort_is_rendered_under_output_config() {
+        let mut req = ChatRequest::new("claude-opus-5");
+        req.messages = vec![Message::user_text("hi")];
+        req.effort = Some(Effort::XHigh);
+        let body = build_body(&req, true, false).unwrap();
+        assert_eq!(body["output_config"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn think_false_falls_back_to_low_effort_when_effort_is_unset() {
+        let mut req = ChatRequest::new("claude-haiku-4-5");
+        req.messages = vec![Message::user_text("classify this")];
+        req.think = Some(false);
+        let body = build_body(&req, true, false).unwrap();
+        assert_eq!(body["output_config"]["effort"], "low");
+    }
+
+    #[test]
+    fn explicit_effort_wins_over_the_think_false_fallback() {
+        let mut req = ChatRequest::new("claude-opus-5");
+        req.messages = vec![Message::user_text("hi")];
+        req.think = Some(false);
+        req.effort = Some(Effort::Max);
+        let body = build_body(&req, true, false).unwrap();
+        assert_eq!(body["output_config"]["effort"], "max");
+    }
+
+    #[test]
+    fn no_output_config_when_neither_effort_nor_think_false_is_set() {
+        let mut req = ChatRequest::new("claude-sonnet-5");
+        req.messages = vec![Message::user_text("hi")];
+        let body = build_body(&req, true, false).unwrap();
+        assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn effort_is_withheld_when_not_allowed_even_if_requested() {
+        let mut req = ChatRequest::new("claude-haiku-4-5");
+        req.messages = vec![Message::user_text("hi")];
+        req.effort = Some(Effort::High);
+        let body = build_body(&req, false, false).unwrap();
+        assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn the_adapter_never_sends_a_thinking_field() {
+        // docs/design/68 §11: current models either 400 on an explicit
+        // `{"type":"disabled"}`/`budget_tokens` or silently degrade under
+        // it. This build must never construct either shape, whatever the
+        // effort/think inputs are.
+        for (effort, think) in [
+            (None, None),
+            (None, Some(false)),
+            (Some(Effort::Low), None),
+            (Some(Effort::Max), Some(false)),
+        ] {
+            let mut req = ChatRequest::new("claude-opus-5");
+            req.messages = vec![Message::user_text("hi")];
+            req.effort = effort;
+            req.think = think;
+            let body = build_body(&req, true, false).unwrap();
+            assert!(body.get("thinking").is_none(), "{effort:?}/{think:?}");
+        }
+    }
+
+    #[test]
+    fn fast_mode_sets_the_speed_field_only_when_enabled() {
+        let mut req = ChatRequest::new("claude-opus-5");
+        req.messages = vec![Message::user_text("hi")];
+        let on = build_body(&req, true, true).unwrap();
+        assert_eq!(on["speed"], "fast");
+        let off = build_body(&req, true, false).unwrap();
+        assert!(off.get("speed").is_none());
+    }
+
+    #[test]
+    fn rejects_effort_detects_the_parameter_by_name() {
+        assert!(rejects_effort(
+            "output_config.effort: extra fields not permitted"
+        ));
+        assert!(rejects_effort("Unknown parameter: 'effort'"));
+        assert!(!rejects_effort("model does not exist"));
     }
 }
