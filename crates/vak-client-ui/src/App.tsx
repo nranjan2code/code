@@ -11,6 +11,7 @@ import {
   backend,
   isRunning,
   markRunning,
+  markStopping,
   resolveApproval,
   setActiveId,
   activeAgentId,
@@ -645,8 +646,9 @@ export async function sendPrompt(
           relation: relation ?? (replyTarget ? "correction" : "independent"),
           provenance: "client.composer",
         };
+        let admission: api.RunAdmission;
         try {
-          await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
         } catch (firstError) {
           // A lost HTTP response must recover the same admission. Retry only
           // transport-shaped failures; server rejections remain visible and
@@ -654,7 +656,15 @@ export async function sendPrompt(
           const message = firstError instanceof Error ? firstError.message.toLowerCase() : String(firstError).toLowerCase();
           const transportFailure = firstError instanceof TypeError || /network|fetch|timeout|connection|failed to fetch/.test(message);
           if (!transportFailure) throw firstError;
-          await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+        }
+        // "started" is the ordinary path and needs no notice. "queued"
+        // means another admission on this session is ahead of it -- a
+        // quiet transient notice, not a chat message, since it is about
+        // scheduling and not conversation. "duplicate" is this exact
+        // request already admitted (a retried request_id) and needs none.
+        if (admission.state === "queued") {
+          setNotice({ kind: "info", text: "Queued, it runs next" });
         }
       } catch (e) {
         markRunning(id, false);
@@ -705,7 +715,15 @@ export async function approve(
 export function stopRun() {
   const id = activeId();
   if (id && isRunning(id)) {
+    // `cancel` no longer synthesizes a `RunFinished` -- the run's own
+    // terminal event arrives once it actually stops, which can take a
+    // moment (the current tool call or provider request has to unwind).
+    // Hold a "stopping" state so the UI shows that between the click and
+    // that event instead of nothing. `markRunning(id, false, ...)` on the
+    // real `RunFinished` clears it.
+    markStopping(id, true);
     void api.cancelRun(id).catch((err) => {
+      markStopping(id, false);
       setNotice({ kind: "error", text: `Could not cancel this task: ${err instanceof Error ? err.message : String(err)}` });
     });
   }

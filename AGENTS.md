@@ -106,8 +106,13 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 3. **Errors are values.** Tools return `is_error` outputs; providers push typed
    errors into streams; the loop returns `TurnOutcome`. Library code never
    panics on bad input; `unwrap`/`expect`/`panic!` are forbidden outside tests.
-4. **Every streaming event carries delta AND snapshot.** Consumers choose their
-   abstraction level; never force re-derivation.
+4. **Every in-process streaming event carries delta AND snapshot.** Consumers
+   inside the runtime choose their abstraction level; never force
+   re-derivation. The client wire is a projection: `client_events::project`
+   (vak-server) sends deltas only and only events a person is meant to see,
+   and presentation frames carry a snapshot only when a stream opens, a run
+   settles, or a consumer resyncs; the snapshot endpoints are authoritative.
+   Under backpressure events coalesce (`StreamEvent::try_merge`), never drop.
 5. **Abort preserves partial output.** Cancellation tokens thread through every
    async call; partial results survive.
 6. **Unsafe is denied** workspace-wide except process-group kill in
@@ -569,17 +574,24 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     The system prefix (identity, contract, card catalogue, tool index) is
     byte-stable across turns; everything per-turn (temporal context, intent,
     stance, work contract, conversation thread, nudges) rides in one tail
-    block on the last user message — placed *before* the user's own words,
-    and never restating the directive, both found live to derail a small
-    model — and cache breakpoints/keys are rendered per provider.
-    Presentations and TurnCards are hash-linked ledger entries, never
-    rebuilt from tool arguments. A directive with temporal deixis
-    ("current", "right now") that gets no retrieval this run is a
-    `[freshness-check]` redo, then fails closed with an honest last-known
-    statement rather than presenting a carried-over figure as current; a
-    thinking-only step is one `[empty-step]` redo unless a card already
-    answered; three consecutive domain-mismatched or answer-repeating steps
-    end the turn via the same degraded outcome as tool-repair exhaustion.
+    block attached once to the turn's directive message — placed *before*
+    the user's own words, and never restating the directive, both found
+    live to derail a small model — and stays there byte-identical for every
+    later step of the turn: the working-set plan and tools array are each
+    resolved once per turn too, re-planned only by an explicit over-length
+    rejection or incremental compaction, so a message the turn already sent
+    never silently changes shape underneath a replayed thinking block
+    (required for Claude's preserved-thinking check and for cache hits).
+    Only a handoff reset clears the frozen plan. Cache breakpoints/keys are
+    rendered per provider. Presentations and TurnCards are hash-linked
+    ledger entries, never rebuilt from tool arguments. A directive with
+    temporal deixis ("current", "right now") that gets no retrieval this
+    run is a `[freshness-check]` redo, then fails closed with an honest
+    last-known statement rather than presenting a carried-over figure as
+    current; a thinking-only step is one `[empty-step]` redo unless a card
+    already answered; three consecutive steps that repeat a prior turn's
+    answer verbatim end the turn via the same degraded outcome as
+    tool-repair exhaustion.
     Vendor and topic names (a search provider, a weather API) are never
     behaviour keys; `vak-eval`'s banned-token gate enforces it.
 37. **Agent ownership is mandatory for new work and isolates workspaces,
@@ -1068,11 +1080,15 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      low-confidence reading loads NO domain tools rather than
                      all of them, and reaches the rest through `find_tools`;
                      docs/design/68-context-engine.md §5),
-                     capacity_profile_for (the bind-time probe entry point:
-                     ledger-recorded profile wins over the in-process cache
-                     so every prior feedback update is seen; local providers
-                     always probed, hosted ones only with
-                     `[probe] hosted = "full"`),
+                     capacity_profile_for (the per-request bind: returns the
+                     newer of the ledger-recorded profile and the in-process
+                     cache by probed-at timestamp, synchronously, from
+                     metadata alone when neither exists yet -- never blocks a
+                     turn on a probe; `maybe_start_capacity_probe` runs the
+                     horizon-ladder probe as a background task once the turn
+                     is done, only when eligible (local, or hosted with
+                     `[probe] hosted = "full"`), the cache is missing/stale,
+                     and no probe for that key is already in flight),
                      prompts.rs (`Resolution{text, tail}` -- the stable
                      prefix and the per-turn tail are two separate strings
                      since 3.5.0; see docs/design/07-prompt.md),

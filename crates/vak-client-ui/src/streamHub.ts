@@ -18,14 +18,14 @@ import { buildHost } from "./host/port";
 import { StreamConnection } from "./streamConnection";
 import { NO_INTEREST, unionInterest, type Interest, type StreamFrame, type StreamStatus } from "./streamMux";
 import type { TabMessage, WorkerMessage } from "./streamWorker";
-import type { AgentEvent, PresentationStreamEvent } from "./types";
+import type { ClientEvent, PresentationStreamEvent } from "./types";
 
 export type { StreamStatus } from "./streamMux";
 
 export interface SessionWatcher {
-  agent?(event: AgentEvent): void;
+  agent?(event: ClientEvent): void;
   presentation?(frame: PresentationStreamEvent): void;
-  side?(event: AgentEvent): void;
+  side?(event: ClientEvent): void;
   /** The server lost this session's place in its replay ring: what is on
    *  screen may be missing events, and only the durable transcript can be
    *  trusted (docs/design/48-web-client.md §4.4). */
@@ -71,14 +71,28 @@ function setStatus(next: StreamStatus) {
   statusWatchers.forEach((watch) => watch(next));
 }
 
+/**
+ * A live presentation frame carries only `delta`; `snapshot` is present
+ * only on the initial connect frame, run settlement, and an explicit resync
+ * (docs/audits Finding 2 -- a full-timeline snapshot on every live frame
+ * previously measured up to 9.3 MB per answer). When `snapshot` is present
+ * it is cross-checked against the envelope's own `session` (the mux
+ * routing is already trusted, so a delta-only frame -- which carries no
+ * embeddable session id of its own -- is accepted on that routing alone).
+ */
 function isPresentationFrame(session: string, frame: unknown): frame is PresentationStreamEvent {
-  const snapshot = (frame as PresentationStreamEvent | null)?.snapshot;
-  return (
-    snapshot?.schema_version === 2 &&
-    snapshot.session_id === session &&
-    Array.isArray(snapshot.items) &&
-    Array.isArray(snapshot.diagnostics)
-  );
+  const candidate = frame as PresentationStreamEvent | null;
+  if (!candidate || typeof candidate !== "object") return false;
+  const snapshot = candidate.snapshot;
+  if (snapshot) {
+    return (
+      snapshot.schema_version === 2 &&
+      snapshot.session_id === session &&
+      Array.isArray(snapshot.items) &&
+      Array.isArray(snapshot.diagnostics)
+    );
+  }
+  return candidate.delta != null;
 }
 
 function dispatch(frame: StreamFrame) {

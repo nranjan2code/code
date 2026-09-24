@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+- **Steadier long turns.** The per-turn working-set plan, tool list, and
+  request tail are now each resolved once per turn and reused byte-identical
+  across every step, instead of being rebuilt (and silently reshaped) on
+  every step — required for Claude's preserved-thinking check and it keeps
+  provider prompt caching hot across a whole turn.
+- **Drift detection is quieter.** A step is now only flagged as drifting off
+  the user's request when it verbatim-repeats a prior turn's answer;
+  cross-domain false positives on legitimately related follow-ups are gone.
+- **Turns stay open through a runtime nudge.** A turn now correctly stays
+  open while its last message is a system redo nudge or a tool result, so
+  the nudge always reaches the model on the next request.
+- **`/run` and `/steering` no longer reject a busy session.** Both endpoints
+  admit through a shared queue and return `202 {"request_id","state":
+  "started"|"queued"|"duplicate"}`; queued input runs as the next turn once
+  the live one settles. Cancelling a run no longer manufactures a duplicate
+  "finished" event.
+- **Faster turn-close.** A turn's closing summary card is now built
+  deterministically (verbatim when short, first-sentence fallback when
+  long) instead of a separate model call, removing a multi-second tail
+  latency on some providers.
+- **Capacity probing moved off the critical path.** A model's context-window
+  probe now runs in the background after a turn finishes rather than
+  blocking the next request; model metadata is served stale-while-revalidate.
+- **Anthropic: reasoning effort and an opt-in fast mode.** Requests now carry
+  `output_config.effort` (never disabling extended thinking outright), and
+  `[providers.anthropic] fast_mode` opts into `speed: "fast"` on models that
+  support it.
+- **Checkpoints are faster and lighter on disk.** Captures are now
+  incremental (unchanged files are skipped via a size/mtime fast path) and
+  stored as content-addressed blobs shared across a session's checkpoints,
+  instead of full base64 copies embedded in every checkpoint file.
+- Streaming events now coalesce under backpressure instead of ever being
+  dropped.
+- **Clients receive only what a person should see.** The live event stream
+  sends text deltas without per-frame snapshots (a ~20 KB answer went from
+  ~21 MB to ~260 KB on the wire), drops retries, route fallbacks, compaction
+  and stop-gate notes, and reports run endings as short human messages
+  instead of raw errors; channel replies use the same messages. Presentation
+  frames carry a snapshot only on open, settle or resync, and runtime
+  bookkeeping (admission, capacity, diagnostics, goal-update rows) is never
+  projected. Drafts the runtime sends back for a redo are removed from the
+  chat.
+- **Answers in prose are never executed.** A code block in the model's
+  answer is no longer run as a command; only explicit `<tool_call>`
+  envelopes naming a loaded tool are treated as calls.
+- **Writing requests no longer demand a command or file edit** unless the
+  request names a file to save.
+- **A slow model step is retried, not aborted.** The step watchdog now
+  cancels only the timed-out attempt.
+
 ## 4.0.2 — 2026-09-24
 
 - **Presentation hydration.** Added timeline snapshot reconciliation and presentation hydration helper in `vak-client-ui` to preserve and smoothly merge presentation state in the client store.

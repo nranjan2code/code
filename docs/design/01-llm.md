@@ -65,6 +65,25 @@ features from a model-name prefix:
 | `openrouter`, `opencode-zen`, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
 | `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
+### Anthropic: reasoning depth and fast mode
+
+The adapter never sends `thinking: {type: "disabled"}` or an explicit
+`budget_tokens` — current models either reject it outright or silently
+degrade tool-call reliability under it — so `thinking` is simply omitted,
+which runs adaptive reasoning on every current model. `effort` is the one
+supported dial: `ChatRequest.effort` renders as `output_config.effort`, and
+`think == Some(false)` (a side-dispatch that wants a fast, cheap answer —
+classify, compaction, handoff, plan) maps onto its lowest level only when
+the caller has not already asked for a specific one. An `output_config`
+400 on a model that does not support it is a one-time, per-model fallback:
+the request is retried once without `effort`, and the model is marked
+unsupported so later requests skip straight to the fallback. Opt-in
+`[providers.anthropic] fast_mode` sends `speed: "fast"` on models discovered
+to support it (support is looked up once per model id, in the background,
+never blocking the request that triggered it); a 429 while `speed` is set is
+retried once without it, and a further failure returns the mapped error
+normally.
+
 ## Model discovery
 
 There is no hardcoded model catalogue. Which models exist is a property of

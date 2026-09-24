@@ -22,8 +22,11 @@ run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
                            tail_tokens, current_turn_tokens)
     messages = session.derive_with_plan(plan)   // Full/Card/Packet per turn
     tail  = compose_tail(temporal, stance, intent, work_contract, thread)
-    attach_tail(messages, tail)         // one block, before the user's own
-                                         // words, on the last user message
+    attach_tail(messages, tail, directive_index)  // one block, before the
+                                         // user's own words, on the turn's
+                                         // directive message; plan/tail/
+                                         // tools are resolved once per turn
+                                         // and reused every step
     request = { model, system: prefix, messages, tools: core+deferred/index,
                 cache: CacheHints{ session_key, breakpoints } }
     stream = provider.stream(request, cancel)
@@ -31,7 +34,12 @@ run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
     response = stream.result()          // errors are values
     record_capacity_usage_feedback(request, usage, first_token_latency)
     append assistant message (+meta)
-    calls = extract_tool_calls(response)
+    calls = extract_tool_calls(response)  // structured tool_use blocks, plus
+                                           // a text fallback for an explicit
+                                           // <tool_call>/```tool_call/
+                                           // ```tool_use envelope naming a
+                                           // loaded tool -- never a bare
+                                           // prose code fence
     if model drift detected: steer, maybe end the turn (see below)
     if calls.is_empty():
       if response has neither text nor a tool call: one [empty-step] redo
@@ -88,8 +96,9 @@ Five bounded, system-authored checks run inside the loop, each with its own
 - **`[empty-step]`**: the response carried neither text nor a tool call (a
   thinking-only completion). One redo, unless a card was already emitted
   this run — a card-only turn is a complete answer.
-- **`[steering-drift]`**: a step's tool call serves a different domain than
-  the reading, or its text restates a prior turn's answer verbatim. The nudge
+- **`[steering-drift]`**: a step ends with no tool call and its final text
+  repeats a prior turn's `TurnCard` narration verbatim instead of addressing
+  the current directive — domain no longer enters the check. The nudge
   points at the user's latest message and never quotes it — an echo reads as
   the user asking again. Three consecutive events end the turn via
   `degraded_drift_outcome()`, the same shape as the tool-repair exhaustion
@@ -126,7 +135,11 @@ returning `Completed`:
 - **marker gate**: final text ends with a bare plan marker, a non-heading
   trailing `:` line, or an unclosed fenced code block → looks truncated;
 - **verify gate**: the run's initial prompt demanded executed verification
-  ("must pass", "run it", "prove that"…) and ZERO bash commands ran all run.
+  ("must pass", "run it", "prove that"…) and ZERO bash commands ran all run;
+  it also fires whenever the resolved outcome's `requires_execution()` is
+  true (an effectful act, `Verify`, or a request that names a file
+  deliverable — `Author` alone never demands a receipt) and no execution
+  receipt exists, independent of the keyword heuristic.
 
 On a hit, the gate reuses the stop-hook continuation machinery: emits
 `StopHookContinuation`, appends `[stop-guard]: <reason> / Please continue.`

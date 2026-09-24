@@ -1,6 +1,7 @@
 import { host } from "./host";
 import { restartStream, setStreamOpener } from "./streamHub";
 import type {
+  ClientEvent,
   BackendInfo,
   DiffResponse,
   Health,
@@ -541,6 +542,11 @@ export async function previewCanvas(content: string, title?: string): Promise<st
   return res.text();
 }
 
+export interface RunAdmission {
+  request_id: string | null;
+  state: "started" | "queued" | "duplicate";
+}
+
 export function runPrompt(
   id: string,
   prompt: string,
@@ -548,7 +554,7 @@ export function runPrompt(
   attachments?: { mime: string; data: string }[],
   requestId?: string,
   routing?: RoutingEnvelope,
-): Promise<void> {
+): Promise<RunAdmission> {
   return req(`/sessions/${id}/run`, {
     method: "POST",
     body: JSON.stringify({
@@ -626,6 +632,8 @@ export function workCommand(
 export type InterventionReceipt = {
   request_id: string;
   decision?: string;
+  /** `"steering_queued"` when a run is already busy; `"started"` when it
+   *  lands on an idle session and starts a run itself. */
   state?: string;
   reason?: string;
 };

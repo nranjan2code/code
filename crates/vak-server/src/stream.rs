@@ -25,7 +25,6 @@ use futures::stream::{self, Stream, StreamExt};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use vak_agent::AgentEvent;
 
-use crate::events::SeqEvent;
 use crate::{AppState, SessionHandle};
 
 type Frames<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
@@ -35,12 +34,20 @@ type Frames<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
 /// client bug, refused rather than turned into unbounded server work.
 pub(crate) const MAX_STREAM_SESSIONS: usize = 32;
 
-/// One item of a session's agent-event subscription.
+/// One item of a session's agent-event subscription. `Event` already carries
+/// `crate::client_events::ClientEvent`, the same projection the single-
+/// session `/sessions/{id}/events` route applies through `seq_frame` — a
+/// multiplexed connection must not become a second, unprojected path for
+/// internal `AgentEvent` traffic (retry reasons, route legs, raw error text)
+/// to reach a client (docs/audits Finding 1).
 pub(crate) enum AgentFrame {
     /// The resume point is older than the replay ring, or this consumer
     /// lagged: what the client holds may be missing events it cannot see.
     Resync(&'static str),
-    Event(Box<SeqEvent>),
+    Event {
+        seq: u64,
+        event: crate::client_events::ClientEvent,
+    },
 }
 
 /// A session's agent events, resuming after `resume` when given.
@@ -48,6 +55,8 @@ pub(crate) enum AgentFrame {
 /// Subscribes BEFORE reading the replay ring, so an event published between
 /// the two is received live rather than falling into the gap between them.
 /// Duplicates are filtered by sequence number; a gap could not be recovered.
+/// `seq` stays monotonic across a projected-away event: it produces no
+/// frame, identically on replay and live, exactly like `seq_frame`.
 pub(crate) fn agent_frames(handle: &SessionHandle, resume: Option<u64>) -> Frames<AgentFrame> {
     let rx = handle.events_tx.subscribe();
 
@@ -71,17 +80,23 @@ pub(crate) fn agent_frames(handle: &SessionHandle, resume: Option<u64>) -> Frame
         std::future::ready(match event {
             // At or below what the replay already delivered is a duplicate.
             Ok(framed) if framed.seq <= highest_replayed => None,
-            Ok(framed) => Some(AgentFrame::Event(Box::new(framed))),
+            Ok(framed) => {
+                crate::client_events::project(framed.event).map(|event| AgentFrame::Event {
+                    seq: framed.seq,
+                    event,
+                })
+            }
             Err(_) => Some(AgentFrame::Resync("live event consumer lagged")),
         })
     });
     Box::pin(
         stream::iter(resync)
-            .chain(stream::iter(
-                replay
-                    .into_iter()
-                    .map(|framed| AgentFrame::Event(Box::new(framed))),
-            ))
+            .chain(stream::iter(replay.into_iter().filter_map(|framed| {
+                crate::client_events::project(framed.event).map(|event| AgentFrame::Event {
+                    seq: framed.seq,
+                    event,
+                })
+            })))
             .chain(live),
     )
 }
@@ -123,7 +138,7 @@ pub(crate) fn presentation_frames(
         let frame = vak_delivery::OutputStreamFrame {
             sequence: None,
             delta: None,
-            snapshot: crate::projection::snapshot(id, &session),
+            snapshot: Some(crate::projection::snapshot(id, &session)),
         };
         return Some(Box::pin(stream::once(std::future::ready(
             presentation_frame(&frame),
@@ -151,7 +166,7 @@ pub(crate) fn presentation_frames(
     let initial = presentation_frame(&vak_delivery::OutputStreamFrame {
         sequence: Some(last_sequence),
         delta: None,
-        snapshot: timeline.clone(),
+        snapshot: Some(timeline.clone()),
     });
     handle.subscribed.notify_one();
     let live = BroadcastStream::new(rx).filter_map(move |event| {
@@ -208,7 +223,7 @@ pub(crate) fn presentation_frames(
                 Some(vak_delivery::OutputStreamFrame {
                     sequence: Some(last_sequence),
                     delta: None,
-                    snapshot: timeline.clone(),
+                    snapshot: Some(timeline.clone()),
                 })
             }
         };
@@ -227,12 +242,27 @@ fn live_cursor(timeline: &vak_delivery::OutputTimeline) -> Option<u64> {
         .and_then(|seq| seq.parse().ok())
 }
 
-/// A session's side-chat (`/btw`) events. `None` marks a lagged consumer.
-fn side_frames(handle: &SessionHandle) -> Frames<Option<SeqEvent>> {
+/// One item of a session's side-chat (`/btw`) subscription, projected
+/// through the same `client_events::project` as the main agent stream
+/// (docs/audits Finding 1) — a side chat is a full agent run and deserves
+/// the same protection from internal traffic.
+enum SideFrame {
+    /// The broadcast consumer lagged; distinct from a projected-away event,
+    /// which simply produces no `Event` variant.
+    Lagged,
+    Event(crate::client_events::ClientEvent),
+}
+
+fn side_frames(handle: &SessionHandle) -> Frames<SideFrame> {
     let mut rx = handle.side_events_tx.subscribe();
     let _ = rx.try_recv();
     handle.side_events_tx.send(AgentEvent::StreamOpened);
-    Box::pin(BroadcastStream::new(rx).map(Result::ok))
+    Box::pin(BroadcastStream::new(rx).filter_map(|result| {
+        std::future::ready(match result {
+            Ok(framed) => crate::client_events::project(framed.event).map(SideFrame::Event),
+            Err(_) => Some(SideFrame::Lagged),
+        })
+    }))
 }
 
 /// Content-free wakeups for a session's shared candidate comments.
@@ -334,7 +364,7 @@ enum Muxed {
     Config(String),
     Agent(String, AgentFrame),
     Presentation(String, PresentationFrame),
-    Side(String, Option<SeqEvent>),
+    Side(String, SideFrame),
     Coworking(String),
     Unknown(String),
 }
@@ -346,7 +376,7 @@ fn session_data(session: &str, key: &str, raw_json: &str) -> String {
     )
 }
 
-fn event_json(event: &AgentEvent) -> String {
+fn client_event_json(event: &crate::client_events::ClientEvent) -> String {
     serde_json::to_string(event).unwrap_or_else(|error| {
         serde_json::json!({
             "error": "event serialization failed",
@@ -452,12 +482,12 @@ pub(crate) async fn stream(
         let event = match item {
             Muxed::Host(payload) => Event::default().event("host").data(payload),
             Muxed::Config(payload) => Event::default().event("config").data(payload),
-            Muxed::Agent(session, AgentFrame::Event(framed)) => {
-                cursor.insert(session.clone(), framed.seq);
+            Muxed::Agent(session, AgentFrame::Event { seq, event }) => {
+                cursor.insert(session.clone(), seq);
                 Event::default()
                     .event("agent")
                     .id(format_cursor(&cursor))
-                    .data(session_data(&session, "event", &event_json(&framed.event)))
+                    .data(session_data(&session, "event", &client_event_json(&event)))
             }
             Muxed::Agent(session, AgentFrame::Resync(reason)) => {
                 Event::default().event("resync").data(session_data(
@@ -469,10 +499,10 @@ pub(crate) async fn stream(
             Muxed::Presentation(session, frame) => Event::default()
                 .event("presentation")
                 .data(session_data(&session, "frame", &frame.json)),
-            Muxed::Side(session, Some(framed)) => Event::default()
+            Muxed::Side(session, SideFrame::Event(event)) => Event::default()
                 .event("side")
-                .data(session_data(&session, "event", &event_json(&framed.event))),
-            Muxed::Side(session, None) => Event::default()
+                .data(session_data(&session, "event", &client_event_json(&event))),
+            Muxed::Side(session, SideFrame::Lagged) => Event::default()
                 .event("side")
                 .data(session_data(&session, "lagged", "true")),
             Muxed::Coworking(session) => Event::default()

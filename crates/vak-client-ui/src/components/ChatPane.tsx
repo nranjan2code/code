@@ -175,19 +175,12 @@ function visibleItems(list: Item[], liveTurn = false): Item[] {
       if (it.kind === "user") {
         return Boolean(stripControlScaffolding(it.text).trim());
       }
-      if (it.kind === "system") {
-        const t = it.text.toLowerCase();
-        if (
-          t.includes("compacting context") ||
-          t.includes("context compacted") ||
-          t.includes("route fallback") ||
-          t.includes("stop gate:") ||
-          t.includes("retrying")
-        ) {
-          return false;
-        }
-        return true;
-      }
+      // Runtime bookkeeping (retries, route fallback, context compaction,
+      // stop-hook continuations) never reaches the client at all now — the
+      // server-side projection (vak-server/src/client_events.rs) drops it
+      // before it becomes a `ClientEvent`, so every "system" item here is
+      // already something meant for the reader.
+      if (it.kind === "system") return true;
       if (it.kind === "approval" && !it.resolved) return true;
       if (it.kind === "assistant") {
         const scrubbed = cleanAssistantText(it.text);

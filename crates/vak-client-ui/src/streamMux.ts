@@ -4,7 +4,7 @@
 // No imports beyond types, so the worker bundle stays small and this file
 // runs under `node --experimental-strip-types` as it stands.
 
-import type { AgentEvent } from "./types";
+import type { ClientEvent } from "./types";
 
 /** What one connection carries. */
 export interface Interest {
@@ -19,9 +19,9 @@ export const NO_INTEREST: Interest = { sessions: [], host: false, config: false 
 export type StreamFrame =
   | { kind: "host"; data: unknown }
   | { kind: "config"; data: unknown }
-  | { kind: "agent"; session: string; event: AgentEvent }
+  | { kind: "agent"; session: string; event: ClientEvent }
   | { kind: "presentation"; session: string; frame: unknown }
-  | { kind: "side"; session: string; event: AgentEvent | null }
+  | { kind: "side"; session: string; event: ClientEvent | null }
   | { kind: "coworking"; session: string }
   | { kind: "resync"; session: string; reason: string }
   | { kind: "unknown"; session: string };
@@ -49,11 +49,11 @@ export function parseFrame(kind: string, raw: string): StreamFrame | null {
   const session = body.session;
   switch (kind) {
     case "agent":
-      return { kind, session, event: body.event as AgentEvent };
+      return { kind, session, event: body.event as ClientEvent };
     case "presentation":
       return { kind, session, frame: body.frame };
     case "side":
-      return { kind, session, event: body.lagged ? null : (body.event as AgentEvent) };
+      return { kind, session, event: body.lagged ? null : (body.event as ClientEvent) };
     case "coworking":
     case "unknown":
       return { kind, session };

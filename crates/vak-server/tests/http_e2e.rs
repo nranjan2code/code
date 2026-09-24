@@ -588,8 +588,13 @@ async fn cancel_endpoint_stops_a_running_session() {
                 // `cancel_run` no longer synthesizes its own `RunFinished`
                 // (it raced the real one); the terminal event now comes
                 // from the run itself unwinding as `TurnOutcome::Aborted`,
-                // which `run_prompt`/`http_settle` summarize as "aborted".
-                if text.contains("RunFinished") && text.contains("aborted") {
+                // which `run_prompt`/`http_settle` summarize as the internal
+                // sentinel "aborted". The wire's `RunFinished` carries a
+                // typed `outcome` and a human `message`, never that raw
+                // internal summary string (`vak-server/src/
+                // client_events.rs`) -- a cancelled run's outcome is
+                // `"Stopped"`.
+                if text.contains("RunFinished") && text.contains("\"Stopped\"") {
                     saw_cancelled = true;
                     break;
                 }

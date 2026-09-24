@@ -3108,6 +3108,9 @@ async fn execute_turn_chain(
                     (Some(log), short_summary(&text), err)
                 }
                 Err(e) => {
+                    // The full error is recorded internally for operators;
+                    // the channel reply stays a human sentence (see
+                    // `outcome_text`) — never the raw `CoreError` display.
                     vak_core::security_events::record(
                         &core.sessions_home(),
                         vak_core::security_events::EventKind::ExecutionError,
@@ -3116,7 +3119,10 @@ async fn execute_turn_chain(
                         None,
                     );
                     let recovered = recover_ledger(&core, &session_id).await;
-                    let text = format!("error: {e}");
+                    let text = crate::client_events::run_outcome_message(
+                        crate::client_events::RunOutcome::Failed,
+                    )
+                    .to_string();
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(text.clone());
                     }
@@ -3150,7 +3156,14 @@ async fn recover_ledger(core: &Core, session_id: &str) -> Option<vak_session::Se
     core.open_session(session_id).await.ok()
 }
 
+/// The text sent back to a Telegram/Slack/Discord user as the bot's reply
+/// for this turn. A completed turn's real answer passes through untouched;
+/// anything that did not produce a normal answer falls back to the same
+/// small set of human sentences `ClientEvent::RunFinished` uses for every
+/// other client (`client_events::run_outcome_message`), never the raw
+/// `TurnOutcome::Failed` error — a channel reply is not a debug log.
 fn outcome_text(o: &vak_agent::TurnOutcome) -> String {
+    use crate::client_events::{RunOutcome, run_outcome_message};
     use vak_agent::TurnOutcome;
     match o {
         TurnOutcome::Completed { response } => {
@@ -3165,9 +3178,9 @@ fn outcome_text(o: &vak_agent::TurnOutcome) -> String {
             .as_ref()
             .map(|m| m.text_content())
             .filter(|t| !t.trim().is_empty())
-            .unwrap_or_else(|| "(aborted)".into()),
-        TurnOutcome::Failed { error } => format!("error: {error}"),
-        TurnOutcome::MaxTurnsReached => "(stopped at max turns)".into(),
+            .unwrap_or_else(|| run_outcome_message(RunOutcome::Stopped).into()),
+        TurnOutcome::Failed { .. } => run_outcome_message(RunOutcome::Failed).into(),
+        TurnOutcome::MaxTurnsReached => run_outcome_message(RunOutcome::MaxTurns).into(),
     }
 }
 
@@ -3412,6 +3425,31 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_channel_reply_for_a_failed_run_is_human_text_never_the_raw_error() {
+        let outcome = vak_agent::TurnOutcome::Failed {
+            error: vak_llm::LlmError::Network("connection reset by peer at 10.0.0.1:443".into()),
+        };
+        let text = outcome_text(&outcome);
+        assert!(
+            !text.contains("10.0.0.1") && !text.contains("connection reset"),
+            "raw provider error leaked into the channel reply: {text:?}"
+        );
+        assert_eq!(
+            text,
+            crate::client_events::run_outcome_message(crate::client_events::RunOutcome::Failed)
+        );
+    }
+
+    #[test]
+    fn a_channel_reply_for_max_turns_names_the_step_limit_not_a_raw_code() {
+        let text = outcome_text(&vak_agent::TurnOutcome::MaxTurnsReached);
+        assert_eq!(
+            text,
+            crate::client_events::run_outcome_message(crate::client_events::RunOutcome::MaxTurns)
+        );
+    }
 
     #[test]
     fn voice_prompt_is_a_normal_user_message() {

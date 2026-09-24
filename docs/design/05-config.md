@@ -64,8 +64,14 @@ The supported surface is discoverable through `vak config dump`:
 `profiles.*`, `[route]`, retry/watchdog/circuit-breaker controls,
 `allow`/`ask`/`deny`, `[sandbox]`, `[tools]`, `[ui]`, `[hooks]`,
 `[mcp.servers]`, `[finops]`, `[goal]`, `[memory]`, `[learning]`,
-`[gateway]`, `[automation]`, `[update]`, `[intent]`, and `[commitment]`
-(`docs/design/47-commitment-kernel.md`).
+`[gateway]`, `[automation]`, `[update]`, `[intent]`, `[commitment]`
+(`docs/design/47-commitment-kernel.md`), `[probe]` (`hosted = "none"|"full"`,
+gating whether a hosted model's bound profile gets the full background
+horizon-ladder probe — local models are always eligible;
+docs/design/68-context-engine.md §1), and per-provider `[providers.*]`
+sections such as `[providers.ollama]` (`keep_alive`/`num_ctx`) and
+`[providers.anthropic]` (`fast_mode`, opt-in `speed: "fast"` on models
+discovered to support it; docs/design/01-llm.md).
 
 ## Storage
 

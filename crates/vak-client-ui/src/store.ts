@@ -4,9 +4,9 @@ import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
-import { mergePresentationSnapshot } from "./presentationHydration";
+import { mergePresentationSnapshot, applyPresentationDelta } from "./presentationHydration";
 import type {
-  AgentEvent,
+  ClientEvent,
   AssistantMessage,
   BackendInfo,
   ContentBlock,
@@ -645,21 +645,18 @@ export function dismissNotice(index: number) {
 /**
  * Live retry state per session.
  *
- * RetryScheduled is emitted once, before the backoff sleep, and the attempt
- * itself is silent — so a transcript line saying "retrying in 0.6s" was the
- * last thing a user ever saw. Holding the state lets the header keep saying
- * "retrying" until real progress (a delta, a tool call, an end) arrives.
+ * The server sends a neutral `"Retrying"` event once per attempt, before the
+ * backoff sleep, with no attempt count, delay or reason (those are internal
+ * dispatch detail — see `vak-server/src/client_events.rs`). Holding the flag
+ * lets the header keep saying "Retrying" until real progress (a delta, a
+ * tool call, an end) arrives.
  */
-export interface RetryState {
-  attempt: number;
-  reason: string;
+const [retryMap, setRetryMap] = createStore<Record<string, boolean>>({});
+export function retryOf(id: string | null): boolean {
+  return !!(id && retryMap[id]);
 }
-const [retryMap, setRetryMap] = createStore<Record<string, RetryState | null>>({});
-export function retryOf(id: string | null): RetryState | null {
-  return id ? (retryMap[id] ?? null) : null;
-}
-function noteRetry(id: string, state: RetryState | null) {
-  setRetryMap(id, state);
+function noteRetry(id: string, retrying: boolean) {
+  setRetryMap(id, retrying);
 }
 
 export interface UiPreferences {
@@ -868,6 +865,13 @@ export function openInEditor(path: string) {
 const [itemsBySession, setItemsBySession] = createStore<Record<string, Item[]>>({});
 const [expandedItems, setExpandedItems] = createStore<Record<string, boolean>>({});
 const [runningMap, setRunningMap] = createStore<Record<string, boolean>>({});
+/**
+ * `POST /cancel` no longer synthesizes a `RunFinished` — the run's own
+ * terminal event arrives once it actually stops (which can take a moment:
+ * the current tool call or provider request has to unwind). Without this,
+ * clicking Stop had nothing to show between the click and that event.
+ */
+const [stoppingMap, setStoppingMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
 const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
 const [presentationErrors, setPresentationErrors] = createStore<Record<string, string | null>>({});
@@ -881,6 +885,14 @@ export function itemsOf(id: string | null, bucket: Bucket = "main"): Item[] {
 
 export function isRunning(id: string | null, bucket: Bucket = "main"): boolean {
   return !!(id && runningMap[K(bucket, id)]);
+}
+
+export function isStopping(id: string | null, bucket: Bucket = "main"): boolean {
+  return !!(id && stoppingMap[K(bucket, id)]);
+}
+
+export function markStopping(id: string, on: boolean, bucket: Bucket = "main") {
+  setStoppingMap(K(bucket, id), on);
 }
 
 export function usageOf(id: string | null): Usage {
@@ -918,7 +930,21 @@ export function setPresentationError(id: string, error: string | null) {
 }
 
 export function applyPresentationEvent(id: string, event: PresentationStreamEvent) {
-  hydrateFromPresentation(id, event.snapshot);
+  // A snapshot frame (initial connect, run settlement, resync) is the sole
+  // authority and replaces state wholesale; an ordinary live frame carries
+  // only `delta` and is applied to the timeline already on screen (docs/
+  // audits Finding 2 -- a snapshot on every live frame previously measured
+  // up to 9.3 MB per answer).
+  if (event.snapshot) {
+    hydrateFromPresentation(id, event.snapshot);
+    return;
+  }
+  if (event.delta) {
+    setPresentationBySession(
+      id,
+      reconcile(applyPresentationDelta(presentationBySession[id] ?? null, event.delta), { key: "id" }),
+    );
+  }
 }
 
 // ---- buckets: "main" transcript vs "side" (/btw) branch --------------------
@@ -1144,9 +1170,9 @@ function appendToLast(bucket: Bucket, id: string, kind: "assistant" | "thinking"
 
 export function applyEvent(
   id: string,
-  ev: AgentEvent,
+  ev: ClientEvent,
   opts: {
-    onFinish?: (summary: string) => void;
+    onFinish?: (message: string) => void;
     /** A gate is now waiting on a person. The only event in the stream
      *  that is *about* the reader rather than the work. */
     onApproval?: (requestId: string, tool: string) => void;
@@ -1155,31 +1181,29 @@ export function applyEvent(
 ) {
   const b: Bucket = opts.bucket ?? "main";
   // Rust's externally tagged unit variant serializes as the bare string
-  // `"StreamOpened"`, while object variants serialize as `{ Variant: ... }`.
-  // It is a lifecycle hint only; accepting the unit form keeps the stream
-  // quiet and avoids applying the `in` operator to a primitive.
-  if (typeof ev === "string") return;
+  // (`"StreamOpened"`, `"Retrying"`), while object variants serialize as
+  // `{ Variant: ... }`.
+  if (ev === "StreamOpened") return;
+  if (ev === "Retrying") {
+    // No attempt count, delay or reason: the server never sends them (see
+    // `ClientEvent::Retrying` in vak-server/src/client_events.rs). The
+    // header shows a neutral "Retrying" state until real progress arrives.
+    noteRetry(id, true);
+    return;
+  }
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
     cueTurnStart();
-    noteRetry(id, null);
-  } else if ("Stream" in ev) {
-    const s = ev.Stream;
-    if ("TextDelta" in s) {
-      noteRetry(id, null);
-      ensureStreamingAssistant(b, id);
-      appendToLast(b, id, "assistant", s.TextDelta.delta);
-    } else if ("ThinkingDelta" in s) {
-      noteRetry(id, null);
-      appendToLast(b, id, "thinking", s.ThinkingDelta.delta);
-    }
-    // "End" (Stream.End) is deliberately not handled here: a stream end
-    // does not by itself mean the turn is done (a tool call can follow),
-    // and closing streaming state early would let a subsequent delta
-    // reopen a "settled" bubble mid-turn. Closing happens on RunFinished,
-    // or implicitly when the next user turn starts a fresh assistant item.
+    noteRetry(id, false);
+  } else if ("TextDelta" in ev) {
+    noteRetry(id, false);
+    ensureStreamingAssistant(b, id);
+    appendToLast(b, id, "assistant", ev.TextDelta.delta);
+  } else if ("ThinkingDelta" in ev) {
+    noteRetry(id, false);
+    appendToLast(b, id, "thinking", ev.ThinkingDelta.delta);
   } else if ("ToolCallStart" in ev) {
-    noteRetry(id, null);
+    noteRetry(id, false);
     pushItem(b, id, {
       kind: "tool",
       id: ev.ToolCallStart.id,
@@ -1229,19 +1253,6 @@ export function applyEvent(
         return { ...it, lines: lines.slice(-12) };
       },
     );
-  } else if ("WorkerUsage" in ev) {
-    patchLast(
-      b,
-      id,
-      (it) => it.kind === "worker",
-      (it) =>
-        it.kind === "worker"
-          ? {
-              ...it,
-              lines: [...it.lines, `tokens ↑${ev.WorkerUsage.input_tokens} ↓${ev.WorkerUsage.output_tokens}`],
-            }
-          : it,
-    );
   } else if ("WorkerFinished" in ev) {
     patchLast(
       b,
@@ -1256,41 +1267,19 @@ export function applyEvent(
             }
           : it,
     );
-  } else if ("RetryScheduled" in ev) {
-    noteRetry(id, {
-      attempt: ev.RetryScheduled.attempt,
-      reason: ev.RetryScheduled.reason,
+  } else if ("DraftDiscarded" in ev) {
+    // The runtime sent this turn's text answer back for a redo. Drop the
+    // discarded draft bubble silently -- no note, it was never a finished
+    // answer the reader should see.
+    updateList(b, id, (list) => {
+      const idx = [...list].reverse().findIndex((it) => it.kind === "assistant");
+      if (idx === -1) return list;
+      const at = list.length - 1 - idx;
+      return [...list.slice(0, at), ...list.slice(at + 1)];
     });
-    note(
-      b,
-      id,
-      `retrying (attempt ${ev.RetryScheduled.attempt}) in ${Math.round(ev.RetryScheduled.delay_ms / 100) / 10}s — ${ev.RetryScheduled.reason}`,
-    );
-  } else if ("RouteFallback" in ev) {
-    // The leg changed: whatever backoff the previous leg scheduled no
-    // longer describes this moment. Clear the header banner and show the
-    // frozen-contract step instead.
-    noteRetry(id, null);
-    note(
-      b,
-      id,
-      `route fallback → ${ev.RouteFallback.to_provider}/${ev.RouteFallback.to_model} (frozen ladder leg)`,
-    );
-  } else if ("ContextCompacting" in ev) {
-    note(b, id, "compacting context…");
-  } else if ("ContextCompacted" in ev) {
-    note(
-      b,
-      id,
-      `context compacted ${ev.ContextCompacted.before_tokens} → ${ev.ContextCompacted.after_tokens} tokens`,
-    );
-  } else if ("StopHookContinuation" in ev) {
-    note(b, id, `stop gate: continuing (${ev.StopHookContinuation.reason})`);
-  } else if ("TurnEnd" in ev) {
-    setUsageBySession(id, ev.TurnEnd.usage);
   } else if ("RunFinished" in ev) {
     markRunning(id, false, b);
-    noteRetry(id, null);
+    noteRetry(id, false);
     // Close every in-flight item. A finished run cannot still have a tool
     // executing or an approval pending, so anything left open means its
     // end event was missed (a dropped stream, a failed re-attach). Leaving
@@ -1312,21 +1301,20 @@ export function applyEvent(
         return it;
       }),
     );
-    // A failed run must say so in the transcript. Previously the reason
-    // lived only in the summary handed to onFinish, which surfaced it only
-    // as a background notification — so a visible window showed nothing at
-    // all when a run died.
-    if (ev.RunFinished.is_error) {
-      note(b, id, ev.RunFinished.summary === "max_turns"
-        ? "Vak reached this run’s step limit. Saved work is available; choose Continue to finish this task."
-        : ev.RunFinished.summary);
+    // A run that did not complete normally must say so in the transcript.
+    // `message` is always one of the server's small set of human sentences
+    // (never raw error text — see `ClientEvent.RunFinished`).
+    const { outcome, message } = ev.RunFinished;
+    const badOutcome = outcome === "Failed" || outcome === "MaxTurns";
+    if (badOutcome) {
+      note(b, id, message);
     }
-    // Short narration only -- the full summary can run long and reads
+    // Short narration only -- the full message can run long and reads
     // awkwardly aloud; a one-word cue is enough to signal completion.
     // Voice conversations own playback. Turn completion is surfaced in the
     // transcript and must not trigger an unscoped one-shot narration request.
-    cueTurnFinish(ev.RunFinished.is_error);
-    opts.onFinish?.(ev.RunFinished.summary);
+    cueTurnFinish(badOutcome);
+    opts.onFinish?.(message);
   } else if ("Sandbox" in ev) {
     const sb = ev.Sandbox;
     if (sb.kind === "ExecutionStarted") {
@@ -1457,7 +1445,10 @@ export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
   // A session that just stopped running (cancelled, or reconciled against
   // the server's own truth in refreshSessions) must not keep showing a
   // stale "Retrying" state from whatever it was last doing.
-  if (!on) noteRetry(id, null);
+  if (!on) {
+    noteRetry(id, false);
+    markStopping(id, false, bucket);
+  }
 }
 
 export function resolveApproval(id: string, requestId: string, verdict: "allowed" | "denied") {

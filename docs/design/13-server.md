@@ -15,9 +15,9 @@ consumers.
 | POST | `/sessions/:id/run` `{prompt}` | 202; events stream on SSE |
 | POST | `/sessions/:id/steering` `{text}` | queue mid-run input |
 | POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
-| GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON. Every frame carries `id: <seq>`; a reconnect with `Last-Event-ID` is replayed the gap, or gets an `event: resync` frame when the gap is wider than the 1024-frame ring (docs/design/48-web-client.md §4.4) |
+| GET | `/sessions/:id/events` | SSE stream of client events: `client_events::project` maps each `AgentEvent` to the user-facing `ClientEvent` (turn start, text/thinking deltas without snapshots, tool calls, approvals, workers, workbench, `DraftDiscarded`, and `RunFinished` with a fixed human message) and drops internal traffic (retries, route fallbacks, compaction, stop-gate notes, raw errors). `/stream` multiplexes the same projection for every session a tab follows. Every frame carries `id: <seq>`; a reconnect with `Last-Event-ID` is replayed the gap, or gets an `event: resync` frame when the gap is wider than the 1024-frame ring (docs/design/48-web-client.md §4.4). Under backpressure a still-full broadcast channel coalesces consecutive same-kind stream deltas (`StreamEvent::try_merge`) and retries the send rather than dropping one — lossless, never a gap the client cannot see |
 | GET | `/sessions/:id/presentation` | reconnectable schema-v2 `OutputTimeline` snapshot; deterministic projection of the ledger and live state |
-| GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`) |
+| GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`). A frame carries the full `snapshot` only when the stream opens, a run settles, or the consumer resyncs; live frames carry the delta alone. Runtime bookkeeping (admission, capacity, diagnostics, retries, goal-update rows) never becomes a timeline item |
 | GET | `/stream?session=…&host=1&config=1` | every subscription a client holds on ONE SSE connection: per followed session its `agent`, `presentation`, `side`, `coworking` and `resync` frames, plus `host` and `config` changes. Agent frames carry the cursor vector `<session>:<seq>,…` as their id, so `Last-Event-ID` resumes every session. What the browser client uses; the per-session routes above serve single-session clients such as `vak term` (docs/design/48-web-client.md §4.7) |
 | GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
 | GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
@@ -98,15 +98,30 @@ and channel clients consume this same projection; a channel's shorter text
 fallback does not change the underlying outcome or evidence.
 
 - **Stream-open handshake**: the SSE handler subscribes to the broadcast
-  ring *before* notifying, then publishes a `StreamOpened` marker. Clients
-  fire `/run` only after seeing it — no subscribe/publish races, verified by
-  both the rust e2e test and the python smoke driver.
+  ring *before* notifying, then publishes a `StreamOpened` marker. A freshly
+  admitted turn chain gives an SSE consumer up to 2s to attach before its
+  first leg starts, so its terminal event is seen — but only when nobody is
+  watching yet (`wait_for_external_subscriber`); a client already attached
+  incurs no wait. Clients fire `/run` only after seeing `StreamOpened` — no
+  subscribe/publish races, verified by both the rust e2e test and the python
+  smoke driver.
 - **Approvals over HTTP**: permission asks publish `ApprovalRequested{id,
   tool, reason}` and park on a oneshot; `POST /approvals/:rid` resolves it.
   Grants are consumed exactly once (same invariant as the TUI approver).
 - **Session ledger returns** after each run (`run_turn_with` now yields
   `(TurnOutcome, SessionLog)`), so transcripts stay queryable between runs.
-- Second concurrent `/run` on a live session → `409 Conflict`.
+- `/run` and `/steering` never reject on a busy session: both admit through
+  `admit_or_queue` and return `202 {"request_id", "state"}`, where `state`
+  is `"started"` (this call owns the run), `"queued"` (a run is already in
+  flight; the input is pushed onto the steering queue and runs as the next
+  leg of the same turn chain once the live leg settles —
+  `continue_or_release`), or `"duplicate"` (this `request_id` was already
+  admitted). There is no concurrent-run rejection. `POST
+  /sessions/:id/cancel` stops the live leg and discards whatever was queued
+  for a continuation leg (input arriving after the discard is unaffected —
+  it becomes the next leg like any other steering); it never synthesizes a
+  `RunFinished` itself, since the chain's own settle path emits the one
+  terminal event once the run actually stops.
 
 ## Browser surface (docs/design/48-web-client.md)
 

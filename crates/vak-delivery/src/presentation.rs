@@ -224,13 +224,19 @@ pub enum OutputStreamEvent {
     },
 }
 
-/// A reconnectable presentation frame. Consumers may apply the delta or
-/// replace their state with the complete snapshot; both describe the same point.
+/// A reconnectable presentation frame. An ordinary live frame carries only
+/// `delta`, which a consumer applies to its own running `OutputTimeline`
+/// (mirroring the server's own `apply_stream_event`); `snapshot` is present
+/// only on the initial connect frame, run settlement, and an explicit
+/// resync, where it is the sole authoritative replacement and `delta` is
+/// `None`. A frame never carries both: the full-timeline-per-live-event
+/// payload this replaces measured 0.6-9.3 MB per answer (docs/audits).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputStreamFrame {
     pub sequence: Option<u64>,
     pub delta: Option<OutputStreamEvent>,
-    pub snapshot: OutputTimeline,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<OutputTimeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

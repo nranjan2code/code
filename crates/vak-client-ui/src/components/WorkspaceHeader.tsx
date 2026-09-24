@@ -6,6 +6,7 @@ import {
   inboxOpen,
   inboxUnread,
   isRunning,
+  isStopping,
   retryOf,
   sessions,
   setBestOfOpen,
@@ -67,7 +68,7 @@ export default function WorkspaceHeader() {
     const id = activeId();
     if (!id) return "New task";
     if (itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "Needs your decision";
-    if (isRunning(id)) return retryOf(id) ? "Retrying" : "Working";
+    if (isRunning(id)) return isStopping(id) ? "Stopping…" : retryOf(id) ? "Retrying" : "Working";
     return "Ready";
   });
   const characterState = createMemo(() => {

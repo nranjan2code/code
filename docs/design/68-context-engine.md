@@ -91,9 +91,21 @@ pub struct CapacityProfile {
 pub struct Horizon { pub tokens: u64, pub confidence: f64, pub last_confirmed: Instant }
 ```
 
-**Bind-time probe.** On the first turn a session binds to a model (and again
-when the profile is stale or contradicted), the engine runs a probe *before*
-assembling the user's request:
+**Bind-time read, background probe.** `capacity_profile_for` never runs the
+ladder on a turn's own critical path: it synchronously returns the newer (by
+`provenance.probed_at`) of the ledger-recorded profile and the in-process
+cache, or a metadata-only profile (`declared_window`/`output_reserve` alone,
+`confidence` low) when neither exists yet, and the request is assembled
+against whatever that is. `maybe_start_capacity_probe` runs the ladder as a
+background task, started only once a turn has finished (docs/design/68 §1:
+"only while that model is idle") and only when the leg is eligible (local,
+or hosted with `[probe] hosted = "full"`), the cached profile is missing,
+stale, or `needs_reprobe`, and no probe for that key is already in flight
+(single-flight; a real turn about to use the same key cancels any
+in-progress background probe for it rather than compete with it for
+compute). The task updates the process cache on completion; the session
+ledger catches up at the next bind, since the ledger belongs to the run that
+called it, not to the detached probe task. The ladder itself:
 
 1. Metadata rung: `model_context()` (Ollama `/api/show` incl.
    `num_ctx`, `/v1/models`, Anthropic/OpenAI catalogues). Sets
@@ -126,12 +138,17 @@ Cost control for hosted models: the horizon ladder runs on the cheapest
 available model of the same family only when the operator has opted in
 (`probe.hosted = full`); otherwise hosted profiles start from
 `instruction_horizon = declared_window` with `confidence = 0.3` and are
-tightened by feedback. Local models are always probed in full: the probe is
-free apart from time, and time is exactly what it saves.
+tightened by feedback. Local models are always eligible for the background
+probe: the probe is free apart from time, and time is exactly what it saves.
 
 **Feedback.** Every turn's receipt updates the profile:
 
-- `tokens_per_char` ← `usage.input_tokens / chars_sent` (EWMA α=0.3).
+- `tokens_per_char` ← `usage.prompt_tokens() / chars_sent` — every prompt
+  token the provider billed, cache tiers included, never `input_tokens`
+  alone: `chars_sent` counts the whole request whether or not it hit the
+  cache, so the numerator has to match, or a growing cache-hit rate would
+  collapse the ratio toward zero (a full cache hit reports `input_tokens ==
+  0`) for a request that was not remotely empty (EWMA α=0.3).
 - `prefill_tps` ← on cache-miss turns only.
 - Horizon tightening: a turn in which the assembled request exceeded
   `instruction_horizon.tokens × 0.8` **and** the model failed an explicit
@@ -226,7 +243,10 @@ Properties:
 - On a frontier model the same session keeps dozens of turns whole.
 - Compaction is incremental, never an overflow emergency: the packet is
   refreshed whenever a turn leaves the working set, so the summariser call
-  is amortised and the request never overshoots.
+  is amortised and the request never overshoots. Turns evicted past the
+  working set move into the packet in fixed-size batches
+  (`PACKET_BATCH_TURNS`, 8), never one at a time, so the packet's boundary
+  holds steady across several turns instead of growing every request.
 - **A packet is a cache, never a boundary.** A `Compaction` entry is keyed
   by the inclusive turn range it summarises (`first_turn_id..=last_turn_id`)
   and records the model whose plan asked for it. The projection renders a
@@ -291,16 +311,21 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 [messages] retrieved older turns (whole)
            compaction packet (if any)
            working-set turns (whole, digested evidence)
-           current turn so far
-           ─── tail (one control message, user role) ───
-           <turn_context> UTC instant, local time, timezone
-           <intent> latest note only
-           <stance> epistemic stance — phrased so it never forbids a tool the
-                    prompt asks for ("answer directly; still use emit_*_card
-                    when a card type fits")
-           <thread> only directives that are NOT in the working set verbatim
-           <work_contract> if active
-           nudges for this turn
+           current turn's directive ─┬─ tail block inserted here, before the
+                                      │  directive's own text:
+                                      │  <turn_context> UTC instant, local
+                                      │    time, timezone
+                                      │  <intent> latest note only
+                                      │  <stance> epistemic stance — phrased
+                                      │    so it never forbids a tool the
+                                      │    prompt asks for ("answer directly;
+                                      │    still use emit_*_card when a card
+                                      │    type fits")
+                                      │  <thread> directives NOT in the
+                                      │    working set verbatim
+                                      │  <work_contract> if active
+           current turn's later steps (tool_use/tool_result pairs, nudges) ──
+           appended after the directive, unmodified, one per step
 ```
 
 The prefix size is *measured*: the assembler sends it once per profile as a
@@ -313,15 +338,25 @@ receipt; a turn whose digest differs from the previous turn's is a cache
 break and is surfaced as an `Activity` so regressions are visible.
 
 
-**Placement.** The tail rides the last user message, after any
-`tool_result` blocks (every adapter keeps results first) and *before* any
-text, so the last thing the model reads is the user's own words — the
-directive on the first step, a runtime nudge on a redo. The tail never
-restates the directive: measured live, an echo after a tool result read as
-the user asking again and the same card was re-emitted up to nineteen
-times in one turn. Also measured: with the tail appended after the
-directive, `gemma4:e2b-mlx` answered the `<stance>` block ("As an
-analytical agent, I can handle tasks…") instead of the question.
+**Placement.** `attach_tail(messages, tail, directive_index)` inserts the
+tail into the turn's DIRECTIVE message specifically — resolved once by
+`SessionLog::derive_with_plan_and_directive` from the turn structure a flat
+`Vec<Message>` no longer carries — not "the last user message": within one
+turn, every step after the first appends more messages (tool results,
+control nudges) after the directive, and re-deriving "last message" each
+step used to move the tail onto whichever one came last, silently changing
+the shape of an already-sent, earlier message between requests — exactly
+what an append-only request must never do (required for Claude's
+preserved-thinking check, and it maximises cache hits generally). The tail
+sits before any text in the directive's own content, after any leading
+`tool_result` blocks, so the last thing the model reads there is the user's
+own words — the directive on the first step, a runtime nudge (appended
+verbatim as its own later message) on a redo. The tail never restates the
+directive: measured live, an echo after a tool result read as the user
+asking again and the same card was re-emitted up to nineteen times in one
+turn. Also measured: with the tail appended after the directive,
+`gemma4:e2b-mlx` answered the `<stance>` block ("As an analytical agent, I
+can handle tasks…") instead of the question.
 
 **Repeated cards.** An `emit_*_card` call identical to one already shown
 is acknowledged as a no-op; after three consecutive all-repeat batches the
@@ -363,13 +398,14 @@ tolerate topic changes:
   only — raising the evidence standard through the stance text made the
   small model deliberate in its thinking channel and emit nothing. Measured live: five of six replays of a "current weather"
   question emitted a card carrying a temperature from a previous turn.
-- **Model drift** (the model's step does not serve the current directive:
-  wrong domain tool, answering a previous question, restating a card): the
-  existing steering nudge fires with the *specific* directive it should
-  serve, and the event lowers horizon confidence if the request was near the
-  horizon. Three consecutive model-drift events end the turn with the
-  system-authored degraded outcome (same shape as tool-repair exhaustion,
-  docs/design/15-reliability.md).
+- **Model drift** (a step ends with no tool call and its final text is a
+  verbatim repeat of a prior turn's `TurnCard` narration — domain-mismatch
+  detection was tried and dropped: it also fired on a legitimately related
+  follow-up): the `[steering-drift]` nudge fires with the *specific*
+  directive it should serve, and the event lowers horizon confidence if the
+  request was near the horizon. Three consecutive model-drift events end the
+  turn with the system-authored degraded outcome (same shape as tool-repair
+  exhaustion, docs/design/15-reliability.md).
 - **Topic mismatch** (a card's own content is unrelated to both the
   directive and this turn's own retrieval, found in real post-release use:
   asked "what is the current top news in AI", the model correctly called
@@ -566,9 +602,13 @@ re-searching, and it is what makes "where did that number come from?"
 answerable from the ledger.
 
 `asked`, `did`, `outcome`, `reading`, the presentation refs and both token
-counts are deterministic. `narration` is verbatim when short; when long it is
-one summariser call on the cheapest capable model with only that prose as
-input (a side call per §10, never the history). The **index text** for a
+counts are deterministic, and so is `narration`: turn close must never
+dispatch a model call of its own and block the run finishing on it (measured
+live: a 3s mock provider delay showed up as a 3.02s gap between the last
+streamed text and `RunFinished`). `narration` is verbatim when short (≤60
+words); otherwise it is the leading sentence via a semantic-boundary
+(`. ! ?`) fallback, never a character count and never a side model call. The
+**index text** for a
 turn is `asked` + every presentation's title, labels, values and takeaways +
 `narration` + the trace tool names and query arguments. Structured card
 fields index better than prose: "Noida" in an entity field or "Temperature:

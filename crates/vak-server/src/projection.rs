@@ -1316,7 +1316,7 @@ fn snapshot_inner(
                     }
                 }
             }
-            EntryPayload::Activity(activity) => {
+            EntryPayload::Activity(activity) if is_user_facing_activity(activity) => {
                 timeline.items.push(activity_item(
                     session_id,
                     &entry.id,
@@ -1325,45 +1325,9 @@ fn snapshot_inner(
                     activity,
                 ));
             }
-            EntryPayload::GoalUpdate(update) => {
-                let label = match update.relation {
-                    vak_intent::GoalRelation::New => "Goal started",
-                    vak_intent::GoalRelation::AddsTo => "Goal expanded",
-                    vak_intent::GoalRelation::Corrects => "Goal corrected",
-                    vak_intent::GoalRelation::Replaces => "Goal revised",
-                    vak_intent::GoalRelation::Status => "Status requested",
-                    vak_intent::GoalRelation::Pauses => "Goal paused",
-                    vak_intent::GoalRelation::Resumes => "Goal resumed",
-                    vak_intent::GoalRelation::Cancels => "Goal cancelled",
-                };
-                timeline.items.push(OutputItem {
-                    id: format!("goal-update-{}", entry.id),
-                    timestamp: entry.ts.to_rfc3339(),
-                    turn_id: format!("turn-{turn}"),
-                    role: OutputRole::System,
-                    kind: OutputKind::Progress,
-                    status: match update.relation {
-                        vak_intent::GoalRelation::Pauses => OutputStatus::Partial,
-                        vak_intent::GoalRelation::Cancels => OutputStatus::Cancelled,
-                        _ => OutputStatus::Succeeded,
-                    },
-                    outcome: None,
-                    content: OutputContent::Progress {
-                        label: label.into(),
-                        detail: Some(update.request.clone()),
-                        percent: None,
-                    },
-                    provenance: Some(OutputProvenance {
-                        session_id: Some(session_id.into()),
-                        entry_id: Some(entry.id.clone()),
-                        tool_call_id: None,
-                        source: Some("goal_update".into()),
-                        presentation_id: None,
-                    }),
-                    actions: Vec::new(),
-                    fallback_text: format!("{label}: {}", update.request),
-                });
-            }
+            // Goal changes reach the client through `timeline.goal_state`;
+            // a per-update progress row is runtime bookkeeping.
+            EntryPayload::GoalUpdate(_) => {}
             _ => {}
         }
     }
@@ -1569,6 +1533,21 @@ fn is_presentation_envelope(text: &str) -> bool {
     !lines.is_empty() && lines.iter().all(|line| is_scaffolding_line(line))
 }
 
+/// Whether an activity is something a person did or would recognise as
+/// progress on their request. Everything else (admission, capacity,
+/// diagnostics, retries, route fallbacks, voice and presentation accounting)
+/// is runtime bookkeeping that stays in the ledger and never reaches a client.
+fn is_user_facing_activity(activity: &vak_session::ActivityRecord) -> bool {
+    match activity.kind {
+        ActivityKind::Approval
+        | ActivityKind::Worker
+        | ActivityKind::CandidateComment
+        | ActivityKind::CandidateRevision => true,
+        ActivityKind::Run => activity.label != "Request accepted",
+        _ => false,
+    }
+}
+
 fn activity_item(
     session_id: &str,
     entry_id: &str,
@@ -1689,6 +1668,19 @@ fn activity_item(
                 percent: None,
             },
         ),
+        // Admission bookkeeping (`vak-server/src/lib.rs`'s `run`/`steering`
+        // handlers append this to guard duplicate request ids). It is never
+        // a real outcome; without this guard it fell into the generic
+        // `ActivityKind::Run` arm below and rendered as a fake completed
+        // "Request accepted" answer (docs/audits Finding 3).
+        ActivityKind::Run if activity.label == "Request accepted" => (
+            OutputRole::System,
+            OutputKind::Information,
+            OutputContent::Information {
+                label: activity.label.clone(),
+                detail: None,
+            },
+        ),
         ActivityKind::Run => (
             OutputRole::Assistant,
             if matches!(
@@ -1709,11 +1701,21 @@ fn activity_item(
                     | OutputStatus::Cancelled
                     | OutputStatus::Partial
             ) {
+                // `activity.detail` is internal bookkeeping recorded at run
+                // completion and can legitimately be a raw provider/internal
+                // error string (docs/audits Finding 3); it never reaches an
+                // item's text. The typed `status` alone selects one of the
+                // same small human sentences `ClientEvent::RunFinished`
+                // uses (`client_events::run_outcome_message`).
+                use crate::client_events::{RunOutcome, run_outcome_message};
+                let message = match status {
+                    OutputStatus::Denied => "This step was denied.",
+                    OutputStatus::Cancelled => run_outcome_message(RunOutcome::Stopped),
+                    OutputStatus::Partial => run_outcome_message(RunOutcome::MaxTurns),
+                    _ => run_outcome_message(RunOutcome::Failed),
+                };
                 OutputContent::Error {
-                    message: activity
-                        .detail
-                        .clone()
-                        .unwrap_or_else(|| activity.label.clone()),
+                    message: message.into(),
                     source: Some("run".into()),
                     retryable: false,
                 }
@@ -2019,35 +2021,12 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 format!("{label} finished in {elapsed_ms} ms"),
             ),
         }),
-        AgentEvent::WorkState { projection } => {
-            let status = match projection.status {
-                vak_session::types::WorkContractStatus::Completed => OutputStatus::Succeeded,
-                vak_session::types::WorkContractStatus::Failed
-                | vak_session::types::WorkContractStatus::Cancelled
-                | vak_session::types::WorkContractStatus::Unverified => OutputStatus::Failed,
-                vak_session::types::WorkContractStatus::Draft
-                | vak_session::types::WorkContractStatus::AwaitingInput
-                | vak_session::types::WorkContractStatus::Active
-                | vak_session::types::WorkContractStatus::Blocked
-                | vak_session::types::WorkContractStatus::Verifying => OutputStatus::Running,
-            };
-            let detail = serde_json::to_string(&projection).unwrap_or_else(|_| "{}".into());
-            Some(OutputStreamEvent::ItemReplaced {
-                item: live_item(
-                    session_id,
-                    format!("work-{}", projection.contract.contract_id),
-                    now,
-                    OutputRole::System,
-                    OutputKind::Progress,
-                    status,
-                    OutputContent::Information {
-                        label: "Managed work state".into(),
-                        detail: Some(detail.clone()),
-                    },
-                    detail,
-                ),
-            })
-        }
+        // The managed-work projection is not rendered from the presentation
+        // timeline (the work panel reads `GET /sessions/:id/work` instead);
+        // it previously leaked its full `serde_json::to_string` dump into an
+        // `Information` item's `detail`/`fallback_text` (docs/audits Finding
+        // 3 -- a raw JSON blob is exactly what a client must never receive).
+        AgentEvent::WorkState { .. } => None,
         AgentEvent::ApprovalRequested {
             id,
             tool,
@@ -2144,17 +2123,23 @@ pub(crate) fn project_frame(
     }
     apply_stream_event(timeline, event.clone());
     timeline.cursor = Some(format!("live:{sequence}"));
+    // No `timeline.clone()` here: a live frame carries only its own small
+    // delta. The per-handle projector in `register_handle` applies every
+    // event through this function whether or not a client is subscribed, so
+    // a snapshot built here would be an unconditional full-timeline clone
+    // per event regardless of demand (docs/audits Finding 2).
     Some(vak_delivery::OutputStreamFrame {
         sequence: Some(sequence),
         delta: Some(event),
-        snapshot: timeline.clone(),
+        snapshot: None,
     })
 }
 
 /// Rebase a live presentation stream onto the durable projection at a run
-/// boundary. The delta and snapshot intentionally carry the same timeline:
-/// consumers may choose either abstraction (invariant 4) without retaining a
-/// subscriber-local projection from the completed run.
+/// boundary. `snapshot` alone is authoritative here — `delta` stays `None`
+/// rather than carrying the same timeline a second time as
+/// `OutputStreamEvent::Snapshot` (docs/audits Finding 2: a settlement frame
+/// previously measured up to 9.3 MB by sending it twice).
 pub(crate) fn settled_frame(
     sequence: u64,
     timeline: &OutputTimeline,
@@ -2173,10 +2158,8 @@ pub(crate) fn settled_frame(
     }
     vak_delivery::OutputStreamFrame {
         sequence: Some(sequence),
-        delta: Some(OutputStreamEvent::Snapshot {
-            timeline: snapshot.clone(),
-        }),
-        snapshot,
+        delta: None,
+        snapshot: Some(snapshot),
     }
 }
 
@@ -2273,16 +2256,33 @@ mod tests {
     };
 
     #[test]
-    fn settled_frame_rebases_delta_and_snapshot_to_durable_history() {
+    fn settled_frame_rebases_snapshot_to_durable_history_and_sends_no_delta() {
         let mut durable = OutputTimeline::empty("session-1");
         durable.cursor = Some("live:41".into());
         let frame = super::settled_frame(42, &durable);
         assert_eq!(frame.sequence, Some(42));
-        assert_eq!(frame.snapshot.cursor.as_deref(), Some("settled:42"));
-        assert!(matches!(
-            frame.delta,
-            Some(vak_delivery::OutputStreamEvent::Snapshot { timeline }) if timeline == frame.snapshot
-        ));
+        let snapshot = frame
+            .snapshot
+            .expect("settlement always carries a snapshot");
+        assert_eq!(snapshot.cursor.as_deref(), Some("settled:42"));
+        // A settlement frame carries the timeline exactly once: `snapshot`
+        // is the sole authority and `delta` stays `None` rather than
+        // repeating it as `OutputStreamEvent::Snapshot` (docs/audits Finding
+        // 2 -- doubling this previously measured up to 9.3 MB per answer).
+        assert!(frame.delta.is_none());
+    }
+
+    #[test]
+    fn project_frame_carries_only_a_delta_never_a_snapshot() {
+        let mut timeline = OutputTimeline::empty("session-1");
+        let framed = crate::events::SeqEvent {
+            seq: 7,
+            event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+        };
+        let frame = super::project_frame(&mut timeline, framed).expect("TurnStart projects");
+        assert_eq!(frame.sequence, Some(7));
+        assert!(frame.delta.is_some());
+        assert!(frame.snapshot.is_none());
     }
 
     /// Writes the `Presentation` entry a real turn would have written at
@@ -2316,6 +2316,100 @@ mod tests {
             identity_digest: info.identity_digest,
         })
         .expect("append presentation");
+    }
+
+    #[test]
+    fn runtime_bookkeeping_never_reaches_the_client_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("bookkeeping.jsonl"),
+            SessionHeader {
+                agent: None,
+                session_id: "bookkeeping".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        let activity = |id: &str, kind: ActivityKind, label: &str| ActivityRecord {
+            activity_id: id.into(),
+            turn: None,
+            kind,
+            status: ActivityStatus::Succeeded,
+            label: label.into(),
+            detail: None,
+            data: BTreeMap::new(),
+        };
+        for record in [
+            activity("admission-r1", ActivityKind::Run, "Request accepted"),
+            activity(
+                "probe-1",
+                ActivityKind::CapacityProbe,
+                "Capacity profile bound",
+            ),
+            activity(
+                "feedback-1",
+                ActivityKind::CapacityFeedback,
+                "Capacity profile updated",
+            ),
+            activity("diag-1", ActivityKind::Diagnostic, "prefix-changed"),
+            activity("retry-1", ActivityKind::Retry, "Retry attempt 1"),
+            activity("route-1", ActivityKind::RouteFallback, "Route fallback"),
+        ] {
+            log.append_activity(record).expect("activity");
+        }
+        log.append_goal_update(vak_intent::GoalUpdate {
+            revision: 1,
+            relation: vak_intent::GoalRelation::New,
+            request: "say hi".into(),
+            supersedes_revision: None,
+        })
+        .expect("goal update");
+        log.append_message(MessageRecord {
+            message: Message::user_text("say hi"),
+            meta: None,
+        })
+        .expect("directive");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Hi.")]),
+            meta: None,
+        })
+        .expect("answer");
+
+        let timeline = snapshot("bookkeeping", &log);
+        let leaked: Vec<&str> = timeline
+            .items
+            .iter()
+            .filter(|item| item.role == OutputRole::System)
+            .map(|item| item.fallback_text.as_str())
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "internal items reached the client: {leaked:?}"
+        );
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.fallback_text.contains("Hi.")),
+            "the answer itself must still be projected"
+        );
     }
 
     #[test]
@@ -4522,20 +4616,37 @@ mod tests {
             meta: None,
         })
         .expect("u");
+        // A text-only draft the runtime itself rejected: the very next
+        // entry is a control nudge that asks for a redo. Neither the draft
+        // nor the nudge belongs on the wire (docs/audits Finding 3).
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::text("sunny")]),
             meta: None,
         })
-        .expect("a");
+        .expect("draft");
         log.append_message(MessageRecord::control(
             vak_intent::control::ControlKind::GroundingCheck,
             "[grounding-check]: cite it",
         ))
         .expect("nudge");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Sunny, source: NWS.")]),
+            meta: None,
+        })
+        .expect("final answer");
         let json = crate::transcript_json(&log);
         let messages = json["messages"].as_array().expect("messages");
         let entries = json["entries"].as_array().expect("entries");
-        assert_eq!(messages.len(), 2, "no nudge on the wire: {messages:?}");
+        assert_eq!(
+            messages.len(),
+            2,
+            "neither the nudge nor the rejected draft is on the wire: {messages:?}"
+        );
+        assert_eq!(
+            messages[1]["content"][0]["text"].as_str(),
+            Some("Sunny, source: NWS."),
+            "the redo's real answer is on the wire, not the discarded draft"
+        );
         assert_eq!(
             entries.len(),
             messages.len(),
@@ -4551,8 +4662,44 @@ mod tests {
             "the frozen system prompt is not sent to the client"
         );
         assert!(
-            json["count"].as_u64().expect("count") >= 3,
-            "count stays the model-visible total, nudge included"
+            json["count"].as_u64().expect("count") >= 4,
+            "count stays the model-visible total, draft and nudge included"
         );
+    }
+
+    #[test]
+    fn conversation_messages_drops_the_rejected_draft_but_keeps_the_redo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "wire-md");
+        log.append_message(MessageRecord {
+            message: Message::user_text("what is the weather"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("sunny")]),
+            meta: None,
+        })
+        .expect("draft");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::GroundingCheck,
+            "[grounding-check]: cite it",
+        ))
+        .expect("nudge");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Sunny, source: NWS.")]),
+            meta: None,
+        })
+        .expect("final answer");
+        let messages = crate::conversation_messages(&log);
+        let texts: Vec<String> = messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["what is the weather", "Sunny, source: NWS."]);
     }
 }

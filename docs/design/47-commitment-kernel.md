@@ -92,7 +92,15 @@ skill affinity and telemetry and **never** for control flow — so adding a
 domain can never change what the runtime is allowed to do.
 
 `Author` / `Modify` / `Operate` is the safety-relevant split and means the same
-thing for prose, a spreadsheet, and a production deploy.
+thing for prose, a spreadsheet, and a production deploy. Only `Modify` /
+`Operate` / `Govern` / `Verify` demand an execution or file-modification
+receipt before honestly claiming done (`Act::requires_execution`); `Author`
+is deliberately absent from that set — producing prose, code, or a plan is
+proven by the response itself, and demanding a shell or file receipt for a
+poem is the bug the split exists to avoid. A request that *names* a file
+deliverable still needs one regardless of act (`OutcomeSpec::
+requires_execution`, which reads the request text `Act::requires_execution`
+does not have).
 
 Interaction rule: **ambiguity only interrupts when the stakes are high.**
 `ambiguous + inert` proceeds on a stated assumption; `ambiguous + irreversible`

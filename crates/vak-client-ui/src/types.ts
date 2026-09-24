@@ -1,5 +1,6 @@
-// Mirrors the serde serialization of vak-agent's AgentEvent and vak-llm
-// types. Any drift here is a contract bug — the JSONL ledger is truth.
+// Mirrors the serde serialization of vak-server's client-facing ClientEvent
+// projection and vak-llm types. Any drift here is a contract bug — the
+// JSONL ledger is truth.
 
 export type Role = "user" | "assistant" | "User" | "Assistant";
 
@@ -215,19 +216,16 @@ export type PresentationDelta =
 
 export interface PresentationStreamEvent {
   sequence: number | null;
+  /** Present only on a live delta frame; `null` on a snapshot frame. */
   delta: PresentationDelta | null;
-  snapshot: OutputTimeline;
+  /**
+   * Present only on the initial connect frame, run settlement, and an
+   * explicit resync — never alongside `delta`. A frame with neither set is
+   * not valid; `applyPresentationEvent` treats a present `snapshot` as the
+   * sole authority and otherwise applies `delta`.
+   */
+  snapshot: OutputTimeline | null;
 }
-
-type StreamEvent =
-  | { Start: { partial: AssistantMessage } }
-  | { TextDelta: { delta: string; partial: AssistantMessage } }
-  | { ThinkingDelta: { delta: string; partial: AssistantMessage } }
-  | {
-      ToolUseStart: { index: number; id: string; name: string; partial: AssistantMessage };
-    }
-  | { ToolInputDelta: { index: number; delta: string; partial: AssistantMessage } }
-  | { End: { message: AssistantMessage } };
 
 export type SandboxEvent =
   | {
@@ -247,35 +245,43 @@ export type SandboxEvent =
   | { kind: "ProcessTelemetry"; execution_id: string; elapsed_ms: number; cpu_percent: number; memory_bytes: number }
   | { kind: "ExecutionFinished"; execution_id: string; exit_code: number; duration_ms: number; artifacts: string[] };
 
-export type AgentEvent =
+/**
+ * Mirrors the serde serialization of `vak_server::client_events::RunOutcome`
+ * — the run's outcome reduced to the handful of states a person may see.
+ * Never carries raw provider/internal error text; see `ClientEvent.RunFinished`.
+ */
+export type RunOutcome = "Completed" | "Stopped" | "MaxTurns" | "Failed";
+
+/**
+ * Mirrors the serde serialization of `vak_server::client_events::ClientEvent`
+ * — the one server-side projection of `vak_agent::AgentEvent` that
+ * `/sessions/:id/events` and `/sessions/:id/side/events` are allowed to
+ * send. Internal bookkeeping (retry attempts/reasons, route fallback,
+ * context compaction, worker token counts, raw error text) never crosses
+ * this boundary; see docs/design/30-output-engineering.md and AGENTS.md
+ * ("Runtime-authored traffic is typed, never sniffed").
+ */
+export type ClientEvent =
   | "StreamOpened"
   | { TurnStart: { turn: number } }
-  | { Stream: StreamEvent }
+  | { TextDelta: { delta: string } }
+  | { ThinkingDelta: { delta: string } }
   | { ToolCallStart: { id: string; name: string; args_json: string } }
   | {
       ToolCallEnd: { id: string; name: string; is_error: boolean; result_preview: string | null };
     }
-  | { TurnEnd: { usage: Usage } }
-  | { StopHookContinuation: { reason: string } }
-  | { RetryScheduled: { attempt: number; delay_ms: number; reason: string } }
-  | {
-      RouteFallback: {
-        to_provider: string;
-        to_model: string;
-      };
-    }
-  | { ContextCompacting: { estimated_tokens: number } }
-  | {
-      ContextCompacted: { before_tokens: number; after_tokens: number; summarized_messages: number };
-    }
-  | { StreamOpened: Record<string, never> }
   | { ApprovalRequested: { id: string; tool: string; args_json: string; reason: string } }
   | { WorkerStarted: { label: string } }
   | { WorkerToolCall: { label: string; name: string; is_error: boolean } }
-  | { WorkerUsage: { label: string; input_tokens: number; output_tokens: number } }
   | { WorkerFinished: { label: string; is_error: boolean; elapsed_ms: number } }
-  | { RunFinished: { summary: string; is_error: boolean } }
-  | { Sandbox: SandboxEvent };
+  /** A long provider-side backoff is happening. No attempt count, delay or
+   *  raw reason rides along — the header shows a neutral "Retrying" state. */
+  | "Retrying"
+  | { Sandbox: SandboxEvent }
+  /** The runtime sent a text answer back for a redo; the client drops the
+   *  discarded draft bubble for this turn. */
+  | { DraftDiscarded: { turn: number } }
+  | { RunFinished: { outcome: RunOutcome; message: string } };
 
 export interface SessionSummary {
   agent?: { id: string; name: string; revision: number; character?: string; animation?: "subtle" | "expressive" | "off"; voice?: string } | null;

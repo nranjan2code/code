@@ -79,11 +79,20 @@ predecessor (`prev_hash`) and carries a stable `id` + `parent_id`:
    results replaced by a schema-driven digest and cards by their short ack —
    never a character-count trim), a one-line `Card`, or omission behind an
    existing `Packet`/`Compaction` entry, decided against a measured
-   `CapacityProfile` budget (docs/design/68-context-engine.md §2–§4). Control
-   messages (nudges, intent notes) are never part of a turn's projected
-   record; they render once, per turn, in the request's **tail** block
-   (docs/design/07-prompt.md, docs/design/68-context-engine.md §6) instead of
-   inline in history.
+   `CapacityProfile` budget (docs/design/68-context-engine.md §2–§4). Once a
+   turn is *closed*, its control messages (nudges, intent notes) drop out of
+   the projected record entirely — they are process, not information. While
+   a turn is still *open*, a control nudge (or a tool result) appended after
+   its directive stays part of that turn's own raw, verbatim request: a
+   `TurnIndex`-built turn stays open exactly as long as its last ledger
+   message is a control nudge or a tool result, precisely so a runtime redo
+   nudge reaches the model on the very next request rather than being
+   dropped the moment `full_record` would otherwise replace it
+   (`crates/vak-session/src/turns.rs`). The stable **tail** block
+   (docs/design/07-prompt.md, docs/design/68-context-engine.md §6) is a
+   separate, always-present per-turn summary (time, intent, stance, thread);
+   it does not stand in for a nudge already riding in the open turn's own
+   history.
 4. **Compaction summarizes turn cards, not raw exchanges.** A packet is
    written only when the working-set plan for the bound model needs one
    (incremental, not an overflow emergency); the summariser sees the

@@ -79,6 +79,7 @@ mod agent_chats;
 pub mod agents;
 mod bus;
 mod channels;
+mod client_events;
 mod client_ui;
 mod core_pool;
 mod coworking;
@@ -6666,20 +6667,6 @@ mod resume_cursor_tests {
     }
 }
 
-/// One SSE frame carrying its sequence number, so the client's next
-/// reconnect can name where it got to.
-fn seq_frame(framed: &events::SeqEvent) -> Event {
-    let data = match serde_json::to_string(&framed.event) {
-        Ok(data) => data,
-        Err(error) => serde_json::json!({
-            "error": "event serialization failed",
-            "detail": error.to_string(),
-        })
-        .to_string(),
-    };
-    Event::default().id(framed.seq.to_string()).data(data)
-}
-
 async fn events_sse(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -6698,7 +6685,16 @@ async fn events_sse(
     {
         Some(h) => Box::pin(stream::agent_frames(&h, resume).map(|frame| {
             Ok(match frame {
-                stream::AgentFrame::Event(framed) => seq_frame(&framed),
+                stream::AgentFrame::Event { seq, event } => {
+                    let data = serde_json::to_string(&event).unwrap_or_else(|error| {
+                        serde_json::json!({
+                            "error": "event serialization failed",
+                            "detail": error.to_string(),
+                        })
+                        .to_string()
+                    });
+                    Event::default().id(seq.to_string()).data(data)
+                }
                 stream::AgentFrame::Resync(reason) => Event::default()
                     .event("resync")
                     .data(serde_json::json!({ "reason": reason }).to_string()),
@@ -7143,6 +7139,40 @@ async fn transcript(
     }
 }
 
+/// Ledger entry ids of assistant drafts the runtime itself discarded: a
+/// text-only assistant message (no tool call) immediately followed by a
+/// runtime control message that asks for a redo
+/// (`ControlKind::retries_answer`, e.g. a presentation/grounding/freshness
+/// check). The model's real answer is whatever came after the redo; this one
+/// was never shown to the user as final and must not appear as if it were
+/// (docs/audits Finding 3).
+///
+/// This belongs in `vak-session`'s own transcript derivation so every
+/// consumer gets it for free; it is implemented here for now because
+/// `vak-server` is the only place that currently projects a transcript.
+fn rejected_draft_entry_ids(
+    transcript: &[vak_session::TranscriptMessage],
+) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for pair in transcript.windows(2) {
+        let prev = &pair[0];
+        let next = &pair[1];
+        let is_text_only_assistant = prev.message.role == vak_llm::Role::Assistant
+            && !prev
+                .message
+                .content
+                .iter()
+                .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. }));
+        let next_asks_for_redo = next
+            .control
+            .is_some_and(vak_intent::control::ControlKind::retries_answer);
+        if is_text_only_assistant && next_asks_for_redo {
+            ids.insert(prev.entry_id.clone());
+        }
+    }
+    ids
+}
+
 /// The JSON transcript, built once for the live and the historical path.
 ///
 /// It carries what a person can see and nothing else. The model-visible
@@ -7150,7 +7180,8 @@ async fn transcript(
 /// (`<context_summary>`, `<intent>`, …); those are not output, so they are not
 /// sent — the client used to receive them only to strip them again. Likewise
 /// the frozen contract (system prompt and prompt layers), which no client of
-/// this endpoint reads.
+/// this endpoint reads. A discarded draft (see `rejected_draft_entry_ids`) is
+/// excluded the same way.
 ///
 /// `count` is still the model-visible total (`derive_messages().len()`); the
 /// multi-turn continuity layer legitimately makes it exceed `messages`.
@@ -7159,9 +7190,14 @@ async fn transcript(
 /// `provenance.entry_id` instead of counting turns.
 pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
     let transcript = s.derive_transcript();
+    let rejected_drafts = rejected_draft_entry_ids(&transcript);
     let visible: Vec<&vak_session::TranscriptMessage> = transcript
         .iter()
-        .filter(|item| item.control.is_none() && !item.context)
+        .filter(|item| {
+            item.control.is_none()
+                && !item.context
+                && !rejected_drafts.contains(item.entry_id.as_str())
+        })
         .collect();
     let entries: Vec<serde_json::Value> = visible
         .iter()
@@ -7180,6 +7216,19 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
         "messages": messages,
         "entries": entries,
     })
+}
+
+/// `SessionLog::derive_conversation` minus discarded drafts (see
+/// `rejected_draft_entry_ids`) — the same exclusion `transcript_json` applies,
+/// kept here rather than in `vak-session` for the reason given there.
+pub(crate) fn conversation_messages(s: &SessionLog) -> Vec<vak_llm::Message> {
+    let transcript = s.derive_transcript();
+    let rejected_drafts = rejected_draft_entry_ids(&transcript);
+    transcript
+        .into_iter()
+        .filter(|item| item.control.is_none() && !rejected_drafts.contains(item.entry_id.as_str()))
+        .map(|item| item.message)
+        .collect()
 }
 
 /// Markdown export over the same projection the JSON transcript serves.
@@ -7202,11 +7251,11 @@ async fn transcript_markdown(
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
         Some(vak_core::transcript_md::render_markdown(
-            &s.derive_conversation(),
+            &conversation_messages(s),
         ))
     } else {
         open_historical_session(&state, &id)
-            .map(|s| vak_core::transcript_md::render_markdown(&s.derive_conversation()))
+            .map(|s| vak_core::transcript_md::render_markdown(&conversation_messages(&s)))
     };
 
     match md_opt {

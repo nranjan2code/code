@@ -25,17 +25,26 @@ export type WorkerMessage =
 
 const tabs = new Map<MessagePort, Interest>();
 let status: StreamStatus = "idle";
-/** Latest snapshot-bearing frames, for a tab that joins a subscription
- *  another tab already holds: the server only sends a snapshot when a
- *  stream opens, and that stream stays open. */
+/** Latest snapshot-bearing frame per session, for a tab that joins a
+ *  subscription another tab already holds: the server only sends a
+ *  snapshot on connect, run settlement or resync, and an ordinary live
+ *  frame in between carries only `delta` (docs/audits Finding 2). Only a
+ *  snapshot-bearing frame is a valid replacement for a fresh subscriber --
+ *  a cached delta has nothing to apply itself onto. */
 const lastPresentation = new Map<string, StreamFrame>();
 let lastHost: StreamFrame | null = null;
+
+function hasSnapshot(frame: StreamFrame): boolean {
+  if (frame.kind !== "presentation") return false;
+  const payload = frame.frame as { snapshot?: unknown } | null;
+  return !!payload?.snapshot;
+}
 
 const connection = new StreamConnection(
   (path) => new EventSource(path, { withCredentials: true }),
   {
     frame(frame) {
-      if (frame.kind === "presentation") lastPresentation.set(frame.session, frame);
+      if (frame.kind === "presentation" && hasSnapshot(frame)) lastPresentation.set(frame.session, frame);
       if (frame.kind === "host") lastHost = frame;
       for (const [port, interest] of tabs) {
         if (wants(interest, frame)) post(port, { type: "frame", frame });
