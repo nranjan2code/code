@@ -282,7 +282,6 @@ export function isRealUserPrompt(entry: TranscriptEntry): boolean {
   if (
     c.startsWith("[result]") ||
     c.startsWith("[recovery]") ||
-    c.startsWith("[repair directive]") ||
     c.startsWith("[tool:") ||
     c.startsWith("<context_summary>") ||
     c.startsWith("<system>")

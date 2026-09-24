@@ -50,6 +50,29 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
     // when `action == "call"`). Each branch carries its own required/properties,
     // so matching a branch validates the whole per-branch contract.
     if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        // A tagged union (every branch fixes one key, like `op`, to a single
+        // value): report against the branch the value names, or list the
+        // names, rather than whichever branch happened to be checked last.
+        if let Some((key, names)) = discriminator(one_of) {
+            match value.get(key).and_then(Value::as_str) {
+                Some(name) => match one_of
+                    .iter()
+                    .zip(&names)
+                    .find(|(_, candidate)| **candidate == name)
+                {
+                    Some((branch, _)) => check(branch, value, path, problems),
+                    None => problems.push(format!(
+                        "{path}.{key} {name:?} is not one of: {}",
+                        names.join(", ")
+                    )),
+                },
+                None => problems.push(format!(
+                    "{path} needs `{key}`, one of: {}",
+                    names.join(", ")
+                )),
+            }
+            return;
+        }
         let mut matched = 0usize;
         let mut last = Vec::new();
         for sub in one_of {
@@ -125,6 +148,29 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
             }
         }
     }
+}
+
+/// The key and per-branch names when every `oneOf` branch pins the same
+/// property to one allowed value.
+fn discriminator(branches: &[Value]) -> Option<(&str, Vec<&str>)> {
+    let first = branches.first()?.get("properties")?.as_object()?;
+    let key = first.iter().find_map(|(key, property)| {
+        let values = property.get("enum")?.as_array()?;
+        (values.len() == 1 && values[0].is_string()).then_some(key.as_str())
+    })?;
+    let names = branches
+        .iter()
+        .map(|branch| {
+            let values = branch
+                .pointer(&format!("/properties/{key}/enum"))?
+                .as_array()?;
+            match values.as_slice() {
+                [Value::String(name)] => Some(name.as_str()),
+                _ => None,
+            }
+        })
+        .collect::<Option<Vec<&str>>>()?;
+    Some((key, names))
 }
 
 fn type_matches(expected: &str, value: &Value) -> bool {

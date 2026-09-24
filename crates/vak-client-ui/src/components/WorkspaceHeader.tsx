@@ -187,11 +187,13 @@ export default function WorkspaceHeader() {
       </div>
       <div class="workspace-actions" aria-label="Workspace tools">
         <Show when={activeId()}>
-          <button type="button" class="workspace-details-button" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>
+          <button type="button" class="workspace-details-button" aria-label="Share" title="Share" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>
           <button
             type="button"
             class="workspace-details-button"
             classList={{ active: Boolean(dockTab()) }}
+            aria-label="Details"
+            title="Details"
             aria-expanded={Boolean(dockTab())}
             onClick={() => setDockTab(dockTab() ? null : "workbench")}
           >

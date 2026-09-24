@@ -51,6 +51,14 @@
   request names a file to save.
 - **A slow model step is retried, not aborted.** The step watchdog now
   cancels only the timed-out attempt.
+- **An Office draft is not re-presented as a card.** A tool that delivers a
+  reviewable file (`office_apply`) now stands down the run's presentation
+  check, so the answer after a draft ends the turn instead of taking another
+  model call. A malformed `office_apply` op names the valid ops.
+- **The repair directive is typed control traffic.** It is recorded as a
+  `ControlKind::RepairDirective` message (`[repair-directive]`) rather than an
+  inline marker, so no client shows it as the person's words.
+- The workspace header fits its own column when the Canvas is open.
 
 ## 4.0.2 — 2026-09-24
 

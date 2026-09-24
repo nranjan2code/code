@@ -3445,7 +3445,7 @@ mod tests {
         log.append_message(MessageRecord {
             message: Message::user_text("The run is stuck on correctable tool failures..."),
             meta: Some(vak_session::MessageMeta {
-                control: Some(vak_intent::control::ControlKind::StopGuard),
+                control: Some(vak_intent::control::ControlKind::RepairDirective),
                 ..Default::default()
             }),
         })

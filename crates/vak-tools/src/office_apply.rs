@@ -32,6 +32,10 @@ impl Tool for OfficeApplyTool {
         &["documents"]
     }
 
+    fn delivers_file(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Propose edits to, or create, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace file does not change until then. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits become tracked changes. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. To keep editing a draft, pass the draft as source. Macros are never added or run."
     }
@@ -54,12 +58,9 @@ impl Tool for OfficeApplyTool {
                 },
                 "ops": {
                     "type": "array",
-                    "description": "Ops applied in order. Word: {op:'replace_paragraph_text', anchor, text} {op:'insert_paragraph_after', anchor, text, style?} {op:'delete_paragraph', anchor}. Excel: {op:'set_cells', sheet, cells:{'B4':120,'C4':'=SUM(B1:B3)','D4':'text'}} {op:'append_rows', sheet, rows:[[...]]} {op:'add_sheet', name}. PowerPoint: {op:'add_slide_from_layout', layout, after?, placeholders:{title:'...', body:['...']}} {op:'set_placeholder_text', anchor, text} {op:'set_notes', anchor, text} {op:'delete_slide', anchor} {op:'move_slide', anchor, after?}. Any: {op:'set_title', title}.",
-                    "items": {
-                        "type": "object",
-                        "properties": { "op": { "type": "string" } },
-                        "required": ["op"]
-                    }
+                    "minItems": 1,
+                    "description": "Ops applied in order. Each names its `op` and only that op's fields. Anchors come from doc_read of the source: paragraphs p:1A2B3C4D or p@12, cells Budget!B4, slides slide:256, shapes slide:256/shape:3, placeholders slide:256/placeholder:title.",
+                    "items": { "oneOf": op_schemas() }
                 }
             },
             "required": ["path", "base_digest", "ops"]
@@ -192,7 +193,7 @@ impl Tool for OfficeApplyTool {
                 crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &draft, &root);
                 finish(0, vec![draft_relative.clone()]);
                 ToolOutput::ok(format!(
-                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
+                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft: the draft is already shown to them with Review draft and its change list, so do not present it again as a card, HTML or a diff; answer with one sentence saying what you changed. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
                 ))
             }
             Ok(Err(error)) => {
@@ -243,6 +244,107 @@ pub fn tracked_change_author(agent_id: &str) -> String {
     } else {
         agent_id.to_string()
     }
+}
+
+/// One schema branch per op, so a model sees each op's exact fields and a
+/// malformed op is reported against the op it names (`contract.rs`).
+fn op_schemas() -> Value {
+    fn op(name: &str, fields: Value, required: &[&str], description: &str) -> Value {
+        let mut properties = serde_json::json!({ "op": { "type": "string", "enum": [name] } });
+        if let (Some(target), Some(extra)) = (properties.as_object_mut(), fields.as_object()) {
+            target.extend(extra.clone());
+        }
+        let mut all_required = vec!["op"];
+        all_required.extend_from_slice(required);
+        serde_json::json!({
+            "type": "object",
+            "description": description,
+            "properties": properties,
+            "required": all_required,
+            "additionalProperties": false
+        })
+    }
+    let anchor = |what: &str| serde_json::json!({ "type": "string", "description": what });
+    let text = serde_json::json!({ "type": "string" });
+    let lines = serde_json::json!({
+        "type": ["string", "array"],
+        "items": { "type": "string" },
+        "description": "One line, or an array of lines (one bullet or paragraph each)"
+    });
+    serde_json::json!([
+        op(
+            "replace_paragraph_text",
+            serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12"), "text": text }),
+            &["anchor", "text"],
+            "Word: replace a paragraph's text (a tracked change)"
+        ),
+        op(
+            "insert_paragraph_after",
+            serde_json::json!({ "anchor": anchor("paragraph anchor"), "text": text, "style": { "type": "string", "description": "style id or name, e.g. Heading 2" } }),
+            &["anchor", "text"],
+            "Word: insert a new paragraph after one"
+        ),
+        op(
+            "delete_paragraph",
+            serde_json::json!({ "anchor": anchor("paragraph anchor") }),
+            &["anchor"],
+            "Word: delete a paragraph (a tracked change)"
+        ),
+        op(
+            "set_cells",
+            serde_json::json!({ "sheet": { "type": "string" }, "cells": { "type": "object", "description": "address to value, e.g. {\"B4\": 120, \"C4\": \"=SUM(B1:B3)\"}" } }),
+            &["sheet", "cells"],
+            "Excel: set cell values or formulas"
+        ),
+        op(
+            "append_rows",
+            serde_json::json!({ "sheet": { "type": "string" }, "rows": { "type": "array", "items": { "type": "array" } } }),
+            &["sheet", "rows"],
+            "Excel: append rows after the last used row"
+        ),
+        op(
+            "add_sheet",
+            serde_json::json!({ "name": { "type": "string" } }),
+            &["name"],
+            "Excel: add an empty sheet"
+        ),
+        op(
+            "add_slide_from_layout",
+            serde_json::json!({ "layout": { "type": "string", "description": "layout name from doc_read, e.g. Title and Content" }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}" } }),
+            &["layout"],
+            "PowerPoint: add a slide from one of the deck's layouts"
+        ),
+        op(
+            "set_placeholder_text",
+            serde_json::json!({ "anchor": anchor("placeholder or shape anchor, e.g. slide:256/placeholder:title"), "text": lines }),
+            &["anchor", "text"],
+            "PowerPoint: set a placeholder's or shape's text"
+        ),
+        op(
+            "set_notes",
+            serde_json::json!({ "anchor": anchor("slide anchor"), "text": text }),
+            &["anchor", "text"],
+            "PowerPoint: set a slide's speaker notes"
+        ),
+        op(
+            "delete_slide",
+            serde_json::json!({ "anchor": anchor("slide anchor") }),
+            &["anchor"],
+            "PowerPoint: delete a slide"
+        ),
+        op(
+            "move_slide",
+            serde_json::json!({ "anchor": anchor("slide anchor"), "after": anchor("slide anchor to move after; omit to move to the start") }),
+            &["anchor"],
+            "PowerPoint: move a slide"
+        ),
+        op(
+            "set_title",
+            serde_json::json!({ "title": text }),
+            &["title"],
+            "Any: set the document title property"
+        ),
+    ])
 }
 
 struct Job {
@@ -449,6 +551,52 @@ mod tests {
             .and_then(|rest| rest.split(". ").next())
             .unwrap()
             .to_string()
+    }
+
+    #[test]
+    fn the_op_schema_accepts_exactly_what_the_engine_reads_and_names_the_fault() {
+        let schema = OfficeApplyTool.schema();
+        let call = |ops: Value| serde_json::json!({"path": "a.docx", "base_digest": "0123456789abcdef", "ops": ops});
+        let valid = serde_json::json!([
+            {"op": "replace_paragraph_text", "anchor": "p@1", "text": "x"},
+            {"op": "insert_paragraph_after", "anchor": "p@1", "text": "x", "style": "Heading 2"},
+            {"op": "delete_paragraph", "anchor": "p@1"},
+            {"op": "set_cells", "sheet": "Budget", "cells": {"B4": 1, "C4": "=A1", "D4": true}},
+            {"op": "append_rows", "sheet": "Budget", "rows": [["a", 1]]},
+            {"op": "add_sheet", "name": "Q4"},
+            {"op": "add_slide_from_layout", "layout": "Title and Content", "after": "slide:256", "placeholders": {"title": "T", "body": ["a", "b"]}},
+            {"op": "set_placeholder_text", "anchor": "slide:256/placeholder:title", "text": ["a", "b"]},
+            {"op": "set_notes", "anchor": "slide:256", "text": "n"},
+            {"op": "delete_slide", "anchor": "slide:256"},
+            {"op": "move_slide", "anchor": "slide:256"},
+            {"op": "set_title", "title": "T"}
+        ]);
+        crate::validate_input(&schema, &call(valid.clone())).unwrap();
+        let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_value(valid).unwrap();
+        assert_eq!(ops.len(), 12, "every op the engine has, in the schema");
+
+        // The call a model made live: no `op`, and `after` as a boolean.
+        let error = crate::validate_input(
+            &schema,
+            &call(serde_json::json!([{"after": true, "layout": "Title and Content", "placeholders": {"title": "Next steps"}}])),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("needs `op`, one of: replace_paragraph_text, insert_paragraph_after"),
+            "{error}"
+        );
+        let error = crate::validate_input(
+            &schema,
+            &call(serde_json::json!([{"op": "add_slide_from_layout", "layout": "Title and Content", "after": true}])),
+        )
+        .unwrap_err();
+        assert!(error.contains("arguments.ops[0].after must be"), "{error}");
+        let error = crate::validate_input(
+            &schema,
+            &call(serde_json::json!([{"op": "add_slide", "layout": "x"}])),
+        )
+        .unwrap_err();
+        assert!(error.contains("\"add_slide\" is not one of"), "{error}");
     }
 
     #[tokio::test]

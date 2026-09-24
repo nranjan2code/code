@@ -26,8 +26,9 @@ tracks consecutive turns that end with an unresolved classifiable
 1. **First** correctable failure this run — the per-call `[recovery]` hint is
    appended to the result (as above; the model still produces the next call).
 2. **Second consecutive** turn failing on a correctable fault — the loop
-   injects an authoritative, schema-resurfacing directive
-   (`[repair directive] …`): it re-surfaces the exact admitted `Tool::schema()`
+   injects an authoritative, schema-resurfacing directive, a tagged
+   `ControlKind::RepairDirective` message (`[repair-directive] …`) that no
+   client shows as the person's words: it re-surfaces the exact admitted `Tool::schema()`
    for each rejected tool (or, for an unknown name, the full admitted inventory)
    so the repair is no longer a guess. This is issued by the runtime, not the
    model.

@@ -3280,9 +3280,23 @@ button.artifact-canvas-result:hover, button.artifact-canvas-result:focus-visible
   --sidebar-width: clamp(228px, 18vw, 278px);
   --dock-width: clamp(360px, 32vw, 520px);
 }
-.main { min-width: 0; overflow: hidden; }
+.main { min-width: 0; overflow: hidden; container: workspace-main / inline-size; }
 .workspace-head { min-width: 0; padding-inline: 18px; }
 .workspace-actions { flex-shrink: 0; }
+/* The header answers to its own column, not the window: with the Canvas
+   open beside the chat, a wide window still leaves a narrow column, and
+   the title row must clip rather than run under the actions. */
+.workspace-leading { flex: 1 1 auto; overflow: hidden; }
+.workspace-title, .workspace-title-row { min-width: 0; }
+@container workspace-main (max-width: 620px) {
+  .workspace-head { gap: 10px; padding-inline: 12px; }
+  .workspace-details-button { padding: 5px 7px; }
+  .workspace-details-button > span { display: none; }
+  .target-dir-pill > span { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@container workspace-main (max-width: 440px) {
+  .target-dir-pill, .run-state { display: none !important; }
+}
 .chat { padding: 26px clamp(20px, 4vw, 48px) 20px; }
 .msg, .tool, .worker, .thinking, .approval, .sysnote,
 .transcript-skeleton, .composer-box, .composer-note { max-width: 860px; }
