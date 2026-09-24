@@ -207,6 +207,34 @@ impl Tool for OfficeApplyTool {
     }
 }
 
+/// The refusal a text tool gives for an Office file: a package is a ZIP of
+/// XML parts, so a text read shows nothing useful and a text edit or write
+/// can only fail or destroy it. Names the tools that do handle it.
+pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
+    let name = path.to_string_lossy();
+    if !vak_ooxml::is_openxml_path(&name) {
+        return None;
+    }
+    let what = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(vak_ooxml::Format::from_extension)
+        .map(|format| format.vocabulary.with_article())
+        .unwrap_or("an Office file");
+    let display = path
+        .file_name()
+        .map(|file| file.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.into_owned());
+    Some(match tool {
+        "read" => format!(
+            "{display} is {what}, a ZIP package that {tool} cannot show. Read it with doc_read, which returns its text with anchors and a sha256."
+        ),
+        _ => format!(
+            "{display} is {what}, a ZIP package that {tool} would corrupt; nothing was changed. Read it with doc_read, then change it with office_apply, which writes a draft for review."
+        ),
+    })
+}
+
 /// The name Word shows on an Agent's tracked changes: the runtime's Agent
 /// id, never a name the model chose.
 pub fn tracked_change_author(agent_id: &str) -> String {
@@ -421,6 +449,55 @@ mod tests {
             .and_then(|rest| rest.split(". ").next())
             .unwrap()
             .to_string()
+    }
+
+    #[tokio::test]
+    async fn text_tools_refuse_an_office_file_and_name_the_office_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("q3.docx");
+        let original = vak_ooxml::fixtures::docx();
+        std::fs::write(&file, &original).unwrap();
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let read = crate::read::ReadTool
+            .execute(&serde_json::json!({"path": "q3.docx"}), &ctx)
+            .await;
+        assert!(read.is_error);
+        assert!(
+            read.content.contains("a Word document") && read.content.contains("doc_read"),
+            "{}",
+            read.content
+        );
+        let edit = crate::edit::EditTool
+            .execute(
+                &serde_json::json!({"path": "q3.docx", "edits": [{"old_text": "Steady.", "new_text": "Growing."}]}),
+                &ctx,
+            )
+            .await;
+        assert!(edit.is_error);
+        assert!(
+            edit.content.contains("office_apply") && edit.content.contains("nothing was changed"),
+            "{}",
+            edit.content
+        );
+        let write = crate::write::WriteTool
+            .execute(
+                &serde_json::json!({"path": "q3.docx", "content": "Growing."}),
+                &ctx,
+            )
+            .await;
+        assert!(write.is_error);
+        assert!(write.content.contains("office_apply"), "{}", write.content);
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            original,
+            "the package is untouched"
+        );
+
+        std::fs::write(dir.path().join("notes.txt"), "plain").unwrap();
+        let plain = crate::read::ReadTool
+            .execute(&serde_json::json!({"path": "notes.txt"}), &ctx)
+            .await;
+        assert!(!plain.is_error, "{}", plain.content);
     }
 
     #[tokio::test]

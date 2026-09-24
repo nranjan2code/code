@@ -6173,3 +6173,73 @@ code.ic[data-previewable="true"]:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Office views in the Canvas (docs/design/72, P4): Document, Workbook,
+   Deck and Structure, drawn from the server's projection as text. */
+.office-view { container-type: inline-size; height: 100%; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 0; overflow: hidden; color: var(--text); background: var(--bg); }
+.office-view-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+.office-view-facts strong { color: var(--text); font-size: 13px; }
+.office-view-flags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--border-soft)); border-radius: 8px; background: color-mix(in srgb, var(--yellow) 9%, var(--surface-raised)); color: var(--text); font-size: 12px; line-height: 1.45; }
+.office-view-flags > span { flex: 1 1 240px; }
+.office-view-tabs, .office-sheet-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.office-view-tabs button, .office-sheet-tabs button { padding: 5px 11px; border: 1px solid var(--border-soft); border-radius: 999px; background: transparent; color: var(--text-soft); font-size: 12px; }
+.office-view-tabs button.active, .office-sheet-tabs button.active { border-color: var(--border-strong); background: var(--surface-raised); color: var(--text); font-weight: 600; }
+.office-view-empty, .office-view-not-read { margin: 0; color: var(--muted); font-size: 12px; }
+.office-view-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr); gap: 14px; }
+.office-outline { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 6px; border-right: 1px solid var(--border-soft); }
+.office-outline button { padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-soft); font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+.office-outline button:hover { background: var(--surface-hover); color: var(--text); }
+.office-units { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-bottom: 12px; }
+.office-unit { position: relative; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }
+.office-unit:hover { background: var(--surface-hover); }
+.office-unit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.office-unit[aria-current="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.office-unit p { margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.office-unit .office-unit-heading { font-size: 15px; font-weight: 650; }
+.office-unit-comment { margin-left: 24px; border-left: 3px solid var(--border-strong); border-radius: 0 8px 8px 0; background: var(--surface-raised); }
+.office-unit-table_row p { font-family: var(--mono); font-size: 12px; }
+.office-unit-anchor { display: none; margin-top: 2px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.office-unit:hover .office-unit-anchor, .office-unit[aria-current="true"] .office-unit-anchor, .office-unit:focus-visible .office-unit-anchor { display: block; }
+.office-unit-kind { display: block; color: var(--muted); font-size: 11px; font-weight: 600; }
+.office-unit-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.office-label { padding: 1px 7px; border: 1px solid var(--border-soft); border-radius: 999px; color: var(--text-soft); font-size: 11px; }
+.office-label-stale, .office-label-external { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border-soft)); color: var(--text); }
+.office-label-sensitivity { border-color: var(--border-strong); color: var(--text); }
+.office-slide { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; padding: 8px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.office-unit-notes { background: var(--surface-raised); }
+.office-view-paging { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.office-view-selection { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0 12px; border-top: 1px solid var(--border-soft); background: var(--bg); }
+.office-view-selection code { max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+.office-workbook { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.office-formula-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); font-size: 12px; }
+.office-formula-hint { color: var(--muted); }
+.office-formula { font-family: var(--mono); color: var(--text); }
+.office-formula-value { color: var(--text-soft); }
+.office-grid-scroll { min-height: 0; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; }
+.office-workbook .office-grid-scroll { flex: 1; }
+.office-grid, .office-table { border-collapse: collapse; font-size: 12px; }
+.office-grid th, .office-grid td, .office-table th, .office-table td { padding: 4px 8px; border: 1px solid var(--border-soft); text-align: left; white-space: nowrap; }
+.office-grid thead th, .office-grid tbody th { position: sticky; background: var(--surface-raised); color: var(--muted); font-weight: 600; }
+.office-grid thead th { top: 0; z-index: 1; }
+.office-grid tbody th { left: 0; }
+.office-grid td { min-width: 64px; cursor: default; }
+.office-grid td[tabindex="0"] { cursor: pointer; }
+.office-grid td.formula { font-style: italic; }
+.office-grid td.stale { background: color-mix(in srgb, var(--yellow) 10%, transparent); }
+.office-grid td.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+.office-grid td:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.office-grid-flagged th { color: var(--text); text-decoration: underline dotted; }
+.office-sheet-tabs { padding-bottom: 12px; }
+.office-structure { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; font-size: 12px; }
+.office-structure p { margin: 0; color: var(--text-soft); }
+.office-structure h4 { margin: 6px 0 0; font-size: 12px; }
+.office-table td { white-space: normal; overflow-wrap: anywhere; }
+.office-external td { background: color-mix(in srgb, var(--yellow) 6%, transparent); }
+/* By the view's own width, not the window's: in split view the Canvas is
+   narrow on a wide screen. */
+@container (max-width: 620px) {
+  .office-view-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .office-outline { max-height: 96px; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border-soft); padding: 0 0 6px; }
+  .office-outline button { padding-left: 8px !important; }
+}
+.office-structure .office-grid-scroll { flex: none; overflow-x: auto; overflow-y: visible; }

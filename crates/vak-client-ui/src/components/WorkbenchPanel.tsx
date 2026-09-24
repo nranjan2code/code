@@ -803,7 +803,7 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-preview">
                 <h3>{reviewedPath() ?? "Choose a file"}</h3>
                 <Show when={reviewedPath()}>{(path) =>
-                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete" && !isOfficePath(path())}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
+                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
                     const version = prepared();
                     setReviewOpen(false);
                     openArtifactCanvas({

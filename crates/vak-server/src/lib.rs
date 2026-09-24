@@ -862,6 +862,10 @@ fn router_with_state(state: AppState) -> Router {
             post(narrow_sandbox_candidate_office),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office",
+            get(read_sandbox_candidate_office_projection),
+        )
+        .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
             get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
         )
@@ -3435,6 +3439,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "candidates", _, "files"]
             | ["sandbox", "candidates", _, "files", "raw"]
             | ["sandbox", "candidates", _, "office-review"]
+            | ["sandbox", "candidates", _, "office"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
@@ -11363,6 +11368,50 @@ async fn read_sandbox_candidate_office_review(
                     "keep": narrowed.keep,
                 });
             }
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// The Canvas views of an Office file in a saved candidate: the frozen
+/// draft, checked against its recorded hash first, parsed in the worker.
+async fn read_sandbox_candidate_office_projection(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !vak_ooxml::is_openxml_path(&q.path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file",
+        )
+            .into_response();
+    }
+    if let Err(status) =
+        sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await
+    {
+        return status.into_response();
+    }
+    let saved = match saved_candidate(&state, &session_id, &candidate_id) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
+    };
+    let Some(draft) = confined_path(&saved.candidate.source_root, &q.path) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let view = match q.view.as_deref() {
+        Some("structure") => vak_tools::broker::OfficeView::Structure,
+        _ => vak_tools::broker::OfficeView::Content { from: q.from },
+    };
+    match vak_tools::broker::office_project(&state.core.tool_worker_exe(), &draft, view).await {
+        Ok(mut body) => {
+            body["path"] = serde_json::Value::String(q.path.clone());
             Json(body).into_response()
         }
         Err(error) => (
@@ -20341,6 +20390,29 @@ mod sandbox_promotion_tests {
         assert_eq!(anchored.len(), 1, "{listed}");
         assert_eq!(anchored[0]["path"], "budget.xlsx");
 
+        let response = read_sandbox_candidate_office_projection(
+            State(state.clone()),
+            Path(("session-1".into(), narrowed_id.clone())),
+            axum::extract::Query(OfficeProjectionQuery {
+                path: "budget.xlsx".into(),
+                from: 0,
+                view: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = body_json(response).await;
+        assert!(
+            page["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|unit| unit["cells"].as_array().is_some_and(|cells| cells
+                    .iter()
+                    .any(|cell| cell[0] == "B3" && cell[1] == "70"))),
+            "the saved version's own cells: {page}"
+        );
+
         let response = narrow(narrowed_id.clone(), vec!["1"]).await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let response = narrow(candidate_id.clone(), vec![]).await;
@@ -21451,6 +21523,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
             "/sessions/session-1/sandbox/candidates/candidate-1/office-review",
+            "/sessions/session-1/sandbox/candidates/candidate-1/office",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",

@@ -858,3 +858,32 @@ fn an_edit_removes_the_signatures_it_invalidates_and_keeps_the_label() {
     .unwrap();
     assert!(unsigned.notices.is_empty());
 }
+
+#[test]
+fn a_paragraph_named_by_its_text_gets_its_anchor_in_the_error() {
+    let error = apply(
+        &fixtures::docx(),
+        vec![OfficeOp::ReplaceParagraphText {
+            anchor: "p:Steady.".into(),
+            text: "Growing fast.".into(),
+        }],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("The paragraph whose text is \"Steady.\" is p@11"),
+        "{error}"
+    );
+    let error = apply(
+        &fixtures::docx(),
+        vec![OfficeOp::DeleteParagraph {
+            anchor: "p:nothing like this".into(),
+        }],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.ends_with("(anchors look like p:1A2B3C4D or p@12)"),
+        "{error}"
+    );
+}

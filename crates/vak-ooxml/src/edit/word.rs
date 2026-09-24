@@ -92,16 +92,81 @@ fn paragraphs(tree: &Tree) -> Vec<(String, usize)> {
 }
 
 fn find(doc: &Doc, anchor: &str) -> Result<usize, EditError> {
-    paragraphs(&doc.tree)
-        .into_iter()
-        .find(|(candidate, _)| candidate == anchor)
-        .map(|(_, index)| index)
-        .ok_or_else(|| EditError {
-            op: None,
-            message: format!(
-                "no paragraph {anchor}; use an anchor from doc_read on this exact file (anchors look like p:1A2B3C4D or p@12)"
-            ),
-        })
+    let all = paragraphs(&doc.tree);
+    if let Some((_, index)) = all.iter().find(|(candidate, _)| candidate == anchor) {
+        return Ok(*index);
+    }
+    Err(EditError {
+        op: None,
+        message: format!(
+            "no paragraph {anchor}; use an anchor from doc_read on this exact file (anchors look like p:1A2B3C4D or p@12){}",
+            suggestion(doc, &all, anchor)
+        ),
+    })
+}
+
+/// When a model names a paragraph by its text instead of its anchor
+/// (`p:Steady.`), the anchors of the paragraphs that text points at, so
+/// the call can be repaired without another read.
+fn suggestion(doc: &Doc, all: &[(String, usize)], anchor: &str) -> String {
+    let needle = anchor
+        .strip_prefix("p:")
+        .or_else(|| anchor.strip_prefix("p@"))
+        .unwrap_or(anchor)
+        .trim();
+    if needle.is_empty() {
+        return String::new();
+    }
+    let lower = needle.to_lowercase();
+    let texts: Vec<(&str, String)> = all
+        .iter()
+        .map(|(candidate, index)| (candidate.as_str(), paragraph_text(doc, *index)))
+        .collect();
+    let exact: Vec<&str> = texts
+        .iter()
+        .filter(|(_, text)| text.trim().to_lowercase() == lower)
+        .map(|(candidate, _)| *candidate)
+        .collect();
+    if !exact.is_empty() {
+        return format!(
+            ". The paragraph whose text is {needle:?} is {}",
+            exact.join(", ")
+        );
+    }
+    if needle.chars().count() < 4 {
+        return String::new();
+    }
+    let containing: Vec<&str> = texts
+        .iter()
+        .filter(|(_, text)| text.to_lowercase().contains(&lower))
+        .map(|(candidate, _)| *candidate)
+        .take(4)
+        .collect();
+    match containing.len() {
+        0 => String::new(),
+        1..=3 => format!(
+            ". Paragraphs containing {needle:?}: {}",
+            containing.join(", ")
+        ),
+        _ => format!(
+            ". Several paragraphs contain {needle:?}, among them {}; read the file to choose",
+            containing[..3].join(", ")
+        ),
+    }
+}
+
+/// A paragraph's visible text, from its `w:t` elements.
+fn paragraph_text(doc: &Doc, paragraph: usize) -> String {
+    let mut text = String::new();
+    for node in doc.tree.descendants(paragraph, "t") {
+        let inner = &doc.tree.nodes[node].inner;
+        text.push_str(&String::from_utf8_lossy(&doc.bytes[inner.clone()]));
+    }
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 fn refuse_complex(doc: &Doc, paragraph: &usize, anchor: &str) -> Result<(), EditError> {

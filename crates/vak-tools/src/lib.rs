@@ -248,6 +248,14 @@ pub trait Tool: Send + Sync {
     fn always_loaded(&self) -> bool {
         false
     }
+
+    /// A reason this call cannot succeed, decided from its arguments alone
+    /// before permission is evaluated, so a person is never asked to approve
+    /// a call that would only be refused (a text edit of a Word file). It
+    /// can only refuse: `None` means "evaluate as usual", never "allowed".
+    fn refusal(&self, _args: &Value) -> Option<String> {
+        None
+    }
 }
 
 /// Declared concurrent-execution constraints for one tool invocation.

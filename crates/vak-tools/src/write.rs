@@ -16,7 +16,7 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file, creating parent directories as needed. Overwrites the file if it exists."
+        "Write text content to a file, creating parent directories as needed. Overwrites the file if it exists. Not for Word, Excel or PowerPoint files: use office_apply."
     }
 
     fn schema(&self) -> Value {
@@ -28,6 +28,11 @@ impl Tool for WriteTool {
             },
             "required": ["path", "content"]
         })
+    }
+
+    fn refusal(&self, args: &Value) -> Option<String> {
+        let path = args.get("path").and_then(Value::as_str)?;
+        crate::office_apply::text_tool_refusal(std::path::Path::new(path), "write")
     }
 
     fn claims(&self, args: &Value) -> crate::ResourceClaims {
@@ -50,6 +55,9 @@ impl Tool for WriteTool {
             return ToolOutput::error("missing required parameter: content");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
+        if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "write") {
+            return ToolOutput::error(refusal);
+        }
 
         if let Some(parent) = path.parent()
             && let Err(e) = tokio::fs::create_dir_all(parent).await

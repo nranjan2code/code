@@ -22,7 +22,7 @@ impl Tool for EditTool {
     }
 
     fn description(&self) -> &str {
-        "Apply exact string replacements to a file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes."
+        "Apply exact string replacements to a text file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes. Word, Excel and PowerPoint files are not text: change them with office_apply."
     }
 
     fn schema(&self) -> Value {
@@ -47,6 +47,11 @@ impl Tool for EditTool {
         })
     }
 
+    fn refusal(&self, args: &Value) -> Option<String> {
+        let path = args.get("path").and_then(Value::as_str)?;
+        crate::office_apply::text_tool_refusal(std::path::Path::new(path), "edit")
+    }
+
     fn claims(&self, args: &Value) -> crate::ResourceClaims {
         crate::ResourceClaims {
             exclusive: false,
@@ -67,6 +72,9 @@ impl Tool for EditTool {
             return ToolOutput::error("missing required parameter: edits");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
+        if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "edit") {
+            return ToolOutput::error(refusal);
+        }
 
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,

@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js";
 import type { OfficeChange, OfficeChoice, OfficeReview } from "../api";
-import { parseRedline } from "../officeRedline";
+import Redline from "./OfficeRedline";
 import { kept } from "../officeChoices";
 
 // The semantic change list for an Office draft (docs/design/72, P3): what
@@ -15,25 +15,6 @@ const KIND_LABEL: Record<OfficeChange["kind"], string> = {
   changed: "Changed",
   moved: "Moved",
 };
-
-function Redline(props: { text: string }) {
-  return (
-    <For each={parseRedline(props.text)}>{(segment) => {
-      switch (segment.kind) {
-        case "inserted":
-          return <ins class="office-redline-inserted" title={`Inserted by ${segment.author}`}>{segment.text}</ins>;
-        case "deleted":
-          return <del class="office-redline-deleted" title={`Deleted by ${segment.author}`}>{segment.text}</del>;
-        case "hidden":
-          return <span class="office-redline-hidden" title="Hidden text in the document">{segment.text}</span>;
-        case "white":
-          return <span class="office-redline-hidden" title="White text in the document">{segment.text}</span>;
-        default:
-          return <>{segment.text}</>;
-      }
-    }}</For>
-  );
-}
 
 function ChangeItem(props: { change: OfficeChange; showSection?: boolean; onComment?: (anchor: string) => void }) {
   const change = () => props.change;

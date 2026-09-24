@@ -23,7 +23,7 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files."
+        "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files. For Word, Excel, PowerPoint and Visio files use doc_read."
     }
 
     fn schema(&self) -> Value {
@@ -36,6 +36,11 @@ impl Tool for ReadTool {
             },
             "required": ["path"]
         })
+    }
+
+    fn refusal(&self, args: &Value) -> Option<String> {
+        let path = args.get("path").and_then(Value::as_str)?;
+        crate::office_apply::text_tool_refusal(std::path::Path::new(path), "read")
     }
 
     fn claims(&self, _args: &Value) -> crate::ResourceClaims {
@@ -51,6 +56,9 @@ impl Tool for ReadTool {
             return ToolOutput::error("missing required parameter: path");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
+        if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "read") {
+            return ToolOutput::error(refusal);
+        }
 
         let ext = path
             .extension()

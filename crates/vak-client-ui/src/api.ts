@@ -1045,6 +1045,68 @@ export async function narrowSandboxCandidateOffice(sessionId: string, candidateI
   return response.record;
 }
 
+/** One addressable piece of an Office file, as the reader projects it:
+ *  `anchor` is what a citation, an op or a comment names. `cells` holds a
+ *  sheet row's cells as [address, shown value]. */
+export type OfficeUnit = {
+  anchor: string;
+  kind: "heading" | "paragraph" | "table_row" | "comment" | "sheet_row" | "defined_name" | "slide" | "shape" | "notes" | "page";
+  level: number;
+  text: string;
+  labels: string[];
+  cells?: [string, string][];
+};
+
+export type OfficeOutlineEntry = { anchor: string; title: string; level: number; first_unit: number; units: number };
+
+/** One page of what the Canvas draws of an Office file (docs/design/72, P4). */
+export type OfficeProjection = {
+  path: string;
+  sha256: string;
+  vocabulary: "word" | "excel" | "power_point" | "visio";
+  kind: string;
+  extension: string;
+  macro_enabled: boolean;
+  strict: boolean;
+  title: string | null;
+  stats: [string, number][];
+  flags: string[];
+  sensitivity_labels: string[];
+  outline: OfficeOutlineEntry[];
+  total_units: number;
+  from: number;
+  next: number | null;
+  units: OfficeUnit[];
+  not_read: string[];
+};
+
+export type OfficeStructure = {
+  path: string;
+  sha256: string;
+  main_part: string;
+  parts: { name: string; content_type: string | null; size: number }[];
+  relationships: { source: string; id: string; kind: string; target: string; external: boolean }[];
+  untyped_parts: string[];
+};
+
+/** Where an Office file lives: the workspace, or a saved candidate. */
+export type OfficeSource = { path: string; sessionId?: string; candidateId?: string };
+
+function officeUrl(source: OfficeSource, query: string): string {
+  const path = `path=${encodeURIComponent(source.path)}&${query}`;
+  return source.candidateId && source.sessionId
+    ? `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/candidates/${encodeURIComponent(source.candidateId)}/office?${path}`
+    : `/fs/office?${path}`;
+}
+
+export function readOfficeProjection(source: OfficeSource, from = 0): Promise<OfficeProjection> {
+  return req(officeUrl(source, `from=${from}`));
+}
+
+export function readOfficeStructure(source: OfficeSource): Promise<OfficeStructure> {
+  return req(officeUrl(source, "view=structure"));
+}
+
 export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
   const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);

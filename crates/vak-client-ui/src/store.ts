@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { isOfficePath } from "./officeRedline";
 import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
@@ -429,7 +430,8 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
     p.endsWith(".ico") ||
     p.endsWith(".bmp") ||
     p.endsWith(".csv") ||
-    p.endsWith(".tsv");
+    p.endsWith(".tsv") ||
+    isOfficePath(p);
 
   if (hasExt) return true;
 

@@ -17,8 +17,10 @@ import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
+import OfficeView from "./OfficeView";
+import { isOfficePath } from "../officeRedline";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
 
 /**
  * ArtifactCanvas — immersive overlay preview for showcaseable artifacts.
@@ -33,6 +35,8 @@ export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | 
  * - PDF: native browser viewer via authenticated blob stream
  * - Images (png/jpg/webp/svg): centered responsive image inspector
  * - CSV/TSV: bounded table preview with source available
+ * - Word/Excel/PowerPoint/Visio: the Office views, drawn from the server's
+ *   projection (docs/design/72, P4)
  * - Code/Text: formatted source with copy
  *
  * Design-61 compliant: never auto-opens. Only appears on explicit user action.
@@ -188,6 +192,7 @@ export default function ArtifactCanvas() {
     const p = (artifact.artifactPath || "").toLowerCase();
     if (p.endsWith(".pdf")) return "pdf";
     if (p.endsWith(".csv") || p.endsWith(".tsv")) return "table";
+    if (isOfficePath(p)) return "office";
     if (
       p.endsWith(".png") ||
       p.endsWith(".jpg") ||
@@ -282,6 +287,12 @@ export default function ArtifactCanvas() {
       // If switching away from dev server, shut down previously started server
       if (startedServerName) cleanupServer();
       setActiveServerPort(null);
+
+      // Office files: OfficeView reads its own pages from the projection.
+      if (kind === "office") {
+        setRawText("");
+        return;
+      }
 
       // 2. PDF Document handling: load raw bytes into a blob URL
       if (kind === "pdf") {
@@ -599,7 +610,7 @@ export default function ArtifactCanvas() {
         <header class="artifact-canvas-header">
           <div class="artifact-canvas-title-group">
             <span class="artifact-canvas-badge">
-              {displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Dev Server" : "Preview"}
+              {displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Dev Server" : displayType() === "office" ? "Office" : "Preview"}
             </span>
             <strong class="artifact-canvas-title">{title()}</strong>
             <Show when={path()}>
@@ -764,6 +775,12 @@ export default function ArtifactCanvas() {
                     </table>
                   </div>
                 </div>
+              }</Show>
+              <Show when={displayType() === "office" && canvasArtifact()}>{(artifact) =>
+                <OfficeView
+                  source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId }}
+                  fileName={title()}
+                />
               }</Show>
               {/* Image Preview */}
               <Show when={displayType() === "image" && mediaUrl()}>

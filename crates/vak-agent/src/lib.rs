@@ -6413,6 +6413,9 @@ async fn authorize(
     }
     if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
         vak_tools::validate_input(&tool.schema(), &call.input)?;
+        if let Some(reason) = tool.refusal(&call.input) {
+            return Err(reason);
+        }
     }
     if config
         .revocation_check

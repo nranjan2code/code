@@ -252,6 +252,10 @@ impl Tool for BrokeredTool {
         self.inner.always_loaded()
     }
 
+    fn refusal(&self, args: &Value) -> Option<String> {
+        self.inner.refusal(args)
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         execute(self.name(), args, &self.worker_exe, ctx).await
     }
