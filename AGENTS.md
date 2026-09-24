@@ -1348,6 +1348,29 @@ target/debug/vak eval                    # deterministic suite, ~100ms
 target/debug/vak eval --live             # real model benchmark
 ```
 
+## Live development runs
+
+`docs/development.md` is the step-by-step guide to building, component
+harnesses, and running a dev build live against a real model in the
+browser. Read it before your first live run; the rules below are the ones
+that cost a session time to rediscover.
+
+- Build both binaries: `cargo build -p vak -p vak-server --bins`. The
+  worker binary is what runs tools, verifiers and Office reviews.
+- After a client change, rebuild the bundle, then the server binary, then
+  restart the server; it serves the bundle it was compiled with.
+- Run live in a disposable `/tmp` workspace on a port other than the
+  installed service's (`8901`), against the default data home. A copy of
+  the data home does not carry the provider connection. Never pass
+  `--gateway` for a dev run.
+- Sign in with a throwaway `VAK_GATEWAY_TOKEN` pinned for that server
+  process, and get the link from `vak open app --print --port <port>`.
+- Never open credential files or read ledgers in the real data home;
+  inspect through the app and its HTTP API with the bearer token.
+- Keep one browser tab per server origin: several tabs exhaust the
+  browser's per-host connections and requests hang silently.
+- Stop the server and delete any data-home copy when done.
+
 ## Parallel agents
 
 Only touch files you changed in this session. Sessions are per-cwd-hashed;
