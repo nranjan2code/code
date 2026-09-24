@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.1 — 2026-09-24
 
 - **`self install` no longer says a linked CLI is missing from PATH.** It checked only whether the install's own directory was on PATH, so a `~/.local/bin/vak` symlink into the app bundle was reported as "not on PATH". It now resolves `vak` the way a shell does — the first executable match wins — and compares real paths. A different `vak` earlier on PATH is named as shadowing the install, with only the PATH-order fix offered, since a link placed after it would change nothing.
 
