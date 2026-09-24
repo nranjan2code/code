@@ -44,6 +44,10 @@ const choosing: OfficeReview = {
 };
 choosing.changes = choosing.choices!.flatMap((choice) => choice.changes);
 const whole: OfficeReview = { ...sheet, path: "whole.xlsx", choices_unavailable: "the draft is not what its recorded edits produce" };
+const signed: OfficeReview = { ...word, path: "signed.docx", flags: [], impact: [
+  { kind: "signature", message: "The file is digitally signed. Accepting removes its signatures, because any edit invalidates them; sign it again in Office if it must stay signed.", warning: true },
+  { kind: "label", message: "Labelled Confidential; the label is kept.", warning: false },
+] };
 const narrowed: OfficeReview = { ...sheet, path: "narrowed.xlsx", changes: sheet.changes.slice(0, 1), narrowed_from: { candidate_id: "c-full", keep: ["0:B2"] } };
 const [excluded, setExcluded] = createSignal<ReadonlySet<string>>(new Set());
 let madeWith: string[] | null = null;
@@ -65,6 +69,7 @@ render(() => (
       onMakeVersion={() => { madeWith = choosing.choices!.filter((choice) => !excluded().has(choice.id)).map((choice) => choice.id); }}
     /></section>
     <section id="whole"><h3>whole.xlsx</h3><OfficeChangeList review={whole} onToggle={() => {}} onMakeVersion={() => {}} /></section>
+    <section id="signed"><h3>signed.docx</h3><OfficeChangeList review={signed} /></section>
     <section id="narrowed"><h3>narrowed.xlsx</h3><OfficeChangeList review={narrowed} onOpenVersion={(id) => { opened = id; }} /></section>
   </div>
 ), document.getElementById("root")!);
@@ -101,6 +106,11 @@ render(() => (
   const whole = document.querySelector("#whole")!;
   if (whole.querySelector("input[type=checkbox]")) throw new Error("no choices when unavailable");
   if (!whole.textContent!.includes("accepted or rejected whole")) throw new Error("says why it is whole");
+  const impacts = document.querySelectorAll("#signed .office-impact li");
+  if (impacts.length !== 2) throw new Error(`impacts: ${impacts.length}`);
+  if (!impacts[0].classList.contains("office-impact-warning") || impacts[1].classList.contains("office-impact-warning")) throw new Error("only the signature removal warns");
+  if (!impacts[0].textContent!.startsWith("Signature")) throw new Error("impact kind named");
+  if (document.querySelector("#word .office-impact")) throw new Error("no impact list without impact");
   const narrowed = document.querySelector("#narrowed")!;
   if (!narrowed.textContent!.includes("keeps 1 of the full draft's changes")) throw new Error("narrowed note");
   narrowed.querySelector<HTMLButtonElement>(".office-choice-note button")!.click();

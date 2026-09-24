@@ -265,6 +265,9 @@ impl Job {
                 result.op, result.summary, result.check
             ));
         }
+        for notice in &applied.notices {
+            report.push_str(&format!("Note: {notice}.\n"));
+        }
         report.push_str("Compared with the workspace file: ");
         if changes.summary.is_empty() {
             report.push_str("no visible change.\n");
@@ -418,6 +421,30 @@ mod tests {
             .and_then(|rest| rest.split(". ").next())
             .unwrap()
             .to_string()
+    }
+
+    #[tokio::test]
+    async fn editing_a_signed_file_records_that_its_signature_was_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("memo.docx");
+        std::fs::write(&file, vak_ooxml::fixtures::signed_labelled_docx()).unwrap();
+        let output = run(
+            dir.path(),
+            serde_json::json!({
+                "path": "memo.docx",
+                "base_digest": digest_of(&file),
+                "ops": [{"op": "replace_paragraph_text", "anchor": "p@1", "text": "Hello again"}]
+            }),
+        )
+        .await;
+        assert!(!output.is_error, "{}", output.content);
+        assert!(
+            output
+                .content
+                .contains("Note: the source was digitally signed; its 1 signature(s) were removed"),
+            "{}",
+            output.content
+        );
     }
 
     #[tokio::test]

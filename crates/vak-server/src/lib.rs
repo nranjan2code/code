@@ -19652,6 +19652,11 @@ mod sandbox_promotion_tests {
         assert_eq!(diff["changes"][0]["before"], "100");
         assert_eq!(diff["changes"][0]["after"], "150");
         assert_eq!(diff["compared_with"], "workspace");
+        assert_eq!(
+            diff["impact"],
+            serde_json::json!([]),
+            "unsigned and unlabelled"
+        );
         assert!(diff.get("choices_unavailable").is_none(), "{diff}");
         let ids: Vec<&str> = diff["choices"]
             .as_array()

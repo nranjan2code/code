@@ -142,6 +142,16 @@ export default function OfficeChangeList(props: {
       <p class="office-change-compared">
         {props.review.compared_with === "workspace" ? "Compared with the current workspace file." : "A new file; nothing to compare with."}
       </p>
+      <Show when={(props.review.impact?.length ?? 0) > 0}>
+        <ul class="office-impact" aria-label="What accepting also does">
+          <For each={props.review.impact}>{(impact) => (
+            <li classList={{ "office-impact-warning": impact.warning }}>
+              <strong>{impact.kind === "signature" ? "Signature" : "Sensitivity label"}</strong>
+              <span>{impact.message}</span>
+            </li>
+          )}</For>
+        </ul>
+      </Show>
       <Show when={props.review.flags.length > 0}>
         <p class="office-change-flags" role="note">{props.review.flags.join(" · ")}</p>
       </Show>

@@ -220,6 +220,7 @@ pub fn narrow(
     let mut minted: HashMap<String, String> = HashMap::new();
     let mut state = source.to_vec();
     let mut results = Vec::with_capacity(kept.len());
+    let mut notices: Vec<String> = Vec::new();
     let mut last: Option<Applied> = None;
     for (index, op) in kept {
         let op = remap(op, &minted);
@@ -235,6 +236,11 @@ pub fn narrow(
             minted.insert(before, now);
         }
         results.extend(applied.results.iter().cloned());
+        for notice in &applied.notices {
+            if !notices.contains(notice) {
+                notices.push(notice.clone());
+            }
+        }
         state.clone_from(&applied.bytes);
         last = Some(applied);
     }
@@ -245,6 +251,7 @@ pub fn narrow(
         bytes: last.bytes,
         results,
         document: last.document,
+        notices,
     })
 }
 

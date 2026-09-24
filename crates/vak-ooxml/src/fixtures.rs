@@ -277,6 +277,60 @@ pub fn word_with(
     zip(&entries)
 }
 
+pub const CONFIDENTIAL_CUSTOM_PROPERTIES: &str = r#"<?xml version="1.0"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="MSIP_Label_1234_Name"><vt:lpwstr>Confidential</vt:lpwstr></property></Properties>"#;
+
+/// A one-paragraph Word document labelled "Confidential" and carrying one
+/// digital signature (an origin part and a signature part; the signature
+/// itself is empty, since nothing here verifies it).
+pub fn signed_labelled_docx() -> Vec<u8> {
+    let origin_rels = relationships(&[(
+        "rId1",
+        "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature",
+        "sig1.xml",
+    )]);
+    let signature =
+        r#"<?xml version="1.0"?><Signature xmlns="http://www.w3.org/2000/09/xmldsig#"/>"#;
+    word_with(
+        WORD_MAIN,
+        MINIMAL_WORD_BODY,
+        &[
+            (
+                "docProps/custom.xml",
+                CONFIDENTIAL_CUSTOM_PROPERTIES.as_bytes(),
+            ),
+            ("_xmlsignatures/origin.sigs", b""),
+            (
+                "_xmlsignatures/_rels/origin.sigs.rels",
+                origin_rels.as_bytes(),
+            ),
+            ("_xmlsignatures/sig1.xml", signature.as_bytes()),
+        ],
+        &[
+            (
+                "_xmlsignatures/sig1.xml",
+                "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml",
+            ),
+            (
+                "_xmlsignatures/origin.sigs",
+                "application/vnd.openxmlformats-package.digital-signature-origin",
+            ),
+        ],
+        &[
+            (
+                "rId2",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties",
+                "docProps/custom.xml",
+            ),
+            (
+                "rId3",
+                "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin",
+                "_xmlsignatures/origin.sigs",
+            ),
+        ],
+        &[],
+    )
+}
+
 pub const MINIMAL_WORD_BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>"#;
 
 const SLIDE_MASTER: &str =

@@ -167,6 +167,9 @@ pub struct Applied {
     pub bytes: Vec<u8>,
     pub results: Vec<OpResult>,
     pub document: Document,
+    /// What the engine did beyond the ops, for the record: a signature it
+    /// removed because the edit invalidated it (D4).
+    pub notices: Vec<String>,
 }
 
 /// Why an apply failed. `op` is the 0-based op index when one op is at
@@ -332,6 +335,13 @@ pub fn apply(
         .map_err(tag)?;
         outcomes.push((index, op.name(), outcome));
     }
+    let mut notices = Vec::new();
+    let signatures = drop_signatures(&mut work)?;
+    if signatures > 0 {
+        notices.push(format!(
+            "the source was digitally signed; its {signatures} signature(s) were removed, because any edit invalidates them and a file must not claim a signature it no longer has"
+        ));
+    }
     let edits = std::mem::take(&mut work.parts);
     drop(work);
     let bytes = package
@@ -376,7 +386,66 @@ pub fn apply(
         bytes,
         results,
         document,
+        notices,
     })
+}
+
+/// Removes the package's digital signatures (D4): the signature origin, its
+/// relationship from the package, every signature part and their content
+/// types. Returns how many signatures there were. Vak does not verify
+/// signatures, but it knows an edit breaks every one of them.
+fn drop_signatures<R: std::io::Read + std::io::Seek>(
+    work: &mut Work<'_, R>,
+) -> Result<usize, EditError> {
+    let origins: Vec<Relationship> = work
+        .relationships("")?
+        .into_iter()
+        .filter(|relationship| {
+            !relationship.external && relationship.kind == crate::package::REL_SIGNATURE_ORIGIN
+        })
+        .collect();
+    let mut signatures: Vec<String> = Vec::new();
+    for origin in &origins {
+        for relationship in work.relationships(&origin.target)? {
+            if !relationship.external
+                && relationship.short_kind() == "signature"
+                && !signatures.contains(&relationship.target)
+            {
+                signatures.push(relationship.target);
+            }
+        }
+    }
+    let name = "[Content_Types].xml";
+    let bytes = work.get(name)?;
+    let tree = Tree::parse(&bytes, name, work.limits())?;
+    for index in tree.descendants(0, "Override") {
+        let element = &tree.nodes[index].element;
+        if element
+            .attr("ContentType")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case(crate::package::CT_SIGNATURE))
+            && let Some(part) = element.attr("PartName")
+        {
+            let part = part.trim_start_matches('/').to_string();
+            if !signatures
+                .iter()
+                .any(|known| part_key(known) == part_key(&part))
+            {
+                signatures.push(part);
+            }
+        }
+    }
+    for part in &signatures {
+        work.remove(part);
+        work.remove(&rels_part_name(part));
+        work.remove_override(part)?;
+    }
+    for origin in &origins {
+        work.remove(&origin.target);
+        work.remove(&rels_part_name(&origin.target));
+        work.remove_override(&origin.target)?;
+        work.remove_relationship("", &origin.id)?;
+    }
+    Ok(signatures.len().max(usize::from(!origins.is_empty())))
 }
 
 fn check(document: &Document, expect: &Expect) -> Result<(), String> {

@@ -635,6 +635,10 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .office-redline-deleted + .office-redline-inserted, .office-redline-inserted + .office-redline-deleted { margin-left: 5px; }
 .office-redline-hidden { padding: 0 3px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); }
 .office-change-where { color: var(--text-soft); }
+.office-impact { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.office-impact li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; line-height: 1.45; }
+.office-impact li strong { color: var(--text); font-size: 11px; }
+.office-impact li.office-impact-warning { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border-soft)); background: color-mix(in srgb, var(--yellow) 9%, var(--surface-raised)); color: var(--text); }
 .office-choices { display: grid; gap: 8px; }
 .office-choice-hint { margin: 0; color: var(--muted); font-size: 12px; }
 .office-choice { display: grid; gap: 6px; padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }

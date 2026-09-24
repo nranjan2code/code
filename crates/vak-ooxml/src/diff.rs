@@ -383,3 +383,83 @@ fn slide_titles(before: &Document, after: &Document, changes: &mut Vec<Change>) 
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpactKind {
+    Signature,
+    Label,
+}
+
+/// Something accepting the draft does beyond its visible changes, stated
+/// before acceptance (D4, O9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Impact {
+    pub kind: ImpactKind,
+    pub message: String,
+    /// It removes or weakens something: a signature, or a label's
+    /// protection.
+    pub warning: bool,
+}
+
+/// What accepting `after` in place of `before` (absent for a new file) does
+/// to digital signatures and sensitivity labels.
+pub fn impact(before: Option<&Document>, after: &Document) -> Vec<Impact> {
+    let mut impacts = Vec::new();
+    let was_signed = before.is_some_and(|before| before.inspection.signed);
+    let signed = after.inspection.signed;
+    if was_signed && !signed {
+        impacts.push(Impact {
+            kind: ImpactKind::Signature,
+            message: "The file is digitally signed. Accepting removes its signatures, because any edit invalidates them; sign it again in Office if it must stay signed.".into(),
+            warning: true,
+        });
+    } else if signed && before.is_some_and(|before| !diff(Some(before), after).is_empty()) {
+        impacts.push(Impact {
+            kind: ImpactKind::Signature,
+            message: "The draft still carries a signature, but its content differs from the file that was signed, so the signature no longer holds. Vak does not verify signatures.".into(),
+            warning: true,
+        });
+    } else if signed && before.is_none() {
+        impacts.push(Impact {
+            kind: ImpactKind::Signature,
+            message: "The new file carries a digital signature Vak has not verified.".into(),
+            warning: false,
+        });
+    }
+    let old: &[String] = before.map_or(&[], |before| &before.inspection.sensitivity_labels);
+    let new = &after.inspection.sensitivity_labels;
+    let join = |labels: &[String]| labels.join(", ");
+    let label = |message: String, warning: bool| Impact {
+        kind: ImpactKind::Label,
+        message,
+        warning,
+    };
+    match (old.is_empty(), new.is_empty()) {
+        (true, true) => {}
+        (false, true) => impacts.push(label(
+            format!(
+                "Accepting removes the sensitivity label {}, and with it the limits it puts on where the file may go.",
+                join(old)
+            ),
+            true,
+        )),
+        (true, false) => impacts.push(label(
+            format!("Accepting adds the sensitivity label {}.", join(new)),
+            false,
+        )),
+        (false, false) if old == new.as_slice() => impacts.push(label(
+            format!("Labelled {}; the label is kept.", join(new)),
+            false,
+        )),
+        (false, false) => impacts.push(label(
+            format!(
+                "The sensitivity label changes from {} to {}.",
+                join(old),
+                join(new)
+            ),
+            true,
+        )),
+    }
+    impacts
+}

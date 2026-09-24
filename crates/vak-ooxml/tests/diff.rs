@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use vak_ooxml::diff::{ChangeKind, diff};
+use vak_ooxml::diff::{ChangeKind, ImpactKind, diff, impact};
 use vak_ooxml::edit::{self, CellValue, EditContext, OfficeOp, TextValue};
 use vak_ooxml::{Limits, fixtures, read};
 
@@ -154,5 +154,63 @@ fn a_new_file_is_one_added_change() {
             .as_deref()
             .unwrap()
             .starts_with("new file: 2 slides")
+    );
+}
+
+#[test]
+fn accepting_states_what_happens_to_signatures_and_labels() {
+    let signed = fixtures::signed_labelled_docx();
+    let edit = vec![OfficeOp::ReplaceParagraphText {
+        anchor: "p@1".into(),
+        text: "Hello again".into(),
+    }];
+    let impacts = impact(Some(&project(&signed)), &project(&edited(&signed, edit)));
+    assert_eq!(impacts.len(), 2, "{impacts:?}");
+    assert_eq!(impacts[0].kind, ImpactKind::Signature);
+    assert!(impacts[0].warning);
+    assert!(impacts[0].message.contains("removes its signatures"));
+    assert_eq!(impacts[1].kind, ImpactKind::Label);
+    assert!(!impacts[1].warning);
+    assert_eq!(
+        impacts[1].message,
+        "Labelled Confidential; the label is kept."
+    );
+
+    // A draft made some other way that kept the signature but changed the
+    // content: the signature no longer holds, whatever the file claims.
+    let tampered = fixtures::with_parts(
+        &signed,
+        &[(
+            "word/document.xml",
+            fixtures::MINIMAL_WORD_BODY
+                .replace("Hello", "Goodbye")
+                .as_bytes(),
+        )],
+    );
+    let impacts = impact(Some(&project(&signed)), &project(&tampered));
+    assert!(
+        impacts[0].message.contains("no longer holds"),
+        "{impacts:?}"
+    );
+
+    // Replacing a labelled file with an unlabelled one removes the label.
+    let impacts = impact(Some(&project(&signed)), &project(&fixtures::docx()));
+    let label = impacts
+        .iter()
+        .find(|i| i.kind == ImpactKind::Label)
+        .unwrap();
+    assert!(label.warning);
+    assert!(
+        label
+            .message
+            .contains("removes the sensitivity label Confidential")
+    );
+
+    assert!(
+        impact(
+            Some(&project(&fixtures::docx())),
+            &project(&fixtures::docx())
+        )
+        .is_empty()
     );
 }

@@ -17,12 +17,12 @@ const REL_OFFICE_DOCUMENT: &str =
 const REL_OFFICE_DOCUMENT_STRICT: &str =
     "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument";
 const REL_VISIO_DOCUMENT: &str = "http://schemas.microsoft.com/visio/2010/relationships/document";
-const REL_SIGNATURE_ORIGIN: &str =
+pub(crate) const REL_SIGNATURE_ORIGIN: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin";
 
 const CT_VBA_PROJECT: &str = "application/vnd.ms-office.vbaproject";
 const CT_ACTIVEX: &str = "application/vnd.ms-office.activex+xml";
-const CT_SIGNATURE: &str =
+pub(crate) const CT_SIGNATURE: &str =
     "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml";
 const CT_XLM_MACROSHEET: &str = "application/vnd.ms-excel.macrosheet+xml";
 const CT_XLM_INTL_MACROSHEET: &str = "application/vnd.ms-excel.intlmacrosheet+xml";

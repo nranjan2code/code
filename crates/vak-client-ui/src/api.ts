@@ -1009,12 +1009,17 @@ export type OfficeChoice = {
   changes: OfficeChange[];
 };
 
+/** What accepting does beyond the visible changes: to digital signatures
+ *  and sensitivity labels. `warning` when it removes or weakens one. */
+export type OfficeImpact = { kind: "signature" | "label"; message: string; warning: boolean };
+
 export type OfficeReview = {
   path: string;
   compared_with: "workspace" | "nothing (new file)";
   summary: string[];
   changes: OfficeChange[];
   flags: string[];
+  impact?: OfficeImpact[];
   /** Present when the draft's recorded edits reproduce it exactly. */
   choices?: OfficeChoice[];
   /** Why the draft can only be accepted or rejected whole. */

@@ -805,3 +805,56 @@ fn several_slide_list_ops_in_one_call_are_checked_against_the_order_they_leave()
     );
     assert_eq!(applied.results[0].created.as_deref(), Some("slide:257"));
 }
+
+#[test]
+fn an_edit_removes_the_signatures_it_invalidates_and_keeps_the_label() {
+    let source = fixtures::signed_labelled_docx();
+    let before = Package::open(Cursor::new(source.clone()), Limits::default())
+        .unwrap()
+        .inspect()
+        .unwrap();
+    assert!(before.signed);
+    let applied = apply(
+        &source,
+        vec![OfficeOp::ReplaceParagraphText {
+            anchor: "p@1".into(),
+            text: "Hello again".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(applied.notices.len(), 1, "{:?}", applied.notices);
+    assert!(applied.notices[0].contains("1 signature(s) were removed"));
+    let after = &applied.document.inspection;
+    assert!(!after.signed, "the output claims no signature");
+    assert_eq!(
+        after.sensitivity_labels,
+        ["Confidential"],
+        "the label stays"
+    );
+    let archive = zip::ZipArchive::new(Cursor::new(applied.bytes.clone())).unwrap();
+    assert!(
+        !archive
+            .file_names()
+            .any(|name| name.starts_with("_xmlsignatures/")),
+        "{:?}",
+        archive.file_names().collect::<Vec<_>>()
+    );
+    let types = part(&applied.bytes, "[Content_Types].xml");
+    assert!(!types.contains("xmlsignatures"), "{types}");
+    assert!(!part(&applied.bytes, "_rels/.rels").contains("digital-signature"));
+    assert_eq!(
+        part(&applied.bytes, "docProps/custom.xml"),
+        fixtures::CONFIDENTIAL_CUSTOM_PROPERTIES,
+        "the label's part is copied as it was"
+    );
+
+    let unsigned = apply(
+        &fixtures::docx(),
+        vec![OfficeOp::ReplaceParagraphText {
+            anchor: "p@11".into(),
+            text: "Growing.".into(),
+        }],
+    )
+    .unwrap();
+    assert!(unsigned.notices.is_empty());
+}

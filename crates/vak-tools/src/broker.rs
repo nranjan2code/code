@@ -709,6 +709,7 @@ fn office_review_in_worker(
         "summary": diff.summary,
         "changes": diff.changes,
         "flags": draft.inspection.flags(),
+        "impact": vak_ooxml::diff::impact(current.as_ref(), &draft),
     });
     let choices = match lineage {
         None => Err("the draft was not made by office_apply in this conversation".to_string()),
