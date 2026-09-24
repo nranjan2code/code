@@ -21,6 +21,7 @@ import * as api from "../api";
 import Icon from "./Icon";
 import OfficeChangeList from "./OfficeChangeList";
 import { isOfficePath } from "../officeRedline";
+import { pendingVersions } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { trapFocus } from "../focusTrap";
@@ -250,13 +251,7 @@ export default function WorkbenchPanel() {
       void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
         if (disposed) return;
         if (reviewOpen() && candidate()?.execution_id !== exec.id) return;
-        const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-        const undone = new Set(records.filter((record) => record.kind === "PromotionUndo").map((record) => record.record.candidate_id));
-        const versions = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id).map((record) => record.record);
-        // Versions of one result are alternatives: once one is applied (and
-        // not undone), the others are no longer waiting for review.
-        const settled = versions.some((record) => promoted.has(record.candidate.candidate_id) && !undone.has(record.candidate.candidate_id));
-        const pending = settled ? [] : versions.filter((record) => !promoted.has(record.candidate.candidate_id));
+        const pending = pendingVersions(records, exec.id);
         setPendingCandidates(pending);
         if (!reviewOpen() && !pending.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) {
           if (pending.length > 0) selectCandidate(pending[pending.length - 1]);
@@ -459,10 +454,11 @@ export default function WorkbenchPanel() {
         .then(({ records }) => {
           if (disposed || candidate()?.candidate.candidate_id !== prepared.candidate.candidate_id) return;
           setPreviewPreparations(records.filter((record): record is { kind: "PreviewPreparation"; record: api.SandboxPreviewPreparationRecord } => record.kind === "PreviewPreparation").map((record) => record.record));
-          const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-          const versions = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === prepared.execution_id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+          const versions = pendingVersions(records, prepared.execution_id);
           setPendingCandidates(versions);
-          const next = versions.findLast((record) => record.parent_candidate_id === prepared.candidate.candidate_id);
+          // A version the person made by keeping some changes is opened by
+          // that action itself; only an Agent revision arrives here.
+          const next = versions.findLast((record) => record.parent_candidate_id === prepared.candidate.candidate_id && !record.narrowed);
           if (next) {
             selectCandidate(next);
             setReviewCommentMessage("The Agent prepared a new draft version. Review its files before accepting.");
@@ -487,8 +483,7 @@ export default function WorkbenchPanel() {
     try {
       const { records } = await api.listSessionSandboxRecords(sessionId);
       if (activeId() !== sessionId) return;
-      const promoted = new Set(records.filter((record) => record.kind === "Promotion").map((record) => record.record.candidate_id));
-      saved = records.filter((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.execution_id === exec.id && !promoted.has(record.record.candidate.candidate_id)).map((record) => record.record);
+      saved = pendingVersions(records, exec.id);
       setPendingCandidates(saved);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
