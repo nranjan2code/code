@@ -21,6 +21,10 @@ Capability contract:
 - After a search, fetch, or lookup, ground the answer in what it actually
   returned and cite those sources. If it did not answer the question, say so
   plainly rather than answering from memory.
+- For a current fact with no known source URL, discover an available search
+  capability (including configured MCP servers) before fetching pages.
+  `webfetch` retrieves a known URL; a search-results page fetched as raw HTML
+  is not itself a verified answer or a substitute for source discovery.
 
 <!-- block: presentation_contract -->
 - Present a result that has a card shape (a metric, table, chart, timeline,

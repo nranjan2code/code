@@ -3,6 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
+import { mergePresentationSnapshot } from "./presentationHydration";
 import type {
   AgentEvent,
   AssistantMessage,
@@ -902,7 +903,7 @@ export function toggleItemExpanded(id: string) {
 
 export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
   if (timeline.schema_version !== 2 || timeline.session_id !== id) throw new Error("Unsupported presentation snapshot");
-  setPresentationBySession(id, reconcile(timeline, { key: "id" }));
+  setPresentationBySession(id, reconcile(mergePresentationSnapshot(presentationBySession[id] ?? null, timeline), { key: "id" }));
   setPresentationErrors(id, null);
 }
 

@@ -21,6 +21,13 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
             return Err(format!("invalid MCP arguments: {path} must be {}", types));
         }
     }
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
+        && !allowed.iter().any(|candidate| candidate == value)
+    {
+        return Err(format!(
+            "invalid MCP arguments: {path} is not an allowed enum value"
+        ));
+    }
     if let Some(required) = schema.get("required").and_then(Value::as_array)
         && let Some(object) = value.as_object()
     {
@@ -122,6 +129,29 @@ mod tests {
         let schema = json!({"type": "array", "items": {"type": "string"}});
         assert!(validate_arguments(&json!(["one", "two"]), &schema).is_ok());
         assert!(validate_arguments(&json!(["one", 2]), &schema).is_err());
+    }
+
+    #[test]
+    fn validates_server_declared_enum_options_before_call() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "depth": {"type": "string", "enum": ["basic", "advanced"]}
+            },
+            "required": ["query"]
+        });
+        assert!(validate_arguments(&json!({"query": "weather"}), &schema).is_ok());
+        assert!(
+            validate_arguments(&json!({"query": "weather", "depth": "advanced"}), &schema).is_ok()
+        );
+        assert!(
+            validate_arguments(
+                &json!({"query": "weather", "depth": "unsupported"}),
+                &schema
+            )
+            .is_err()
+        );
     }
 
     #[test]

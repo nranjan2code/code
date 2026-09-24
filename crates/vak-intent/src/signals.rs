@@ -224,6 +224,13 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("summarize", Act::Answer, 0.7),
     ("summarise", Act::Answer, 0.7),
     ("tell", Act::Answer, 0.5),
+    // Conversational delivery verbs describe the answer the user wants in
+    // this chat; they do not imply a workspace artifact. This distinction is
+    // especially important for clauses such as "give me the latest news" or
+    // "present it as a card": treating the presentation verb as Author makes
+    // the stop gate demand a file/edit receipt for an ordinary answer.
+    ("give", Act::Answer, 0.8),
+    ("present", Act::Answer, 0.7),
     // Locate
     ("find", Act::Locate, 0.9),
     ("search", Act::Locate, 0.9),
@@ -232,6 +239,7 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("list", Act::Locate, 0.7),
     ("grep", Act::Locate, 1.0),
     ("look", Act::Locate, 0.5),
+    ("show", Act::Locate, 0.7),
     // Analyze
     ("analyze", Act::Analyze, 1.0),
     ("analyse", Act::Analyze, 1.0),

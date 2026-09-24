@@ -80,11 +80,11 @@ fn research_payload_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
-                        "url": {"type": "string"},
-                        "snippet": {"type": "string"},
-                        "source_name": {"type": "string"},
-                        "published_at": {"type": "string"}
+                        "title": {"type": "string", "description": "Copy the source title from the retrieved result."},
+                        "url": {"type": "string", "description": "Required: copy the exact source URL from retrieved evidence, not a guessed homepage or search URL."},
+                        "snippet": {"type": "string", "description": "Use only text supported by the retrieved source."},
+                        "source_name": {"type": "string", "description": "Optional; include only if the retrieved result identifies this publisher."},
+                        "published_at": {"type": "string", "description": "Optional; include only when the retrieved result supplies a publication date."}
                     },
                     "required": ["title", "url"]
                 }
@@ -365,7 +365,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_research_card",
-        description: "Emit a research/news synthesis card: several distinct findings drawn from multiple cited sources, each takeaway traceable to a source. Choose it by the shape of the answer, not because you searched: a single measurement or fact (a temperature, a price, a score) belongs on the metric card and a comparison on the table card, with the source named in your sentence.",
+        description: "Emit a research/news synthesis card: several distinct findings drawn from multiple cited sources, each takeaway traceable to a source. Every source needs its exact retrieved title and URL; omit publication dates or publisher names the evidence did not provide. Choose it by the shape of the answer, not because you searched: a single measurement or fact (a temperature, a price, a score) belongs on the metric card and a comparison on the table card, with the source named in your sentence.",
         semantic_types: &["research.synthesis", "research_brief", "news"],
         payload_schema: research_payload_schema,
     },

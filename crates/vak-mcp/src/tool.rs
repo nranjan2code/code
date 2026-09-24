@@ -103,18 +103,35 @@ impl Tool for McpTool {
     }
 
     fn description(&self) -> &str {
-        "Call tools exposed by configured MCP servers. Always use this broker (never call an MCP tool name directly). Use action \"list\" with a server to get its exact tool names and inputSchemas, then action \"call\" with server, tool, and arguments matching that schema exactly."
+        "Discover and call tools exposed by configured MCP servers. For a current fact or an unknown source URL, check configured servers for a search tool before fetching a page by URL. Always use this broker (never call an MCP tool name directly). Use action \"list\" with a server to get its exact tool names and inputSchemas, then action \"call\" with server, tool, and arguments matching that schema exactly."
     }
 
     fn schema(&self) -> Value {
         // OpenAI function declarations require a top-level object without
         // oneOf/anyOf. Keep the two actions explicit in descriptions, and
         // enforce call-only fields again in execute before touching a server.
+        // The configured server names are declaration data, not a catalog
+        // probe, so exposing them here preserves lazy startup while making a
+        // `find_tools` result actionable for models that missed the separate
+        // prompt inventory.
+        let servers = self.reachable_servers();
+        let server_schema = if servers.is_empty() {
+            serde_json::json!({
+                "type": "string",
+                "description": "The configured server to list or call. Required for call."
+            })
+        } else {
+            serde_json::json!({
+                "type": "string",
+                "enum": servers,
+                "description": "A configured, policy-reachable server to list or call. Required for call."
+            })
+        };
         serde_json::json!({
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["list", "call"], "description": "list: a server's exact tool names and schemas (without a server, just the server names); call: invoke one tool."},
-                "server": {"type": "string", "description": "The server to list or call. Required for call."},
+                "server": server_schema,
                 "tool": {"type": "string", "description": "Required for call: a tool name returned by list for that server."},
                 "arguments": {"type": "object", "description": "For call: arguments matching the discovered tool's inputSchema."}
             },
@@ -139,7 +156,17 @@ impl McpTool {
         self.manager
             .server_names()
             .into_iter()
-            .filter(|server| self.allowed(server, "*"))
+            .filter(|server| {
+                let may_be_allowed = self.allow.as_ref().is_none_or(|allow| {
+                    allow.iter().any(|pattern| {
+                        let server_pattern = pattern.split('/').next().unwrap_or_default();
+                        globset::Glob::new(server_pattern)
+                            .ok()
+                            .is_some_and(|glob| glob.compile_matcher().is_match(server))
+                    })
+                });
+                may_be_allowed && !Self::matches(&self.deny, &format!("{server}/*"))
+            })
             .collect()
     }
 

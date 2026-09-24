@@ -345,6 +345,49 @@ async fn a_thinking_only_step_gets_one_redo_to_act() {
         1,
         "exactly one empty-step nudge: {nudges:?}"
     );
+    assert!(
+        nudges.iter().any(|text| {
+            text.starts_with("[empty-step]") && text.contains("explain how copper is refined")
+        }),
+        "empty-step repair must retain the already-admitted target: {nudges:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_tool_call_starts_a_fresh_bounded_empty_step_boundary() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "empty-step-after-tool",
+        vec![
+            thinking_only(),
+            search_call("s1"),
+            thinking_only(),
+            text_msg("The retrieved observation reports 26.4 C in Delhi."),
+        ],
+        false,
+    )
+    .await;
+    let outcome = agent
+        .run(
+            "find the Delhi observation and answer",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content().contains("26.4")),
+        "got {outcome:?}"
+    );
+    assert_eq!(
+        user_texts(&agent)
+            .iter()
+            .filter(|text| text.starts_with("[empty-step]"))
+            .count(),
+        2,
+        "each action boundary gets one bounded repair"
+    );
 }
 
 #[tokio::test]

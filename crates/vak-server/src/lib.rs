@@ -2926,12 +2926,32 @@ pub async fn serve_with(
     if force_gateway {
         eprintln!("gateway: ENABLED (--gateway overrides config)");
     }
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
+    let (draining_tx, draining_rx) = oneshot::channel();
+    let server = std::future::IntoFuture::into_future(
+        axum::serve(listener, app).with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             eprintln!("\n[shutting down: draining connections]");
-        })
-        .await
+            let _ = draining_tx.send(());
+        }),
+    );
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => result,
+        _ = draining_rx => {
+            // EventSource streams can remain open indefinitely. A restart
+            // must release session-ledger locks even when a browser keeps
+            // those connections alive, or the replacement server can only
+            // attach read-only and every follow-up conflicts. Give ordinary
+            // requests a short drain window, then end this process.
+            match tokio::time::timeout(Duration::from_secs(5), &mut server).await {
+                Ok(result) => result,
+                Err(_) => {
+                    eprintln!("[shutdown: closing long-lived connections]");
+                    Ok(())
+                }
+            }
+        }
+    }
 }
 
 fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
@@ -3597,6 +3617,32 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Build the one canonical presentation projection used when a live handle is
+/// created or a run settles. Keeping both boundaries on this path prevents a
+/// completion rebase from silently dropping plugin renderers, adaptive
+/// library selection, or sandbox-artifact sidecars until the next reload.
+fn live_presentation_snapshot(
+    core: &Core,
+    session_id: &str,
+    session: &SessionLog,
+) -> vak_delivery::OutputTimeline {
+    let planner = delivery::merged_presentation_planner(core);
+    let adaptive_store = vak_store::presentation::PresentationStore::new(
+        core.sessions_home().join("presentations.json"),
+    );
+    let mut timeline = match adaptive_store.load() {
+        Ok(library) => {
+            let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
+            crate::projection::snapshot_with_planner_and_library(
+                session_id, session, &planner, &effective,
+            )
+        }
+        Err(_) => crate::projection::snapshot_with_planner(session_id, session, &planner),
+    };
+    crate::projection::append_sandbox_artifacts(&mut timeline, &core.sessions_home(), session_id);
+    timeline
+}
+
 pub(crate) fn register_handle(
     state: &AppState,
     id: String,
@@ -3621,20 +3667,7 @@ pub(crate) fn register_handle(
     });
     let events_tx = events::EventBus::new();
     let side_events_tx = events::EventBus::new();
-    let planner = delivery::merged_presentation_planner(&core);
-    let adaptive_store = vak_store::presentation::PresentationStore::new(
-        core.sessions_home().join("presentations.json"),
-    );
-    let mut presentation_snapshot = match adaptive_store.load() {
-        Ok(library) => {
-            let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
-            crate::projection::snapshot_with_planner_and_library(
-                &id, &session, &planner, &effective,
-            )
-        }
-        Err(_) => crate::projection::snapshot_with_planner(&id, &session, &planner),
-    };
-    crate::projection::append_sandbox_artifacts(&mut presentation_snapshot, &durable_home, &id);
+    let presentation_snapshot = live_presentation_snapshot(&core, &id, &session);
     let presentation = Arc::new(Mutex::new(presentation_snapshot));
     let mut presentation_rx = events_tx.subscribe();
     let presentation_state = presentation.clone();
@@ -3829,6 +3862,28 @@ async fn attach_session(
     State(state): State<AppState>,
     Json(body): Json<AttachBody>,
 ) -> axum::response::Response {
+    match ensure_session_handle(&state, &body.session_id).await {
+        Ok((id, _)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "session_id": id })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Resolve a durable conversation into the live handle map at an admission
+/// boundary. A browser may keep its page and EventSources across a server
+/// restart; neither a follow-up run nor a reconnected stream can assume an
+/// earlier explicit `/attach` call still exists in this process.
+async fn ensure_session_handle(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(String, Arc<SessionHandle>), vak_core::CoreError> {
     // Already attached? Return before touching the file.
     //
     // The live handle owns an exclusive lock on the session JSONL for its
@@ -3838,84 +3893,65 @@ async fn attach_session(
     // calls it on every task switch, and mid-run the handle's session is
     // temporarily owned by the agent — so this must be a no-op, not a
     // second open.
-    if state.get(&body.session_id).is_some() {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({ "session_id": body.session_id })),
-        )
-            .into_response();
+    if let Some(handle) = state.get(session_id) {
+        return Ok((session_id.to_owned(), handle));
     }
-    let session = if let Ok(s) = state.active_core().open_session(&body.session_id).await {
+    let session = if let Ok(s) = state.active_core().open_session(session_id).await {
         Ok(s)
-    } else if let Ok(s) = state.core.open_session(&body.session_id).await {
+    } else if let Ok(s) = state.core.open_session(session_id).await {
         Ok(s)
-    } else if let Ok(s) = state
-        .active_core()
-        .open_session_read_only(&body.session_id)
-        .await
-    {
+    } else if let Ok(s) = state.active_core().open_session_read_only(session_id).await {
         Ok(s)
-    } else if let Ok(s) = state.core.open_session_read_only(&body.session_id).await {
+    } else if let Ok(s) = state.core.open_session_read_only(session_id).await {
         Ok(s)
     } else {
-        find_session_on_disk(&state.core, &body.session_id).ok_or_else(|| {
+        find_session_on_disk(&state.core, session_id).ok_or_else(|| {
             vak_core::CoreError::Session(vak_session::SessionError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("session not found: {}", body.session_id),
+                format!("session not found: {session_id}"),
             )))
         })
     };
-    match session {
-        Ok(session) => {
-            let id = session
-                .header()
-                .map(|h| h.session_id.clone())
-                .unwrap_or_else(|| body.session_id.clone());
-            let session_cwd = session
-                .header()
-                .map(|h| h.cwd.clone())
-                .unwrap_or_else(|| state.core.cwd().clone());
-            let active = state.active_core();
-            let handle_core = if session_cwd == *active.cwd() {
-                active
-            } else if session_cwd == *state.core.cwd() {
-                state.core.clone()
-            } else if let Ok(c) =
-                state
-                    .gateway
-                    .core_pool
-                    .resolve_at(&session_cwd, None, std::time::Instant::now())
-            {
-                c
-            } else {
-                // `resolve_at` failing here is not a trust decision — an
-                // unconditional `true` would let a workspace whose trust
-                // prompt an operator declined have its hooks/MCP
-                // servers/secret scope applied anyway. Recompute trust the
-                // same way `resolve_at` does rather than assuming it.
-                vak_core::Core::new_with_trust(
-                    session_cwd.clone(),
-                    vak_core::trust::is_trusted(&session_cwd),
-                )
-                .unwrap_or_else(|_| state.core.clone())
-            };
-            // The header id can differ from the requested one; if that handle
-            // is already live, keep it rather than replacing it.
-            if state.get(&id).is_none() {
-                register_handle(&state, id.clone(), session, session_cwd, handle_core);
-            }
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "session_id": id })),
+    session.map(|session| {
+        let id = session
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_else(|| session_id.to_owned());
+        let session_cwd = session
+            .header()
+            .map(|h| h.cwd.clone())
+            .unwrap_or_else(|| state.core.cwd().clone());
+        let active = state.active_core();
+        let handle_core = if session_cwd == *active.cwd() {
+            active
+        } else if session_cwd == *state.core.cwd() {
+            state.core.clone()
+        } else if let Ok(c) =
+            state
+                .gateway
+                .core_pool
+                .resolve_at(&session_cwd, None, std::time::Instant::now())
+        {
+            c
+        } else {
+            // `resolve_at` failing here is not a trust decision — an
+            // unconditional `true` would let a workspace whose trust
+            // prompt an operator declined have its hooks/MCP
+            // servers/secret scope applied anyway. Recompute trust the
+            // same way `resolve_at` does rather than assuming it.
+            vak_core::Core::new_with_trust(
+                session_cwd.clone(),
+                vak_core::trust::is_trusted(&session_cwd),
             )
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+            .unwrap_or_else(|_| state.core.clone())
+        };
+        // The header id can differ from the requested one; if that handle
+        // is already live, keep it rather than replacing it.
+        let handle = state.get(&id).unwrap_or_else(|| {
+            register_handle(state, id.clone(), session, session_cwd, handle_core)
+        });
+        (id, handle)
+    })
 }
 
 /// Sidebar projection over the persisted store: one summary per JSONL file.
@@ -4274,8 +4310,15 @@ async fn run_prompt(
 ) -> axum::response::Response {
     refresh_control_plane(&state);
     use axum::response::IntoResponse;
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let handle = match ensure_session_handle(&state, &id).await {
+        Ok((_, handle)) => handle,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
     };
     if let Some(routing) = body.routing.as_ref()
         && let Some(expected) = routing.outcome_revision
@@ -4613,7 +4656,7 @@ async fn run_prompt(
                     .presentation
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    crate::projection::snapshot(&run_id, &session_log);
+                    live_presentation_snapshot(&core, &run_id, &session_log);
                 hub.emit_agent_summary(&summary, Some(run_id.clone()));
                 let _ = handle.events_tx.send(AgentEvent::RunFinished {
                     summary: summary.clone(),
@@ -4654,7 +4697,7 @@ async fn run_prompt(
                         .presentation
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        crate::projection::snapshot(&run_id, &restored);
+                        live_presentation_snapshot(&core, &run_id, &restored);
                     *handle
                         .session
                         .lock()
@@ -6162,7 +6205,11 @@ async fn events_sse(
     let resume = resume_from(&headers, &uri);
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match state.get(&id) {
+    > = match ensure_session_handle(&state, &id)
+        .await
+        .ok()
+        .map(|(_, h)| h)
+    {
         Some(h) => {
             // Subscribe BEFORE reading the replay ring, so an event
             // published between the two is received live rather than
@@ -6597,7 +6644,11 @@ async fn presentation_events_sse(
     let _resume = resume_from(&headers, &uri);
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match state.get(&id) {
+    > = match ensure_session_handle(&state, &id)
+        .await
+        .ok()
+        .map(|(_, h)| h)
+    {
         Some(handle) => {
             let rx = handle.events_tx.subscribe();
             let initial = {
@@ -6607,15 +6658,7 @@ async fn presentation_events_sse(
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 guard
                     .as_ref()
-                    .map(|session| {
-                        let mut timeline = crate::projection::snapshot(&id, session);
-                        crate::projection::append_sandbox_artifacts(
-                            &mut timeline,
-                            &handle.core.sessions_home(),
-                            &id,
-                        );
-                        timeline
-                    })
+                    .map(|session| live_presentation_snapshot(&handle.core, &id, session))
                     .unwrap_or_else(|| {
                         handle
                             .presentation
@@ -6646,13 +6689,28 @@ async fn presentation_events_sse(
                     .to_string()
                 }))));
             handle.subscribed.notify_one();
+            let settled_presentation = handle.presentation.clone();
             let live = BroadcastStream::new(rx).filter_map(move |event| match event {
                 Ok(framed) => {
                     if framed.seq <= last_sequence {
                         return None;
                     }
                     last_sequence = framed.seq;
-                    crate::projection::project_frame(&mut timeline, framed).map(|frame| {
+                    let frame = if matches!(&framed.event, AgentEvent::RunFinished { .. }) {
+                        // The run owner publishes the rebuilt durable projection
+                        // before broadcasting RunFinished. Rebase this long-lived
+                        // subscriber now: carrying its private live timeline into
+                        // the next run would otherwise replace settled cards with
+                        // the prior run's prose/progress snapshot.
+                        timeline = settled_presentation
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone();
+                        Some(crate::projection::settled_frame(last_sequence, &timeline))
+                    } else {
+                        crate::projection::project_frame(&mut timeline, framed)
+                    };
+                    frame.map(|frame| {
                         Ok(Event::default().id(last_sequence.to_string()).data(
                             serde_json::to_string(&frame).unwrap_or_else(|error| {
                                 serde_json::json!({

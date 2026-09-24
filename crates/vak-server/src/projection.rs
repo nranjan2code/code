@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 pub(crate) use vak_intent::control::{clean_scaffolding, is_scaffolding_line};
 
@@ -1444,6 +1445,7 @@ fn document_has_content(document: &PresentationDocument) -> bool {
 }
 
 fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline) {
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let mut turns: BTreeMap<&str, Vec<&OutputItem>> = BTreeMap::new();
     for item in &timeline.items {
         turns.entry(item.turn_id.as_str()).or_default().push(item);
@@ -1486,6 +1488,22 @@ fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline)
             .iter()
             .map(|item| format!("{:?}/{:?}", item.kind, item.status))
             .collect();
+        let fingerprint = format!("{session_id}\0{turn_id}\0{}", kinds.join(","));
+        let mut warned = WARNED
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if warned.contains(&fingerprint) {
+            continue;
+        }
+        // This is diagnostic process state, not session truth. Bound it so a
+        // long-lived daemon cannot grow forever; clearing may repeat an old
+        // warning once, which is preferable to unbounded memory or per-poll
+        // log spam.
+        if warned.len() >= 4096 {
+            warned.clear();
+        }
+        warned.insert(fingerprint);
         eprintln!(
             "[projection] session={session_id} turn={turn_id} produced no visible answer ({} non-progress item(s): {}) — client renders a fallback notice for this turn",
             non_progress.len(),
@@ -2133,6 +2151,35 @@ pub(crate) fn project_frame(
     })
 }
 
+/// Rebase a live presentation stream onto the durable projection at a run
+/// boundary. The delta and snapshot intentionally carry the same timeline:
+/// consumers may choose either abstraction (invariant 4) without retaining a
+/// subscriber-local projection from the completed run.
+pub(crate) fn settled_frame(
+    sequence: u64,
+    timeline: &OutputTimeline,
+) -> vak_delivery::OutputStreamFrame {
+    let mut snapshot = timeline.clone();
+    // The handle's background projector receives the same RunFinished event
+    // and may win the mutex race, changing only the cursor back to `live:*`.
+    // A settlement frame is an authoritative replacement regardless of that
+    // scheduling order, so give it an explicitly non-live cursor.
+    if snapshot
+        .cursor
+        .as_deref()
+        .is_some_and(|cursor| cursor.starts_with("live:"))
+    {
+        snapshot.cursor = Some(format!("settled:{sequence}"));
+    }
+    vak_delivery::OutputStreamFrame {
+        sequence: Some(sequence),
+        delta: Some(OutputStreamEvent::Snapshot {
+            timeline: snapshot.clone(),
+        }),
+        snapshot,
+    }
+}
+
 pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStreamEvent) {
     match event {
         OutputStreamEvent::Snapshot { timeline: snapshot } => *timeline = snapshot,
@@ -2224,6 +2271,19 @@ mod tests {
         ActivityKind, ActivityRecord, ActivityStatus, FrozenContract, MessageRecord, SessionHeader,
         SessionLog,
     };
+
+    #[test]
+    fn settled_frame_rebases_delta_and_snapshot_to_durable_history() {
+        let mut durable = OutputTimeline::empty("session-1");
+        durable.cursor = Some("live:41".into());
+        let frame = super::settled_frame(42, &durable);
+        assert_eq!(frame.sequence, Some(42));
+        assert_eq!(frame.snapshot.cursor.as_deref(), Some("settled:42"));
+        assert!(matches!(
+            frame.delta,
+            Some(vak_delivery::OutputStreamEvent::Snapshot { timeline }) if timeline == frame.snapshot
+        ));
+    }
 
     /// Writes the `Presentation` entry a real turn would have written at
     /// card validation (docs/design/68-context-engine.md §10), so these

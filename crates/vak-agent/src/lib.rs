@@ -1689,7 +1689,7 @@ impl Agent {
             };
             let mut request = base_request.clone();
 
-            let response = {
+            let mut response = {
                 // Run-level endurance: a sustained fault window (rate-limit
                 // burst, slow/hung upstream, truncating proxy) can outlast
                 // one step's retry budget. The ledger has not been touched,
@@ -1847,6 +1847,18 @@ impl Agent {
                 }
             };
 
+            // Provider dialect quirks are normalized before the assistant
+            // message reaches the append-only ledger. Execution, replay,
+            // presentation projection, and the next model step must all see
+            // the same canonical call rather than a live-only repaired copy.
+            let mcp_index = self
+                .config
+                .mcp_tool_index
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            normalize_response_tool_uses(&mut response, &self.config.tools, &mcp_index);
+
             outcome_turns += 1;
 
             let usage = response.usage.clone();
@@ -1989,9 +2001,12 @@ impl Agent {
                         .await
                         .append_message(MessageRecord::control(
                         vak_intent::control::ControlKind::EmptyStep,
-                        "[empty-step]: Your last response had no visible answer and no tool call. \
-                         Act now: make the tool call you planned, or write the answer as text."
-                            .to_string(),
+                        format!(
+                            "[empty-step]: Your last response had no visible answer and no tool call. \
+                             Complete this already-admitted target now (this is context, not a new request): {:?}. \
+                             Make the tool call you planned, or write the answer as text.",
+                            prompt_owned.chars().take(600).collect::<String>()
+                        ),
                     ));
                     turn += 1;
                     continue;
@@ -2015,13 +2030,13 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
+                        let available = freshness_retrieval_hint(&tool_defs);
                         let _ = self.session.lock().await.append_message(MessageRecord::control(
                             vak_intent::control::ControlKind::FreshnessCheck,
-                            "[freshness-check]: This asks for a value as it stands now, but nothing was \
+                            format!("[freshness-check]: This asks for a value as it stands now, but nothing was \
                              retrieved on this turn — a number carried over from an earlier answer is \
-                             stale. Call a retrieval tool for a current reading and answer from what it \
-                             returns (a card is fine), or say plainly that you have no live data."
-                                .to_string(),
+                             stale. {available} Retrieve a current reading and answer from what it \
+                             returns (a card is fine). If retrieval fails, say what failed."),
                         ));
                         turn += 1;
                         continue;
@@ -2049,10 +2064,12 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let tool_list = tool_names.join(", ");
+                        let target = prompt_owned.chars().take(600).collect::<String>();
                         let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
                                 "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
+                                 Complete this already-admitted target (this is context, not a new request): {target:?}. \
                                  Answer from those results and name the sources you used, or, if they do not \
-                                 answer the question, say so plainly instead of answering from memory."
+                                 answer the target, say so plainly instead of answering from memory."
                             )));
                         turn += 1;
                         continue;
@@ -2261,6 +2278,15 @@ impl Agent {
                 return TurnOutcome::Completed { response };
             }
 
+            // A real tool call is forward progress and starts a new
+            // model-action boundary. Keep the empty-step retry bounded for
+            // consecutive thinking-only completions, but do not spend that
+            // retry forever: after a later tool result (including a
+            // correctable tool error with an exact repair schema), the model
+            // may legitimately need one fresh nudge to perform its next
+            // planned action.
+            empty_step_repair_attempted = false;
+
             for call in &calls {
                 receipts.total_tool_calls += 1;
                 if call.name == "bash" {
@@ -2432,6 +2458,31 @@ impl Agent {
                 }
                 topic_repair_attempted = true;
             }
+            // A raw search-results HTML page is not a retrieved source for a
+            // current fact. When a genuine discovery route is offered, turn
+            // this mistaken fetch into a correctable tool result instead of
+            // spending context on script-heavy markup and treating it as
+            // fresh evidence. This identifies the URL shape, not a search
+            // vendor or an MCP server instance.
+            let discovery_offered = tool_defs
+                .iter()
+                .any(|definition| matches!(definition.name.as_str(), "mcp" | "find_tools"));
+            let mut search_page_fetches = Vec::new();
+            let calls: Vec<PendingToolCall> = calls
+                .into_iter()
+                .filter(|call| {
+                    if wants_live_data
+                        && discovery_offered
+                        && call.name == "webfetch"
+                        && is_search_results_fetch(&call.input)
+                    {
+                        search_page_fetches.push(call.id.clone());
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
             let inspection_ids = calls
                 .iter()
                 .filter(|call| {
@@ -2452,21 +2503,31 @@ impl Agent {
                 .map(|call| call.id.clone())
                 .collect::<std::collections::HashSet<_>>();
             let mut results = self.execute_batch(calls, &cancel, &events).await;
+            let available = freshness_retrieval_hint(&tool_defs);
+            results.extend(search_page_fetches.into_iter().map(|id| {
+                (
+                    id,
+                    ToolRunOutput::Err(format!(
+                        "[source-discovery]: webfetch retrieves a known page, not a search-results URL for a current fact. {available} Discover a search capability, then use its returned source URLs as evidence."
+                    )),
+                )
+            }));
             results.extend(gated.into_iter().map(|(call, gate)| {
                 let message = match gate {
                     CardGate::Fresh => {
-                        "[freshness-check]: not shown — this asks for a value as it stands now and \
+                        format!("[freshness-check]: not shown — this asks for a value as it stands now and \
                          nothing has been retrieved on this turn, so the card would carry a figure \
-                         from an earlier answer. Call a retrieval tool first and build the card from \
-                         what it returns, or say plainly that you have no live data."
+                         from an earlier answer. {available} Retrieve current evidence first and \
+                         build the card from what it returns. If retrieval fails, say what failed.")
                     }
                     CardGate::Topic => {
                         "[topic-mismatch]: not shown — this card's own content has nothing to do \
                          with what was asked. Build the card from what the current directive and \
                          this turn's own tool results actually say, not from an earlier turn's data."
+                            .to_string()
                     }
                 };
-                (call.id, ToolRunOutput::Err(message.into()))
+                (call.id, ToolRunOutput::Err(message))
             }));
             self.record_worker_work(&task_assignments, &results).await;
             // Identical-card repeat breaker: the no-op ack ("already
@@ -4784,6 +4845,7 @@ impl Agent {
             .into_iter()
             .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
+            .map(|call| normalize_schema_wrapper(call, &self.config.tools))
             .collect::<Vec<_>>();
         let n = calls.len();
         let cwd = self
@@ -5482,6 +5544,52 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     call
 }
 
+/// Name only retrieval routes actually offered on this step. A generic
+/// "use a retrieval tool" repair left small models claiming they had no live
+/// access even when an MCP broker was admitted and had worked in this same
+/// session. Server and tool instances remain discovered at demand time.
+fn freshness_retrieval_hint(definitions: &[vak_llm::ToolDefinition]) -> String {
+    let mut routes = Vec::new();
+    for definition in definitions {
+        match definition.name.as_str() {
+            "mcp" => routes
+                .push("mcp (list a configured server's tools, then call an exact discovered tool)"),
+            "browse" => routes.push("browse"),
+            "webfetch" => routes.push("webfetch"),
+            "find_tools" => routes.push("find_tools (discover another admitted retrieval tool)"),
+            _ => {}
+        }
+    }
+    if routes.is_empty() {
+        "Use an admitted retrieval tool if one is available.".into()
+    } else {
+        format!(
+            "Admitted retrieval routes on this step: {}.",
+            routes.join(", ")
+        )
+    }
+}
+
+fn is_search_results_fetch(input: &Value) -> bool {
+    let Some(url) = input.get("url").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some((_, authority_and_path)) = url.split_once("://") else {
+        return false;
+    };
+    let Some((_, path_and_query)) = authority_and_path.split_once('/') else {
+        return false;
+    };
+    let Some((path, query)) = path_and_query.split_once('?') else {
+        return false;
+    };
+    let path = path.trim_end_matches('/');
+    (path == "search" || path.ends_with("/search"))
+        && query.split('&').any(|part| {
+            part.starts_with("q=") || part.starts_with("query=") || part.starts_with("search=")
+        })
+}
+
 /// Whether an answer honestly says it has no data. The one list the
 /// freshness and grounding checks share (a judgement, listed in
 /// docs/design/30-output-engineering.md).
@@ -5612,6 +5720,44 @@ fn normalize_mcp_call(
         }
     }
     call
+}
+
+/// Some provider dialects wrap a tool's arguments once beneath a generated
+/// label such as `metric_card` or `arguments`. Recover only the unambiguous
+/// case: the outer call fails the declared schema, contains exactly one
+/// unknown object value, and that inner object satisfies the schema in full.
+///
+/// This is deliberately schema-driven rather than a list of card/tool names.
+/// It cannot make an invalid payload valid, discard sibling fields, or weaken
+/// the authorization boundary: the canonical value is still validated again
+/// by `authorize` before dispatch.
+fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> PendingToolCall {
+    let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) else {
+        return call;
+    };
+    let schema = tool.schema();
+    if let Some(input) = unwrapped_schema_input(&schema, &call.input) {
+        call.input = input;
+    }
+    call
+}
+
+fn unwrapped_schema_input(schema: &Value, input: &Value) -> Option<Value> {
+    if vak_tools::validate_input(schema, input).is_ok() {
+        return None;
+    }
+    let object = input.as_object()?;
+    let (outer_key, inner) = object.iter().next().filter(|_| object.len() == 1)?;
+    if !inner.is_object()
+        || schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .is_some_and(|properties| properties.contains_key(outer_key))
+        || vak_tools::validate_input(schema, inner).is_err()
+    {
+        return None;
+    }
+    Some(inner.clone())
 }
 
 fn extract_worker_id(text: &str) -> Option<String> {
@@ -6234,6 +6380,31 @@ enum ToolRunOutput {
     Err(String),
 }
 
+fn normalize_response_tool_uses(
+    response: &mut AssistantMessage,
+    tools: &[Arc<dyn Tool>],
+    mcp_index: &std::collections::HashMap<String, String>,
+) {
+    for block in &mut response.content {
+        let ContentBlock::ToolUse { id, name, input } = block else {
+            continue;
+        };
+        let call = normalize_schema_wrapper(
+            normalize_mcp_call(
+                normalize_tool_call(PendingToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                }),
+                mcp_index,
+            ),
+            tools,
+        );
+        *name = call.name;
+        *input = call.input;
+    }
+}
+
 fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
     let calls: Vec<PendingToolCall> = response
         .content
@@ -6659,7 +6830,41 @@ fn rand_jitter(ms: u64) -> u64 {
 
 #[cfg(test)]
 mod tool_recovery_tests {
-    use super::tool_recovery_hint;
+    use super::{freshness_retrieval_hint, tool_recovery_hint};
+
+    #[test]
+    fn freshness_repair_names_only_admitted_generic_retrieval_routes() {
+        let offered = vec![
+            vak_llm::ToolDefinition::new("mcp", "broker", serde_json::json!({})),
+            vak_llm::ToolDefinition::new("browse", "browse", serde_json::json!({})),
+            vak_llm::ToolDefinition::new("emit_metric_card", "card", serde_json::json!({})),
+        ];
+        let hint = freshness_retrieval_hint(&offered);
+        assert!(
+            hint.contains("mcp (list a configured server's tools"),
+            "{hint}"
+        );
+        assert!(hint.contains("browse"), "{hint}");
+        assert!(!hint.contains("webfetch"), "{hint}");
+        assert!(!hint.contains("emit_metric_card"), "{hint}");
+    }
+
+    #[test]
+    fn current_fact_search_page_fetch_is_identified_by_url_shape() {
+        use super::is_search_results_fetch;
+        assert!(is_search_results_fetch(&serde_json::json!({
+            "url": "https://www.google.com/search?q=weather+in+Mumbai"
+        })));
+        assert!(is_search_results_fetch(&serde_json::json!({
+            "url": "https://example.org/site/search?query=weather"
+        })));
+        assert!(!is_search_results_fetch(&serde_json::json!({
+            "url": "https://weather.example.org/mumbai"
+        })));
+        assert!(!is_search_results_fetch(&serde_json::json!({
+            "url": "https://example.org/search?category=weather"
+        })));
+    }
 
     #[test]
     fn repairable_failures_get_a_model_recovery_contract() {
@@ -6735,6 +6940,46 @@ mod tool_recovery_tests {
         assert_eq!(
             repair.input.get("action").and_then(|v| v.as_str()),
             Some("list")
+        );
+    }
+
+    #[test]
+    fn one_redundant_provider_wrapper_is_removed_only_when_inner_schema_is_valid() {
+        use super::unwrapped_schema_input;
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "semantic_type": {"type": "string", "enum": ["weather"]},
+                "payload": {"type": "object"}
+            },
+            "required": ["semantic_type", "payload"],
+            "additionalProperties": false
+        });
+        let canonical = serde_json::json!({
+            "semantic_type": "weather",
+            "payload": {"temperature": "28.5°C"}
+        });
+        assert_eq!(
+            unwrapped_schema_input(
+                &schema,
+                &serde_json::json!({"metric_card": canonical.clone()})
+            ),
+            Some(canonical.clone())
+        );
+        assert_eq!(unwrapped_schema_input(&schema, &canonical), None);
+        assert_eq!(
+            unwrapped_schema_input(
+                &schema,
+                &serde_json::json!({"metric_card": {"payload": {}}})
+            ),
+            None
+        );
+        assert_eq!(
+            unwrapped_schema_input(
+                &schema,
+                &serde_json::json!({"metric_card": canonical, "extra": true})
+            ),
+            None
         );
     }
 }

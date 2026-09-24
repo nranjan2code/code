@@ -410,17 +410,7 @@ impl McpClient {
             .get("isError")
             .and_then(|e| e.as_bool())
             .unwrap_or(false);
-        let text = result
-            .get("content")
-            .and_then(|c| c.as_array())
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
+        let text = text_tool_result(&result)?;
 
         if is_error {
             Err(McpError::Server(if text.is_empty() {
@@ -432,6 +422,35 @@ impl McpClient {
             Ok(text)
         }
     }
+}
+
+/// The current model tool-result contract is text. Never report success after
+/// silently discarding an MCP image, audio, or resource block: that would
+/// make the model reason over an incomplete result while the ledger says the
+/// call succeeded. A richer result type can replace this boundary later.
+fn text_tool_result(result: &Value) -> Result<String, McpError> {
+    let blocks = result
+        .get("content")
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpError::Protocol("tools/call returned no content array".into()))?;
+    let mut parts = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("text") {
+            let kind = block
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            return Err(McpError::Protocol(format!(
+                "tools/call returned unsupported {kind} content; this tool boundary supports text only"
+            )));
+        }
+        let text = block
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| McpError::Protocol("tools/call text block has no text".into()))?;
+        parts.push(text);
+    }
+    Ok(parts.join("\n"))
 }
 
 fn resolve_command(command: &str) -> PathBuf {
@@ -475,4 +494,34 @@ pub struct McpToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_result_keeps_every_text_block() {
+        let result = serde_json::json!({"content": [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"}
+        ]});
+        assert_eq!(text_tool_result(&result).unwrap(), "first\nsecond");
+    }
+
+    #[test]
+    fn non_text_result_fails_instead_of_disappearing() {
+        for result in [
+            serde_json::json!({"content": [{"type": "image", "data": "..."}]}),
+            serde_json::json!({"content": [
+                {"type": "text", "text": "caption"},
+                {"type": "resource", "resource": {"uri": "file:///report"}}
+            ]}),
+        ] {
+            assert!(matches!(
+                text_tool_result(&result),
+                Err(McpError::Protocol(_))
+            ));
+        }
+    }
 }

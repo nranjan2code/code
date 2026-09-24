@@ -7,6 +7,7 @@
 //! case-insensitive substring and token overlap over each candidate's name,
 //! description, and JSON-schema argument names/descriptions.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -16,6 +17,11 @@ use crate::{Tool, ToolContext, ToolOutput};
 
 pub struct FindToolsTool {
     catalogue: Vec<vak_llm::ToolDefinition>,
+    /// Search-only vocabulary supplied by the capability registry (currently
+    /// domain labels such as `live-data`). It is deliberately separate from
+    /// the model-visible tool schema so discovery metadata cannot change the
+    /// callable contract.
+    keywords: HashMap<String, Vec<String>>,
     /// Every match returned this run is also pushed here, so the caller
     /// (`vak_agent::Agent::tool_definitions`) can keep offering a
     /// discovered tool's full schema for the rest of the turn without the
@@ -27,8 +33,14 @@ impl FindToolsTool {
     pub fn new(catalogue: Vec<vak_llm::ToolDefinition>) -> Self {
         FindToolsTool {
             catalogue,
+            keywords: HashMap::new(),
             discovered: None,
         }
+    }
+
+    pub fn with_keywords(mut self, keywords: HashMap<String, Vec<String>>) -> Self {
+        self.keywords = keywords;
+        self
     }
 
     pub fn with_discovered_sink(mut self, sink: Arc<Mutex<Vec<vak_llm::ToolDefinition>>>) -> Self {
@@ -51,7 +63,7 @@ impl Tool for FindToolsTool {
     }
 
     fn description(&self) -> &str {
-        "Search tools not currently loaded, by name, description, or argument names/descriptions. Returns full schemas for the best matches, which are then usable for the rest of this turn."
+        "Search all admitted tools, including already-loaded broker tools, by name, capability domain, description, or argument names/descriptions. Returns full schemas for the best matches; deferred matches become usable for the rest of this turn."
     }
 
     fn schema(&self) -> Value {
@@ -87,7 +99,7 @@ impl Tool for FindToolsTool {
             .and_then(Value::as_u64)
             .map(|n| (n as usize).clamp(1, MAX_LIMIT))
             .unwrap_or(DEFAULT_LIMIT);
-        let matches = rank(&self.catalogue, query, limit);
+        let matches = rank(&self.catalogue, &self.keywords, query, limit);
         if let Some(sink) = &self.discovered {
             let mut discovered = sink
                 .lock()
@@ -114,6 +126,7 @@ impl Tool for FindToolsTool {
 
 fn rank<'a>(
     catalogue: &'a [vak_llm::ToolDefinition],
+    keywords: &HashMap<String, Vec<String>>,
     query: &str,
     limit: usize,
 ) -> Vec<&'a vak_llm::ToolDefinition> {
@@ -122,7 +135,15 @@ fn rank<'a>(
     let mut scored: Vec<(i64, &vak_llm::ToolDefinition)> = catalogue
         .iter()
         .filter_map(|def| {
-            let score = score_tool(def, &query_lower, &tokens);
+            let score = score_tool(
+                def,
+                keywords
+                    .get(&def.name)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                &query_lower,
+                &tokens,
+            );
             (score > 0).then_some((score, def))
         })
         .collect();
@@ -130,10 +151,19 @@ fn rank<'a>(
     scored.into_iter().take(limit).map(|(_, def)| def).collect()
 }
 
-fn score_tool(def: &vak_llm::ToolDefinition, query_lower: &str, tokens: &[&str]) -> i64 {
+fn score_tool(
+    def: &vak_llm::ToolDefinition,
+    keywords: &[String],
+    query_lower: &str,
+    tokens: &[&str],
+) -> i64 {
     let name_lower = def.name.to_ascii_lowercase();
     let mut haystack = format!("{} {}", name_lower, def.description.to_ascii_lowercase());
     collect_schema_text(&def.parameters, &mut haystack);
+    for keyword in keywords {
+        haystack.push(' ');
+        haystack.push_str(&keyword.to_ascii_lowercase());
+    }
 
     let mut score = 0i64;
     if name_lower == query_lower {
@@ -210,6 +240,24 @@ mod tests {
         let out = tool.execute(&json!({"query": "forecast"}), &ctx()).await;
         let parsed: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(parsed["matches"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn matches_loaded_broker_by_capability_domain() {
+        let tool = FindToolsTool::new(vec![def(
+            "mcp",
+            "Call tools exposed by configured servers.",
+            json!({}),
+        )])
+        .with_keywords(HashMap::from([(
+            "mcp".into(),
+            vec!["live-data".into(), "web".into()],
+        )]));
+        let out = tool
+            .execute(&json!({"query": "live-data weather"}), &ctx())
+            .await;
+        let parsed: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(parsed["matches"][0]["name"], "mcp");
     }
 
     #[tokio::test]

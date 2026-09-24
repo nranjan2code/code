@@ -1,3 +1,7 @@
-model = "gemma4:e2b-mlx"
+max_turns = 40
+model = "gpt-6-luna"
 permission_mode = "workspace-write"
-provider = "ollama"
+provider = "openai-responses"
+
+[intent]
+evidence_max_age_secs = 86400

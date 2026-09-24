@@ -260,10 +260,10 @@ async fn ungrounded_answer_after_search_gets_one_repair_turn() {
             .collect()
     });
     assert!(
-        user_texts
-            .iter()
-            .any(|t| t.contains("[grounding-check]") && t.contains("search")),
-        "expected a grounding-check nudge naming the ignored tool, got: {user_texts:?}"
+        user_texts.iter().any(|t| t.contains("[grounding-check]")
+            && t.contains("search")
+            && t.contains("what are top news in india right now")),
+        "expected a grounding-check nudge naming the ignored tool and admitted target, got: {user_texts:?}"
     );
 }
 

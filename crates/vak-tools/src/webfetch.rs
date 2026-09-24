@@ -199,7 +199,7 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch a URL over HTTP(S) with GET. Blocks loopback/private/link-local targets, follows at most 3 redirects, caps the body at 512KiB, accepts only text/json/xml content types, and returns a status header line followed by the UTF-8 body. Never sends credentials."
+        "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. To locate current sources, discover an available search tool first. Blocks loopback/private/link-local targets, follows at most 3 redirects, caps the body at 512KiB, accepts only text/json/xml content types, and returns a status header line followed by the UTF-8 body. Never sends credentials."
     }
 
     fn schema(&self) -> Value {

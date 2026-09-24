@@ -259,6 +259,84 @@ async fn sessions_list_attach_and_title_roundtrip() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persisted_conversation_accepts_followup_and_streams_without_explicit_attach() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    let mut session = core.start_session().await.unwrap();
+    let id = session.header().unwrap().session_id.clone();
+    session
+        .append_message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::types::Role::User,
+                content: vec![vak_llm::types::ContentBlock::text("Earlier question")],
+            },
+            meta: None,
+        })
+        .unwrap();
+    session
+        .append_message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::types::Role::Assistant,
+                content: vec![vak_llm::types::ContentBlock::text("Earlier answer")],
+            },
+            meta: None,
+        })
+        .unwrap();
+    drop(session);
+
+    // A new process has no live handle. EventSources reconnect before the
+    // browser sends a follow-up, so both streams and /run must recover it.
+    let resumed = Core::new(cwd.clone()).unwrap();
+    resumed.set_sessions_home(cwd.join("home"));
+    resumed.set_provider_instance(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text("Follow-up answer")])),
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(resumed);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    let events = client
+        .get(format!("{base}/sessions/{id}/events"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200);
+    let presentation = client
+        .get(format!("{base}/sessions/{id}/presentation/events"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(presentation.status(), 200);
+    drop(events);
+    drop(presentation);
+
+    let started = client
+        .post(format!("{base}/sessions/{id}/run"))
+        .json(&serde_json::json!({"prompt": "Follow-up question"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(started.status(), 202);
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        assert!(std::time::Instant::now() < deadline, "follow-up timeout");
+        let transcript = wait_transcript(&client, &base, &id).await;
+        if transcript["count"].as_u64() == Some(4) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn sessions_list_hides_abandoned_header_only_drafts() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();

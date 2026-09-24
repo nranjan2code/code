@@ -41,6 +41,41 @@ fn ctx() -> ToolContext {
     ToolContext::new(std::env::temp_dir())
 }
 
+#[test]
+fn broker_schema_names_configured_servers_without_starting_them() {
+    let manager = manager();
+    let tool = McpTool::new(manager.clone());
+    let schema = tool.schema();
+    assert_eq!(schema["properties"]["server"]["enum"], json!(["fake"]));
+    assert!(
+        manager.observations().is_empty(),
+        "schema construction must preserve lazy MCP startup"
+    );
+}
+
+#[tokio::test]
+async fn tool_scoped_allow_keeps_server_discoverable_without_exposing_other_tools() {
+    let tool = McpTool::with_policy(manager(), Some(vec!["fake/echo".into()]), Vec::new());
+    assert_eq!(
+        tool.schema()["properties"]["server"]["enum"],
+        json!(["fake"])
+    );
+    let out = tool
+        .execute(&json!({"action": "list", "server": "fake"}), &ctx())
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.contains("echo —"), "{}", out.content);
+    assert!(!out.content.contains("boom —"), "{}", out.content);
+    let denied = tool
+        .execute(
+            &json!({"action": "call", "server": "fake", "tool": "boom"}),
+            &ctx(),
+        )
+        .await;
+    assert!(denied.is_error);
+    assert!(denied.content.contains("denied by channel policy"));
+}
+
 #[tokio::test]
 async fn list_discovers_server_and_tools() {
     let tool = McpTool::new(manager());

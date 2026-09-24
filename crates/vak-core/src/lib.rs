@@ -6313,10 +6313,32 @@ impl Core {
             &vak_delivery::built_in_recipes(),
         );
         let surface = capability::build_tool_surface(&tools, &loaded_domains, &predicted_cards);
-        // `find_tools` is synthetic: it exists so the deferred set can be
-        // found, so it is never itself deferred.
+        // `find_tools` is synthetic and never itself deferred. Search spans
+        // every admitted tool, not only the deferred subset: weaker/local
+        // models often use discovery to relocate an already-loaded broker
+        // such as `mcp`, and an empty result must not be mistaken for absence.
+        // Domain labels stay search-only rather than mutating tool schemas.
+        let searchable_tools = surface
+            .core
+            .iter()
+            .chain(surface.deferred.iter())
+            .cloned()
+            .collect();
+        let search_keywords = tools
+            .iter()
+            .map(|tool| {
+                (
+                    tool.name().to_string(),
+                    tool.serves()
+                        .iter()
+                        .map(|domain| (*domain).to_string())
+                        .collect(),
+                )
+            })
+            .collect();
         let find_tools_tool = Arc::new(
-            vak_tools::FindToolsTool::new(surface.deferred.clone())
+            vak_tools::FindToolsTool::new(searchable_tools)
+                .with_keywords(search_keywords)
                 .with_discovered_sink(cfg.discovered_tools.clone()),
         );
         let find_tools_def = vak_llm::ToolDefinition::new(

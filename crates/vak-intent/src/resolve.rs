@@ -45,9 +45,10 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 ///
 /// History: 1 — the original kernel. 2 — word-boundary phrase matching,
 /// sub-floor ordered votes abstain, lexical stakes gated on effectful acts,
-/// strands. The test `lexicon_digest_matches_resolver_version` pins the
+/// strands. 3 — conversational delivery verbs resolve as Answer rather than
+/// workspace authoring. The test `lexicon_digest_matches_resolver_version` pins the
 /// tables to this number so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 2;
+pub const RESOLVER_VERSION: u32 = 3;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -470,10 +471,11 @@ fn lineage_for(
 /// The one reading for the turn: the most consequential strand, widened by
 /// the others.
 fn composite_reading(strands: &[Strand]) -> Reading {
-    let Some(primary) = strands.iter().max_by_key(|strand| {
+    let Some(primary) = strands.iter().rev().max_by_key(|strand| {
         (
             strand.reading.stakes.rank(),
             strand.reading.acts().iter().any(|act| act.is_effectful()),
+            !matches!(strand.relation, StrandRelation::Dependent { .. }),
             (strand.reading.confidence * 1000.0) as u32,
         )
     }) else {
@@ -1141,8 +1143,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            2,
-            "328cd6e6509e2acc20f2362fd634d249c309206a710729d9f90f621d7fb9dbb6",
+            3,
+            "2d1404c227272d3046af63de9f15fa5a40864b0c2a4c1b04ec6d7e4a5e5a266e",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
@@ -1431,6 +1433,25 @@ mod tests {
         assert!(note.contains("after part 1"), "{note}");
         for strand in &intent.strands {
             assert!(!note.contains(strand.text.trim()), "quoted: {note}");
+        }
+    }
+
+    #[test]
+    fn conversational_card_delivery_is_an_answer_not_workspace_authoring() {
+        for text in [
+            "Give me the latest India news and present it as a card",
+            "What is the current weather in Delhi? Show it as a card",
+        ] {
+            let intent = resolve_text(text).intent();
+            assert_eq!(intent.reading.act, Act::Answer, "{text}");
+            assert!(
+                intent
+                    .strands
+                    .iter()
+                    .all(|strand| strand.reading.act != Act::Author),
+                "{text}: {:?}",
+                intent.strands
+            );
         }
     }
 
