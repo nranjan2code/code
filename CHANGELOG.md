@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 4.0.0 — 2026-09-24
+
+The first release since 3.5.0. It consolidates every line of work into `main` — the context engine, the intent kernel's strands and control plane, the calm agent experience, and the workspace-execution fixes — and ships 3.5.1's topic-mismatch check, which was stamped but never published. The supported baseline stays 2.0.0, so a 3.x install updates in place.
 
 - **The Workbench offers Review only for a draft.** A command that worked in the workspace already put its files where they belong, so its run shows "Written directly to the workspace" instead of a *Review candidate* button the server would refuse; an execution that ran inside `.vak/scratch/` keeps the review and accept flow. Checked in the component harness with one run of each kind.
 - **The desktop app builds again.** The brand refresh left every icon in `crates/vak-desktop/icons/` as an opaque RGB PNG, and Tauri's build refuses anything but RGBA, so `vak-desktop` did not compile. Each icon gained an opaque alpha channel with every pixel's colour unchanged (verified by decoding both).

@@ -127,9 +127,9 @@ printf 'release staging: %s (removed on exit)\n' "$RELEASE_TARGET_DIR"
 printf '== gates ==\n'
 "$ROOT_DIR/scripts/check-version.sh"
 
-# Bound the test gate. crates/vak-server/tests/gateway.rs currently
-# deadlocks (every test in it blocks on one mutex), so an unbounded
-# `cargo test --workspace` never returns. A release must fail loudly on
+# Bound the test gate. A deadlocked test (crates/vak-server/tests/gateway.rs
+# once blocked every test on one mutex) makes an unbounded
+# `cargo test --workspace` never return. A release must fail loudly on
 # that rather than hang a terminal overnight.
 run_bounded() {
     local seconds="$1" label="$2"; shift 2
