@@ -762,6 +762,10 @@ fn router_with_state(state: AppState) -> Router {
             get(read_sandbox_candidate_file_raw),
         )
         .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-diff",
+            get(read_sandbox_candidate_office_diff),
+        )
+        .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
             get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
         )
@@ -3333,6 +3337,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "records"]
             | ["sandbox", "candidates", _, "files"]
             | ["sandbox", "candidates", _, "files", "raw"]
+            | ["sandbox", "candidates", _, "office-diff"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
@@ -10587,6 +10592,70 @@ async fn sandbox_candidate_file_bytes(
         return Err(StatusCode::CONFLICT);
     }
     Ok(bytes)
+}
+
+/// What an Office file in a candidate changes, compared with the workspace
+/// file it would replace (docs/design/72, P3). Both packages are parsed in
+/// a worker, never in the server (invariant 39).
+async fn read_sandbox_candidate_office_diff(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !vak_ooxml::is_openxml_path(&q.path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file",
+        )
+            .into_response();
+    }
+    if let Err(status) =
+        sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await
+    {
+        return status.into_response();
+    }
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+        Ok(records) => records,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let Some(candidate) = records.iter().rev().find_map(|record| match record {
+        vak_sandbox::DurableRecord::Candidate(saved)
+            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
+        {
+            Some(saved.candidate.clone())
+        }
+        _ => None,
+    }) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (Some(draft), Some(current)) = (
+        confined_path(&candidate.source_root, &q.path),
+        confined_path(&candidate.destination_root, &q.path),
+    ) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let before = current.is_file().then_some(current.as_path());
+    match vak_tools::broker::office_diff(&state.core.tool_worker_exe(), before, &draft).await {
+        Ok(diff) => {
+            let mut body = diff;
+            body["path"] = serde_json::Value::String(q.path.clone());
+            body["compared_with"] = serde_json::Value::String(
+                if before.is_some() {
+                    "workspace"
+                } else {
+                    "nothing (new file)"
+                }
+                .into(),
+            );
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 async fn read_sandbox_candidate_file(
@@ -19055,6 +19124,127 @@ mod sandbox_promotion_tests {
         record
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_office_draft_is_reviewed_by_meaning_and_accepted_through_promotion() {
+        use sha2::Digest as _;
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        let workbook = dir.path().join("budget.xlsx");
+        tokio::fs::write(&workbook, vak_ooxml::fixtures::xlsx())
+            .await
+            .unwrap();
+        let digest: String = sha2::Sha256::digest(vak_ooxml::fixtures::xlsx())
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+
+        let tool = vak_tools::brokered_default_tools(state.core.tool_worker_exe())
+            .into_iter()
+            .find(|tool| tool.name() == "office_apply")
+            .unwrap();
+        let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-1".into());
+        let output = tool
+            .execute(
+                &serde_json::json!({
+                    "path": "budget.xlsx",
+                    "base_digest": digest,
+                    "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
+                }),
+                &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
+            )
+            .await;
+        assert!(!output.is_error, "{}", output.content);
+        assert_eq!(
+            tokio::fs::read(&workbook).await.unwrap(),
+            vak_ooxml::fixtures::xlsx(),
+            "the workspace file is untouched until review"
+        );
+
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-1".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-1".into(),
+                source: ".vak/scratch/vak/exec-1".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 256 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(candidate.draft_checks.len(), 1);
+        assert_eq!(candidate.draft_checks[0].verifier, "format.openxml");
+        assert_eq!(
+            candidate.draft_checks[0].status, "passed",
+            "{}",
+            candidate.draft_checks[0].evidence
+        );
+        let candidate_id = candidate.candidate.candidate_id.clone();
+
+        let response = read_sandbox_candidate_office_diff(
+            State(state.clone()),
+            Path(("session-1".into(), candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "budget.xlsx".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let diff: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 256 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(diff["summary"], serde_json::json!(["Budget: 1 changed"]));
+        assert_eq!(diff["changes"][0]["anchor"], "Budget!B2");
+        assert_eq!(diff["changes"][0]["before"], "100");
+        assert_eq!(diff["changes"][0]["after"], "150");
+        assert_eq!(diff["compared_with"], "workspace");
+
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id,
+                files: vec!["budget.xlsx".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let promoted = tokio::fs::read(&workbook).await.unwrap();
+        let document =
+            vak_ooxml::read::read(std::io::Cursor::new(promoted), vak_ooxml::Limits::default())
+                .unwrap();
+        assert!(document.lines().join("\n").contains("B2: 150"));
+    }
+
     #[tokio::test]
     async fn candidate_export_and_promotion_runs_planned_target_verifier() {
         crate::pin_test_data_home();
@@ -19923,6 +20113,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/records",
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
+            "/sessions/session-1/sandbox/candidates/candidate-1/office-diff",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",

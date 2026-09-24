@@ -40,6 +40,10 @@ pub struct Unit {
     pub level: u8,
     pub text: String,
     pub labels: Vec<String>,
+    /// For a sheet row, its cells as (address, shown value); empty
+    /// otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -473,6 +477,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                             level,
                             text,
                             labels,
+                            cells: Vec::new(),
                         });
                     }
                     attach_comments(&mut units, &paragraph, &comments);
@@ -491,6 +496,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                                 level: 0,
                                 text: cells.join(" | "),
                                 labels: Vec::new(),
+                                cells: Vec::new(),
                             });
                         }
                         tables.push(Table {
@@ -602,6 +608,7 @@ fn attach_comments(
                 level: 0,
                 text: text.clone(),
                 labels: vec![format!("comment by {author}")],
+                cells: Vec::new(),
             });
         }
     }
@@ -873,6 +880,16 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                     .collect::<Vec<_>>()
                     .join(" | "),
                 labels: row_labels,
+                cells: row
+                    .cells
+                    .iter()
+                    .map(|(column, value)| {
+                        (
+                            format!("{}{}", column_name(*column), row.number),
+                            value.clone(),
+                        )
+                    })
+                    .collect(),
             });
             table_rows.push(
                 std::iter::once(row.number.to_string())
@@ -907,6 +924,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             level: 0,
             text: format!("defined name {name} = {reference}"),
             labels: Vec::new(),
+            cells: Vec::new(),
         });
     }
     document.units = units;
@@ -1188,6 +1206,7 @@ fn powerpoint<R: Read + Seek>(
             level: 1,
             text: format!("Slide {number}: {title}"),
             labels: slide_labels.clone(),
+            cells: Vec::new(),
         });
         for shape in &shapes {
             let mut labels = slide_labels.clone();
@@ -1208,6 +1227,7 @@ fn powerpoint<R: Read + Seek>(
                     level: 0,
                     text,
                     labels: labels.clone(),
+                    cells: Vec::new(),
                 });
             }
             if !shape.table.is_empty() {
@@ -1237,6 +1257,7 @@ fn powerpoint<R: Read + Seek>(
                     level: 0,
                     text: notes.join(" / "),
                     labels: vec!["speaker notes".into()],
+                    cells: Vec::new(),
                 });
             }
         }
@@ -1439,6 +1460,7 @@ fn visio<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             level: 1,
             text: format!("Page: {}", page.name),
             labels: labels.clone(),
+            cells: Vec::new(),
         });
         if let Some(relationship) = page.relationship
             && let Some(part) = package.part_by_relationship_id(&pages_part, &relationship)?
@@ -1459,6 +1481,7 @@ fn visio<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                         format!("{shape_name}: {text}")
                     },
                     labels: labels.clone(),
+                    cells: Vec::new(),
                 });
             }
         }

@@ -193,9 +193,9 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     an image that does not contain the pinned worker artifact. A parser of
     untrusted file formats never runs in the server, desktop or gateway
     process: `doc_read` and `office_apply` are worker tools, and every target
-    verifier runs in
-    the worker's `VerifyTargets` task under a read-only, network-denied
-    sandbox rooted at the tree being verified, whatever the session's mode,
+    verifier and every Review diff of an Office file runs in a worker task
+    (`VerifyTargets`, `OfficeDiff`) under a read-only, network-denied
+    sandbox rooted at the files being read, whatever the session's mode,
     within a deadline. A worker that cannot answer fails every planned check;
     a check never passes because verification could not run.
 15. **Unattended surfaces fail closed.** The gateway ships disabled, cannot be
@@ -655,8 +655,11 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     a document goes through the one `vak_ooxml::edit` engine and its typed
     ops, and `office_apply` is its only tool: an op names an anchor from a
     read of the exact file (`base_digest`), splices only the elements it
-    changes, and is confirmed by re-reading the written package before an
-    atomic write, or nothing is written. A Word edit to an existing document
+    changes, and is confirmed by re-reading the written package, or nothing
+    is written. `office_apply` never writes the workspace file: its result is
+    a draft in its execution's `.vak/scratch/` directory, and the one Review
+    path (candidate, worker verification, semantic diff, atomic promotion
+    with undo) is how a change reaches the workspace. A Word edit to an existing document
     is a tracked change authored by the runtime's Agent id, never a name the
     model supplies. A changed Excel input or formula sets `fullCalcOnLoad`,
     and cached values read as stale until Excel recalculates. An op never

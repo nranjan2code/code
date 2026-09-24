@@ -44,6 +44,10 @@ enum WorkerTask {
         root: PathBuf,
         checks: Vec<vak_sandbox::TargetCheckPlan>,
     },
+    OfficeDiff {
+        before: Option<PathBuf>,
+        after: PathBuf,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -416,6 +420,19 @@ pub async fn worker_main() -> i32 {
             execution_id,
             agent_id,
         } => (tool, args, execution_id, agent_id),
+        WorkerTask::OfficeDiff { before, after } => {
+            let (content, is_error) = match office_diff_in_worker(before.as_deref(), &after) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -526,29 +543,92 @@ pub async fn verify_targets(
             })
             .collect::<Vec<_>>()
     };
+    let task = WorkerTask::VerifyTargets {
+        root: root.to_path_buf(),
+        checks: checks.to_vec(),
+    };
+    let content = match run_task(worker_exe, root, &[root], task).await {
+        Ok(content) => content,
+        Err(reason) => return failed(reason),
+    };
+    match serde_json::from_str::<Vec<vak_sandbox::TargetCheckResult>>(&content) {
+        Ok(results) if results.len() == checks.len() => results,
+        Ok(_) => failed("worker answered a different number of checks".into()),
+        Err(error) => failed(format!("worker returned invalid results: {error}")),
+    }
+}
+
+/// The semantic difference between an Office file as it is (`before`,
+/// absent for a new file) and a draft (`after`), computed in a worker under
+/// the same read-only sandbox and deadline as verification, because both
+/// files are hostile input (invariant 39). Returns the diff as JSON.
+pub async fn office_diff(
+    worker_exe: &Path,
+    before: Option<&Path>,
+    after: &Path,
+) -> Result<Value, String> {
+    let Some(after_dir) = after.parent() else {
+        return Err("the draft has no directory".into());
+    };
+    let mut roots = vec![after_dir];
+    if let Some(before) = before.and_then(Path::parent) {
+        roots.push(before);
+    }
+    let task = WorkerTask::OfficeDiff {
+        before: before.map(Path::to_path_buf),
+        after: after.to_path_buf(),
+    };
+    let content = run_task(worker_exe, after_dir, &roots, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid diff: {error}"))
+}
+
+fn office_diff_in_worker(before: Option<&Path>, after: &Path) -> Result<String, String> {
+    let limits = vak_ooxml::Limits::default();
+    let read = |path: &Path| -> Result<vak_ooxml::read::Document, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        vak_ooxml::read::read(file, limits)
+            .map_err(|error| format!("{} could not be read: {error}", path.display()))
+    };
+    let current = before.map(read).transpose()?;
+    let draft = read(after)?;
+    let diff = vak_ooxml::diff::diff(current.as_ref(), &draft);
+    serde_json::to_string(&serde_json::json!({
+        "summary": diff.summary,
+        "changes": diff.changes,
+        "flags": draft.inspection.flags(),
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Spawns one worker for `task` under a read-only, network-denied sandbox
+/// that can read `roots`, and returns its answer's content. Every failure,
+/// including the deadline, is an error; nothing is guessed.
+async fn run_task(
+    worker_exe: &Path,
+    cwd: &Path,
+    roots: &[&Path],
+    task: WorkerTask,
+) -> Result<String, String> {
     if !worker_exe.is_file() {
-        return failed(format!(
+        return Err(format!(
             "worker executable not found: {}",
             worker_exe.display()
         ));
     }
     let request = WorkerRequest {
         version: PROTOCOL_VERSION,
-        task: WorkerTask::VerifyTargets {
-            root: root.to_path_buf(),
-            checks: checks.to_vec(),
-        },
+        task,
     };
-    let payload = match serde_json::to_vec(&request) {
-        Ok(payload) => payload,
-        Err(error) => return failed(format!("request encode failed: {error}")),
-    };
+    let payload =
+        serde_json::to_vec(&request).map_err(|error| format!("request encode failed: {error}"))?;
     let worker_command = format!(
         "{} {}",
         shell_quote(&worker_exe.display().to_string()),
         WORKER_SUBCOMMAND
     );
-    let effective = match verification_sandbox(root, worker_exe) {
+    let effective = match verification_sandbox(roots, worker_exe) {
         Some(sandbox) => sandbox.wrap(&worker_command),
         None => worker_command,
     };
@@ -556,7 +636,7 @@ pub async fn verify_targets(
     command
         .arg("-c")
         .arg(effective)
-        .current_dir(root)
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -564,23 +644,22 @@ pub async fn verify_targets(
     crate::bash::scrub_environment(&mut command);
     command.env(WORKER_ENV, "1");
     crate::bash::isolate_process_group(&mut command);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => return failed(format!("worker spawn failed: {error}")),
-    };
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("worker spawn failed: {error}"))?;
     let pid = child.id();
     let Some(mut stdin) = child.stdin.take() else {
         crate::bash::kill_process_group(&pid);
-        return failed("worker has no stdin".into());
+        return Err("worker has no stdin".into());
     };
     if let Err(error) = stdin.write_all(&payload).await {
         crate::bash::kill_process_group(&pid);
-        return failed(format!("worker request failed: {error}"));
+        return Err(format!("worker request failed: {error}"));
     }
     drop(stdin);
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         crate::bash::kill_process_group(&pid);
-        return failed("worker has no output pipes".into());
+        return Err("worker has no output pipes".into());
     };
     let stdout_reader = tokio::spawn(async move {
         let mut bytes = Vec::new();
@@ -597,12 +676,12 @@ pub async fn verify_targets(
     });
     let status = match tokio::time::timeout(VERIFY_DEADLINE, child.wait()).await {
         Ok(Ok(status)) => status,
-        Ok(Err(error)) => return failed(format!("worker wait failed: {error}")),
+        Ok(Err(error)) => return Err(format!("worker wait failed: {error}")),
         Err(_) => {
             crate::bash::kill_process_group(&pid);
             let _ = child.wait().await;
-            return failed(format!(
-                "worker exceeded the {}s verification deadline",
+            return Err(format!(
+                "worker exceeded the {}s deadline",
                 VERIFY_DEADLINE.as_secs()
             ));
         }
@@ -610,54 +689,53 @@ pub async fn verify_targets(
     let stdout = stdout_reader.await.unwrap_or_default();
     let stderr = stderr_reader.await.unwrap_or_default();
     if !status.success() {
-        return failed(format!(
+        return Err(format!(
             "worker exited with {}: {}",
             status.code().unwrap_or(-1),
             String::from_utf8_lossy(&stderr).trim()
         ));
     }
     if stdout.len() as u64 > MAX_PROTOCOL_BYTES {
-        return failed("worker output exceeded the protocol limit".into());
+        return Err("worker output exceeded the protocol limit".into());
     }
-    let response: WorkerResponse = match serde_json::from_slice(&stdout) {
-        Ok(response) => response,
-        Err(error) => return failed(format!("worker returned invalid protocol: {error}")),
-    };
+    let response: WorkerResponse = serde_json::from_slice(&stdout)
+        .map_err(|error| format!("worker returned invalid protocol: {error}"))?;
     if response.version != PROTOCOL_VERSION || response.is_error {
-        return failed(format!("worker refused the request: {}", response.content));
+        return Err(format!("worker refused the request: {}", response.content));
     }
-    match serde_json::from_str::<Vec<vak_sandbox::TargetCheckResult>>(&response.content) {
-        Ok(results) if results.len() == checks.len() => results,
-        Ok(_) => failed("worker answered a different number of checks".into()),
-        Err(error) => failed(format!("worker returned invalid results: {error}")),
-    }
+    Ok(response.content)
 }
 
-/// Read-only and network-denied, rooted at the tree being verified, with
-/// the worker executable readable so it can be executed. `None` where no
-/// OS backend exists; the in-code bounds of each verifier then stand alone.
+/// Read-only and network-denied, able to read `roots` and the worker
+/// executable. `None` where no OS backend exists; the in-code bounds of
+/// each reader then stand alone.
 fn verification_sandbox(
-    root: &Path,
+    roots: &[&Path],
     worker_exe: &Path,
 ) -> Option<Arc<dyn crate::sandbox::Sandbox>> {
-    let worker_dir = worker_exe.parent().map(Path::to_path_buf);
+    let (first, rest) = roots.split_first()?;
+    let mut extra: Vec<PathBuf> = rest
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect();
+    extra.extend(worker_exe.parent().map(Path::to_path_buf));
     #[cfg(target_os = "macos")]
     {
         let mut sandbox =
-            crate::sandbox::Seatbelt::task_copy(crate::sandbox::SandboxMode::ReadOnly, root);
-        sandbox.read_paths.extend(worker_dir);
+            crate::sandbox::Seatbelt::task_copy(crate::sandbox::SandboxMode::ReadOnly, first);
+        sandbox.read_paths.extend(extra);
         Some(Arc::new(sandbox))
     }
     #[cfg(target_os = "linux")]
     {
         let mut sandbox =
-            crate::landlock::Landlock::task_copy(crate::sandbox::SandboxMode::ReadOnly, root);
-        sandbox.read_paths.extend(worker_dir);
+            crate::landlock::Landlock::task_copy(crate::sandbox::SandboxMode::ReadOnly, first);
+        sandbox.read_paths.extend(extra);
         Some(Arc::new(sandbox))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = (root, worker_dir);
+        let _ = (first, extra);
         None
     }
 }

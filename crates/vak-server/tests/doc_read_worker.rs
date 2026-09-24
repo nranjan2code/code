@@ -103,7 +103,19 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
         "the worker received the calling Agent's id: {}",
         output.content
     );
-    let bytes = std::fs::read(&file).unwrap();
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        vak_ooxml::fixtures::docx(),
+        "the workspace file waits for review"
+    );
+    let draft = output
+        .content
+        .split("written to ")
+        .nth(1)
+        .and_then(|rest| rest.split(". ").next())
+        .unwrap();
+    assert!(draft.starts_with(".vak/scratch/mira/"), "{draft}");
+    let bytes = std::fs::read(dir.path().join(draft)).unwrap();
     let document =
         vak_ooxml::read::read(std::io::Cursor::new(bytes), vak_ooxml::Limits::default()).unwrap();
     assert!(

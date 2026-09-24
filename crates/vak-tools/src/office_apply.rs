@@ -1,11 +1,17 @@
-//! `office_apply`: edit or create a Word, Excel or PowerPoint file through
-//! the typed op set (docs/design/72-openxml-documents.md, P2).
+//! `office_apply`: propose edits to, or create, a Word, Excel or PowerPoint
+//! file through the typed op set (docs/design/72-openxml-documents.md, P2).
 //!
 //! It runs in the broker worker (invariant 14). The source must be the
 //! exact file the model read (`base_digest`, O4); every op is checked by a
-//! re-read before anything is written (O5); the write is atomic; and Word
-//! edits are tracked changes under the runtime's Agent id, never a name the
-//! model chose.
+//! re-read before anything is written (O5); and Word edits are tracked
+//! changes under the runtime's Agent id, never a name the model chose.
+//!
+//! It never writes the workspace file. The result is a draft in this
+//! execution's `.vak/scratch/<agent>/<execution>/` directory, announced to
+//! the Workbench like any other execution, so the one Review path (freeze a
+//! candidate, verify it in the worker, promote atomically with undo) is how
+//! a change reaches the workspace (invariant 35; docs/design/72, "Owner
+//! direction").
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +33,7 @@ impl Tool for OfficeApplyTool {
     }
 
     fn description(&self) -> &str {
-        "Edit or create a Word, Excel or PowerPoint file with typed ops. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits become tracked changes. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. Macros are never added or run."
+        "Propose edits to, or create, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace file does not change until then. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits become tracked changes. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. To keep editing a draft, pass the draft as source. Macros are never added or run."
     }
 
     fn schema(&self) -> Value {
@@ -36,11 +42,11 @@ impl Tool for OfficeApplyTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File to write (relative to the workspace). May equal source."
+                    "description": "The workspace file the draft is for (relative to the workspace). May equal source."
                 },
                 "source": {
                     "type": "string",
-                    "description": "File to start from: the file being edited, or a template. Defaults to path."
+                    "description": "File to start from: the file being edited, a template, or an earlier draft. Defaults to path."
                 },
                 "base_digest": {
                     "type": "string",
@@ -114,89 +120,177 @@ impl Tool for OfficeApplyTool {
                 "{path} is not named as a Word, Excel or PowerPoint file (.docx, .xlsx, .pptx and their variants)"
             ));
         };
-        let author = match ctx.agent_id.as_deref() {
-            None | Some("vak") => "Vak".to_string(),
-            Some(id) => id.to_string(),
+        let root = match canonical_root(&ctx.cwd) {
+            Ok(root) => root,
+            Err(error) => return ToolOutput::error(error),
         };
-        let date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let Ok(relative) = destination.strip_prefix(&root).map(Path::to_path_buf) else {
+            return ToolOutput::error(format!("access denied: {path} is outside the workspace"));
+        };
+        if relative.starts_with(".vak") {
+            return ToolOutput::error(format!(
+                "{path} is inside .vak; name the workspace file the draft is for, and pass an earlier draft as source"
+            ));
+        }
+        let agent = ctx.agent_id.clone().unwrap_or_else(|| "vak".into());
+        let author = if agent == "vak" {
+            "Vak".to_string()
+        } else {
+            agent.clone()
+        };
+        let now = chrono::Utc::now();
+        let date = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let execution = ctx
+            .sandbox_sink
+            .as_ref()
+            .map(|sink| sink.execution_id().to_string())
+            .unwrap_or_else(|| format!("office-{}", now.timestamp_nanos_opt().unwrap_or(0)));
+        let draft_root = root
+            .join(".vak")
+            .join("scratch")
+            .join(&agent)
+            .join(&execution);
+        let draft = draft_root.join(&relative);
+        let draft_relative = draft
+            .strip_prefix(&root)
+            .unwrap_or(&draft)
+            .display()
+            .to_string();
+        let started = std::time::Instant::now();
+        if let Some(sink) = &ctx.sandbox_sink {
+            let preview = serde_json::json!({
+                "path": path,
+                "source": source,
+                "ops": args.get("ops"),
+            })
+            .to_string();
+            sink.emit_execution_started(
+                "office_apply",
+                &preview,
+                "json",
+                &draft_root.display().to_string(),
+            );
+        }
         let base_digest = base_digest
             .trim()
             .trim_end_matches('…')
             .to_ascii_lowercase();
-        let display = path.to_string();
-        let work = tokio::task::spawn_blocking(move || {
-            apply(
-                &source_path,
-                &destination,
-                &base_digest,
-                &ops,
-                author,
-                date,
-                target,
-            )
-        })
-        .await;
+        let job = Job {
+            source: source_path,
+            destination,
+            draft: draft.clone(),
+            base_digest,
+            ops,
+            context: vak_ooxml::edit::EditContext { author, date },
+            target,
+        };
+        let work = tokio::task::spawn_blocking(move || job.run()).await;
+        let duration = started.elapsed().as_millis() as u64;
+        let finish = |code: i32, artifacts: Vec<String>| {
+            if let Some(sink) = &ctx.sandbox_sink {
+                sink.emit_finished(code, duration, artifacts);
+            }
+        };
         match work {
-            Ok(Ok(report)) => ToolOutput::ok(format!("Wrote {display}. {report}")),
-            Ok(Err(error)) => ToolOutput::error(error),
-            Err(error) => ToolOutput::error(format!("office_apply failed: {error}")),
+            Ok(Ok(report)) => {
+                crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &draft, &root);
+                finish(0, vec![draft_relative.clone()]);
+                ToolOutput::ok(format!(
+                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
+                ))
+            }
+            Ok(Err(error)) => {
+                finish(1, Vec::new());
+                ToolOutput::error(error)
+            }
+            Err(error) => {
+                finish(1, Vec::new());
+                ToolOutput::error(format!("office_apply failed: {error}"))
+            }
         }
     }
 }
 
-fn apply(
-    source: &Path,
-    destination: &Path,
-    base_digest: &str,
-    ops: &[vak_ooxml::edit::OfficeOp],
-    author: String,
-    date: String,
+struct Job {
+    source: PathBuf,
+    destination: PathBuf,
+    draft: PathBuf,
+    base_digest: String,
+    ops: Vec<vak_ooxml::edit::OfficeOp>,
+    context: vak_ooxml::edit::EditContext,
     target: vak_ooxml::Format,
-) -> Result<String, String> {
-    let limits = vak_ooxml::Limits::default();
-    let size = std::fs::metadata(source)
-        .map_err(|error| format!("cannot read the source: {error}"))?
+}
+
+impl Job {
+    fn run(self) -> Result<String, String> {
+        let limits = vak_ooxml::Limits::default();
+        let bytes = read_bounded(&self.source, &limits)?;
+        let digest = sha256_hex(&bytes);
+        if self.base_digest.len() < 16 || !digest.starts_with(&self.base_digest) {
+            return Err(format!(
+                "base_digest {:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Read it again with doc_read and use the anchors and sha256 from that read",
+                self.base_digest,
+                &digest[..16]
+            ));
+        }
+        let applied =
+            vak_ooxml::edit::apply(&bytes, &self.ops, &self.context, limits, Some(self.target))
+                .map_err(|error| format!("nothing was written: {error}"))?;
+        let current = if self.destination.is_file() {
+            let bytes = read_bounded(&self.destination, &limits)?;
+            Some(
+                vak_ooxml::read::read(std::io::Cursor::new(bytes), limits).map_err(|error| {
+                    format!("the current workspace file cannot be read for comparison: {error}")
+                })?,
+            )
+        } else {
+            None
+        };
+        let changes = vak_ooxml::diff::diff(current.as_ref(), &applied.document);
+        if let Some(parent) = self.draft.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create the draft directory: {error}"))?;
+        }
+        write_atomically(&self.draft, &applied.bytes)?;
+        let mut report = format!("Draft sha256 {}….\n", &sha256_hex(&applied.bytes)[..16]);
+        for result in &applied.results {
+            report.push_str(&format!(
+                "- {}: {} ({})\n",
+                result.op, result.summary, result.check
+            ));
+        }
+        report.push_str("Compared with the workspace file: ");
+        if changes.summary.is_empty() {
+            report.push_str("no visible change.\n");
+        } else {
+            report.push_str(&changes.summary.join("; "));
+            report.push('\n');
+        }
+        match self.target.vocabulary {
+            vak_ooxml::Vocabulary::Word => report.push_str(&format!(
+                "Word edits are tracked changes by {}; they can also be accepted or rejected in Word.\n",
+                self.context.author
+            )),
+            vak_ooxml::Vocabulary::Excel => report.push_str(
+                "Vak does not calculate formulas: Excel recalculates when the file is opened, and until then cached values are stale.\n",
+            ),
+            _ => {}
+        }
+        Ok(report)
+    }
+}
+
+fn read_bounded(path: &Path, limits: &vak_ooxml::Limits) -> Result<Vec<u8>, String> {
+    let size = std::fs::metadata(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?
         .len();
     if size > limits.max_total_bytes {
-        return Err("the source is over the size limit for an Office package".into());
-    }
-    let bytes =
-        std::fs::read(source).map_err(|error| format!("cannot read the source: {error}"))?;
-    let digest = sha256_hex(&bytes);
-    if base_digest.len() < 16 || !digest.starts_with(base_digest) {
         return Err(format!(
-            "base_digest {base_digest:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Read it again with doc_read and use the anchors and sha256 from that read",
-            &digest[..16]
+            "{} is over the size limit for an Office package",
+            path.display()
         ));
     }
-    let context = vak_ooxml::edit::EditContext {
-        author: author.clone(),
-        date,
-    };
-    let applied = vak_ooxml::edit::apply(&bytes, ops, &context, limits, Some(target))
-        .map_err(|error| format!("nothing was written: {error}"))?;
-    write_atomically(destination, &applied.bytes)?;
-    let new_digest = sha256_hex(&applied.bytes);
-    let mut report = format!(
-        "sha256 {}… (use it as base_digest for further edits).\n",
-        &new_digest[..16]
-    );
-    for result in &applied.results {
-        report.push_str(&format!(
-            "- {}: {} ({})\n",
-            result.op, result.summary, result.check
-        ));
-    }
-    match target.vocabulary {
-        vak_ooxml::Vocabulary::Word => report.push_str(&format!(
-            "Word edits are tracked changes by {author}; a reviewer can accept or reject each in Word.\n"
-        )),
-        vak_ooxml::Vocabulary::Excel => report.push_str(
-            "Vak does not calculate formulas: Excel recalculates when the file is opened, and until then cached values are stale.\n",
-        ),
-        _ => {}
-    }
-    Ok(report)
+    std::fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -208,7 +302,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Writes through a sibling temporary file and a rename, so a reader never
-/// sees half a package and a failure leaves the old file in place.
+/// sees half a package and a failure leaves no partial file.
 fn write_atomically(destination: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write as _;
     let Some(parent) = destination.parent() else {
@@ -260,8 +354,8 @@ fn confined_existing(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-/// A file to write inside the workspace: its directory must exist inside
-/// the workspace, and it must not be a symlink.
+/// The workspace file a draft is for: its directory must exist inside the
+/// workspace, and it must not be a symlink.
 fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     let root = canonical_root(cwd)?;
     let candidate = if Path::new(path).is_absolute() {
@@ -295,6 +389,7 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::sandbox_events::{SandboxEvent, SandboxEventSink};
 
     async fn run(dir: &Path, args: Value) -> ToolOutput {
         OfficeApplyTool
@@ -309,32 +404,45 @@ mod tests {
         sha256_hex(&std::fs::read(path).unwrap())[..16].to_string()
     }
 
+    fn draft_path(output: &ToolOutput) -> String {
+        output
+            .content
+            .split("written to ")
+            .nth(1)
+            .and_then(|rest| rest.split(". ").next())
+            .unwrap()
+            .to_string()
+    }
+
     #[tokio::test]
-    async fn edits_a_workbook_in_place_and_reports_the_new_digest() {
+    async fn an_edit_is_a_draft_and_the_workspace_file_is_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("budget.xlsx");
         std::fs::write(&file, vak_ooxml::fixtures::xlsx()).unwrap();
-        let output = run(
-            dir.path(),
-            serde_json::json!({
-                "path": "budget.xlsx",
-                "base_digest": digest_of(&file),
-                "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
-            }),
-        )
-        .await;
+        let (sink, mut events) = SandboxEventSink::new_with_id("exec-7".into());
+        let output = OfficeApplyTool
+            .execute(
+                &serde_json::json!({
+                    "path": "budget.xlsx",
+                    "base_digest": digest_of(&file),
+                    "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
+                }),
+                &ToolContext::new(dir.path().to_path_buf())
+                    .with_agent_id("mira")
+                    .with_sandbox_sink(sink),
+            )
+            .await;
         assert!(!output.is_error, "{}", output.content);
-        assert!(
-            output
-                .content
-                .contains("set_cells: 1 cell(s) set on Budget"),
-            "{}",
-            output.content
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            vak_ooxml::fixtures::xlsx(),
+            "the workspace file is unchanged"
         );
+        assert_eq!(draft_path(&output), ".vak/scratch/mira/exec-7/budget.xlsx");
         assert!(
             output
                 .content
-                .contains(&format!("sha256 {}…", digest_of(&file))),
+                .contains("Compared with the workspace file: Budget: 1 changed"),
             "{}",
             output.content
         );
@@ -343,6 +451,24 @@ mod tests {
                 .content
                 .contains("recalculates when the file is opened")
         );
+        let draft = dir.path().join(".vak/scratch/mira/exec-7/budget.xlsx");
+        let document = vak_ooxml::read::read(
+            std::io::Cursor::new(std::fs::read(&draft).unwrap()),
+            vak_ooxml::Limits::default(),
+        )
+        .unwrap();
+        assert!(document.lines().join("\n").contains("B2: 150"));
+
+        let mut seen = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            seen.push(event);
+        }
+        assert!(seen.iter().any(|event| matches!(event,
+            SandboxEvent::ExecutionStarted { tool, scratch_dir, .. }
+                if tool == "office_apply" && scratch_dir.ends_with(".vak/scratch/mira/exec-7"))));
+        assert!(seen.iter().any(|event| matches!(event,
+            SandboxEvent::ExecutionFinished { exit_code: 0, artifacts, .. }
+                if artifacts == &vec![".vak/scratch/mira/exec-7/budget.xlsx".to_string()])));
 
         let stale = run(
             dir.path(),
@@ -362,11 +488,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creates_a_deck_from_a_template_with_the_agent_as_author() {
+    async fn drafts_chain_and_a_template_creates_a_new_file() {
         let dir = tempfile::tempdir().unwrap();
         let template = dir.path().join("brand.pptx");
         std::fs::write(&template, vak_ooxml::fixtures::pptx_template()).unwrap();
-        let output = run(
+        let first = run(
             dir.path(),
             serde_json::json!({
                 "path": "q3.pptx",
@@ -377,33 +503,56 @@ mod tests {
             }),
         )
         .await;
-        assert!(!output.is_error, "{}", output.content);
-        let bytes = std::fs::read(dir.path().join("q3.pptx")).unwrap();
-        let document =
-            vak_ooxml::read::read(std::io::Cursor::new(bytes), vak_ooxml::Limits::default())
-                .unwrap();
-        assert!(document.lines().join("\n").contains("Slide 2: Q3"));
-        assert_eq!(
-            std::fs::read(&template).unwrap(),
-            vak_ooxml::fixtures::pptx_template(),
-            "the template is untouched"
+        assert!(!first.is_error, "{}", first.content);
+        assert!(
+            first
+                .content
+                .contains("Compared with the workspace file: Deck: 1 added"),
+            "{}",
+            first.content
         );
-
-        let doc = dir.path().join("memo.docx");
-        std::fs::write(&doc, vak_ooxml::fixtures::docx()).unwrap();
-        let output = run(
+        assert!(
+            !dir.path().join("q3.pptx").exists(),
+            "nothing lands in the workspace before review"
+        );
+        let draft = draft_path(&first);
+        let second = run(
             dir.path(),
             serde_json::json!({
-                "path": "memo.docx",
-                "base_digest": digest_of(&doc),
-                "ops": [{"op": "replace_paragraph_text", "anchor": "p@11", "text": "Up."}]
+                "path": "q3.pptx",
+                "source": draft,
+                "base_digest": digest_of(&dir.path().join(&draft)),
+                "ops": [{"op": "set_notes", "anchor": "slide:256", "text": "x"}]
             }),
         )
         .await;
+        assert!(second.is_error, "the template's slide has no notes page");
         assert!(
-            output.content.contains("tracked changes by mira"),
+            second.content.contains("no notes page"),
             "{}",
-            output.content
+            second.content
+        );
+        let third = run(
+            dir.path(),
+            serde_json::json!({
+                "path": "q3.pptx",
+                "source": draft,
+                "base_digest": digest_of(&dir.path().join(&draft)),
+                "ops": [{"op": "set_title", "title": "Q3 review"}]
+            }),
+        )
+        .await;
+        assert!(!third.is_error, "{}", third.content);
+        let latest = dir.path().join(draft_path(&third));
+        let document = vak_ooxml::read::read(
+            std::io::Cursor::new(std::fs::read(latest).unwrap()),
+            vak_ooxml::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(document.title.as_deref(), Some("Q3 review"));
+        assert!(
+            document.lines().join("\n").contains("Slide 2: Q3"),
+            "the chained draft keeps the first edit"
         );
     }
 
@@ -412,7 +561,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("memo.docx");
         std::fs::write(&file, vak_ooxml::fixtures::docx()).unwrap();
-        let before = std::fs::read(&file).unwrap();
         let digest = digest_of(&file);
         for (args, expected) in [
             (
@@ -440,9 +588,12 @@ mod tests {
             assert!(output.is_error, "{}", output.content);
             assert!(output.content.contains(expected), "{}", output.content);
         }
-        assert_eq!(std::fs::read(&file).unwrap(), before);
-        assert!(!dir.path().join("memo.docm").exists());
+        assert_eq!(std::fs::read(&file).unwrap(), vak_ooxml::fixtures::docx());
         let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(leftovers.len(), 1, "no temporary file is left behind");
+        assert_eq!(
+            leftovers.len(),
+            1,
+            "no draft and no temporary file are left behind"
+        );
     }
 }
