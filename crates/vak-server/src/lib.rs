@@ -762,8 +762,12 @@ fn router_with_state(state: AppState) -> Router {
             get(read_sandbox_candidate_file_raw),
         )
         .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-diff",
-            get(read_sandbox_candidate_office_diff),
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-review",
+            get(read_sandbox_candidate_office_review),
+        )
+        .route(
+            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-narrow",
+            post(narrow_sandbox_candidate_office),
         )
         .route(
             "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
@@ -3337,7 +3341,7 @@ fn participant_read_route_allowed(
             | ["sandbox", "records"]
             | ["sandbox", "candidates", _, "files"]
             | ["sandbox", "candidates", _, "files", "raw"]
-            | ["sandbox", "candidates", _, "office-diff"]
+            | ["sandbox", "candidates", _, "office-review"]
             | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
@@ -10529,6 +10533,7 @@ async fn export_sandbox_candidate(
                 updated_at: chrono::Utc::now().to_rfc3339(),
                 parent_candidate_id: None,
                 revision_session_id: None,
+                narrowed: None,
             });
             match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
                 Ok(()) => Json(record).into_response(),
@@ -10594,10 +10599,163 @@ async fn sandbox_candidate_file_bytes(
     Ok(bytes)
 }
 
+fn saved_candidate(
+    state: &AppState,
+    session_id: &str,
+    candidate_id: &str,
+) -> Result<vak_sandbox::CandidateRecord, StatusCode> {
+    let records = vak_sandbox::load_records(&sandbox_records_path(state))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    records
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            vak_sandbox::DurableRecord::Candidate(saved)
+                if saved.session_id == session_id
+                    && saved.candidate.candidate_id == candidate_id =>
+            {
+                Some(saved)
+            }
+            _ => None,
+        })
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// How the Office draft `path` of execution `execution_id` was made: the
+/// `office_apply` calls in this session's ledger, followed back through
+/// each call whose source was an earlier draft to the file the chain
+/// started from (docs/design/72, P3). Only successful calls count; the
+/// worker then refuses a lineage that does not reproduce the draft.
+fn office_lineage(
+    state: &AppState,
+    session_id: &str,
+    execution_id: &str,
+    path: &str,
+) -> Result<vak_tools::broker::OfficeLineage, String> {
+    let workspace = sandbox_session_workspace(state, session_id).ok_or("unknown session")?;
+    let root = workspace
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the workspace: {error}"))?;
+    let collect = |log: &vak_session::SessionLog| {
+        let mut calls = std::collections::HashMap::new();
+        let mut succeeded = std::collections::HashSet::new();
+        for (_, message) in log.message_chain() {
+            for block in &message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, input }
+                        if name == "office_apply" =>
+                    {
+                        calls.insert(id.clone(), input.clone());
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error: false,
+                        ..
+                    } => {
+                        succeeded.insert(tool_use_id.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        calls.retain(|id, _| succeeded.contains(id));
+        let agent = log
+            .header()
+            .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
+        (calls, agent)
+    };
+    let live = state.get(session_id).and_then(|handle| {
+        handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(collect)
+    });
+    let (calls, agent) = match live {
+        Some(found) => found,
+        None => open_historical_session(state, session_id)
+            .map(|log| collect(&log))
+            .ok_or("the session ledger cannot be read")?,
+    };
+    let relative = |value: &str| -> Option<std::path::PathBuf> {
+        confined_path(&root, value)?
+            .strip_prefix(&root)
+            .ok()
+            .map(std::path::Path::to_path_buf)
+    };
+    let mut ops = Vec::new();
+    let mut call_id = execution_id.to_string();
+    let mut wanted = std::path::PathBuf::from(path);
+    for _ in 0..64 {
+        let Some(args) = calls.get(&call_id) else {
+            return Err(
+                "the draft was not made by a successful office_apply call in this conversation"
+                    .into(),
+            );
+        };
+        let target = args
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(relative);
+        if target.as_deref() != Some(wanted.as_path()) {
+            return Err(format!(
+                "office_apply {call_id} did not write {}",
+                wanted.display()
+            ));
+        }
+        let mut call_ops: Vec<vak_ooxml::edit::OfficeOp> = args
+            .get("ops")
+            .cloned()
+            .and_then(|ops| serde_json::from_value(ops).ok())
+            .ok_or("a recorded office_apply call has ops this version cannot read")?;
+        call_ops.append(&mut ops);
+        ops = call_ops;
+        let source_text = args
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|source| !source.is_empty())
+            .or_else(|| args.get("path").and_then(serde_json::Value::as_str))
+            .unwrap_or_default();
+        let source = relative(source_text).ok_or("a draft's source is outside the workspace")?;
+        let parts: Vec<String> = source
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        match parts.as_slice() {
+            [vak, scratch, _agent, earlier, rest @ ..] if vak == ".vak" && scratch == "scratch" => {
+                call_id = earlier.clone();
+                wanted = rest.iter().collect();
+            }
+            [vak, ..] if vak == ".vak" => {
+                return Err("a draft's source is inside .vak but not an earlier draft".into());
+            }
+            _ => {
+                let base_digest = args
+                    .get("base_digest")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                return Ok(vak_tools::broker::OfficeLineage {
+                    source: root.join(source),
+                    base_digest,
+                    ops,
+                    author: vak_tools::office_apply::tracked_change_author(
+                        agent.as_deref().unwrap_or("vak"),
+                    ),
+                });
+            }
+        }
+    }
+    Err("the chain of drafts is too long to follow".into())
+}
+
 /// What an Office file in a candidate changes, compared with the workspace
-/// file it would replace (docs/design/72, P3). Both packages are parsed in
-/// a worker, never in the server (invariant 39).
-async fn read_sandbox_candidate_office_diff(
+/// file it would replace, and the changes a person can keep or leave out
+/// (docs/design/72, P3). Every package is parsed in a worker, never in the
+/// server (invariant 39).
+async fn read_sandbox_candidate_office_review(
     State(state): State<AppState>,
     Path((session_id, candidate_id)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<FileQuery>,
@@ -10615,30 +10773,49 @@ async fn read_sandbox_candidate_office_diff(
     {
         return status.into_response();
     }
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
-        Ok(records) => records,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let saved = match saved_candidate(&state, &session_id, &candidate_id) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
     };
-    let Some(candidate) = records.iter().rev().find_map(|record| match record {
-        vak_sandbox::DurableRecord::Candidate(saved)
-            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
-        {
-            Some(saved.candidate.clone())
-        }
-        _ => None,
-    }) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
+    let candidate = &saved.candidate;
     let (Some(draft), Some(current)) = (
         confined_path(&candidate.source_root, &q.path),
         confined_path(&candidate.destination_root, &q.path),
     ) else {
         return StatusCode::FORBIDDEN.into_response();
     };
+    let (lineage, whole_reason) = if let Some(narrowed) = &saved.narrowed {
+        (
+            None,
+            Some(format!(
+                "This version keeps {} of the draft's changes. To choose differently, go back to the full draft.",
+                narrowed.keep.len()
+            )),
+        )
+    } else if saved.revision_session_id.is_some() {
+        (
+            None,
+            Some(
+                "This version was made by a revision, so it is accepted or rejected whole."
+                    .to_string(),
+            ),
+        )
+    } else {
+        match office_lineage(&state, &session_id, &saved.execution_id, &q.path) {
+            Ok(lineage) => (Some(lineage), None),
+            Err(reason) => (None, Some(reason)),
+        }
+    };
     let before = current.is_file().then_some(current.as_path());
-    match vak_tools::broker::office_diff(&state.core.tool_worker_exe(), before, &draft).await {
-        Ok(diff) => {
-            let mut body = diff;
+    match vak_tools::broker::office_review(
+        &state.core.tool_worker_exe(),
+        before,
+        &draft,
+        lineage.as_ref(),
+    )
+    .await
+    {
+        Ok(mut body) => {
             body["path"] = serde_json::Value::String(q.path.clone());
             body["compared_with"] = serde_json::Value::String(
                 if before.is_some() {
@@ -10648,6 +10825,15 @@ async fn read_sandbox_candidate_office_diff(
                 }
                 .into(),
             );
+            if let Some(reason) = whole_reason {
+                body["choices_unavailable"] = serde_json::Value::String(reason);
+            }
+            if let Some(narrowed) = &saved.narrowed {
+                body["narrowed_from"] = serde_json::json!({
+                    "candidate_id": saved.parent_candidate_id,
+                    "keep": narrowed.keep,
+                });
+            }
             Json(body).into_response()
         }
         Err(error) => (
@@ -10655,6 +10841,167 @@ async fn read_sandbox_candidate_office_diff(
             Json(serde_json::json!({ "error": error })),
         )
             .into_response(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OfficeNarrowBody {
+    path: String,
+    keep: Vec<String>,
+}
+
+/// A new version of a candidate that keeps only the chosen changes of one
+/// Office draft, replayed from its lineage in a worker that can write only
+/// the new version's staging directory (docs/design/72, P3). The full draft
+/// stays as it was; the new version is reviewed and accepted like any other.
+async fn narrow_sandbox_candidate_office(
+    State(state): State<AppState>,
+    Path((session_id, candidate_id)): Path<(String, String)>,
+    Json(body): Json<OfficeNarrowBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let refuse = |status: StatusCode, message: String| {
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
+    };
+    if !vak_ooxml::is_openxml_path(&body.path) {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file".into(),
+        );
+    }
+    if body.keep.is_empty() {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "no change was kept; reject the draft instead".into(),
+        );
+    }
+    if let Err(status) =
+        sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &body.path).await
+    {
+        return status.into_response();
+    }
+    let saved = match saved_candidate(&state, &session_id, &candidate_id) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
+    };
+    if saved.narrowed.is_some() || saved.revision_session_id.is_some() {
+        return refuse(
+            StatusCode::CONFLICT,
+            "choose changes from the full draft, not from a version made from it".into(),
+        );
+    }
+    let applied = vak_sandbox::load_records(&sandbox_records_path(&state))
+        .map(|records| {
+            records.iter().any(|record| {
+                matches!(record, vak_sandbox::DurableRecord::Promotion(promoted)
+                    if promoted.candidate_id == candidate_id)
+            })
+        })
+        .unwrap_or(true);
+    if applied {
+        return refuse(StatusCode::CONFLICT, "the draft was already applied".into());
+    }
+    let lineage = match office_lineage(&state, &session_id, &saved.execution_id, &body.path) {
+        Ok(lineage) => lineage,
+        Err(reason) => return refuse(StatusCode::CONFLICT, reason),
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    let staging = state
+        .core
+        .sessions_home()
+        .join("sandbox")
+        .join("staging")
+        .join(&id);
+    let prepared = (|| -> Result<std::path::PathBuf, String> {
+        for file in &saved.candidate.files {
+            if file.operation != vak_sandbox::CandidateOperation::Upsert || file.path == body.path {
+                continue;
+            }
+            let from = confined_path(&saved.candidate.source_root, &file.path)
+                .ok_or("a candidate file is outside its root")?;
+            let to = staging.join(&file.path);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::copy(&from, &to).map_err(|error| error.to_string())?;
+        }
+        let out = staging.join(&body.path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        Ok(out)
+    })();
+    let out = match prepared {
+        Ok(out) => out,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, error);
+        }
+    };
+    let Some(draft) = confined_path(&saved.candidate.source_root, &body.path) else {
+        let _ = std::fs::remove_dir_all(&staging);
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let narrowed = vak_tools::broker::office_narrow(
+        &state.core.tool_worker_exe(),
+        &lineage,
+        &draft,
+        &body.keep,
+        &out,
+    )
+    .await;
+    if let Err(error) = narrowed {
+        let _ = std::fs::remove_dir_all(&staging);
+        return refuse(StatusCode::UNPROCESSABLE_ENTITY, error);
+    }
+    let frozen_root = sandbox_candidates_root(&state).join(&id);
+    let frozen =
+        vak_sandbox::freeze_revision_candidate(&id, &staging, &saved.candidate, &frozen_root);
+    let _ = std::fs::remove_dir_all(&staging);
+    let mut candidate = match frozen {
+        Ok(candidate) => candidate,
+        Err(error) => return refuse(StatusCode::CONFLICT, error.to_string()),
+    };
+    candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
+    candidate.workspace_checks = planned_workspace_checks(&candidate);
+    let draft_checks = vak_tools::broker::verify_targets(
+        &state.core.tool_worker_exe(),
+        &candidate.source_root,
+        &candidate.target_checks,
+    )
+    .await;
+    let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
+        Ok(digest) => digest,
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+        }
+    };
+    let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+        record_id: format!("candidate-{id}"),
+        session_id: saved.session_id.clone(),
+        turn_id: saved.turn_id.clone(),
+        result_id: saved.result_id.clone(),
+        execution_id: saved.execution_id.clone(),
+        environment_id: saved.environment_id.clone(),
+        candidate_digest,
+        candidate,
+        verified: true,
+        draft_checks,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        parent_candidate_id: Some(candidate_id),
+        revision_session_id: None,
+        narrowed: Some(vak_sandbox::NarrowedDraft {
+            path: body.path,
+            keep: body.keep,
+        }),
+    });
+    match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+        Ok(()) => Json(record).into_response(),
+        Err(error) => {
+            let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+            refuse(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+        }
     }
 }
 
@@ -11249,6 +11596,7 @@ async fn dispatch_candidate_revision(
                                     updated_at: chrono::Utc::now().to_rfc3339(),
                                     parent_candidate_id: Some(saved.candidate.candidate_id.clone()),
                                     revision_session_id: Some(child_session_id.clone()),
+                                    narrowed: None,
                                 };
                                 match vak_sandbox::append_record(
                                     &records_path,
@@ -19124,48 +19472,306 @@ mod sandbox_promotion_tests {
         record
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_office_draft_is_reviewed_by_meaning_and_accepted_through_promotion() {
+    /// A ledger in which the Agent made `calls` (`office_apply` id and
+    /// arguments), each succeeding, then answered.
+    fn seed_office_calls(core: &Core, session_id: &str, calls: &[(&str, serde_json::Value)]) {
+        seed_bound_result(core, session_id, "unused");
+        let path = core
+            .sessions_home()
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(format!("{session_id}.jsonl"));
+        let mut log = vak_session::SessionLog::open(path).unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Update the budget"),
+            meta: None,
+        })
+        .unwrap();
+        for (id, input) in calls {
+            log.append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                    id: (*id).into(),
+                    name: "office_apply".into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .unwrap();
+            log.append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message {
+                    role: vak_llm::Role::User,
+                    content: vec![vak_llm::ContentBlock::ToolResult {
+                        tool_use_id: (*id).into(),
+                        content: "Draft written.".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .unwrap();
+        }
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
+                "The draft is ready for review.",
+            )]),
+            meta: None,
+        })
+        .unwrap();
+    }
+
+    async fn body_json(response: axum::response::Response) -> serde_json::Value {
+        serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn sha256_prefix(bytes: &[u8]) -> String {
         use sha2::Digest as _;
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_office_draft_is_reviewed_by_meaning_narrowed_and_accepted_through_promotion() {
         crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
-        seed_bound_result(&core, "session-1", "exec-1");
-        let state = AppState::new(core);
-        pin_test_tool_worker(&state.core);
         let workbook = dir.path().join("budget.xlsx");
         tokio::fs::write(&workbook, vak_ooxml::fixtures::xlsx())
             .await
             .unwrap();
-        let digest: String = sha2::Sha256::digest(vak_ooxml::fixtures::xlsx())
-            .iter()
-            .take(8)
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-
+        let first_draft = ".vak/scratch/vak/exec-1/budget.xlsx";
+        let first = serde_json::json!({
+            "path": "budget.xlsx",
+            "base_digest": sha256_prefix(&vak_ooxml::fixtures::xlsx()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
+        });
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
         let tool = vak_tools::brokered_default_tools(state.core.tool_worker_exe())
             .into_iter()
             .find(|tool| tool.name() == "office_apply")
             .unwrap();
-        let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-1".into());
-        let output = tool
-            .execute(
-                &serde_json::json!({
-                    "path": "budget.xlsx",
-                    "base_digest": digest,
-                    "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150}}]
-                }),
-                &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
-            )
-            .await;
+        let run = |id: &'static str, args: serde_json::Value| {
+            let tool = &tool;
+            let cwd = dir.path().to_path_buf();
+            async move {
+                let (sink, _events) = vak_tools::SandboxEventSink::new_with_id(id.into());
+                tool.execute(
+                    &args,
+                    &vak_tools::ToolContext::new(cwd).with_sandbox_sink(sink),
+                )
+                .await
+            }
+        };
+        let output = run("exec-1", first.clone()).await;
+        assert!(!output.is_error, "{}", output.content);
+        // The Agent keeps editing its own draft: a second call, whose source
+        // is the first draft, so the lineage spans both calls.
+        let second = serde_json::json!({
+            "path": "budget.xlsx",
+            "source": first_draft,
+            "base_digest": sha256_prefix(&tokio::fs::read(dir.path().join(first_draft)).await.unwrap()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B3": 70}}]
+        });
+        let output = run("exec-2", second.clone()).await;
         assert!(!output.is_error, "{}", output.content);
         assert_eq!(
             tokio::fs::read(&workbook).await.unwrap(),
             vak_ooxml::fixtures::xlsx(),
             "the workspace file is untouched until review"
         );
+        seed_office_calls(
+            &state.core,
+            "session-1",
+            &[("exec-1", first), ("exec-2", second)],
+        );
 
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-2".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: ".vak/scratch/vak/exec-2".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-2".into(),
+                source: ".vak/scratch/vak/exec-2".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(candidate.draft_checks.len(), 1);
+        assert_eq!(candidate.draft_checks[0].verifier, "format.openxml");
+        assert_eq!(
+            candidate.draft_checks[0].status, "passed",
+            "{}",
+            candidate.draft_checks[0].evidence
+        );
+        let candidate_id = candidate.candidate.candidate_id.clone();
+        let review = |id: String| {
+            let state = state.clone();
+            async move {
+                read_sandbox_candidate_office_review(
+                    State(state),
+                    Path(("session-1".into(), id)),
+                    axum::extract::Query(FileQuery {
+                        path: "budget.xlsx".into(),
+                    }),
+                )
+                .await
+            }
+        };
+
+        let response = review(candidate_id.clone()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let diff = body_json(response).await;
+        assert_eq!(diff["summary"], serde_json::json!(["Budget: 2 changed"]));
+        assert_eq!(diff["changes"][0]["anchor"], "Budget!B2");
+        assert_eq!(diff["changes"][0]["before"], "100");
+        assert_eq!(diff["changes"][0]["after"], "150");
+        assert_eq!(diff["compared_with"], "workspace");
+        assert!(diff.get("choices_unavailable").is_none(), "{diff}");
+        let ids: Vec<&str> = diff["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|choice| choice["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["0", "1"], "one choice per call's op, oldest first");
+        assert_eq!(diff["choices"][1]["label"], "Set Budget!B3");
+        assert_eq!(diff["choices"][1]["changes"][0]["after"], "70");
+
+        let narrow = |id: String, keep: Vec<&'static str>| {
+            let state = state.clone();
+            async move {
+                narrow_sandbox_candidate_office(
+                    State(state),
+                    Path(("session-1".into(), id)),
+                    Json(OfficeNarrowBody {
+                        path: "budget.xlsx".into(),
+                        keep: keep.into_iter().map(str::to_string).collect(),
+                    }),
+                )
+                .await
+            }
+        };
+        let response = narrow(candidate_id.clone(), vec!["1"]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(narrowed) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(
+            narrowed.parent_candidate_id.as_deref(),
+            Some(candidate_id.as_str())
+        );
+        assert_eq!(narrowed.draft_checks[0].status, "passed");
+        let narrowed_id = narrowed.candidate.candidate_id.clone();
+
+        let diff = body_json(review(narrowed_id.clone()).await).await;
+        assert_eq!(diff["summary"], serde_json::json!(["Budget: 1 changed"]));
+        assert_eq!(diff["changes"][0]["anchor"], "Budget!B3");
+        assert_eq!(diff["narrowed_from"]["candidate_id"], candidate_id.as_str());
+        assert!(
+            diff["choices_unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("keeps 1 of the draft's changes")
+        );
+
+        let response = narrow(narrowed_id.clone(), vec!["1"]).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let response = narrow(candidate_id.clone(), vec![]).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = narrow(candidate_id.clone(), vec!["7"]).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: narrowed_id,
+                files: vec!["budget.xlsx".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let promoted = tokio::fs::read(&workbook).await.unwrap();
+        let text =
+            vak_ooxml::read::read(std::io::Cursor::new(promoted), vak_ooxml::Limits::default())
+                .unwrap()
+                .lines()
+                .join("\n");
+        assert!(text.contains("B3: 70"), "{text}");
+        assert!(
+            text.contains("B2: 100"),
+            "the left-out change is not applied: {text}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_draft_changed_after_office_apply_is_offered_only_whole() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        tokio::fs::write(dir.path().join("budget.xlsx"), vak_ooxml::fixtures::xlsx())
+            .await
+            .unwrap();
+        let args = serde_json::json!({
+            "path": "budget.xlsx",
+            "base_digest": sha256_prefix(&vak_ooxml::fixtures::xlsx()),
+            "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B2": 150, "B3": 70}}]
+        });
+        seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
+        // A draft that no office_apply call produced: a command wrote it.
+        let scratch = dir.path().join(".vak/scratch/vak/exec-1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        let other = vak_ooxml::edit::apply(
+            &vak_ooxml::fixtures::xlsx(),
+            &[vak_ooxml::edit::OfficeOp::SetCells {
+                sheet: "Budget".into(),
+                cells: std::collections::BTreeMap::from([(
+                    "B2".to_string(),
+                    vak_ooxml::edit::CellValue::Number(999.0),
+                )]),
+            }],
+            &vak_ooxml::edit::EditContext {
+                author: "Vak".into(),
+                date: "2026-09-24T10:00:00Z".into(),
+            },
+            vak_ooxml::Limits::default(),
+            None,
+        )
+        .unwrap();
+        tokio::fs::write(scratch.join("budget.xlsx"), &other.bytes)
+            .await
+            .unwrap();
         append_session_sandbox_event(
             &state.core.sessions_home(),
             "session-1",
@@ -19188,61 +19794,43 @@ mod sandbox_promotion_tests {
             }),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let record: vak_sandbox::DurableRecord = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), 256 * 1024)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
         let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
             panic!("candidate response")
         };
-        assert_eq!(candidate.draft_checks.len(), 1);
-        assert_eq!(candidate.draft_checks[0].verifier, "format.openxml");
-        assert_eq!(
-            candidate.draft_checks[0].status, "passed",
-            "{}",
-            candidate.draft_checks[0].evidence
-        );
-        let candidate_id = candidate.candidate.candidate_id.clone();
-
-        let response = read_sandbox_candidate_office_diff(
+        let response = read_sandbox_candidate_office_review(
             State(state.clone()),
-            Path(("session-1".into(), candidate_id.clone())),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
             axum::extract::Query(FileQuery {
                 path: "budget.xlsx".into(),
             }),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let diff: serde_json::Value = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), 256 * 1024)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(diff["summary"], serde_json::json!(["Budget: 1 changed"]));
-        assert_eq!(diff["changes"][0]["anchor"], "Budget!B2");
-        assert_eq!(diff["changes"][0]["before"], "100");
-        assert_eq!(diff["changes"][0]["after"], "150");
-        assert_eq!(diff["compared_with"], "workspace");
-
-        let response = promote_sandbox_candidate(
+        let diff = body_json(response).await;
+        assert!(diff.get("choices").is_none(), "{diff}");
+        assert!(
+            diff["choices_unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("not what its recorded edits produce"),
+            "{diff}"
+        );
+        assert_eq!(diff["changes"][0]["after"], "999");
+        let response = narrow_sandbox_candidate_office(
             State(state.clone()),
-            Path("session-1".into()),
-            Json(SandboxPromotionBody {
-                candidate_id,
-                files: vec!["budget.xlsx".into()],
+            Path(("session-1".into(), candidate.candidate.candidate_id)),
+            Json(OfficeNarrowBody {
+                path: "budget.xlsx".into(),
+                keep: vec!["0:B2".into()],
             }),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let promoted = tokio::fs::read(&workbook).await.unwrap();
-        let document =
-            vak_ooxml::read::read(std::io::Cursor::new(promoted), vak_ooxml::Limits::default())
-                .unwrap();
-        assert!(document.lines().join("\n").contains("B2: 150"));
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "narrowing replays and would silently drop the hand edit, so the worker's integrity check must refuse it too"
+        );
     }
 
     #[tokio::test]
@@ -20113,7 +20701,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/records",
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
-            "/sessions/session-1/sandbox/candidates/candidate-1/office-diff",
+            "/sessions/session-1/sandbox/candidates/candidate-1/office-review",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",

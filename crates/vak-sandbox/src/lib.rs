@@ -615,6 +615,18 @@ pub struct CandidateRecord {
     /// Durable child session whose tool receipts produced this version.
     #[serde(default)]
     pub revision_session_id: Option<String>,
+    /// Set when a person kept only some of an Office draft's changes: this
+    /// version replays those, and `parent_candidate_id` is the full draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrowed: Option<NarrowedDraft>,
+}
+
+/// Which of an Office draft's changes a narrowed version keeps
+/// (docs/design/72-openxml-documents.md, P3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NarrowedDraft {
+    pub path: String,
+    pub keep: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

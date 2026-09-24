@@ -133,11 +133,7 @@ impl Tool for OfficeApplyTool {
             ));
         }
         let agent = ctx.agent_id.clone().unwrap_or_else(|| "vak".into());
-        let author = if agent == "vak" {
-            "Vak".to_string()
-        } else {
-            agent.clone()
-        };
+        let author = tracked_change_author(&agent);
         let now = chrono::Utc::now();
         let date = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let execution = ctx
@@ -211,6 +207,16 @@ impl Tool for OfficeApplyTool {
     }
 }
 
+/// The name Word shows on an Agent's tracked changes: the runtime's Agent
+/// id, never a name the model chose.
+pub fn tracked_change_author(agent_id: &str) -> String {
+    if agent_id == "vak" {
+        "Vak".to_string()
+    } else {
+        agent_id.to_string()
+    }
+}
+
 struct Job {
     source: PathBuf,
     destination: PathBuf,
@@ -280,7 +286,7 @@ impl Job {
     }
 }
 
-fn read_bounded(path: &Path, limits: &vak_ooxml::Limits) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bounded(path: &Path, limits: &vak_ooxml::Limits) -> Result<Vec<u8>, String> {
     let size = std::fs::metadata(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?
         .len();
@@ -293,7 +299,7 @@ fn read_bounded(path: &Path, limits: &vak_ooxml::Limits) -> Result<Vec<u8>, Stri
     std::fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     sha2::Sha256::digest(bytes)
         .iter()
@@ -303,7 +309,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Writes through a sibling temporary file and a rename, so a reader never
 /// sees half a package and a failure leaves no partial file.
-fn write_atomically(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomically(destination: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write as _;
     let Some(parent) = destination.parent() else {
         return Err("the destination has no parent directory".into());

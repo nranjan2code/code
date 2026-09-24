@@ -38,9 +38,18 @@ fn choices(source: &[u8], ops: &[OfficeOp]) -> Vec<Choice> {
 
 fn narrow(source: &[u8], ops: &[OfficeOp], keep: &[&str]) -> Result<String, String> {
     let keep: Vec<String> = keep.iter().map(|id| id.to_string()).collect();
-    review::narrow(source, ops, &keep, &context(), Limits::default(), None)
-        .map(|applied| applied.document.lines().join("\n"))
-        .map_err(|error| error.to_string())
+    let full = draft(source, ops);
+    review::narrow(
+        source,
+        ops,
+        &keep,
+        &context(),
+        Limits::default(),
+        None,
+        &full.document,
+    )
+    .map(|applied| applied.document.lines().join("\n"))
+    .map_err(|error| error.to_string())
 }
 
 fn insert(anchor: &str, text: &str) -> OfficeOp {
@@ -173,6 +182,22 @@ fn a_draft_the_ops_do_not_reproduce_is_taken_whole() {
     .unwrap_err();
     assert!(
         error.contains("not what its recorded edits produce"),
+        "{error}"
+    );
+    let error = review::narrow(
+        &source,
+        &ops,
+        &["0".to_string()],
+        &context(),
+        Limits::default(),
+        None,
+        &edited_later.document,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("not what its recorded edits produce"),
         "{error}"
     );
 

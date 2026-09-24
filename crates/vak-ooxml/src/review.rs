@@ -120,7 +120,9 @@ pub fn choices(
 }
 
 /// Replays the choices in `keep` (ids from [`choices`]) against `source`.
-/// A kept choice whose requirement was left out fails, naming both.
+/// A kept choice whose requirement was left out fails, naming both, and so
+/// does a `draft` the ops do not reproduce: narrowing it would silently drop
+/// whatever changed it afterwards.
 pub fn narrow(
     source: &[u8],
     ops: &[OfficeOp],
@@ -128,6 +130,7 @@ pub fn narrow(
     context: &EditContext,
     limits: Limits,
     target: Option<Format>,
+    draft: &Document,
 ) -> Result<Applied, EditError> {
     if ops.len() > MAX_OPS {
         return edit_fail(format!(
@@ -188,6 +191,11 @@ pub fn narrow(
         return edit_fail("no change was kept; reject the draft instead");
     }
     let original = edit::apply(source, ops, context, limits, target)?;
+    if !diff(Some(&original.document), draft).is_empty() {
+        return edit_fail(
+            "the draft is not what its recorded edits produce, so it can only be accepted or rejected whole",
+        );
+    }
     let created: Vec<Option<String>> = original
         .results
         .iter()
